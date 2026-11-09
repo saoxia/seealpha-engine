@@ -275,3 +275,44 @@ def test_weak_or_shared_secret_refused(tmp_path):
         )
         with pytest.raises(ValueError):
             create_research_app(config, runtime, tasks)
+
+
+def test_research_mount_does_not_share_admin_credentials(tmp_path, monkeypatch):
+    """The main Engine's global admin dependency must not guard/bypass Research."""
+    from engine.app import create_app
+    from engine.runtime import EngineRuntime
+
+    (tmp_path / "data" / "catalog").mkdir(parents=True)
+    monkeypatch.setattr(
+        "engine.research_snapshots.dataset_inventory",
+        lambda _settings, all_levels: [],
+    )
+    runtime = EngineRuntime(tmp_path / "state", tmp_path)
+    runtime.ensure_tenant("dev", "development")
+    config = EngineConfig(
+        state_dir=runtime.root, token=ADMIN, project=tmp_path,
+        tenant_id="dev", tenant_purpose="development",
+        research_signing_key=SECRET,
+    )
+    app = create_app(config, runtime)
+    try:
+        with TestClient(app) as client:
+            assert client.get("/health", headers=headers()).status_code == 401
+            assert client.get(
+                "/health", headers={"Authorization": f"Bearer {ADMIN}"},
+            ).status_code == 200
+            assert client.get(
+                "/research/v1/datasets",
+                headers={
+                    "Authorization": f"Bearer {ADMIN}",
+                    ENGINE_HEADER: "2", RESEARCH_HEADER: "1",
+                },
+            ).status_code == 401
+            response = client.get("/research/v1/datasets", headers=headers())
+            assert response.status_code == 200, response.text
+            assert response.json()["datasets"] == []
+            assert client.get(
+                "/tenants/dev/strategy-loads", headers=headers(),
+            ).status_code == 401
+    finally:
+        runtime.close()
