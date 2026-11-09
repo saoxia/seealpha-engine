@@ -268,7 +268,7 @@ def test_no_research_in_production_tenant(service):
 
 
 def test_weak_or_shared_secret_refused(tmp_path):
-    runtime, tasks = FakeRuntime(tmp_path)
+    runtime, tasks = FakeRuntime(tmp_path), FakeTasks()
     for key in ("weak", ADMIN):
         config = EngineConfig(
             state_dir=runtime.root, token=ADMIN, project=tmp_path,
