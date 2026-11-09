@@ -1,20 +1,22 @@
 """No-model, no-exchange Research API producer/consumer contract tests."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import io
 import time
+from dataclasses import dataclass
 from types import SimpleNamespace
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import pyarrow.parquet as pq
 import pytest
+from fastapi.testclient import TestClient
 
 from engine.config import EngineConfig
 from engine.research_api import create_research_app
 from engine.research_auth import (
-    ENGINE_HEADER, RESEARCH_HEADER, sign_research_grant,
+    ENGINE_HEADER,
+    RESEARCH_HEADER,
+    sign_research_grant,
 )
 
 SECRET = "research-signing-key-for-tests-00000000000000"
