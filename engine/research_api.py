@@ -5,9 +5,9 @@ Depends(authorized) can NEVER be satisfied by a scoped research grant.
 """
 from __future__ import annotations
 
-from hashlib import sha256
 import hmac
 import re
+from hashlib import sha256
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -15,8 +15,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from engine.research_auth import (
-    ENGINE_HEADER, ENGINE_VERSION, RESEARCH_HEADER, RESEARCH_VERSION,
-    identifier, require_op, verify_research_grant,
+    ENGINE_HEADER,
+    ENGINE_VERSION,
+    RESEARCH_HEADER,
+    RESEARCH_VERSION,
+    identifier,
+    require_op,
+    verify_research_grant,
 )
 from engine.research_snapshots import SnapshotService
 from engine.runtime import EngineConflict
@@ -97,20 +102,22 @@ def create_research_app(config, runtime, tasks):
             raise HTTPException(403, "Research requires an active development tenant")
         return claims
 
+    grant_dependency = Depends(grant)
+
     @app.get("/v1/datasets")
-    def datasets(claims: dict = Depends(grant)):
+    def datasets(claims: dict = grant_dependency):
         return {"datasets": snapshots.discover(claims)}
 
     @app.post("/v1/snapshots", status_code=202)
-    def create_snapshot(body: SnapshotRequest, claims: dict = Depends(grant)):
+    def create_snapshot(body: SnapshotRequest, claims: dict = grant_dependency):
         return snapshots.create(body.dataset_id, body.start, body.end, claims)
 
     @app.get("/v1/snapshots/{snapshot_id}")
-    def get_snapshot(snapshot_id: str, claims: dict = Depends(grant)):
+    def get_snapshot(snapshot_id: str, claims: dict = grant_dependency):
         return snapshots.get(snapshot_id, claims)
 
     @app.get("/v1/snapshots/{snapshot_id}/content")
-    def download_snapshot(snapshot_id: str, claims: dict = Depends(grant)):
+    def download_snapshot(snapshot_id: str, claims: dict = grant_dependency):
         path = snapshots.file(snapshot_id, claims)
         return FileResponse(
             path, media_type="application/octet-stream",
@@ -147,7 +154,7 @@ def create_research_app(config, runtime, tasks):
         return data
 
     @app.post("/v1/backtests", status_code=202)
-    def submit_backtest(body: BacktestRequest, claims: dict = Depends(grant)):
+    def submit_backtest(body: BacktestRequest, claims: dict = grant_dependency):
         require_op(claims, "backtests:submit", strategy=identifier(body.strategy_ref))
         if body.parameters:
             # Current engine backtester takes only the fixed BacktestParameters.
@@ -185,7 +192,7 @@ def create_research_app(config, runtime, tasks):
             # Use the existing 366-day/interval guard rather than changing it.
             from engine.strategies.backtest import parse_window
             parse_window(body.start, body.end, interval)
-        except (EngineConflict, ValueError) as exc:
+        except (EngineConflict, ValueError):
             raise HTTPException(422, "Invalid development backtest window") from None
         idem = (
             "research." + sha256(claims["task_id"].encode()).hexdigest()[:32] + "."
@@ -197,12 +204,12 @@ def create_research_app(config, runtime, tasks):
         return _public_backtest(job)
 
     @app.get("/v1/backtests/{backtest_id}")
-    def get_backtest(backtest_id: str, claims: dict = Depends(grant)):
+    def get_backtest(backtest_id: str, claims: dict = grant_dependency):
         require_op(claims, "backtests:read")
         return _public_backtest(_scoped_backtest(backtest_id, claims), with_result=True)
 
     @app.post("/v1/backtests/{backtest_id}/cancel")
-    def cancel_backtest(backtest_id: str, claims: dict = Depends(grant)):
+    def cancel_backtest(backtest_id: str, claims: dict = grant_dependency):
         require_op(claims, "backtests:cancel")
         _scoped_backtest(backtest_id, claims)
         return _public_backtest(tasks.cancel(config.tenant_id, backtest_id))
