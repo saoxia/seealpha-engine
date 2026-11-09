@@ -13,6 +13,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import tempfile
 from threading import BoundedSemaphore, RLock
 from uuid import uuid4
 
@@ -54,13 +55,17 @@ def parse_range(start: str, end: str) -> tuple[datetime, datetime]:
 
 
 def _write_json(file: Path, value: dict) -> None:
-    staging = file.with_suffix(".json.tmp")
-    with staging.open("x", encoding="utf-8") as handle:
-        os.fchmod(handle.fileno(), 0o600)
-        json.dump(value, handle, ensure_ascii=False, allow_nan=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(staging, file)
+    fd, staged = tempfile.mkstemp(prefix=".research-", dir=file.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(value, handle, ensure_ascii=False, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, file)
+    finally:
+        if os.path.exists(staged):
+            os.unlink(staged)
 
 
 def _row_schema(level: str) -> pa.Schema:
@@ -83,6 +88,8 @@ class SnapshotService:
 
     def _recover(self):
         for path in self.root.glob("*.json"):
+            if path.is_symlink():
+                continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -258,6 +265,11 @@ class SnapshotService:
             with staged.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
                     checksum.update(block)
+            fd = os.open(staged, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
             os.replace(staged, target)
             with self.lock:
                 current = self._read(snapshot_id)
