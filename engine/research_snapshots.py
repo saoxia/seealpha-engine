@@ -150,7 +150,10 @@ class SnapshotService:
         return [d for d in self._discover() if d["id"] in grant["datasets"]]
 
     def _meta(self, snapshot_id: str) -> Path:
-        snapshot_id = identifier(snapshot_id)
+        try:
+            snapshot_id = identifier(snapshot_id)
+        except ValueError:
+            raise HTTPException(404, "Research snapshot not found") from None
         if len(snapshot_id) != 32 or any(c not in "0123456789abcdef" for c in snapshot_id):
             raise HTTPException(404, "Research snapshot not found")
         return self.root / f"{snapshot_id}.json"
