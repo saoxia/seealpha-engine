@@ -1037,113 +1037,46 @@ wheels = [
 ]
 
 [[package]]
-name = "seealpha"
-version = "0.2.0"
+name = "seealpha-engine"
+version = "0.1.0"
 source = { virtual = "." }
-default-groups = ["api", "dev", "research"]
+default-groups = ["dev"]
 dependencies = [
+    { name = "fastapi" },
     { name = "nautilus-trader" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "uvicorn" },
     { name = "websockets" },
 ]
 
 [package.dev-dependencies]
-api = [
-    { name = "alembic" },
-    { name = "argon2-cffi" },
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "sqlalchemy" },
-    { name = "uvicorn" },
-]
 dev = [
     { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
 ]
-research = [
-    { name = "click" },
-    { name = "contourpy" },
-    { name = "cycler" },
-    { name = "fonttools" },
-    { name = "fsspec" },
-    { name = "iniconfig" },
-    { name = "kiwisolver" },
-    { name = "matplotlib" },
-    { name = "msgspec" },
-    { name = "packaging" },
-    { name = "pillow" },
-    { name = "pluggy" },
-    { name = "polars" },
-    { name = "polars-runtime-32" },
-    { name = "portion" },
-    { name = "pygments" },
-    { name = "pyparsing" },
-    { name = "python-dateutil" },
-    { name = "pytz" },
-    { name = "six" },
-    { name = "sortedcontainers" },
-    { name = "tqdm" },
-    { name = "tzdata" },
-    { name = "uvloop", marker = "sys_platform != 'win32'" },
-]
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = "==0.141.1" },
     { name = "nautilus-trader", specifier = "==2.0.0rc8" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "pyarrow", specifier = ">=26.0.0" },
+    { name = "pydantic", specifier = ">=2.14,<3" },
+    { name = "uvicorn", specifier = "==0.52.1" },
     { name = "websockets", specifier = ">=17.3" },
 ]
 
 [package.metadata.requires-dev]
-api = [
-    { name = "alembic", specifier = ">=1.16,<2" },
-    { name = "argon2-cffi", specifier = "==25.1.0" },
-    { name = "cryptography", specifier = "==49.0.0" },
-    { name = "fastapi", specifier = "==0.141.1" },
-    { name = "httpx", specifier = "==0.28.1" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
-    { name = "sqlalchemy", specifier = ">=2.0,<2.2" },
-    { name = "uvicorn", specifier = "==0.52.1" },
-]
 dev = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.17.2" },
 ]
-research = [
-    { name = "click", specifier = ">=8.5.0" },
-    { name = "contourpy", specifier = ">=1.4.0" },
-    { name = "cycler", specifier = ">=0.12.1" },
-    { name = "fonttools", specifier = ">=4.67.0" },
-    { name = "fsspec", specifier = ">=2026.9.0" },
-    { name = "iniconfig", specifier = ">=2.3.1" },
-    { name = "kiwisolver", specifier = ">=1.5.1" },
-    { name = "matplotlib", specifier = ">=3.11.2" },
-    { name = "msgspec", specifier = ">=0.22.0" },
-    { name = "packaging", specifier = ">=26.3" },
-    { name = "pillow", specifier = ">=13.0.0" },
-    { name = "pluggy", specifier = ">=1.7.0" },
-    { name = "polars", specifier = ">=2.1.0" },
-    { name = "polars-runtime-32", specifier = ">=2.1.0" },
-    { name = "portion", specifier = ">=2.6.3" },
-    { name = "pygments", specifier = ">=2.21.0" },
-    { name = "pyparsing", specifier = ">=3.3.3" },
-    { name = "python-dateutil", specifier = ">=3.0.0" },
-    { name = "pytz", specifier = ">=2026.5" },
-    { name = "six", specifier = ">=1.17.0" },
-    { name = "sortedcontainers", specifier = ">=2.4.0" },
-    { name = "tqdm", specifier = ">=4.70.1" },
-    { name = "tzdata", specifier = ">=2026.5" },
-    { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.23.0" },
-]
-
 [[package]]
 name = "six"
 version = "1.17.0"
