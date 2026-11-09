@@ -34,7 +34,7 @@ cargo test --locked --release --manifest-path engine/pipeline/rust_converter/Car
 cargo build --locked --release --manifest-path engine/pipeline/rust_converter/Cargo.toml
 ```
 
-当前 `pyproject.toml` 与 `uv.lock` 是首阶段按原仓库同步的锁定快照（包含原 API/research 依赖组）。待独立 CI 验证基线通过后再独立精简和重锁，**不能在未更新锁文件时宣称完成依赖瘦身**。
+本仓库已独立命名为 `seealpha-engine`，运行依赖只声明 NautilusTrader、FastAPI/Uvicorn、Pydantic、WebSocket 和数据处理库；开发依赖仅包括 HTTPX、pytest、Ruff。原 Platform 的 `api`/`research` 依赖组不再纳入 Engine 项目。当前锁文件保留部分先前已解析但可能未使用的包记录，等待重新生成锁文件时进一步清理；实际运行安装以根依赖图为准。
 
 ## 启动
 

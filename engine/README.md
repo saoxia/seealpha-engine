@@ -27,8 +27,8 @@ Phase 1 把行情、连接和订单事实从业务 API 进程里拆出来。本�
 在仓库根目录：
 
 ```bash
-source ./activate.sh
-python -m engine
+uv sync --locked
+uv run python -m engine
 ```
 
 默认监听 `127.0.0.1:8766`。状态库是 `.local/state/engine/book.sqlite`（WAL）。
@@ -84,5 +84,5 @@ python -m engine
 
 独立 Engine Docker 镜像现在只包含 `engine/`、`core/`、`nautilus_support.py`、
 `packages/` 和构建依赖，不包含业务后台和前端源码。跨进程错误与账户结果类型
-在 `core/engine_contracts.py` 定义。仓库尚未独立；详见
+在 `core/engine_contracts.py` 定义。源码已迁至独立仓库，Platform 尚未切换；详见
 [后续 API 解耦清单](../docs/STANDALONE_MIGRATION.md)。

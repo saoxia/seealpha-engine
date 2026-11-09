@@ -4,7 +4,7 @@
 - 目标：`saoxia/seealpha-engine`，独立维护 `engine/`、`core/`、示例策略、必要文档和 Engine 测试。
 - 保留原 Python 包路径 `engine.*`、`core.*`，阶段一不进行重命名或改变 Engine HTTP v2 契约。
 - 此次不包含原业务 API/Web/ORM/迁移；生产 Platform 尚未改为消费此镜像。
-- Docker 镜像由本仓库构建，已复制原项目的构建上下文和锁文件；依赖瘦身为后续受控变更。
+- Docker 镜像只由本仓库的源码及独立 `pyproject.toml`、`uv.lock` 构建；已移除原 Platform 的 `api` / `research` 依赖组，并保留 NautilusTrader 2.0.0rc8。锁文件可能保留旧的未引用 package 记录，待离线/在线重锁后精简。
 
 ## 切换前的阻断项
 

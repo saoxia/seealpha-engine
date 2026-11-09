@@ -7,9 +7,9 @@ RUN cargo build --locked --release --manifest-path rust_converter/Cargo.toml
 FROM python:3.14-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-RUN python -m pip install --no-cache-dir uv
+RUN python -m pip install --no-cache-dir uv==0.10.0
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-default-groups --group api --group research --no-install-project
+RUN uv sync --locked --no-default-groups --no-install-project
 # Only Engine-owned code and the shared market/HTTP contracts are shipped.
 # No API, database migration, web frontend or admin source in the image.
 COPY core/ ./core/
