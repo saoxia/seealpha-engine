@@ -5,13 +5,12 @@ Depends(authorized) can NEVER be satisfied by a scoped research grant.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from hashlib import sha256
 import hmac
 import re
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
