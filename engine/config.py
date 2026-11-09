@@ -16,6 +16,7 @@ class EngineConfig:
     project: Path = PROJECT
     tenant_id: str | None = None
     tenant_purpose: str | None = None
+    research_signing_key: str | None = None
 
     @classmethod
     def from_environment(cls):
@@ -30,4 +31,5 @@ class EngineConfig:
             project=Path(os.getenv("ENGINE_PROJECT", str(PROJECT))),
             tenant_id=os.getenv("ENGINE_TENANT_ID"),
             tenant_purpose=os.getenv("ENGINE_TENANT_PURPOSE"),
+            research_signing_key=os.getenv("ENGINE_RESEARCH_SIGNING_KEY"),
         )
