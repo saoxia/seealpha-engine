@@ -72,4 +72,4 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 
 ## 当前明确未验收
 
-跨仓库独立发布、双仓库完整 HTTP 回归、真实交易账户、长时间行情运行、生产状态卷备份恢复与正式切换尚未完成。此次提交只建立新仓库的独立源码、构建和测试基线。详见 [迁移边界](docs/STANDALONE_MIGRATION.md)。
+跨仓库独立发布、双仓库完整 HTTP 回归、真实交易账户、长时间行情运行、生产状态卷备份恢复与正式切换尚未完成。此次提交只建立新仓库的独立源码、构建和测试基线。详见 [迁移边界](docs/STANDALONE_MIGRATION.md) 和 [Platform 跨仓库接入预演](docs/PLATFORM_INTEGRATION.md)。
