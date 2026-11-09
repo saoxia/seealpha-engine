@@ -1,0 +1,13 @@
+.git
+.venv
+.local
+data
+logs
+reports
+web/node_modules
+web/.next
+web/coverage
+**/__pycache__
+**/*.pyc
+**/target
+.DS_Store

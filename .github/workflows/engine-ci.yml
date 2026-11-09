@@ -1,0 +1,56 @@
+name: Engine standalone CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-and-rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - name: Install locked Python dependencies
+        run: uv sync --locked
+      - name: Rust release converter build
+        run: cargo build --locked --release --manifest-path engine/pipeline/rust_converter/Cargo.toml
+      - name: Rust release tests
+        run: cargo test --locked --release --manifest-path engine/pipeline/rust_converter/Cargo.toml
+      - name: Python lint
+        run: uv run ruff check .
+      - name: Engine regression tests (offline fixtures only)
+        run: uv run pytest -q tests/engine tests/connectors tests/feed tests/pipeline tests/core
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build standalone Engine image
+        run: docker build -f docker/engine.Dockerfile -t seealpha-engine:ci .
+      - name: Verify image excludes Platform and migrations
+        run: docker run --rm --entrypoint sh seealpha-engine:ci -c 'test ! -e /app/api && test ! -e /app/web && test ! -e /app/migrations'
+      - name: Local synthetic HTTP smoke (no exchange credentials)
+        run: |
+          docker run -d --name seealpha-engine-ci -p 127.0.0.1:18766:8766 \
+            -e ENGINE_HOST=0.0.0.0 -e ENGINE_TOKEN=ci-engine-token \
+            -e ENGINE_TENANT_ID=42 -e ENGINE_TENANT_PURPOSE=development \
+            seealpha-engine:ci
+          trap 'docker logs seealpha-engine-ci || true; docker rm -f seealpha-engine-ci || true' EXIT
+          for i in $(seq 1 50); do
+            if curl -fsS --max-time 2 -H 'Authorization: Bearer ci-engine-token' http://127.0.0.1:18766/health > /tmp/engine-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python -c 'import json; d=json.load(open("/tmp/engine-health.json")); assert d["contract_version"] == "2"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/health)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-engine-token' http://127.0.0.1:18766/tenants/99/jobs)" = 403

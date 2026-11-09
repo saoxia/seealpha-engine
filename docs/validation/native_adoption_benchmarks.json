@@ -1,0 +1,25 @@
+{
+  "engine": "2.0.0rc7",
+  "method": "3 warm runs, median; synthetic microbenchmarks of the actual project adapters, not full strategy performance",
+  "RollingMean": {
+    "rows": 100000,
+    "before_seconds": 0.030817667000519577,
+    "after_seconds": 0.007677125002373941,
+    "ratio": 4.01421977510983,
+    "max_abs_error": 4.774847184307873e-12
+  },
+  "RollingBollinger": {
+    "rows": 100000,
+    "before_seconds": 0.13143470899376553,
+    "after_seconds": 0.014280000003054738,
+    "ratio": 9.204111272104297,
+    "max_abs_error": 3.637978807091713e-12
+  },
+  "BarDataWrangler": {
+    "rows": 30000,
+    "before_seconds": 0.030242958004237153,
+    "after_seconds": 0.011813791999884415,
+    "ratio": 2.559970414624961,
+    "all_values_equal": true
+  }
+}

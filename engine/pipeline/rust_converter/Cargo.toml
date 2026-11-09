@@ -1,0 +1,20 @@
+[package]
+name = "nautilus-data-converter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+arrow-array = "60"
+arrow-schema = "60"
+clap = { version = "4", features = ["derive"] }
+csv = "1"
+parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
+rust_decimal = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

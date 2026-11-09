@@ -1,0 +1,77 @@
+[project]
+name = "seealpha"
+version = "0.2.0"
+description = "SeeAlpha：基于 NautilusTrader 的多资产量化交易系统"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "nautilus-trader==2.0.0rc8",
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+    "pyarrow>=26.0.0",
+    "websockets>=17.3",
+]
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.17.2",
+]
+api = [
+    "cryptography==49.0.0",
+    "fastapi==0.141.1",
+    "uvicorn==0.52.1",
+    "argon2-cffi==25.1.0",
+    "httpx==0.28.1",
+    "sqlalchemy>=2.0,<2.2",
+    "alembic>=1.16,<2",
+    "psycopg[binary]>=3.2,<4",
+]
+research = [
+    "pygments>=2.21.0",
+    "click>=8.5.0",
+    "contourpy>=1.4.0",
+    "cycler>=0.12.1",
+    "fonttools>=4.67.0",
+    "fsspec>=2026.9.0",
+    "iniconfig>=2.3.1",
+    "kiwisolver>=1.5.1",
+    "matplotlib>=3.11.2",
+    "msgspec>=0.22.0",
+    "packaging>=26.3",
+    "pillow>=13.0.0",
+    "pluggy>=1.7.0",
+    "polars>=2.1.0",
+    "polars-runtime-32>=2.1.0",
+    "portion>=2.6.3",
+    "pyparsing>=3.3.3",
+    "python-dateutil>=3.0.0",
+    "pytz>=2026.5",
+    "six>=1.17.0",
+    "sortedcontainers>=2.4.0",
+    "tqdm>=4.70.1",
+    "tzdata>=2026.5",
+    "uvloop>=0.23.0; sys_platform != 'win32'",
+]
+
+[tool.uv]
+package = false
+default-groups = ["dev", "research", "api"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+python_files = ["*_test.py"]
+pythonpath = ["."]
+cache_dir = ".local/cache/pytest"
+
+[tool.ruff]
+cache-dir = ".local/cache/ruff"
+line-length = 100
+target-version = "py313"
+
+# 历史研究与回放快照保留原始字节；当前报告生成器、全部策略和测试仍检查。
+extend-exclude = [
+    ".local", ".venv", "data", "logs", "reports",
+]
+

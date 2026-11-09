@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "name": "ema_crossover",
+  "title": "双均线",
+  "version": "1",
+  "entry_point": "strategy:EmaCrossover",
+  "description": "金叉满额，死叉空仓",
+  "parameters": {
+    "symbol": "ETHUSDT",
+    "fast_period": 8,
+    "slow_period": 21,
+    "allocation": "1",
+    "risk_limit": "1"
+  }
+}

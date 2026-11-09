@@ -1,0 +1,31 @@
+{
+  "engine": "2.0.0rc7",
+  "scope": "Synthetic microbenchmarks, median of 3 warm runs; not end-to-end strategy speedup.",
+  "SMA": {
+    "updates": 100000,
+    "period": 99,
+    "project_seconds": 0.0303255420003552,
+    "native_seconds": 0.006188749997818377,
+    "ratio": 4.90010777799158,
+    "max_abs_error": 4.774847184307873e-12,
+    "warmup_outputs_match": true
+  },
+  "Bollinger": {
+    "updates": 100000,
+    "period": 20,
+    "project_seconds": 0.12836145800247323,
+    "native_seconds": 0.012897417000203859,
+    "ratio": 9.95249343340952,
+    "max_abs_error": 4.092726157978177e-12,
+    "warmup_outputs_match": true
+  },
+  "BarWrangler": {
+    "rows": 30000,
+    "project_seconds": 0.030192874997737817,
+    "native_with_dataframe_to_ipc_seconds": 0.004297999999835156,
+    "native_decode_only_seconds": 0.0022726669994881377,
+    "end_to_end_conversion_ratio": 7.02486621658814,
+    "all_outputs_equal": true,
+    "note": "Constant exactly representable OHLCV fixture; conversion timing includes Arrow casts, IPC serialization and native decode; excludes CSV parsing."
+  }
+}

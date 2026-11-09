@@ -1,0 +1,98 @@
+{
+  "native_margin_min_notional": {
+    "instrument_min_notional": "10.00000000 USDT",
+    "submitted_notional": "2 USDT",
+    "orders": [
+      {
+        "status": "DENIED",
+        "events": [
+          "OrderInitialized(instrument_id=ETHUSDT-PERP.BINANCE, client_order_id=O-19700101-000100-001-000-1, side=BUY, type=LIMIT, quantity=0.001, time_in_force=GTC, post_only=false, reduce_only=false, quote_quantity=false, price=2000.00, emulation_trigger=None, trigger_instrument_id=None, contingency_type=None, order_list_id=None, linked_order_ids=[None], parent_order_id=None, exec_algorithm_id=None, exec_algorithm_params=None, exec_spawn_id=None, tags=None)",
+          "OrderDenied(instrument_id=ETHUSDT-PERP.BINANCE, client_order_id=O-19700101-000100-001-000-1, reason='NOTIONAL_BELOW_MINIMUM: min=10.00000000 USDT, notional=2.00000000 USDT')"
+        ]
+      }
+    ]
+  },
+  "native_strategy_only_cancellation_existing_isolation_test": "passed",
+  "catalog_intervals": {
+    "project": [
+      [
+        60000000000,
+        60000000000
+      ],
+      [
+        180000000000,
+        180000000000
+      ]
+    ],
+    "native": [
+      [
+        60000000000,
+        60000000000
+      ],
+      [
+        180000000000,
+        180000000000
+      ]
+    ],
+    "equal": true
+  },
+  "native_custom_data_roundtrip": {
+    "count": 1,
+    "value": 1.5,
+    "symbol": "ETHUSDT"
+  },
+  "aggregation_semantics": {
+    "complete": {
+      "project": [
+        {
+          "ts_end": 1785542700000000000
+        },
+        {
+          "ts_end": 1785543000000000000
+        }
+      ],
+      "native": [
+        {
+          "ts_event": 1785542700000000000,
+          "volume": "5.000"
+        },
+        {
+          "ts_event": 1785543000000000000,
+          "volume": "5.000"
+        }
+      ]
+    },
+    "missing_minute_3": {
+      "project": [
+        {
+          "ts_end": 1785543000000000000
+        }
+      ],
+      "native": [
+        {
+          "ts_event": 1785542700000000000,
+          "volume": "4.000"
+        },
+        {
+          "ts_event": 1785543000000000000,
+          "volume": "5.000"
+        }
+      ]
+    }
+  },
+  "aggregation_setup": {
+    "source": "1-MINUTE-LAST-EXTERNAL",
+    "target": "5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL",
+    "start_ns": 1785542400000000000,
+    "input_minutes": 11,
+    "input_timestamp": "minute close minus 1ms",
+    "time_bars_skip_first_non_full_bar": false,
+    "time_bars_build_with_no_updates": false
+  },
+  "converter_discovery_without_activation": {
+    "environment_override_present": false,
+    "default_path": "/Users/lingyu/Documents/ChatGPT/NautilusTrader/pipeline/rust_converter/target/release/nautilus-data-converter",
+    "found": null,
+    "external_binary_exists": true
+  }
+}
