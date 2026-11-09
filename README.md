@@ -52,6 +52,18 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 
 此镜像仅包含 Engine、轻量契约、示例包、锁定依赖和 Rust 转换器，不包含 SeeAlpha Platform。按租户创建/停止容器的控制面仍在原 SeeAlpha 项目。
 
+## CI 与 Docker 构建策略
+
+每次 PR 和 `main` 分支提交仍执行锁定依赖安装、Python Ruff/Engine 测试、Rust Release 构建和 Rust 测试。CI 的 `docker-scope` 检查很轻量，**不会在大部分普通 Python 代码修改时构建 Docker**。
+
+下列情况会额外执行完整 Docker 构建、镜像源码范围检查、匿名令牌拒绝及租户权限 HTTP 冒烟测试：
+
+- 修改 `docker/`、`.dockerignore`、`pyproject.toml`、`uv.lock`、`.python-version`、`rust-toolchain.toml`、`engine/pipeline/rust_converter/` 或 Engine CI 工作流；
+- 推送 `v*` 版本标签（用于发布前验收，不自动推送镜像到镜像仓库）；
+- 在 GitHub Actions 中手动运行 **Engine standalone CI → Run workflow**，需要复查完整镜像时使用。
+
+如果提交只改 `engine/` 下的普通 Python 代码、`core/`、测试或文档，Docker Job 将跳过，但 Python/Rust 回归仍执行。此优化只省去重复构建，不表示新代码自动具有实盘资格。正式发布必须使用对应提交的完整 Docker 检查结果，并完成 Platform 兼容性及升级/回滚验证。
+
 ## HTTP 契约与边界
 
 当前主契约版本：`2`，请求与成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。变更交易命令、错误语义或请求/响应字段前须协调 Platform 并跑跨仓库兼容测试，不能擅自降级或隐式切换到进程内执行。
