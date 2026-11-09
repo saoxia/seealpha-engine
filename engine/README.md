@@ -19,7 +19,7 @@ Phase 1 把行情、连接和订单事实从业务 API 进程里拆出来。本�
 所有租户容器仍运行此 `python -m engine`，通过 `ENGINE_TENANT_ID` 和
 `ENGINE_TENANT_PURPOSE` 固定租户身份，拒绝跨租户请求；每个容器拥有独立资源限额和持久状态。
 开发租户的历史数据各自保存，不执行跨租户共享缓存或重复回测数据预加载。
-详见 [租户 Docker Engine 运行说明](../docs/TENANT_DOCKER_RUNTIME.md)。
+详见 [租户 Docker Engine 运行说明](https://github.com/saoxia/SeeAlpha/blob/main/docs/TENANT_DOCKER_RUNTIME.md)。
 切换现有生产环境前必须迁移旧 Engine 状态，不能直接启动空 SQLite。
 
 ## 启动
@@ -85,4 +85,4 @@ python -m engine
 独立 Engine Docker 镜像现在只包含 `engine/`、`core/`、`nautilus_support.py`、
 `packages/` 和构建依赖，不包含业务后台和前端源码。跨进程错误与账户结果类型
 在 `core/engine_contracts.py` 定义。仓库尚未独立；详见
-[后续 API 解耦清单](../docs/ENGINE_REPOSITORY_BOUNDARY.md)。
+[后续 API 解耦清单](../docs/STANDALONE_MIGRATION.md)。

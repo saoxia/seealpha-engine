@@ -5,7 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from core.engine_contracts import ENGINE_CONTRACT_VERSION, AccountSnapshot, EngineConflict, QueryError
+from core.engine_contracts import (
+    ENGINE_CONTRACT_VERSION,
+    AccountSnapshot,
+    EngineConflict,
+    QueryError,
+)
 from engine.connectors.binance.queries import AccountSnapshot as EngineAccountSnapshot
 from engine.connectors.binance.queries import QueryError as EngineQueryError
 from engine.runtime import EngineConflict as RuntimeEngineConflict

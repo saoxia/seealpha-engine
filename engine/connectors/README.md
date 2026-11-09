@@ -64,7 +64,7 @@ NautilusTrader 原生适配器；行情接入与账户、执行接入分别说�
 管理端同时订阅 Tick 和前 10 档盘口（100ms），共享公开连接；
 新增/移除合约使用原连接订阅/退订并核对确认。
 连接器只交付精确行情与传输状态，有界队列施加背压；落盘、补齐和缺口恢复仍归 Feed/Pipeline。
-调用方式、连接状态和未验证边界见 [期权适配器](../docs/BINANCE_OPTIONS_ADAPTER.md)。
+调用方式、连接状态和未验证边界见 [期权适配器](../../docs/BINANCE_OPTIONS_ADAPTER.md)。
 
 同日按用户明确要求增加下单、撤单：`options_execution.py` 提供单独的原生执行客户端及
 config/factory，`options_orders.py` 允许固定端点的单次签名发送；保留只读账户客户端边界。
@@ -89,7 +89,7 @@ LiveNode / Strategy / 原生 Binance factory 提交显式命令，继续经过�
 合约选择器汇总行情使用固定公开白名单；图表行情由浏览器直连，旧快照查询已移除。
 下单等待独立的新鲜原生报价，不使用显示行情作为风险报价。
 connector 不依赖 API/数据库；命令登记、账户互斥和账本保存仍属 API。
-功能及验证边界见 [手动交易](../docs/MANUAL_TRADING.md)。
+功能及验证边界见 [手动交易](https://github.com/saoxia/SeeAlpha/blob/main/docs/MANUAL_TRADING.md)。
 
 手动交易 `binance/manual.py` 在现有原生执行路径中只读核对实际持仓模式并匹配开/平仓方向，
 不改变交易所账户设置。固定 GET 补充公共 Python 节点未暴露的持仓模式、损益两平/强平价；
@@ -109,7 +109,7 @@ connector 不依赖 API/数据库；命令登记、账户互斥和账本保存�
 断线、账户读取失败或有界队列溢出结束事件流，由 API 保存缺口并重建基准。
 原生对象仅在所属工作线程创建和释放，不发送交易或账户配置命令。
 持久化、Decimal 估值、资产指数折算、校准、任务和恢复继续属于 API。
-详见 [资产估值与重算](../docs/EQUITY_VALUATION.md)。
+详见 [资产估值与重算](https://github.com/saoxia/SeeAlpha/blob/main/docs/EQUITY_VALUATION.md)。
 
 
 2026-11-08 首页及操作记录增加期权只读接入：`options_account.history_pages` 提供
@@ -117,4 +117,4 @@ connector 不依赖 API/数据库；命令登记、账户互斥和账本保存�
 只允许固定 EAPI 主机的签名 GET，保持重定向拒绝、限流重试、精确数值和错误脱敏；
 满页二分时间，单毫秒饱和或身份/范围冲突拒绝确认覆盖。
 一次初始持仓、操作调度、持仓推算和存储仍归 API，不为展示注册执行客户端。
-详见 [期权操作与持仓推算](../docs/OPERATIONS_API.md#期权操作与持仓推算2026-11-08)。
+详见 [期权操作与持仓推算](https://github.com/saoxia/SeeAlpha/blob/main/docs/OPERATIONS_API.md#期权操作与持仓推算2026-11-08)。

@@ -335,17 +335,17 @@ features = read_bar_features(
 
 ### 已新增的分钟级衔接入口
 
-独立的 [`feed`](../engine/feed/README.md) 已实现闭合 1 分钟 OHLCV 的历史读取、
+独立的 [`feed`](../feed/README.md) 已实现闭合 1 分钟 OHLCV 的历史读取、
 REST 补洞、WebSocket 缓冲、重连补齐和就绪控制。上面的逐笔 Trade 衔接仍是独立后续范围；
 新入口不混用 trades/aggTrades 编号，不改历史 Catalog，不自动接入冻结策略。
 
-2026-10-27: Native Arrow scans, quote supplements, feature metadata sidecars and cache rebuild requirements are documented in [native adoption](../docs/NATIVE_CAPABILITY_ADOPTION.md).
+2026-10-27: Native Arrow scans, quote supplements, feature metadata sidecars and cache rebuild requirements are documented in [native adoption](../../docs/NATIVE_CAPABILITY_ADOPTION.md).
 
 ## 与行情服务、连接器的边界
 
-本模块负责离线历史数据准备。持续行情服务位于 [`engine/feed/`](../engine/feed/README.md)，历史工作进程位于 [`engine/pipeline/pair_data.py`](../engine/pipeline/pair_data.py)，
+本模块负责离线历史数据准备。持续行情服务位于 [`engine/feed/`](../feed/README.md)，历史工作进程位于 [`engine/pipeline/pair_data.py`](pair_data.py)，
 交易所原生适配器桥接位于 [`connectors/`](../connectors/README.md)。公共市场命名和项目路径
-位于 [`core/`](../core/README.md)，管道原有导出仍可使用。
+位于 [`core/`](../../core/README.md)，管道原有导出仍可使用。
 
 ## 数据管理接入
 
@@ -358,7 +358,7 @@ REST 补洞、WebSocket 缓冲、重连补齐和就绪控制。上面的逐笔 T
 管理页面授权的删除按完整 UTC 日规划实际文件，保持 Tick、所有 K 线周期、quote 补充数据、
 转换记录和滚动指标缓存一致；可选择保留或删除原始归档。先预览再校验文件指纹，
 拒绝链接和跨范围文件，逐文件删除并记录日志；中断可能仅完成部分删除。
-不修改本模块既有配置、公开入口或强制重建语义。详见 [数据管理 API](../docs/DATA_MANAGEMENT_API.md)。
+不修改本模块既有配置、公开入口或强制重建语义。详见 [数据管理 API](https://github.com/saoxia/SeeAlpha/blob/main/docs/DATA_MANAGEMENT_API.md)。
 
 
 ## 期权管理任务
@@ -372,7 +372,7 @@ REST 补洞、WebSocket 缓冲、重连补齐和就绪控制。上面的逐笔 T
 `options_data.py` 获取近期最多 500 笔或直接读取 1m/5m/15m 历史 K 线，保留 SHA256 来源，
 通过 native CryptoOption / TradeTick / Bar 和既有 Catalog 保存。使用事件时间索引，获取时间
 保留在来源；空结果不声明覆盖。不能将近期片段当完整历史或从 K 线反推 Tick。
-校验、删除和恢复继续由 data_management 固定任务编排，详见 [期权接入](../docs/OPTIONS_DATA_PLAN.md)。
+校验、删除和恢复继续由 data_management 固定任务编排，详见 [期权接入](../../docs/OPTIONS_DATA_PLAN.md)。
 
 ## 按交易对历史核验与补齐
 

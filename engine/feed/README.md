@@ -17,7 +17,7 @@
 
 Binance 接入已迁至 [`connectors/binance/`](../connectors/README.md)，复用 Nautilus 原生
 适配器；本目录保留校时、消息校验、历史衔接、连续性、补洞编排、存储和交付控制。
-公共分钟线类型和命名规则位于 [`core/`](../core/README.md)。
+公共分钟线类型和命名规则位于 [`core/`](../../core/README.md)。
 `history.py` 通过 `engine.pipeline.catalog` 读取历史 Catalog，这是显式的存储桥接；
 服务入口不再依赖离线管道的配置和命名模块。现有启动命令及数据目录保持不变。
 
@@ -159,7 +159,7 @@ Delivery 和 1m/5m/15m 聚合，60 分钟窗口不替代策略自己的预热检
 
 所有新管理更新禁止新增交易风险，不改变原分钟 Feed 的就绪门禁。库存/预览只读访问日志，
 缺失文件不会自动创建。期权管理端持续采集见下文，原分钟 Feed 门禁不变。详见
-[数据管理 API](../docs/DATA_MANAGEMENT_API.md#按交易对配置与分钟实时管理2026-10-29)。
+[数据管理 API](https://github.com/saoxia/SeeAlpha/blob/main/docs/DATA_MANAGEMENT_API.md#按交易对配置与分钟实时管理2026-10-29)。
 
 
 实网原始流中价格或数量为零的事件按正常过滤项处理，不写入有效 Tick、不参与聚合，
@@ -176,7 +176,7 @@ Delivery 和 1m/5m/15m 聚合，60 分钟窗口不替代策略自己的预热检
 计算进程从采集状态读取交易所确认水位，不用本机时钟擅自闭合实时 K 线。
 历史变化通过原 `history.py` 桥转交 Pipeline 计算，成功后确认文件通知，不跨越存储边界。
 计算状态在 `calculation/status.json`，API 内监控定期读取三个服务的状态并写本地快照，
-均不写业务数据库。细节与切换步骤见[四个服务](../docs/DATA_MANAGEMENT_API.md#四个服务与配置切换2026-10-29)。
+均不写业务数据库。细节与切换步骤见[四个服务](https://github.com/saoxia/SeeAlpha/blob/main/docs/DATA_MANAGEMENT_API.md#四个服务与配置切换2026-10-29)。
 
 历史重算在计算进程内异步消费文件通知，耗时的历史读取与聚合放在线程中执行；
 实时 SQLite 待办继续按交易所确认水位处理，不等待一整段历史计算结束。
