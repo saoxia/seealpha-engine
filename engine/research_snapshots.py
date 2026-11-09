@@ -5,21 +5,21 @@ are durably written. No filesystem path or redirect comes from the caller.
 """
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-import json
-import os
 from pathlib import Path
-import tempfile
 from threading import BoundedSemaphore, RLock
 from uuid import uuid4
 
-from fastapi import HTTPException
 import pyarrow as pa
 import pyarrow.parquet as pq
+from fastapi import HTTPException
 
 from core.market.instruments import INTERVALS
 from engine.data_queries import read_lease
@@ -40,8 +40,8 @@ _STATUSES = {"pending", "running", "ready", "failed", "interrupted"}
 
 def parse_range(start: str, end: str) -> tuple[datetime, datetime]:
     try:
-        a = datetime.fromisoformat(start.replace("Z", "+00:00"))
-        b = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        a = datetime.fromisoformat(start)
+        b = datetime.fromisoformat(end)
         if a.tzinfo is None:
             a = a.replace(tzinfo=UTC)
         if b.tzinfo is None:
@@ -278,7 +278,7 @@ class SnapshotService:
                     row_count=count,
                 )
                 _write_json(self._meta(snapshot_id), current)
-        except Exception:
+        except Exception:  # noqa: BLE001 - record untrusted Catalog/Arrow export failures
             with self.lock:
                 current = self._read(snapshot_id)
                 current.update(status="failed", error="snapshot_generation_failed")
