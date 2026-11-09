@@ -41,6 +41,7 @@ uv run python -m engine
 | `ENGINE_TOKEN` | `seealpha-local-engine` | 服务间 Bearer 令牌，仅限本机开发 |
 | `ENGINE_STATE` | `.local/state/engine` | SQLite 目录 |
 | `ENGINE_PROJECT` | 仓库根目录 | 行情锁和数据路径 |
+| `ENGINE_RESEARCH_SIGNING_KEY` | 不设置（关闭） | 仅固定开发租户启用研究 HTTP v1 所需的独立签名密钥 |
 
 业务 API 使用同名 `ENGINE_URL`（默认 `http://127.0.0.1:8766`）和 `ENGINE_TOKEN`。
 先启动引擎，再启动 API。公开行情不需要交易所密钥。手动交易和账户查询由 API 解密后，
@@ -73,6 +74,10 @@ uv run python -m engine
 引擎用 `PortfolioCoordinator` 和 `target_netting`，先按 `risk_limit` 截断合计目标，
 再对当前净持仓提交差额。预览和历史回测都不连接交易所。归档租户不能运行。
 正式租户不能使用这条历史回测。
+
+## Research API
+
+单独的 `/research/v1/*` 只接收任务级研究授权，不使用管理 `ENGINE_TOKEN`。支持 Catalog 库存、后台 Parquet 快照及开发租户的已下发策略回测；当前受限于现有 Engine 的 1m/5m、单账户回测能力。启用条件、安全限制及客户端合同见 [Research API](../docs/RESEARCH_API.md)。
 
 ## 尚未纳入
 
