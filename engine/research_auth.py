@@ -6,7 +6,7 @@ key must NEVER be exposed to an Agent, Harness Shell, or general Engine client.
 from __future__ import annotations
 
 import base64
-import hashlib
+import binascii
 import hmac
 import json
 import re
@@ -102,7 +102,7 @@ def verify_research_grant(
             raise ValueError
         claims = json.loads(_unb64(payload))
         return _validate_claims(claims, now=int(time.time()) if now is None else now)
-    except (ValueError, TypeError, UnicodeError, KeyError, OverflowError) as exc:
+    except (ValueError, TypeError, UnicodeError, KeyError, OverflowError, binascii.Error):
         raise HTTPException(401, "Research authorization rejected") from None
 
 
