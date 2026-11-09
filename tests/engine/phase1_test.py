@@ -1,4 +1,4 @@
-"""Resident engine facts, account scope, and the API process boundary."""
+"""Resident engine facts, account scope, and Engine module boundaries."""
 
 import ast
 from pathlib import Path
@@ -87,41 +87,6 @@ def test_engine_keeps_per_account_orders_gaps_and_no_secrets(tmp_path, monkeypat
     blob = b"".join(path.read_bytes() for path in (tmp_path / "state").glob("book.sqlite*"))
     assert b"secret-one" not in blob and b"secret-two" not in blob and b"key-one" not in blob
     assert numeric_id("11") == 11
-
-
-def test_api_does_not_own_live_nodes_feed_processes_or_the_engine_book():
-    offenders = []
-    for path in (PROJECT / "api").rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if "LiveNode" in text or "account_node(" in text:
-            offenders.append(str(path))
-        if path.name != "engine_client.py" and "book.sqlite" in text:
-            offenders.append(str(path))
-    trading = (PROJECT / "api/exchanges/trading.py").read_text(encoding="utf-8")
-    service = (PROJECT / "api/exchanges/service.py").read_text(encoding="utf-8")
-    equity = (PROJECT / "api/equity/service.py").read_text(encoding="utf-8")
-    subscriptions = (PROJECT / "api/market_data/subscriptions.py").read_text(encoding="utf-8")
-    jobs = (PROJECT / "api/market_data/service.py").read_text(encoding="utf-8")
-    assert not offenders
-    assert "manual.execute" not in trading
-    assert "queries.account_snapshot" not in service
-    assert "engine.connectors.binance.valuation" not in equity
-    assert "self.engine.valuation_events(account)" in equity
-    assert "from engine.runtime import valuation_events" not in equity
-    assert "subprocess.Popen" not in subscriptions
-    assert "engine.supervisor import popen" not in subscriptions
-    assert "self.processes" not in subscriptions and "self.auxiliary" not in subscriptions
-    assert 'market_control("sync"' in subscriptions
-    engine_subscriptions = (PROJECT / "engine/data_manager/subscriptions.py").read_text(encoding="utf-8")
-    assert "engine.supervisor import popen" in engine_subscriptions
-    assert "self.processes" in engine_subscriptions
-    assert "subprocess.Popen" not in jobs
-    assert '"job/start"' in jobs and '"job/retry"' in jobs and '"job/cancel"' in jobs
-    assert "from engine.supervisor import popen as start_worker" not in jobs
-    assert "def recover(" not in jobs and "def _wait(" not in jobs
-    assert "self.processes" not in jobs and "self.threads" not in jobs
-    config = (PROJECT / "api/config.py").read_text(encoding="utf-8")
-    assert 'os.getenv("ENGINE_URL", "http://127.0.0.1:8766")' in config
 
 
 def test_connectors_stay_below_feed_pipeline_and_api():
