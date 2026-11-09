@@ -23,6 +23,7 @@ from engine.data_manager.routes import router as control_router
 from engine.data_manager.service import DataService as EngineDataService
 from engine.data_queries import router as market_data_router
 from engine.public_queries import router as venue_router
+from engine.research_api import create_research_app
 from engine.runtime import EngineConflict, EngineRuntime, valuation_events
 from engine.task_queue import TaskCoordinator
 from engine.task_routes import router as task_router
@@ -167,6 +168,15 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
     app.include_router(control_router)
     app.state.tasks = TaskCoordinator(runtime, app.state.market_data, runtime.root)
     app.include_router(task_router)
+    # Mount a separate ASGI application: research grants must NEVER authenticate
+    # against the administrative Engine HTTP API or its trading routes.
+    if config.research_signing_key:
+        if config.tenant_id is None:
+            raise ValueError("Research API requires a pinned Engine tenant")
+        app.state.research_api = create_research_app(
+            config, runtime, app.state.tasks,
+        )
+        app.mount("/research", app.state.research_api)
 
     stop_monitor = threading.Event()
     monitor_thread = None
@@ -197,6 +207,8 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
         if monitor_thread is not None:
             monitor_thread.join(timeout=8)
         app.state.tasks.close()
+        if hasattr(app.state, "research_api"):
+            app.state.research_api.state.snapshots.close()
         app.state.market_data.close()
 
     @app.middleware("http")
