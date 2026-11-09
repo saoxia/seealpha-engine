@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import io
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -61,7 +62,7 @@ class FakeRuntime:
 class FakeTasks:
     def __init__(self):
         self.records = {}
-        self.journal = self
+        self.journal = SimpleNamespace(get=lambda _tenant, identity: self.records.get(identity))
 
     def submit(self, tenant_id, kind, params, *, idempotency_key):
         assert tenant_id == "dev" and kind == "backtest"
