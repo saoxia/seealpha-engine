@@ -1,0 +1,118 @@
+{
+  "v1": {
+    "engine": "1.231.0",
+    "scenarios": [
+      [
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "105.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:add:-1"
+          ]
+        },
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "100.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:initial:-1"
+          ]
+        },
+        {
+          "side": "BUY",
+          "quantity": "2.000",
+          "price": "102.50",
+          "tags": [
+            "ethusdt-mean-reversion-short:take-profit:-1:take_profit_second"
+          ]
+        }
+      ],
+      [
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "105.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:add:-1"
+          ]
+        },
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "100.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:initial:-1"
+          ]
+        },
+        {
+          "side": "BUY",
+          "quantity": "2.000",
+          "price": "103.53",
+          "tags": [
+            "ethusdt-mean-reversion-short:take-profit:-1:take_profit_second"
+          ]
+        }
+      ]
+    ]
+  },
+  "v2": {
+    "engine": "2.0.0rc7",
+    "scenarios": [
+      [
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "105.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:add:-1"
+          ]
+        },
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "100.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:initial:-1"
+          ]
+        },
+        {
+          "side": "BUY",
+          "quantity": "2.000",
+          "price": "102.50",
+          "tags": [
+            "ethusdt-mean-reversion-short:take-profit:-1:take_profit_second"
+          ]
+        }
+      ],
+      [
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "105.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:add:-1"
+          ]
+        },
+        {
+          "side": "SELL",
+          "quantity": "1.000",
+          "price": "100.00",
+          "tags": [
+            "ethusdt-mean-reversion-short:initial:-1"
+          ]
+        },
+        {
+          "side": "BUY",
+          "quantity": "2.000",
+          "price": "103.53",
+          "tags": [
+            "ethusdt-mean-reversion-short:take-profit:-1:take_profit_second"
+          ]
+        }
+      ]
+    ]
+  },
+  "filled_order_prices_quantities_sides_equal": true,
+  "scope": "Two deterministic entry/add/limit-exit scenarios; not a historical performance reproduction."
+}
