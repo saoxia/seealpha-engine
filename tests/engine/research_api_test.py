@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 import io
 import time
 from types import SimpleNamespace
@@ -17,7 +16,6 @@ from engine.research_api import create_research_app
 from engine.research_auth import (
     ENGINE_HEADER, RESEARCH_HEADER, sign_research_grant,
 )
-from engine.research_snapshots import SnapshotService
 
 SECRET = "research-signing-key-for-tests-00000000000000"
 ADMIN = "engine-admin-token-for-tests"
