@@ -70,6 +70,12 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 
 交易风险检查、订单幂等、未知结果不重发、状态恢复、租户数据隔离、回放数据不准用于新风险决策等约束必须保留。任何自动化测试均不可使用真实凭据、发真实订单或修改生产状态卷。
 
+## Engine Research API（默认关闭）
+
+已添加独立的 `/research/v1/*` 研究服务，支持经任务级授权发现 Catalog 数据、生成有界只读 Parquet 快照，并将已授权开发策略的回测请求映射到原有异步任务队列。
+
+仅在固定**开发租户**的 Engine 环境中设置独立 `ENGINE_RESEARCH_SIGNING_KEY` 才启用；与管理 API 的 `ENGINE_TOKEN` 完全隔离。Platform 颁发授权、Harness 安全工具网关与跨仓库联调尚未实现。参见 [Research API 说明](docs/RESEARCH_API.md)。不应给 Agent Shell 签名密钥或研究 Bearer 凭据。
+
 ## 当前明确未验收
 
 跨仓库独立发布、双仓库完整 HTTP 回归、真实交易账户、长时间行情运行、生产状态卷备份恢复与正式切换尚未完成。此次提交只建立新仓库的独立源码、构建和测试基线。详见 [迁移边界](docs/STANDALONE_MIGRATION.md) 和 [Platform 跨仓库接入预演](docs/PLATFORM_INTEGRATION.md)。
