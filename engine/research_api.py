@@ -110,7 +110,11 @@ def create_research_app(config, runtime, tasks):
 
     @app.post("/v1/snapshots", status_code=202)
     def create_snapshot(body: SnapshotRequest, claims: dict = grant_dependency):
-        return snapshots.create(body.dataset_id, body.start, body.end, claims)
+        try:
+            dataset_id = identifier(body.dataset_id)
+        except ValueError:
+            raise HTTPException(422, "Invalid research dataset identifier") from None
+        return snapshots.create(dataset_id, body.start, body.end, claims)
 
     @app.get("/v1/snapshots/{snapshot_id}")
     def get_snapshot(snapshot_id: str, claims: dict = grant_dependency):
@@ -127,7 +131,10 @@ def create_research_app(config, runtime, tasks):
     def _scoped_backtest(record_id: str, claims: dict) -> dict:
         # The TaskCoordinator journal owns backtest lifecycles. Bind its job
         # identity to the research task by the prefix of its idempotency key.
-        identity = identifier(record_id)
+        try:
+            identity = identifier(record_id)
+        except ValueError:
+            raise HTTPException(404, "Research backtest not found") from None
         prefix = "research." + sha256(claims["task_id"].encode()).hexdigest()[:32] + "."
         try:
             job = tasks.get(config.tenant_id, identity)
@@ -155,7 +162,12 @@ def create_research_app(config, runtime, tasks):
 
     @app.post("/v1/backtests", status_code=202)
     def submit_backtest(body: BacktestRequest, claims: dict = grant_dependency):
-        require_op(claims, "backtests:submit", strategy=identifier(body.strategy_ref))
+        try:
+            strategy_ref = identifier(body.strategy_ref)
+            dataset_id = identifier(body.dataset_refs[0])
+        except ValueError:
+            raise HTTPException(422, "Invalid research reference") from None
+        require_op(claims, "backtests:submit", strategy=strategy_ref)
         if body.parameters:
             # Current engine backtester takes only the fixed BacktestParameters.
             raise HTTPException(422, "Free-form strategy parameters not supported by this Engine")
@@ -163,7 +175,6 @@ def create_research_app(config, runtime, tasks):
         if match is None:
             raise HTTPException(422, "strategy_ref must identify an issued development account")
         account_id = match.group(1)
-        dataset_id = identifier(body.dataset_refs[0])
         require_op(claims, "backtests:submit", dataset=dataset_id)
         try:
             market, symbol, interval = dataset_id.split(":")
