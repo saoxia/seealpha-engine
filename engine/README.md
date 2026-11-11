@@ -24,12 +24,18 @@ Phase 1 把行情、连接和订单事实从业务 API 进程里拆出来。本�
 
 ## 启动
 
-在仓库根目录：
+在全新、隔离的 Engine checkout 中，先准备空 Catalog，再启动：
 
 ```bash
+mkdir -p data/catalog
 uv sync --locked
 uv run python -m engine
 ```
+
+已有部署先确认原数据卷已挂载且运行用户可读写。普通行情查询在项目的 `data/` 不可用时返回
+`503`，空 Catalog 则返回空清单。独立进程部署若将数据保存在 checkout 之外，应将 checkout 的
+`data/` 绑定或链接到持久化数据目录，让运行时检查与管道 TOML 相对路径解析指向同一数据卷。
+若同时设置 `ENGINE_PROJECT`，该目录下的 `data/` 也应指向这一数据卷。
 
 默认监听 `127.0.0.1:8766`。状态库是 `.local/state/engine/book.sqlite`（WAL）。
 可用环境变量：
