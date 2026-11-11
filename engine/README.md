@@ -43,6 +43,9 @@ uv run python -m engine
 | `ENGINE_PROJECT` | 仓库根目录 | 行情锁和数据路径 |
 | `ENGINE_RESEARCH_SIGNING_KEY` | 不设置（关闭） | 仅固定开发租户启用研究 HTTP v1 所需的独立签名密钥 |
 
+采集、历史和计算子进程从 `ENGINE_PROJECT` 工作目录启动。即使该目录独立于源码 checkout，
+引擎也会为子进程加入自己的模块路径，部署时无需手动设置 `PYTHONPATH`。
+
 业务 API 使用同名 `ENGINE_URL`（默认 `http://127.0.0.1:8766`）和 `ENGINE_TOKEN`。
 先启动引擎，再启动 API。公开行情不需要交易所密钥。手动交易和账户查询由 API 解密后，
 按 `account_id` 把密钥放进当次请求；引擎不保存主密钥，也不把密钥写入 SQLite。
