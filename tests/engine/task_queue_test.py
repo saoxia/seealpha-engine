@@ -494,3 +494,113 @@ def test_worker_timeout_fails_without_exposing_result(tmp_path):
 def test_worker_count_has_hard_limit(tmp_path, count):
     with pytest.raises(ValueError, match="MAX_WORKERS"):
         TaskCoordinator(FakeRuntime(), FakeData(), tmp_path, max_workers=count)
+
+
+def test_worker_settings_default_update_and_recovery(tmp_path):
+    jobs = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path,
+                           command_factory=fake_worker_factory(tmp_path))
+    try:
+        original = jobs.worker_settings("1")
+        assert original["max_workers"] == 1
+        assert original["timeout_seconds"] == 3600
+        assert original["source"] == "default"
+        changed = jobs.update_worker_settings("1", max_workers=3, timeout_seconds=90)
+        assert changed["source"] == "saved"
+        assert changed["max_workers"] == 3
+        assert changed["timeout_seconds"] == 90
+        assert len(jobs.workers) == 3
+        jobs.update_worker_settings("1", max_workers=1, timeout_seconds=120)
+        assert jobs.max_workers == 1
+        assert len(jobs.workers) == 3  # Idle supervisors are reused, not killed.
+        with pytest.raises(HTTPException) as invalid:
+            jobs.update_worker_settings("1", max_workers=9, timeout_seconds=1)
+        assert invalid.value.status_code == 422
+        assert jobs.worker_settings("1")["max_workers"] == 1
+    finally:
+        jobs.close()
+
+    restarted = TaskCoordinator(
+        FakeRuntime(), FakeData(), tmp_path, max_workers=4, timeout_seconds=700,
+        command_factory=fake_worker_factory(tmp_path),
+    )
+    try:
+        assert restarted.worker_settings("1")["source"] == "saved"
+        assert restarted.worker_settings("1")["max_workers"] == 1
+        assert restarted.worker_settings("1")["timeout_seconds"] == 120
+        assert restarted.worker_settings("1")["default_max_workers"] == 4
+        assert restarted.worker_settings("1")["default_timeout_seconds"] == 700
+    finally:
+        restarted.close()
+
+
+def test_decreasing_worker_limit_does_not_terminate_running_jobs(tmp_path):
+    def gated_worker(tenant, identity):
+        return fake_worker_factory(tmp_path, gate=tmp_path / f"release-{identity}")(
+            tenant, identity,
+        )
+
+    jobs = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path, max_workers=2,
+                           command_factory=gated_worker)
+    first = second = third = None
+    try:
+        first = jobs.submit("1", "backtest", parameters("first"))
+        second = jobs.submit("1", "backtest", parameters("second"))
+        deadline = time.monotonic() + 8
+        while not all(
+            (tmp_path / f"started-{item['id']}").exists() for item in (first, second)
+        ):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+        updated = jobs.update_worker_settings("1", max_workers=1, timeout_seconds=20)
+        assert updated["running"] == 2
+        third = jobs.submit("1", "backtest", parameters("third"))
+        (tmp_path / f"release-{first['id']}").touch()
+        assert done(jobs, "1", first["id"])["status"] == "SUCCEEDED"
+        time.sleep(0.2)
+        assert not (tmp_path / f"started-{third['id']}").exists()
+        assert jobs.get("1", second["id"])["status"] == "RUNNING"
+        (tmp_path / f"release-{second['id']}").touch()
+        assert done(jobs, "1", second["id"])["status"] == "SUCCEEDED"
+        deadline = time.monotonic() + 8
+        while not (tmp_path / f"started-{third['id']}").exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        (tmp_path / f"release-{third['id']}").touch()
+        assert done(jobs, "1", third["id"])["status"] == "SUCCEEDED"
+    finally:
+        for row in (first, second, third):
+            if row is not None:
+                (tmp_path / f"release-{row['id']}").touch()
+        jobs.close()
+
+
+def test_worker_settings_http_admin_token_and_validation(tmp_path):
+    app = create_app(EngineConfig(
+        tmp_path / "state", "secret", project=tmp_path,
+        tenant_id="dev", tenant_purpose="development",
+    ))
+    runtime = app.state.runtime
+    runtime.ensure_tenant("dev", "development")
+    headers = {"Authorization": "Bearer secret"}
+    with TestClient(app) as client:
+        path = "/tenants/dev/jobs/worker-settings"
+        assert client.get(path).status_code == 401
+        assert client.get(path.replace("/dev/", "/other/"), headers=headers).status_code == 403
+        initial = client.get(path, headers=headers)
+        assert initial.status_code == 200 and initial.json()["max_workers"] == 1
+        assert initial.json()["source"] == "default"
+        assert client.put(path, headers=headers, json={
+            "max_workers": True, "timeout_seconds": 3600,
+        }).status_code == 422
+        assert client.put(path, headers=headers, json={
+            "max_workers": 9, "timeout_seconds": 3600,
+        }).status_code == 422
+        saved = client.put(path, headers=headers, json={
+            "max_workers": 2, "timeout_seconds": 1800,
+        })
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["max_workers"] == 2
+        assert saved.json()["source"] == "saved"
+        assert client.get(path, headers=headers).json()["timeout_seconds"] == 1800
+    runtime.close()
