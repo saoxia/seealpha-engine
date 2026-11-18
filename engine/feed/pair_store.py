@@ -287,7 +287,7 @@ class PairStore:
         self.db.close()
 
 
-def journal_inventory(path, symbol):
+def journal_inventory(path, symbol, *, product="futures_um"):
     """Read-only management projection; absence never creates a replacement journal."""
     if not path.is_file():
         return []
@@ -295,12 +295,12 @@ def journal_inventory(path, symbol):
     try:
         result = []
         for level, first, last in db.execute("SELECT interval,min(start_ms),max(end_ms) FROM candles WHERE coalesce(json_extract(value,'$.retained'),1)=1 GROUP BY interval"):
-            result.append({"symbol": symbol, "product": "futures_um", "level": level,
+            result.append({"symbol": symbol, "product": product, "level": level,
                            "event_ranges_ns": [[str(first * 1000000), str((last - 1) * 1000000)]], "quality": "unverified"})
         config = db.execute("SELECT base_level FROM config").fetchone()
         first, last = db.execute("SELECT min(timestamp_ms),max(timestamp_ms) FROM trades").fetchone()
         if config and config[0] == "tick" and first is not None:
-            result.append({"symbol": symbol, "product": "futures_um", "level": "tick",
+            result.append({"symbol": symbol, "product": product, "level": "tick",
                            "event_ranges_ns": [[str(first * 1000000), str(last * 1000000)]], "quality": "partial_recent_trades"})
         return result
     finally:
