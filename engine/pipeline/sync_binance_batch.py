@@ -34,14 +34,18 @@ def archive_path(
     data_type: str,
     day: date,
     interval: str | None = None,
+    market: str = "futures_um",
 ) -> str:
-    """生成 USD-M 永续 trades 或 klines 日归档的站内路径。"""
+    """生成现货或 USD-M 每日交易所来源归档路径。"""
+    if market not in {"futures_um", "spot"}:
+        raise PipelineConfigError("不支持的归档市场")
+    prefix = "data/spot" if market == "spot" else "data/futures/um"
     if data_type == "trades":
         filename = f"{symbol}-trades-{day.isoformat()}.zip"
-        return f"data/futures/um/daily/trades/{symbol}/{filename}"
+        return f"{prefix}/daily/trades/{symbol}/{filename}"
     if data_type == "klines" and interval is not None:
         filename = f"{symbol}-{interval}-{day.isoformat()}.zip"
-        return f"data/futures/um/daily/klines/{symbol}/{interval}/{filename}"
+        return f"{prefix}/daily/klines/{symbol}/{interval}/{filename}"
     raise PipelineConfigError(f"无法生成归档路径：data_type={data_type!r}, interval={interval!r}")
 
 
@@ -63,7 +67,8 @@ def plan_daily_archives(request: DataRequest, *, today: date | None = None) -> l
                     symbol=symbol,
                     data_type="trades",
                     day=day,
-                    source_path=archive_path(symbol, "trades", day),
+                    source_path=archive_path(symbol, "trades", day, market=request.market),
+                    market=request.market,
                 ),
             )
         day += timedelta(days=1)
