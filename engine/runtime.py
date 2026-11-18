@@ -483,8 +483,9 @@ class EngineRuntime:
             start=start_at.isoformat(),
             end=end_at.isoformat(),
             starting_balance=format(amount, "f"),
-            product=product,
         )
+        if product == "spot":
+            result["product"] = "spot"
         if publish_event:
             self.store.add_event(tenant_id, account_id, "backtest", result)
         return result
