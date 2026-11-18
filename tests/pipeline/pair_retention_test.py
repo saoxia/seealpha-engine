@@ -212,3 +212,31 @@ def test_rows_without_event_times_are_preserved_instead_of_assumed_old(retained)
     with pytest.raises(ValueError, match="空事件时间"):
         history_trim_plan("ETHUSDT", "futures_um", START, settings, project=project)
     assert path.read_bytes() == before and len(list(source.glob("*.zip"))) == 2
+
+
+def test_funding_settlement_retention_follows_pair_start_without_discarding_current(retained):
+    from engine.feed.funding_service import FundingStore, read_funding
+
+    settings, project, *_rest = retained
+    path = project / "data/market_data/binance_um_1m/managed/ETHUSDT/funding.sqlite"
+    store = FundingStore(path, "ETHUSDT")
+    with store.db:
+        store.db.execute(
+            "INSERT INTO funding_settlements(funding_time_ms,rate) VALUES (?,?)",
+            (CUTOFF - 1000, "0.0001"),
+        )
+        store.db.execute(
+            "INSERT INTO funding_settlements(funding_time_ms,rate) VALUES (?,?)",
+            (CUTOFF + 1000, "-0.0002"),
+        )
+    store.update_estimate({"s": "ETHUSDT", "E": CUTOFF + 2000,
+                           "T": CUTOFF + 3600000, "r": "0.0003"})
+    store.close()
+    plan = history_trim_plan("ETHUSDT", "futures_um", START, settings, project=project)
+    assert any(item["path"].endswith("/funding.sqlite") and item["operation"] == "sqlite"
+               for item in plan["files"])
+    trim_pair_history("ETHUSDT", "futures_um", START, settings,
+                      expected_snapshot=plan["snapshot"], project=project)
+    view = read_funding(path, "ETHUSDT", now_ms=CUTOFF + 3000)
+    assert [row["funding_time_ms"] for row in view["settlements"]] == [CUTOFF + 1000]
+    assert view["current"]["rate"] == "0.0003"

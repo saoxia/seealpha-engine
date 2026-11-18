@@ -200,10 +200,10 @@ async def collect_funding(symbol, path, *, history_start_ms=None, rest=None, soc
             if not store.update_estimate(row):
                 continue
             stamp, target = row["E"], row["T"]
-            if old and old["next_funding_ms"] <= stamp:
-                if pending_due is None or old["next_funding_ms"] < pending_due:
-                    pending_due = old["next_funding_ms"]
-                    retry_after = 0.0
+            if (old and old["next_funding_ms"] <= stamp
+                    and (pending_due is None or old["next_funding_ms"] < pending_due)):
+                pending_due = old["next_funding_ms"]
+                retry_after = 0.0
             if target <= stamp:
                 pending_due = target if pending_due is None else min(target, pending_due)
             if not refresh and pending_due is None:
@@ -216,16 +216,20 @@ async def collect_funding(symbol, path, *, history_start_ms=None, rest=None, soc
                 0, history_start_ms if history_start_ms is not None else stamp - 7 * DAY_MS,
             )
             try:
-                if start < stamp + 1:
-                    observations = await fetch_history(symbol, start, stamp + 1, rest.get)
-                    store.persist_settlements(observations)
-                refresh = False
-                last = store.last_settlement_ms()
-                if pending_due is not None and last is not None and last >= pending_due:
-                    pending_due = None
-                # A settlement is not acknowledged until it appears in REST history.
+                observations = (
+                    await fetch_history(symbol, start, stamp + 1, rest.get)
+                    if start < stamp + 1 else []
+                )
             except (OSError, TimeoutError, DataError):
-                refresh = True  # Retry without inventing a history record.
+                refresh = True  # Retry network/transport errors without inventing a final rate.
+                continue
+            # Journal conflicts are integrity failures, never transient REST errors.
+            store.persist_settlements(observations)
+            refresh = False
+            last = store.last_settlement_ms()
+            if pending_due is not None and last is not None and last >= pending_due:
+                pending_due = None
+            # A settlement is not acknowledged until it appears in REST history.
     finally:
         store.close()
 

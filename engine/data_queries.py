@@ -19,8 +19,8 @@ from nautilus_trader.model import NautilusDataType
 from pydantic import BaseModel, Field
 
 from core.market.instruments import INTERVALS, bar_type_for, bar_window, normalize_symbol
-from engine.feed.pair_store import journal_chart, journal_inventory, journal_page
 from engine.feed.funding_service import read_funding
+from engine.feed.pair_store import journal_chart, journal_inventory, journal_page
 from engine.pipeline.config import load_settings
 from engine.pipeline.data_management import (
     checked_request,
