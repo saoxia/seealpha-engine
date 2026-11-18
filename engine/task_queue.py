@@ -266,19 +266,68 @@ class TaskCoordinator:
         # The task journal uses its own SQLite connection to the existing WAL DB.
         self.journal = TaskJournal(self.state_root / "tasks")
         self.lock = threading.RLock()
+        self.condition = threading.Condition(self.lock)
         self.pending = queue.Queue(maxsize=capacity)
         self.closed = False
-        self.max_workers = max_workers
-        self.timeout_seconds = timeout_seconds
+        self.default_max_workers = max_workers
+        self.default_timeout_seconds = timeout_seconds
+        persisted = self.journal.store.backtest_worker_settings()
+        self.max_workers = persisted["max_workers"] if persisted else max_workers
+        self.timeout_seconds = persisted["timeout_seconds"] if persisted else timeout_seconds
+        self.settings_source = "saved" if persisted else "default"
+        self.active_slots = 0
         self.command_factory = command_factory or self._worker_command
         self.running: dict[tuple[str, str], _WorkerSlot] = {}
         self.journal.recover_interrupted()
-        self.workers = [
-            threading.Thread(target=self._loop, name=f"engine-backtest-supervisor-{i}", daemon=True)
-            for i in range(max_workers)
-        ]
-        for worker in self.workers:
+        self.workers = []
+        self._grow_workers(self.max_workers)
+
+    def _grow_workers(self, target):
+        """Caller holds the coordinator lock after initialization."""
+        for index in range(len(self.workers), target):
+            worker = threading.Thread(
+                target=self._loop, name=f"engine-backtest-supervisor-{index}", daemon=True,
+            )
+            self.workers.append(worker)
             worker.start()
+
+    def worker_settings(self, tenant_id):
+        tenant = self._active(tenant_id)
+        if tenant["purpose"] != "development":
+            raise HTTPException(409, "只有开发租户可以配置回测 Worker。")
+        with self.lock:
+            return {
+                "max_workers": self.max_workers,
+                "timeout_seconds": self.timeout_seconds,
+                "default_max_workers": self.default_max_workers,
+                "default_timeout_seconds": self.default_timeout_seconds,
+                "source": self.settings_source,
+                "running": self.active_slots,
+                "queued": sum(
+                    row["status"] == "PENDING" for row in self.journal.list(tenant_id)
+                ),
+            }
+
+    def update_worker_settings(self, tenant_id, *, max_workers, timeout_seconds):
+        tenant = self._active(tenant_id)
+        if tenant["purpose"] != "development":
+            raise HTTPException(409, "只有开发租户可以配置回测 Worker。")
+        if (type(max_workers) is not int or not 1 <= max_workers <= 8
+                or type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 86400):
+            raise HTTPException(422, "Worker 数量须为 1–8，执行超时须为 1–86400 秒。")
+        with self.condition:
+            if self.closed:
+                raise HTTPException(503, "任务服务正在关闭。")
+            try:
+                self.journal.store.save_backtest_worker_settings(max_workers, timeout_seconds)
+            except sqlite3.Error as exc:
+                raise HTTPException(503, "Worker 配置持久化失败。") from exc
+            self.max_workers = max_workers
+            self.timeout_seconds = timeout_seconds
+            self.settings_source = "saved"
+            self._grow_workers(max_workers)
+            self.condition.notify_all()
+        return self.worker_settings(tenant_id)
 
     def _worker_command(self, tenant_id, identity):
         return [
@@ -401,6 +450,8 @@ class TaskCoordinator:
             with self.lock:
                 slot.process = process
             started = time.monotonic()
+            with self.lock:
+                task_timeout = self.timeout_seconds
             reason = None
             while process.poll() is None:
                 with self.lock:
@@ -408,7 +459,7 @@ class TaskCoordinator:
                         reason = "shutdown"
                     elif slot.cancel_requested:
                         reason = "cancel"
-                if reason is None and time.monotonic() - started >= self.timeout_seconds:
+                if reason is None and time.monotonic() - started >= task_timeout:
                     reason = "timeout"
                 if reason is not None:
                     if not _stop_process(process):
@@ -439,10 +490,18 @@ class TaskCoordinator:
                 if self.closed:
                     return
                 continue
+            claimed = False
             try:
                 tenant_id, identity = work
                 key = (tenant_id, identity)
-                with self.lock:
+                with self.condition:
+                    record = self.journal.get(tenant_id, identity)
+                    if record is None or record["status"] != "PENDING":
+                        continue
+                    # Decreasing the configured cap never terminates active jobs.
+                    # It blocks subsequent starts until concurrency falls below cap.
+                    while self.active_slots >= self.max_workers and not self.closed:
+                        self.condition.wait()
                     record = self.journal.get(tenant_id, identity)
                     if record is None or record["status"] != "PENDING":
                         continue
@@ -454,6 +513,8 @@ class TaskCoordinator:
                         )
                         self.journal.save(record)
                         continue
+                    self.active_slots += 1
+                    claimed = True
                     self.running[key] = slot = _WorkerSlot()
                     record.update(
                         status="RUNNING", started_at=_now(),
@@ -493,6 +554,10 @@ class TaskCoordinator:
             except Exception:  # noqa: BLE001 - keep supervisor alive on state failures
                 _LOG.exception("Engine backtest task state could not be persisted")
             finally:
+                with self.condition:
+                    if "claimed" in locals() and claimed:
+                        self.active_slots -= 1
+                        self.condition.notify_all()
                 self.pending.task_done()
 
     def list(self, tenant_id):
@@ -557,8 +622,9 @@ class TaskCoordinator:
         return self.submit(tenant_id, "backtest", row["parameters"], retry_of=identity)
 
     def close(self):
-        with self.lock:
+        with self.condition:
             self.closed = True
+            self.condition.notify_all()
         # Supervisors observe shutdown and terminate their process groups.
         for worker in self.workers:
             worker.join(timeout=9)
