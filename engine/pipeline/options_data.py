@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
