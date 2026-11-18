@@ -16,10 +16,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from nautilus_trader.backtest import BacktestEngine
-from engine.strategies.backtest_engine import backtest_engine_config
 from nautilus_trader.model import AccountType, Bar, BarType, FundingRateUpdate, Money, OmsType
 
 from engine.runtime import EngineConflict
+from engine.strategies.backtest_engine import backtest_engine_config
 from engine.strategies.package import (
     PackageError,
     build_strategy,
