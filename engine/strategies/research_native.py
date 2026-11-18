@@ -10,7 +10,7 @@ from itertools import chain
 from math import isfinite
 
 from nautilus_trader.backtest import BacktestEngine
-from nautilus_trader.config import BacktestEngineConfig, LoggerConfig
+from engine.strategies.backtest_engine import backtest_engine_config
 from nautilus_trader.model import (
     AccountType,
     Bar,
@@ -126,7 +126,7 @@ def run_depth_backtest(instrument, depths, starting, strategies=(), *,
     """
     batches = iter_validated_depth_batches(depths, instrument.id, batch_size=batch_size)
     first = next(batches)  # Reject empty/invalid sources before opening the engine.
-    engine = BacktestEngine(BacktestEngineConfig(logging=LoggerConfig(bypass_logging=True)))
+    engine = BacktestEngine(backtest_engine_config())
     try:
         kwargs = {"book_type": BookType.L2_MBP}
         if fee_model is not None:
