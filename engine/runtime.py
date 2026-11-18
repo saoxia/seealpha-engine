@@ -413,7 +413,9 @@ class EngineRuntime:
         from nautilus_trader.model import Money
 
         from engine.strategies.backtest import (
-            catalog_directory, parse_window, read_history_batches,
+            catalog_directory,
+            parse_window,
+            read_history_batches,
         )
         from engine.strategies.loading import run_issued_history_stream
 
