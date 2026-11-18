@@ -208,6 +208,38 @@ class ParquetDataCatalog:
         root.mkdir(parents=True, exist_ok=True)
         return NativeCatalog(str(root))
 
+    def custom_data_batches(
+        self, data_cls, instrument_ids=None, start=None, end=None, *, batch_size=10_000,
+    ):
+        """Yield bounded native Arrow record batches without collecting custom rows.
+
+        Each item is (feature_catalog_id, RecordBatch). Ordering is per identifier,
+        not a global timestamp merge across feature catalogs. The existing
+        custom_data() list-returning API remains unchanged for small callers.
+        """
+        if type(batch_size) is not int or not 1 <= batch_size <= 50_000:
+            raise ValueError("Custom data batch size must be between 1 and 50,000")
+        if instrument_ids is None:
+            root = Path(self.path) / "features"
+            instrument_ids = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.exists() else []
+        begin_ns, end_ns = _nanos(start), _nanos(end)
+        if begin_ns is not None and end_ns is not None and begin_ns >= end_ns:
+            raise ValueError("Custom data requires an increasing time range")
+        for identifier in instrument_ids:
+            native = self.feature_catalog(identifier)
+            reader = native.query_data_arrow_stream(
+                NautilusDataType.Custom(data_cls.__name__),
+                start=begin_ns, end=None if end_ns is None else end_ns - 1,
+                display=False,
+            )
+            reader = pa.RecordBatchReader._import_from_c_capsule(reader)
+            try:
+                for batch in reader:
+                    for offset in range(0, batch.num_rows, batch_size):
+                        yield identifier, batch.slice(offset, batch_size)
+            finally:
+                reader.close()
+
     def custom_data(self, data_cls, instrument_ids=None, start=None, end=None):
         if instrument_ids is None:
             root = Path(self.path) / "features"
