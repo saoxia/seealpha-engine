@@ -102,7 +102,7 @@ class SpotCancelValues(BaseModel):
     account_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
     request_id: UUID
     symbol: str = Field(pattern=r"^[A-Z0-9]{2,30}(?:USDT|USDC|FDUSD)$")
-    client_order_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9._:/-]+$")
+    client_order_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     environment: Literal["production", "sandbox"]
 
 
