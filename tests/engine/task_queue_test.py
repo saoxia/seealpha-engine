@@ -1,4 +1,6 @@
 """Durable Engine job semantics: idempotency, isolation and fail-closed recovery."""
+import json
+import sqlite3
 import threading
 import time
 from types import SimpleNamespace
@@ -292,3 +294,66 @@ def test_actual_nautilus_backtest_runs_inside_background_engine_worker(tmp_path)
         assert result.json()["bar_count"] > 0
         assert result.json()["fills"]
     runtime.close()
+
+
+def test_backtest_task_metadata_uses_existing_engine_sqlite(tmp_path):
+    jobs = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path)
+    try:
+        task = jobs.submit("1", "backtest", parameters(), idempotency_key="db-key")
+        assert done(jobs, "1", task["id"])["status"] == "SUCCEEDED"
+        assert not list((tmp_path / "tasks").rglob("*.record.json"))
+        assert (tmp_path / "tasks" / "1" / f"{task['id']}.result.json").exists()
+        with sqlite3.connect(tmp_path / "book.sqlite") as db:
+            saved = db.execute(
+                "SELECT status, idempotency_key, record_json FROM backtest_tasks "
+                "WHERE tenant_id=? AND id=?", ("1", task["id"]),
+            ).fetchone()
+        assert saved[:2] == ("SUCCEEDED", "db-key")
+        assert json.loads(saved[2])["id"] == task["id"]
+    finally:
+        jobs.close()
+
+
+def test_legacy_json_task_record_migrates_once_and_restarts_fail_closed(tmp_path):
+    root = tmp_path / "tasks"
+    folder = root / "dev"
+    folder.mkdir(parents=True)
+    identity = "e" * 32
+    original = {
+        "id": identity, "tenant_id": "dev", "kind": "backtest", "action": "run",
+        "status": "RUNNING", "parameters": parameters(), "fingerprint": "original",
+        "idempotency_key": "old-key", "created_at": "2026-01-01T00:00:00+00:00",
+        "started_at": "2026-01-01T00:00:00+00:00", "finished_at": None,
+        "progress": "running", "error": None, "result_ref": None,
+        "cancellable": False, "retryable": False,
+    }
+    legacy = folder / f"{identity}.record.json"
+    legacy.write_text(json.dumps(original), encoding="utf-8")
+    journal = TaskJournal(root)
+    assert journal.get("dev", identity)["status"] == "RUNNING"
+    assert not legacy.exists()
+    assert legacy.with_name(legacy.name + ".migrated").exists()
+    journal.recover_interrupted()
+    assert journal.get("dev", identity)["status"] == "INTERRUPTED"
+    assert journal.find_idempotent("dev", "old-key")["id"] == identity
+    reopened = TaskJournal(root)
+    assert reopened.get("dev", identity)["status"] == "INTERRUPTED"
+    assert reopened.get("other", identity) is None
+    reopened.store.delete_runtime("dev")
+    assert reopened.get("dev", identity) is None
+    assert TaskJournal(root).get("dev", identity) is None
+
+
+def test_legacy_task_identity_mismatch_is_not_imported(tmp_path):
+    root = tmp_path / "tasks"
+    folder = root / "tenant"
+    folder.mkdir(parents=True)
+    identity = "d" * 32
+    (folder / f"{identity}.record.json").write_text(
+        json.dumps({"id": identity, "tenant_id": "another", "kind": "backtest"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(HTTPException) as error:
+        TaskJournal(root)
+    assert error.value.status_code == 503
+    assert (folder / f"{identity}.record.json").exists()

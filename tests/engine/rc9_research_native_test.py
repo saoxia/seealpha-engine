@@ -141,3 +141,37 @@ def test_depth_backtest_runs_streaming_and_disposes_on_failure(monkeypatch):
     with pytest.raises(ValueError, match="No L2 snapshots"):
         native.run_depth_backtest(instrument, iter(()), "100 USDT")
     assert len(engines) == before
+
+
+def test_funding_join_is_ordered_one_pass_and_bounded(monkeypatch):
+    from engine.strategies import research_native as native
+
+    class Bar:
+        def __init__(self, ts_event):
+            self.ts_event = ts_event
+
+    monkeypatch.setattr(native, "Bar", Bar)
+    identifier = InstrumentId.from_str("ETHUSDT-PERP.BINANCE")
+    observed = []
+
+    def rates():
+        for index in range(10_025):
+            observed.append(index)
+            yield SimpleNamespace(
+                instrument_id=identifier, rate=Decimal("0.0001"), ts_event=index,
+            )
+
+    batches = native.join_funding_updates([[Bar(10), Bar(20)]], rates(), identifier)
+    first = next(batches)
+    assert len(first) == 23  # 0..20 funding observations plus two Bars
+    assert len(observed) < 100
+    remaining = list(batches)
+    assert max(len(batch) for batch in remaining) <= 10_000
+    assert len([event for batch in [first, *remaining] for event in batch]) == 10_027
+    with pytest.raises(ValueError, match="repeated or out of order"):
+        list(native.join_funding_updates(
+            [], iter([
+                SimpleNamespace(instrument_id=identifier, rate=Decimal(0), ts_event=2),
+                SimpleNamespace(instrument_id=identifier, rate=Decimal(0), ts_event=1),
+            ]), identifier,
+        ))
