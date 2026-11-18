@@ -6,11 +6,9 @@ from decimal import Decimal
 from nautilus_trader.model import FundingRateUpdate, InstrumentId, Money
 
 from engine.pipeline.catalog import ParquetDataCatalog
-from engine.strategies.backtest import read_history, read_history_batches
+from engine.strategies.backtest import read_history_batches
 from engine.strategies.loading import run_issued_history, run_issued_history_stream
-from nautilus_support import TestInstrumentProvider
 from tests.engine.backtest_test import write_crossover_catalog
-from tests.engine.strategy_load_test import ema_archive, ema_parameters, issued_payload
 
 
 def test_rc9_funding_rate_catalog_round_trip(tmp_path):
@@ -30,11 +28,7 @@ def test_rc9_funding_rate_catalog_round_trip(tmp_path):
 
 
 def test_streamed_backtest_matches_one_shot_for_deterministic_bars(tmp_path):
-    from engine.strategies.package import archive_directory
-    from engine.strategies.loading import _run_symbol, _instrument
-    from nautilus_trader.model import BarType
-
-    instrument = TestInstrumentProvider.ethusdt_perp_binance()
+    
     start = datetime(2024, 1, 1, tzinfo=UTC)
     root = tmp_path / "catalog"
     bars = write_crossover_catalog(root, start)
