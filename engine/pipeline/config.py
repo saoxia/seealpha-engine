@@ -51,8 +51,8 @@ def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> PipelineSettings:
         raise PipelineConfigError("配置必须包含 [dataset] 和 [paths]")
 
     market = dataset.get("market")
-    if market != "futures_um":
-        raise PipelineConfigError("首版管道仅支持 dataset.market = 'futures_um'")
+    if market not in {"futures_um", "spot"}:
+        raise PipelineConfigError("管道仅支持 dataset.market = 'futures_um' 或 'spot'")
 
     data_type = dataset.get("data_type")
     if data_type not in SUPPORTED_DATA_TYPES:
