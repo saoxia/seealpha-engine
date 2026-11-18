@@ -49,7 +49,8 @@ CSV_CHUNK_ROWS = 250_000
 DEFAULT_BAR_INTERVALS = ("1s", "1m")
 
 
-def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS, *, market="futures_um") -> Iterator[pd.DataFrame]:
+def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS, *, market="futures_um",
+                       microseconds=False) -> Iterator[pd.DataFrame]:
     """逐块读取 trades CSV；重复 Trade ID 保留源文件中靠后的记录。"""
     try:
         with ZipFile(path) as archive:
@@ -88,7 +89,7 @@ def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS, *, market="
                 for chunk in chunks:
                     if chunk.empty:
                         continue
-                    combined = normalize_trade_frame(chunk)
+                    combined = normalize_trade_frame(chunk, microseconds=microseconds)
                     if pending is not None:
                         combined = pd.concat([pending, combined], ignore_index=True)
                     combined = validate_normalized_trade_frame(combined)
@@ -394,7 +395,9 @@ def _convert_fresh_trade_archive(
     aggregate_parts: dict[str, list[pd.DataFrame]] = {interval: [] for interval in bar_intervals}
 
     try:
-        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market):
+        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market,
+                                   microseconds=(synced.spec.market == "spot"
+                                                 and synced.spec.day.isoformat() >= "2025-01-01")):
             for interval in bar_intervals:
                 aggregate_parts[interval].append(aggregate_trade_chunk(chunk, interval))
             first_time = int(chunk.iloc[0]["timestamp"])
@@ -599,7 +602,9 @@ def stage_missing_bars(
         parts = {interval: [] for interval in raw_intervals}
         day_start, day_end = day_bounds_ns(synced)
         previous_time = previous_id = None
-        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market):
+        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market,
+                                   microseconds=(synced.spec.market == "spot"
+                                                 and synced.spec.day.isoformat() >= "2025-01-01")):
             first_time, last_time = (
                 int(chunk.iloc[0]["timestamp"]),
                 int(chunk.iloc[-1]["timestamp"]),
