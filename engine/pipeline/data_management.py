@@ -353,7 +353,7 @@ def validate(request, settings):
             finish = begin + timedelta(days=1)
             before = fingerprint(settings, str(instrument.id), "trades")
 
-            def expected_rows(path=path, begin=begin, finish=finish):
+            def expected_rows(path=path, begin=begin, finish=finish, spec=spec):
                 previous_time = previous_id = None
                 wrangler = TradeTickDataWrangler(instrument)
                 micros = spec.market == "spot" and spec.day.isoformat() >= "2025-01-01"
