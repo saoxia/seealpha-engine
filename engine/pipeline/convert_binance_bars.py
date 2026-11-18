@@ -171,7 +171,7 @@ def convert_archive(
         raise ConversionError("K 线归档缺少 interval")
     record_path = record_path_for(synced.path, raw_dir, state_dir)
     record = read_record(record_path)
-    expected_bar_type = bar_type_for(synced.spec.symbol, synced.spec.interval)
+    expected_bar_type = bar_type_for(synced.spec.symbol, synced.spec.interval, synced.spec.market)
 
     if (
         not force
