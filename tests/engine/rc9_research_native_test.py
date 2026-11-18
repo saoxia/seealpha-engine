@@ -132,6 +132,7 @@ def test_depth_backtest_runs_streaming_and_disposes_on_failure(monkeypatch):
     ]
     assert engines[0].disposed
 
+    produced.clear()
     with pytest.raises(ValueError, match="repeated or regressing"):
         native.run_depth_backtest(instrument, source([1, 2, 2]), "100 USDT", batch_size=2)
     assert engines[1].disposed

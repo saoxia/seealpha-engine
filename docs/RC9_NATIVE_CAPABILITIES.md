@@ -93,3 +93,9 @@ References: https://github.com/nautechsystems/nautilus_trader/releases/tag/v2.0.
 - These changes do not grant live execution, certify disconnected history,
   or establish accurate queue position. Full CI and offline integration
   tests are required before adoption in a deployed collector.
+
+The native `ParquetDataCatalog.depth_stream(instrument, start, end)` method
+uses the Rust/Arrow scanner and `OrderBookDepthDataWrangler` to supply
+bounded model records directly to `run_depth_backtest`, without first calling
+the list-returning `order_book_depths`. The time range is [start, end);
+callers remain responsible for retained source completeness and permissions.

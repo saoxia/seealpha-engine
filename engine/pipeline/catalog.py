@@ -27,6 +27,9 @@ from nautilus_trader.persistence import (
     BarDataWrangler as NativeBarWrangler,
 )
 from nautilus_trader.persistence import (
+    OrderBookDepthDataWrangler as NativeDepthWrangler,
+)
+from nautilus_trader.persistence import (
     ParquetDataCatalog as NativeCatalog,
 )
 from nautilus_trader.persistence import (
@@ -137,6 +140,29 @@ class ParquetDataCatalog:
         return self.native.query_order_book_depths(
             identifiers=instrument_ids, start=_nanos(start), end=_nanos(end),
         )
+
+    def depth_stream(self, instrument, start, end, batch_size=10_000):
+        """Stream native L2 depth records from a bounded Arrow scanner.
+
+        The end timestamp is exclusive. Keep the native catalog query alive for
+        the whole iteration; callers must not concurrently modify this catalog.
+        """
+        if type(batch_size) is not int or not 1 <= batch_size <= 50_000:
+            raise ValueError("L2 batch size must be between 1 and 50,000")
+        begin_ns, end_ns = _nanos(start), _nanos(end)
+        if begin_ns is None or end_ns is None or begin_ns >= end_ns:
+            raise ValueError("L2 depth stream requires a nonempty time range")
+        reader = self.native.query_data_arrow_stream(
+            NautilusDataType.OrderBookDepth, [str(instrument.id)], begin_ns, end_ns - 1,
+            display=False,
+        )
+        reader = pa.RecordBatchReader._import_from_c_capsule(reader)
+        wrangler = NativeDepthWrangler(
+            str(instrument.id), instrument.price_precision, instrument.size_precision,
+        )
+        for batch in reader:
+            for offset in range(0, batch.num_rows, batch_size):
+                yield from wrangler.process_record_batch_bytes(_ipc(batch.slice(offset, batch_size)))
 
     def instrument_statuses(self, instrument_ids=None, start=None, end=None):
         return self.native.query_instrument_statuses(
