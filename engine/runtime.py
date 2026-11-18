@@ -406,9 +406,9 @@ class EngineRuntime:
 
     def run_backtest(
         self, tenant_id, account_id, start, end, interval, starting_balance, quote_currency,
-        *, publish_event=True,
+        *, publish_event=True, product="futures_um",
     ):
-        """Run this tenant's issued loads on catalog history and keep the latest result."""
+        """Run this tenant's issued loads on product-scoped catalog history."""
         from decimal import Decimal, InvalidOperation
 
         from nautilus_trader.model import Money
@@ -420,6 +420,8 @@ class EngineRuntime:
         )
         from engine.strategies.loading import run_issued_history_stream
 
+        if product not in {"futures_um", "spot"}:
+            raise EngineConflict("回测不支持此交易产品。")
         start_at, end_at, interval = parse_window(start, end, interval)
         self.assert_runnable(tenant_id, "backtest")
         row = self.store.tenant(tenant_id)
@@ -445,7 +447,8 @@ class EngineRuntime:
             raise EngineConflict("初始资金无效。") from exc
         if not amount.is_finite() or amount <= 0:
             raise EngineConflict("初始资金无效。")
-        if not isinstance(quote_currency, str) or quote_currency != "USDT":
+        allowed_quotes = {"USDT"} if product == "futures_um" else {"USDT", "USDC", "FDUSD"}
+        if not isinstance(quote_currency, str) or quote_currency not in allowed_quotes:
             raise EngineConflict("虚拟账户报价币种与策略品种不一致。")
         try:
             starting = Money.from_str(f"{format(amount, 'f')} {quote_currency}")
@@ -457,18 +460,30 @@ class EngineRuntime:
 
         # Delete/trim jobs must not unlink a Catalog dataset while a backtest
         # is loading its historical bars.
-        with read_lease(self.project, symbol, "futures_um"):
+        with read_lease(self.project, symbol, product):
+            instrument = None
+            if product == "spot":
+                from core.market.instruments import instrument_id_for
+                from engine.pipeline.catalog import ParquetDataCatalog
+
+                catalog = ParquetDataCatalog(catalog_directory(self.project))
+                values = catalog.instruments(instrument_ids=[instrument_id_for(symbol, "spot")])
+                instrument = next((item for item in values if str(item.id) == instrument_id_for(symbol, "spot")), None)
+                if instrument is None or instrument.quote_currency.code != quote_currency:
+                    raise EngineConflict("现货品种定义不存在或计价资产与回测设置不一致。")
             batches = read_history_batches(
                 catalog_directory(self.project), symbol, interval, start_at, end_at,
+                **({"product": "spot"} if product == "spot" else {}),
             )
             # Keep the lease for the entire iterator consumption and native replay.
             # A concurrent delete must not unlink Parquet files mid-backtest.
-            result = run_issued_history_stream(loads, batches, starting)
+            result = run_issued_history_stream(loads, batches, starting, **({"instrument": instrument} if instrument else {}))
         result.update(
             interval=interval,
             start=start_at.isoformat(),
             end=end_at.isoformat(),
             starting_balance=format(amount, "f"),
+            product=product,
         )
         if publish_event:
             self.store.add_event(tenant_id, account_id, "backtest", result)
