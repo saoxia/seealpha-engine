@@ -16,6 +16,7 @@ from engine.connectors.binance.transport import KlineSocket, PublicREST
 
 from .clock import ServerClock
 from .feed import Feed
+from .funding_service import collect_funding
 from .history import CatalogHistory
 from .models import DAY, MINUTE, DataError, State, parse_message
 from .store import Store
@@ -176,6 +177,11 @@ async def serve(args, root, *, on_delivery=None, on_bar_update=None):
             enqueue(("partial", bar, stamp))
         rest.source.on_partial = partial
 
+    funding_base = getattr(args, "funding_dir", root / "funding")
+    funding_tasks = {
+        symbol: asyncio.create_task(collect_funding(symbol, funding_base / symbol / "funding.sqlite"))
+        for symbol in args.symbols
+    }
     worker = None
     receive_task = None
     started = time.monotonic()
@@ -207,6 +213,10 @@ async def serve(args, root, *, on_delivery=None, on_bar_update=None):
                     feed.transport_lost()
             else:
                 feed.connected = True
+            for funding_task in funding_tasks.values():
+                if funding_task.done():
+                    funding_task.result()
+                    raise DataError("Funding collector stopped unexpectedly")
             if receive_task.done():
                 receive_task.result()
                 raise DataError("WebSocket receiver stopped")
@@ -247,7 +257,7 @@ async def serve(args, root, *, on_delivery=None, on_bar_update=None):
             write_status(root, status)
             await asyncio.sleep(0.25)
     finally:
-        for task in (worker, receive_task):
+        for task in (worker, receive_task, *funding_tasks.values()):
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
