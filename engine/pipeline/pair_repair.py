@@ -222,8 +222,10 @@ async def reconcile_day(policy, settings, rest, source, day, finish, available_m
                     "archive_pending": True, "scope": "saved_kline_ohlcv"}
     comparison = ParquetDataCatalog(comparison_catalog or settings.catalog_dir)
     start_ms, end_ms = int(day.timestamp() * 1000), int(finish.timestamp() * 1000)
-    candidates, unresolved = await scan_day(rest, comparison, policy["symbol"], source, start_ms, end_ms, available_ms,
-                                            market=policy.get("product", "futures_um"))
+    scan_kwargs = {"market": "spot"} if policy.get("product") == "spot" else {}
+    candidates, unresolved = await scan_day(
+        rest, comparison, policy["symbol"], source, start_ms, end_ms, available_ms, **scan_kwargs,
+    )
     written, conflicts = 0, []
     if candidates:
         catalog = ParquetDataCatalog(settings.catalog_dir)
@@ -235,9 +237,11 @@ async def reconcile_day(policy, settings, rest, source, day, finish, available_m
             # Keep the caller's file lease until the worker has actually stopped writing.
             await writing
             raise
-    remaining, after_errors = (await scan_day(rest, comparison, policy["symbol"], source, start_ms, end_ms, available_ms,
-                                            market=policy.get("product", "futures_um"))
-                               if written and source == "1m" else (candidates, []))
+    remaining, after_errors = (
+        await scan_day(
+            rest, comparison, policy["symbol"], source, start_ms, end_ms, available_ms, **scan_kwargs,
+        ) if written and source == "1m" else (candidates, [])
+    )
     needs_calculation = (bool(candidates) and source != "1m" and not conflicts
                          or bool(written) and any(level != source for level in policy.get("intervals", [])))
     if not remaining and not unresolved and not conflicts and not after_errors:
