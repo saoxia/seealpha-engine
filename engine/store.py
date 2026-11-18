@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS strategy_loads (
     loaded_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, issuance_id)
 );
+CREATE TABLE IF NOT EXISTS backtest_tasks (
+    tenant_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    idempotency_key TEXT,
+    record_json TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, id),
+    UNIQUE (tenant_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_tasks_tenant_created
+    ON backtest_tasks (tenant_id, created_at DESC);
 """
 
 RUNTIME_TABLES = (
@@ -236,6 +248,59 @@ class Store:
         with self.lock:
             self._ensure()
             self.db.execute(sql, params)
+
+
+    def save_task_record(self, record, *, if_absent=False):
+        """Persist a complete task envelope using the existing Engine WAL database."""
+        payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
+        args = (
+            str(record["tenant_id"]), str(record["id"]), record["status"],
+            record["created_at"], record.get("idempotency_key"), payload,
+        )
+        sql = """INSERT INTO backtest_tasks
+            (tenant_id, id, status, created_at, idempotency_key, record_json)
+            VALUES (?, ?, ?, ?, ?, ?)"""
+        if if_absent:
+            sql += " ON CONFLICT(tenant_id, id) DO NOTHING"
+        else:
+            sql += """ ON CONFLICT(tenant_id, id) DO UPDATE SET
+                status=excluded.status, created_at=excluded.created_at,
+                idempotency_key=excluded.idempotency_key, record_json=excluded.record_json"""
+        with self.lock:
+            self._ensure()
+            self.db.execute(sql, args)
+
+    def task_record(self, tenant_id, identity):
+        with self.lock:
+            self._ensure()
+            row = self.db.execute(
+                "SELECT record_json FROM backtest_tasks WHERE tenant_id=? AND id=?",
+                (str(tenant_id), str(identity)),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def task_for_key(self, tenant_id, key):
+        with self.lock:
+            self._ensure()
+            row = self.db.execute(
+                "SELECT record_json FROM backtest_tasks WHERE tenant_id=? AND idempotency_key=?",
+                (str(tenant_id), key),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def task_records(self, tenant_id=None, *, unfinished=False):
+        with self.lock:
+            self._ensure()
+            if unfinished:
+                rows = self.db.execute(
+                    "SELECT record_json FROM backtest_tasks WHERE status IN ('PENDING', 'RUNNING')"
+                ).fetchall()
+            else:
+                rows = self.db.execute(
+                    "SELECT record_json FROM backtest_tasks WHERE tenant_id=? ORDER BY created_at DESC",
+                    (str(tenant_id),),
+                ).fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def ensure_tenant(self, tenant_id, purpose, status):
         self._write(
@@ -595,6 +660,8 @@ class Store:
             self._ensure()
             for name in RUNTIME_TABLES:
                 self.db.execute(f"DELETE FROM {name} WHERE tenant_id=?", (tenant_id,))
+            # Task metadata shares book.sqlite but result artifacts remain separate.
+            self.db.execute("DELETE FROM backtest_tasks WHERE tenant_id=?", (tenant_id,))
 
     def delete_tenant(self, tenant_id):
         self.delete_runtime(tenant_id)
