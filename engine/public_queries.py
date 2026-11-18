@@ -144,6 +144,14 @@ async def spot_trades(tenant_id: str, request: SpotTradesRequest):
 
 @router.post("/tickers")
 async def tickers(tenant_id: str, request: PublicRequest):
+    if request.product == "spot":
+        if request.environment != "production":
+            raise HTTPException(422, "现货公开行情仅支持正式环境")
+        from engine.connectors.binance.spot import market_tickers
+
+        return await market_tickers()
+    if request.product == "options":
+        raise HTTPException(422, "期权目录与行情须通过期权查询")
     return await manual.market_tickers(request.environment)
 
 
