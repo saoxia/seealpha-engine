@@ -11,12 +11,13 @@ import shutil
 import tempfile
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from itertools import chain
 from pathlib import Path
 from uuid import uuid4
 
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.config import BacktestEngineConfig, LoggerConfig
-from nautilus_trader.model import AccountType, Bar, BarType, Money, OmsType
+from nautilus_trader.model import AccountType, Bar, BarType, FundingRateUpdate, Money, OmsType
 
 from engine.runtime import EngineConflict
 from engine.strategies.package import (
@@ -152,6 +153,43 @@ def run_issued_history(loads, bars, starting: Money):
     return result
 
 
+def run_issued_history_stream(loads, batches, starting: Money, *, funding_updates=()):
+    """Execute one issued strategy set from bounded, ordered Catalog batches."""
+    if not loads:
+        raise EngineConflict("该租户账户没有已下发的策略。")
+    groups = defaultdict(list)
+    for load in loads:
+        groups[load["parameters"]["symbol"]].append(load)
+    if len(groups) != 1:
+        raise EngineConflict("一次回测只支持同一品种的已下发策略。")
+    symbol, group = next(iter(groups.items()))
+    instrument = _instrument(symbol)
+    if starting.currency != instrument.quote_currency:
+        raise EngineConflict("虚拟账户报价币种与策略品种不一致。")
+    iterator = iter(batches)
+    first = next((batch for batch in iterator if batch), None)
+    if first is None:
+        raise EngineConflict("指定区间没有可用的本地 K 线。")
+    bar_type = first[0].bar_type
+    if not str(bar_type).startswith(str(instrument.id)):
+        raise EngineConflict("K 线品种与策略不一致。")
+    data = chain([first], iterator)
+    if funding_updates:
+        from engine.strategies.research_native import join_funding_updates
+
+        data = join_funding_updates(data, funding_updates, instrument.id)
+    piece = _run_symbol(
+        symbol, group, instrument, bar_type, data, starting, streaming=True,
+    )
+    result = _assemble(loads, [piece], include_account=True)
+    result["symbol"] = symbol
+    result["bar_count"] = piece["bar_count"]
+    result["quote_currency"] = instrument.quote_currency.code
+    result["starting_balance"] = format(starting.as_decimal(), "f")
+    result["ending_balance"] = piece["ending_balance"]
+    return result
+
+
 def _assemble(loads, pieces, *, include_account):
     holdings = []
     orders = []
@@ -180,7 +218,7 @@ def _assemble(loads, pieces, *, include_account):
     return result
 
 
-def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money):
+def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, streaming=False):
     risk_limit = min(Decimal(item["parameters"]["risk_limit"]) for item in group)
     coordinator = RiskClippedCoordinator(
         PortfolioCoordinatorConfig(
@@ -222,8 +260,33 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money):
         )
         engine.add_instrument(instrument)
         engine.add_strategies([coordinator, *[strategy for _load, strategy in bound]])
-        engine.add_data(data)
-        engine.run()
+        if streaming:
+            count = 0
+            previous_ns = None
+            for batch in data:
+                if not batch:
+                    continue
+                for item in batch:
+                    if isinstance(item, FundingRateUpdate):
+                        if item.instrument_id != instrument.id:
+                            raise EngineConflict("资金费率品种与策略不一致。")
+                        continue
+                    if not isinstance(item, Bar) or item.bar_type != bar_type:
+                        raise EngineConflict("K 线品种或周期不一致。")
+                    if previous_ns is not None and item.ts_event <= previous_ns:
+                        raise EngineConflict("流式回测时间重复或倒退。")
+                    previous_ns = item.ts_event
+                    count += 1
+                engine.add_data(batch, sort=True)
+                engine.run(streaming=True)
+                engine.clear_data()
+            if count == 0:
+                raise EngineConflict("指定区间没有可用的本地 K 线。")
+            engine.end()
+        else:
+            count = len(data)
+            engine.add_data(data)
+            engine.run()
         holdings = []
         member_ids = []
         for load, strategy in bound:
@@ -244,6 +307,7 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money):
             "fills": [view for view in (_fill_view(order) for order in orders) if view],
             "position": {"symbol": symbol, "quantity": _decimal_text(position)},
             "ending_balance": _ending_balance(engine, instrument),
+            "bar_count": count,
             "coordinator_id": str(coordinator.strategy_id),
             "member_ids": member_ids,
         }

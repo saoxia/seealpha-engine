@@ -94,6 +94,10 @@ def normalize_event(event, order, account):
         "OrderFilled": "fill",
         "OrderRejected": "reject",
         "OrderDenied": "reject",
+        "OrderCancelDenied": "reject",
+        "OrderCancelRejected": "reject",
+        "OrderModifyDenied": "reject",
+        "OrderModifyRejected": "reject",
         "OrderExpired": "expire",
     }
     event_type = names.get(type(event).__name__)
@@ -108,7 +112,9 @@ def normalize_event(event, order, account):
         synthetic = True
     # A strategy can claim venue orders; ownership alone is not proof of origination.
     project_origin = strategy != "EXTERNAL" and (
-        type(event).__name__ in {"OrderSubmitted", "OrderDenied"}
+        type(event).__name__ in {
+            "OrderSubmitted", "OrderDenied", "OrderCancelDenied", "OrderModifyDenied"
+        }
         or any(
             type(item).__name__ == "OrderSubmitted" and not getattr(item, "reconciliation", False)
             for item in order.events()
@@ -148,9 +154,15 @@ def normalize_event(event, order, account):
             "OrderFilled": "filled",
             "OrderRejected": "rejected",
             "OrderDenied": "denied",
+            "OrderCancelDenied": "cancel_denied",
+            "OrderCancelRejected": "cancel_rejected",
+            "OrderModifyDenied": "modify_denied",
+            "OrderModifyRejected": "modify_rejected",
             "OrderExpired": "expired",
         }[type(event).__name__],
     }
+    if getattr(event, "reason", None) is not None:
+        record["reason"] = str(event.reason)
     commission = getattr(event, "commission", None)
     if commission is not None:
         record.update(fee_cost=str(commission.as_decimal()), fee_currency=str(commission.currency))

@@ -261,8 +261,11 @@ class BinanceOptionsExecutionClient(ExecutionClient):
         return report
 
     async def _poll(self):
+        # Bound EAPI reconciliation pressure after a failure; the risk gate
+        # remains closed until a complete authoritative sync succeeds.
+        delay = 2
         while not self._closing:
-            await asyncio.sleep(2)
+            await asyncio.sleep(delay)
             try:
                 async with self._sync_lock:
                     await self._account()
@@ -276,8 +279,10 @@ class BinanceOptionsExecutionClient(ExecutionClient):
                             continue
                         await self._observe(order)
                     self._last_sync, self._last_error = self.clock.timestamp_ns(), None
+                    delay = 2
             except (QueryError, ValueError, KeyError, TypeError, ArithmeticError):
                 self._last_error = "期权账户或订单核对未完成；禁止新增风险"
+                delay = min(delay * 2, 30)
 
     def _validate(self, order):
         item = self._item(order.instrument_id)
@@ -412,7 +417,9 @@ class BinanceOptionsExecutionClient(ExecutionClient):
     async def _modify_order(self, command):
         order = self.cache.order(command.client_order_id)
         if order is not None and order.account_id == self.account_id:
-            self.generate_order_modify_rejected(order, order.venue_order_id, "期权不支持原地改单，请明确撤单后另下新单", self.clock.timestamp_ns())
+            self.generate_order_modify_denied(
+                order, "期权不支持原地改单，请明确撤单后另下新单", self.clock.timestamp_ns()
+            )
 
     async def _register_external_order(self, client_order_id, venue_order_id, instrument_id, strategy_id, ts_init):
         order = self.cache.order(client_order_id)

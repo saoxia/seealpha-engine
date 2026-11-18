@@ -224,7 +224,7 @@ class EngineRuntime:
                 if order is not None:
                     response.update(
                         status="completed", order=order,
-                        message=("撤单被拒绝，当前订单状态：" if result.get("outcome") == "OrderCancelRejected"
+                        message=("撤单被拒绝，当前订单状态：" if result.get("outcome") in {"OrderCancelRejected", "OrderCancelDenied"}
                                  else "交易所订单状态：") + order["status"],
                     )
                 self.store.save_request(tenant_id, account_id, request_id, body)
@@ -412,8 +412,12 @@ class EngineRuntime:
 
         from nautilus_trader.model import Money
 
-        from engine.strategies.backtest import catalog_directory, parse_window, read_history
-        from engine.strategies.loading import run_issued_history
+        from engine.strategies.backtest import (
+            catalog_directory,
+            parse_window,
+            read_history_batches,
+        )
+        from engine.strategies.loading import run_issued_history_stream
 
         start_at, end_at, interval = parse_window(start, end, interval)
         self.assert_runnable(tenant_id, "backtest")
@@ -453,10 +457,12 @@ class EngineRuntime:
         # Delete/trim jobs must not unlink a Catalog dataset while a backtest
         # is loading its historical bars.
         with read_lease(self.project, symbol, "futures_um"):
-            bars = read_history(catalog_directory(self.project), symbol, interval, start_at, end_at)
-        if not bars:
-            raise EngineConflict("指定区间没有可用的本地 K 线。")
-        result = run_issued_history(loads, bars, starting)
+            batches = read_history_batches(
+                catalog_directory(self.project), symbol, interval, start_at, end_at,
+            )
+            # Keep the lease for the entire iterator consumption and native replay.
+            # A concurrent delete must not unlink Parquet files mid-backtest.
+            result = run_issued_history_stream(loads, batches, starting)
         result.update(
             interval=interval,
             start=start_at.isoformat(),

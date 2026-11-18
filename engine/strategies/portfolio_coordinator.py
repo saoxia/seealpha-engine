@@ -96,6 +96,8 @@ class PortfolioCoordinator(Strategy):
         self._orders: dict[str, VirtualOrder] = {}
         self._bar = None
         self._working_id = None
+        self._working_filled = Decimal(0)
+        self._working_requested = Decimal(0)
         self._cancel_sent = False
         self._denied_bar_ts = None
         self._reconciling = False
@@ -233,9 +235,38 @@ class PortfolioCoordinator(Strategy):
         if self._working_id is None or str(event.client_order_id) != str(self._working_id):
             return
         self._allocate_real_fill(event)
-        self._working_id = None
+        self._working_filled += event.last_qty.as_decimal()
+        cached = self.cache.order(event.client_order_id)
+        # A fill event may be partial. Keep the outstanding venue order in
+        # flight; otherwise reconciliation can submit the remaining size twice.
+        if cached is not None and (
+            cached.is_closed or cached.filled_qty.as_decimal() >= cached.quantity.as_decimal()
+        ):
+            self._clear_working(event.client_order_id)
+        else:
+            self.reconcile()
+
+    def on_order_cancel_denied(self, event) -> None:
+        self._on_cancel_failed(event)
+
+    def on_order_cancel_rejected(self, event) -> None:
+        self._on_cancel_failed(event)
+
+    def _on_cancel_failed(self, event) -> None:
+        if self._working_id is None or str(event.client_order_id) != str(self._working_id):
+            return
+        # A denied/rejected cancellation does not mean the order was canceled.
+        # Do not retry the cancel on this same bar or submit replacement risk.
         self._cancel_sent = False
-        self.reconcile()
+        if self._bar is not None:
+            self._denied_bar_ts = self._bar.ts_event
+        self.log.error(f"净额订单撤销失败，仍须核对在途委托：{getattr(event, 'reason', '')}")
+
+    def on_order_modify_denied(self, event) -> None:
+        self.log.error(f"净额订单改单未发送：{getattr(event, 'reason', '')}")
+
+    def on_order_modify_rejected(self, event) -> None:
+        self.log.error(f"净额订单改单被拒绝：{getattr(event, 'reason', '')}")
 
     def on_order_canceled(self, event) -> None:
         self._clear_working(event.client_order_id)
@@ -255,6 +286,8 @@ class PortfolioCoordinator(Strategy):
         if self._working_id is None or str(client_order_id) != str(self._working_id):
             return
         self._working_id = None
+        self._working_filled = Decimal(0)
+        self._working_requested = Decimal(0)
         self._cancel_sent = False
         self.reconcile()
 
@@ -420,9 +453,14 @@ class PortfolioCoordinator(Strategy):
         if self._working_id is None:
             return Decimal(0)
         order = self.cache.order(self._working_id)
-        if order is None or order.is_closed:
+        if order is None:
+            # A just-submitted command can precede cache registration. Treat it
+            # as in-flight, never as permission to send a duplicate order.
+            return self._working_requested
+        if order.is_closed:
             return Decimal(0)
-        leaves = order.quantity.as_decimal() - order.filled_qty.as_decimal()
+        filled = max(order.filled_qty.as_decimal(), self._working_filled)
+        leaves = max(Decimal(0), order.quantity.as_decimal() - filled)
         sign = Decimal(1) if order.side == OrderSide.BUY else Decimal(-1)
         return sign * leaves
 
@@ -442,6 +480,8 @@ class PortfolioCoordinator(Strategy):
             tags=["portfolio-net-delta"],
         )
         self._working_id = order.client_order_id
+        self._working_filled = Decimal(0)
+        self._working_requested = signed_quantity
         self._cancel_sent = False
         self.submit_order(order)
 
