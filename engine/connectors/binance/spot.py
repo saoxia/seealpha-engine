@@ -132,3 +132,35 @@ async def recent_trades(symbol, *, limit=500, rest=None):
         previous = identity
     return {"product": "spot", "symbol": symbol, "trades": values, "complete_history": False,
             "source": "binance_spot_public_rest"}
+
+
+async def market_tickers(*, rest=None):
+    """Binance Spot public 24h snapshots; funding and open interest do not apply."""
+    client = rest or SpotREST(attempts=2)
+    rows = await client.get("ticker/24hr")
+    if not isinstance(rows, list):
+        raise DataError("Invalid Binance Spot ticker response")
+    result = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("symbol"), str):
+            raise DataError("Invalid Spot ticker identity")
+        symbol = normalize_symbol(row["symbol"], "spot")
+        if symbol in result:
+            raise DataError("Duplicate Spot ticker")
+        result[symbol] = {
+            "last_price": _positive_number(row.get("lastPrice"), zero=True),
+            "change_percent": _signed_number(row.get("priceChangePercent")),
+            "quote_volume": _positive_number(row.get("quoteVolume"), zero=True),
+            "funding_rate": None,
+        }
+    return {"checked_at": int(time.time() * 1000), "rows": result}
+
+
+def _signed_number(value):
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise DataError("Invalid Spot ticker number") from exc
+    if not number.is_finite():
+        raise DataError("Invalid Spot ticker number")
+    return format(number, "f")
