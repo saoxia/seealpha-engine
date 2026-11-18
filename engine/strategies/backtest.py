@@ -34,7 +34,8 @@ def catalog_directory(project):
     return Path(project) / "data" / "catalog"
 
 
-def read_history_batches(catalog_dir, symbol, interval, start, end, *, batch_size=50_000):
+def read_history_batches(catalog_dir, symbol, interval, start, end, *, batch_size=50_000,
+                         product="futures_um"):
     """Iterate bounded native Arrow batches while the caller holds a data read lease.
 
     The Catalog query end is inclusive upstream; the Engine contract is [start, end).
@@ -47,7 +48,7 @@ def read_history_batches(catalog_dir, symbol, interval, start, end, *, batch_siz
     from engine.pipeline.catalog import ParquetDataCatalog
 
     try:
-        bar_type = bar_type_for(symbol, interval)
+        bar_type = bar_type_for(symbol, interval, product)
         catalog = ParquetDataCatalog(root)
         start_ns, end_ns = _nanos(start), _nanos(end)
         previous_ns = None
@@ -69,7 +70,7 @@ def read_history_batches(catalog_dir, symbol, interval, start, end, *, batch_siz
         raise EngineConflict("本地行情目录无法读取。") from exc
 
 
-def read_history(catalog_dir, symbol, interval, start, end):
+def read_history(catalog_dir, symbol, interval, start, end, *, product="futures_um"):
     """Return catalog bars in ``[start, end)``. Missing data is an empty list."""
     root = Path(catalog_dir)
     if not root.is_dir():
@@ -78,7 +79,7 @@ def read_history(catalog_dir, symbol, interval, start, end):
     from engine.pipeline.catalog import ParquetDataCatalog
 
     try:
-        bar_type = bar_type_for(symbol, interval)
+        bar_type = bar_type_for(symbol, interval, product)
         catalog = ParquetDataCatalog(root)
         rows = catalog.bars(bar_types=[bar_type], start=start, end=end) or []
     except (OSError, ValueError, MarketConfigError) as exc:
