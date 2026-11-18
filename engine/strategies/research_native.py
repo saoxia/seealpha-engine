@@ -10,7 +10,6 @@ from itertools import chain
 from math import isfinite
 
 from nautilus_trader.backtest import BacktestEngine
-from engine.strategies.backtest_engine import backtest_engine_config
 from nautilus_trader.model import (
     AccountType,
     Bar,
@@ -19,6 +18,8 @@ from nautilus_trader.model import (
     OptionGreeks,
     OrderBookDepth,
 )
+
+from engine.strategies.backtest_engine import backtest_engine_config
 
 
 def join_funding_updates(bar_batches, funding_updates, instrument_id):
