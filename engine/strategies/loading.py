@@ -135,7 +135,7 @@ def run_issued_history(loads, bars, starting: Money):
     if len(groups) != 1:
         raise EngineConflict("一次回测只支持同一品种的已下发策略。")
     symbol, group = next(iter(groups.items()))
-    instrument = instrument if instrument is not None else _instrument(symbol)
+    instrument = _instrument(symbol)
     if starting.currency != instrument.quote_currency:
         raise EngineConflict("虚拟账户报价币种与策略品种不一致。")
     bar_type = bars[0].bar_type
