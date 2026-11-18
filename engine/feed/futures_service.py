@@ -62,15 +62,15 @@ class FuturesCombinedSocket:
                                 await socket.send(json.dumps({
                                     "method": "SUBSCRIBE",
                                     "params": [f"{symbol.lower()}{suffix}" for symbol in sorted(additions)],
-                                    "id": next_id,
+                                    "id": str(next_id),
                                 }))
-                                pending[next_id] = additions
+                                pending[str(next_id)] = additions
                             if removed:
                                 next_id += 1
                                 await socket.send(json.dumps({
                                     "method": "UNSUBSCRIBE",
                                     "params": [f"{symbol.lower()}{suffix}" for symbol in sorted(removed)],
-                                    "id": next_id,
+                                    "id": str(next_id),
                                 }))
                             if additions or removed:
                                 subscribed = desired
