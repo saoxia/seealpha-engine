@@ -549,7 +549,8 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
         try:
             return runtime.run_backtest(
                 tenant_id, account_id, body.start, body.end, body.interval,
-                body.starting_balance, body.quote_currency, product=body.product,
+                body.starting_balance, body.quote_currency,
+                **({"product": "spot"} if body.product == "spot" else {}),
             )
         except EngineConflict as error:
             conflict(error)
