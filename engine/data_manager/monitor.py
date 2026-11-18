@@ -33,7 +33,9 @@ def observe(subscriptions, policy, now):
             except (OSError, ValueError, TypeError):
                 item.update(state="DEGRADED", reason="status_unavailable")
             processes = subscriptions.processes if role == "collection" else subscriptions.auxiliary
-            symbol = "ALL" if policy.product == "options" else policy.symbol
+            symbol = ("ALL" if policy.product == "options" or
+                      policy.product == "futures_um" and policy.base_level != "auto" and role == "collection"
+                      else policy.symbol)
             key = (policy.product, symbol) if role == "collection" else (policy.product, symbol, role)
             process = processes.get(key)
             if item.get("reason") == "expired" and item.get("expiry_ms", float("inf")) <= now:

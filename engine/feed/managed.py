@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--symbol")
     parser.add_argument("--intervals", nargs="+", choices=tuple(PERIODS))
     parser.add_argument("--options-config", type=Path, help="Runtime snapshot for the shared options collector")
+    parser.add_argument("--futures-config", type=Path, help="Shared USD-M collector manifest")
     parser.add_argument("--policy", help="Validated pair configuration JSON")
     parser.add_argument("--warmup-minutes", type=int, default=60)
     parser.add_argument("--role", choices=("combined", "collection", "calculation"), default="combined")
@@ -30,6 +31,22 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     if not 15 <= args.warmup_minutes <= 135 * 1440:
         parser.error("Invalid warmup")
+    if args.futures_config:
+        if args.options_config or args.symbol or args.policy or args.role != "combined":
+            parser.error("Shared futures collector owns only USD-M subscriptions")
+        if not args.data_root.is_dir() or not args.root.resolve().is_relative_to(args.data_root.resolve()):
+            parser.error("Data mount unavailable")
+        args.root.mkdir(parents=True, exist_ok=True)
+        with (args.root / "writer.lock").open("a") as lease:
+            fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            from .futures_service import serve_futures_batch
+            try:
+                asyncio.run(serve_futures_batch(
+                    args.futures_config, args.root.parent, args.catalog, project=args.data_root.parent,
+                ))
+            except KeyboardInterrupt:
+                pass
+        return
     if args.options_config:
         if args.role == "calculation":
             parser.error("Options batch collection does not run local calculation")
