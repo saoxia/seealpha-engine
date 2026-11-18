@@ -193,11 +193,21 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                             job["task"].cancel()  # Fail closed rather than silently drop data.
 
     async def stop(symbol):
-        job = jobs.pop(symbol)
+        job = jobs[symbol]
         for group in groups.values():
             group["scope"]["members"].discard(symbol)
+        # Stop accepting events first and let the pair drain its dispatched
+        # trade/estimate queue before releasing its durable writer lock.
+        deadline = time.monotonic() + 5
+        while ((not job["trades"].empty() or not job["funding"].empty())
+               and not job["task"].done() and time.monotonic() < deadline):
+            await asyncio.sleep(0.05)
+        if not job["trades"].empty() or not job["funding"].empty():
+            logging.error("Futures %s stopped with unprocessed buffered messages", symbol)
+        await asyncio.sleep(0)  # Yield to the per-contract journal writer.
         job["task"].cancel()
         await asyncio.gather(job["task"], return_exceptions=True)
+        del jobs[symbol]
 
     try:
         while True:

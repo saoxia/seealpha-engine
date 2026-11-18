@@ -87,3 +87,51 @@ def test_rejects_more_than_bounded_group_without_network(monkeypatch):
         await stream.aclose()
 
     asyncio.run(scenario())
+
+
+def test_batch_fans_out_two_pairs_without_opening_per_symbol_sockets(tmp_path, monkeypatch):
+    from engine.feed import futures_service as module
+
+    async def scenario():
+        root = tmp_path / "data/market_data/binance_um_1m/managed"
+        root.mkdir(parents=True)
+        manifest = tmp_path / "futures-runtime.json"
+        manifest.write_text(json.dumps({"version": 1, "policies": [
+            {"symbol": symbol, "product": "futures_um", "base_level": "1m",
+             "intervals": ["1m"], "realtime_enabled": True}
+            for symbol in ("ETHUSDT", "BTCUSDT")
+        ]}))
+        received = {}
+        connected = asyncio.Event()
+        opened = []
+
+        class FakeMarket:
+            async def stream(self, scope):
+                opened.append(scope)
+                for symbol in sorted(scope["members"]):
+                    yield {"symbol": symbol, "kind": "connected"}
+                    yield {"symbol": symbol, "kind": "trade", "row": {"id": symbol}}
+                await asyncio.Event().wait()
+
+        async def fake_serve(policy, root, catalog, *, calculate, trade_socket, funding_socket):
+            async for event in trade_socket.stream(policy["symbol"]):
+                if event["kind"] == "trade":
+                    received[policy["symbol"]] = event["row"]["id"]
+                    if len(received) == 2:
+                        connected.set()
+
+        monkeypatch.setattr(module, "serve_pair", fake_serve)
+        task = asyncio.create_task(module.serve_futures_batch(
+            manifest, root, tmp_path / "data/catalog", project=tmp_path,
+            socket_factory=FakeMarket,
+        ))
+        try:
+            await asyncio.wait_for(connected.wait(), 4)
+            assert received == {"BTCUSDT": "BTCUSDT", "ETHUSDT": "ETHUSDT"}
+            assert len(opened) == 1
+            assert len(opened[0]["members"]) == 2
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())

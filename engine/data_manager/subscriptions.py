@@ -147,6 +147,13 @@ class Subscriptions:
                     self._start_options()
                 self._claim()
                 self._publish_futures()
+                # Retire known pre-multiplex per-pair collectors before opening
+                # the shared writer. Auto-mode legacy minute workers are retained.
+                for key in list(self.processes):
+                    if (key[0] == "futures_um" and key[1] != "ALL"
+                            and any(p.symbol == key[1] and p.base_level != "auto"
+                                    for p in [*previous, *policies])):
+                        self.manager._stop(self.processes.pop(key))
                 self._start_futures()
                 if previous:
                     self._claim()
