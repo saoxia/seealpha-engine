@@ -52,7 +52,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         run(args.state_root, args.project, args.tenant_id, args.task_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - isolate arbitrary strategy exceptions within the child
         _LOG.exception("Backtest worker aborted")
         raise SystemExit(1) from None
 
