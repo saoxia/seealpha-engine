@@ -5,11 +5,11 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-arrow-array = "60"
-arrow-schema = "60"
+arrow-array = "61"
+arrow-schema = "61"
 clap = { version = "4", features = ["derive"] }
 csv = "1"
-parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
+parquet = { version = "61", default-features = false, features = ["arrow", "snap"] }
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,13 +1,13 @@
 # Build from the repository root: docker build -f docker/engine.Dockerfile -t seealpha-engine:latest .
-FROM rust:1.91-slim AS converter
+FROM rust:1.100-slim AS converter
 WORKDIR /build
 COPY engine/pipeline/rust_converter/ ./rust_converter/
 RUN cargo build --locked --release --manifest-path rust_converter/Cargo.toml
 
-FROM python:3.14-slim
+FROM python:3.15-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-RUN python -m pip install --no-cache-dir uv==0.10.0
+RUN python -m pip install --no-cache-dir uv==0.13.9
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-default-groups --no-install-project
 # Only Engine-owned code and the shared market/HTTP contracts are shipped.

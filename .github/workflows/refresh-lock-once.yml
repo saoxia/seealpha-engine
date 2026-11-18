@@ -1,0 +1,36 @@
+# One-time migration helper: deletes itself after committing resolved lockfiles.
+name: Refresh rc9 dependency locks (one time)
+
+on:
+  push:
+    branches: [chore/nautilus-rc9-dependency-refresh-20261119]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lockfiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.13.9"
+          python-version: "3.15"
+      - name: Resolve latest compatible Python dependency graph
+        run: uv lock --upgrade
+      - name: Resolve latest compatible Rust dependency graph
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          cargo +1.100.0 update --manifest-path engine/pipeline/rust_converter/Cargo.toml
+      - name: Commit resolved lockfiles and remove one-time helper
+        run: |
+          set -euo pipefail
+          rm .github/workflows/refresh-lock-once.yml
+          git add uv.lock engine/pipeline/rust_converter/Cargo.lock .github/workflows/refresh-lock-once.yml
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git diff --cached --stat
+          git commit -m "chore: regenerate Python and Rust dependency locks"
+          git push origin "HEAD:chore/nautilus-rc9-dependency-refresh-20261119"
