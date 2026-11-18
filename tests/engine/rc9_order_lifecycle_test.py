@@ -88,7 +88,7 @@ def test_ledger_retains_rc9_denial_reason_and_does_not_claim_cancel_success():
         client_order_id="net-order", venue_order_id=None,
         side=OrderSide.BUY, order_type="LIMIT",
         quantity=Quantity.from_str("1"), price=Price.from_str("100.00"),
-        events=lambda: [],
+        events=list,
     )
     event = type("OrderCancelDenied", (), {
         "client_order_id": "net-order", "event_id": "event-1",
