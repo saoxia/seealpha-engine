@@ -5,6 +5,7 @@ import time
 
 from core.market.models import DataError
 from engine.connectors.binance.pair_data import PairREST, PairTradeSocket
+from engine.connectors.binance.spot import SpotREST, SpotTradeSocket
 
 from .clock import ServerClock
 from .funding_service import collect_funding, funding_start_ms
@@ -13,7 +14,10 @@ from .service import write_status
 
 
 async def serve_pair(policy, root, catalog, *, calculate=True, trade_socket=None, funding_socket=None):
-    rest = PairREST(symbols=(policy["symbol"],))
+    product = policy["product"]
+    if product not in {"spot", "futures_um"}:
+        raise ValueError("不支持的原始逐笔采集产品")
+    rest = (SpotREST() if product == "spot" else PairREST(symbols=(policy["symbol"],)))
     clock = ServerClock()
     with journal_access(root):
         store = PairStore(root / "collection.sqlite", policy["symbol"], policy["base_level"], policy["intervals"])
@@ -43,7 +47,7 @@ async def serve_pair(policy, root, catalog, *, calculate=True, trade_socket=None
 
     async def receive():
         # Backpressure never silently drops a trade when the writer is slower.
-        stream = (trade_socket or PairTradeSocket()).stream(policy["symbol"])
+        stream = (trade_socket or (SpotTradeSocket() if product == "spot" else PairTradeSocket())).stream(policy["symbol"])
         try:
             async for event in stream:
                 await queue.put(event)
@@ -52,16 +56,18 @@ async def serve_pair(policy, root, catalog, *, calculate=True, trade_socket=None
             await stream.aclose()
 
     receiver = asyncio.create_task(receive())
-    funding_path = (root.parent if root.name == policy["base_level"] else root) / "funding.sqlite"
-    funding_task = asyncio.create_task(collect_funding(
-        policy["symbol"], funding_path, history_start_ms=funding_start_ms(policy),
-        socket=funding_socket,
-    ))
+    funding_task = None
+    if product == "futures_um":
+        funding_path = (root.parent if root.name == policy["base_level"] else root) / "funding.sqlite"
+        funding_task = asyncio.create_task(collect_funding(
+            policy["symbol"], funding_path, history_start_ms=funding_start_ms(policy),
+            socket=funding_socket,
+        ))
     pending_events = []
     snapshot_pending, retry_delay = False, 1
     try:
         while True:
-            if funding_task.done():
+            if funding_task is not None and funding_task.done():
                 await funding_task
                 raise DataError("Funding collector stopped unexpectedly")
             if receiver.done():
@@ -121,8 +127,9 @@ async def serve_pair(policy, root, catalog, *, calculate=True, trade_socket=None
             publish()
     finally:
         receiver.cancel()
-        funding_task.cancel()
-        await asyncio.gather(receiver, funding_task, return_exceptions=True)
+        if funding_task is not None:
+            funding_task.cancel()
+        await asyncio.gather(receiver, *([funding_task] if funding_task else []), return_exceptions=True)
         try:
             publish(stopped=True)
         finally:
