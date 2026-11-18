@@ -215,10 +215,9 @@ class TaskCoordinator:
     def __init__(self, runtime, market_data, state_root, *, capacity=16):
         self.runtime = runtime
         self.market_data = market_data
-        self.journal = TaskJournal(
-            Path(state_root) / "tasks",
-            store=runtime.store if isinstance(runtime.store, Store) else None,
-        )
+        # Keep the SQLite WAL file shared, but never share a connection between
+        # the resident Engine and the worker thread's task journal.
+        self.journal = TaskJournal(Path(state_root) / "tasks")
         self.lock = threading.RLock()
         self.pending = queue.Queue(maxsize=capacity)
         self.closed = False
