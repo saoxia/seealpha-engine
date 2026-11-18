@@ -175,12 +175,12 @@ def repair_candidates(policy, settings, catalog, source, candidates, day, instru
                     or values[4] != values[4].quantize(size_step)):
                 raise ValueError("补齐来源精度与合约不一致")
             stamp = (item["end_ms"] - 1) * 1000000
-            existing = catalog.bars(bar_types=[bar_type_for(policy["symbol"], "1m", policy["product"])], start=stamp, end=stamp)
+            existing = catalog.bars(bar_types=[bar_type_for(policy["symbol"], "1m", policy.get("product", "futures_um"))], start=stamp, end=stamp)
             if existing:
                 if any(getattr(existing[0], name).as_decimal() != value for name, value in zip(FIELDS, values, strict=True)):
                     conflicts.append({"start_ms": item["start_ms"], "interval": "1m", "reason": "已有分钟来源值冲突"})
                 continue
-            bars.append(Bar(BarType.from_str(bar_type_for(policy["symbol"], "1m", policy["product"])),
+            bars.append(Bar(BarType.from_str(bar_type_for(policy["symbol"], "1m", policy.get("product", "futures_um"))),
                             *(Price.from_str(str(value)) for value in values[:4]), Quantity.from_str(str(values[4])), stamp, stamp))
         install_bars(catalog, bars)
         return len(bars), conflicts
@@ -192,17 +192,17 @@ def repair_candidates(policy, settings, catalog, source, candidates, day, instru
         canonical.write_data([instrument])
         intervals = ("1s",) if source == "1s" else ()
         prepare_data(DataRequest((policy["symbol"],), day, day + timedelta(days=1), bar_intervals=intervals,
-                                 market=policy["product"]),
-                     settings=replace(settings, market=policy["product"], catalog_dir=Path(canonical.path), state_dir=staging / "state",
+                                 market=policy.get("product", "futures_um")),
+                     settings=replace(settings, market=policy.get("product", "futures_um"), catalog_dir=Path(canonical.path), state_dir=staging / "state",
                                       symbols=(policy["symbol"],), intervals=intervals))
         for item in candidates:
             if source == "tick":
                 written += install_tick_slice(canonical, catalog, policy["symbol"], item["start_ms"], item["end_ms"],
-                                              market=policy["product"])
+                                              market=policy.get("product", "futures_um"))
             else:
-                expected = canonical.bars(bar_types=[bar_type_for(policy["symbol"], "1s", policy["product"])],
+                expected = canonical.bars(bar_types=[bar_type_for(policy["symbol"], "1s", policy.get("product", "futures_um"))],
                                           start=item["start_ms"] * 1000000, end=item["end_ms"] * 1000000 - 1)
-                actual = {bar.ts_event: bar for bar in catalog.bars(bar_types=[bar_type_for(policy["symbol"], "1s", policy["product"])],
+                actual = {bar.ts_event: bar for bar in catalog.bars(bar_types=[bar_type_for(policy["symbol"], "1s", policy.get("product", "futures_um"))],
                            start=item["start_ms"] * 1000000, end=item["end_ms"] * 1000000 - 1)}
                 if any(bar.ts_event in actual and any(getattr(bar, name) != getattr(actual[bar.ts_event], name)
                                                      for name in FIELDS) for bar in expected):
@@ -223,11 +223,11 @@ async def reconcile_day(policy, settings, rest, source, day, finish, available_m
     comparison = ParquetDataCatalog(comparison_catalog or settings.catalog_dir)
     start_ms, end_ms = int(day.timestamp() * 1000), int(finish.timestamp() * 1000)
     candidates, unresolved = await scan_day(rest, comparison, policy["symbol"], source, start_ms, end_ms, available_ms,
-                                            market=policy["product"])
+                                            market=policy.get("product", "futures_um"))
     written, conflicts = 0, []
     if candidates:
         catalog = ParquetDataCatalog(settings.catalog_dir)
-        instrument = (await asyncio.to_thread(ensure_instruments, catalog, (policy["symbol"],), market=policy["product"]))[policy["symbol"]]
+        instrument = (await asyncio.to_thread(ensure_instruments, catalog, (policy["symbol"],), market=policy.get("product", "futures_um")))[policy["symbol"]]
         writing = asyncio.create_task(asyncio.to_thread(repair_candidates, policy, settings, catalog, source, candidates, day, instrument))
         try:
             written, conflicts = await asyncio.shield(writing)
@@ -236,20 +236,20 @@ async def reconcile_day(policy, settings, rest, source, day, finish, available_m
             await writing
             raise
     remaining, after_errors = (await scan_day(rest, comparison, policy["symbol"], source, start_ms, end_ms, available_ms,
-                                            market=policy["product"])
+                                            market=policy.get("product", "futures_um"))
                                if written and source == "1m" else (candidates, []))
     needs_calculation = (bool(candidates) and source != "1m" and not conflicts
                          or bool(written) and any(level != source for level in policy.get("intervals", [])))
     if not remaining and not unresolved and not conflicts and not after_errors:
         # A matching minute-only catalog is valid comparison evidence, but do not
         # finish an explicit managed policy before its requested outputs exist.
-        active = comparison.bars(bar_types=[bar_type_for(policy["symbol"], "1m", policy["product"]), bar_type_for(policy["symbol"], "1d", policy["product"])],
+        active = comparison.bars(bar_types=[bar_type_for(policy["symbol"], "1m", policy.get("product", "futures_um")), bar_type_for(policy["symbol"], "1d", policy.get("product", "futures_um"))],
                                  start=start_ms * 1000000, end=end_ms * 1000000 - 1)
         if any(bar.volume.as_decimal() > 0 for bar in active):
             for level in policy.get("intervals", []):
                 if level in {"1s", *SCAN_PATH} and not any(
                         first < end_ms * 1000000 and last >= start_ms * 1000000
-                        for first, last in comparison.get_intervals(Bar, bar_type_for(policy["symbol"], level, policy["product"]))):
+                        for first, last in comparison.get_intervals(Bar, bar_type_for(policy["symbol"], level, policy.get("product", "futures_um")))):
                     needs_calculation = True
                     break
     return {"ready": not remaining and not unresolved and not conflicts and not after_errors and not needs_calculation,
