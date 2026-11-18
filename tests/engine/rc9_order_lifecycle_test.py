@@ -29,8 +29,8 @@ def test_partial_fill_keeps_working_order_and_inflight_quantity():
     )
     PortfolioCoordinator.on_order_filled(fake, event)
     assert seen == ["allocated", "reconciled"]
-    assert PortfolioCoordinator._in_flight(fake) == Decimal("6")
-    assert fake._working_filled == Decimal("4")
+    assert PortfolioCoordinator._in_flight(fake) == Decimal(6)
+    assert fake._working_filled == Decimal(4)
     order.filled_qty = Quantity.from_str("10")
     order.is_closed = True
     event.last_qty = Quantity.from_str("6")
@@ -41,10 +41,10 @@ def test_partial_fill_keeps_working_order_and_inflight_quantity():
 def test_unregistered_working_order_is_not_treated_as_zero_exposure():
     fake = SimpleNamespace(
         _working_id="net-order", _working_filled=Decimal(0),
-        _working_requested=Decimal("-2"),
+        _working_requested=Decimal(-2),
         cache=SimpleNamespace(order=lambda _: None),
     )
-    assert PortfolioCoordinator._in_flight(fake) == Decimal("-2")
+    assert PortfolioCoordinator._in_flight(fake) == Decimal(-2)
 
 
 def test_cancel_denial_preserves_working_id_and_suppresses_same_bar_retries():
