@@ -163,7 +163,7 @@ def run_issued_history_stream(loads, batches, starting: Money, *, funding_update
     if len(groups) != 1:
         raise EngineConflict("一次回测只支持同一品种的已下发策略。")
     symbol, group = next(iter(groups.items()))
-    instrument = _instrument(symbol)
+    instrument = instrument if instrument is not None else _instrument(symbol)
     if starting.currency != instrument.quote_currency:
         raise EngineConflict("虚拟账户报价币种与策略品种不一致。")
     iterator = iter(batches)
