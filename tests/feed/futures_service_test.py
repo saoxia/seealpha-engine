@@ -3,7 +3,6 @@
 import asyncio
 import json
 
-import pytest
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 

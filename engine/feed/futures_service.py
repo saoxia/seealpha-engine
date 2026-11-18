@@ -10,7 +10,6 @@ import fcntl
 import json
 import logging
 import time
-from pathlib import Path
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
