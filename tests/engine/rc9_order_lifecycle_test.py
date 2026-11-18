@@ -1,7 +1,7 @@
 """RC9 order lifecycle guards; synthetic events only, no exchange connectivity."""
 
 from decimal import Decimal
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 from nautilus_trader.model import OrderSide, Price, Quantity
 
@@ -54,6 +54,7 @@ def test_cancel_denial_preserves_working_id_and_suppresses_same_bar_retries():
         _denied_bar_ts=None, _cancel_sent=True,
         log=SimpleNamespace(error=messages.append),
     )
+    fake._on_cancel_failed = MethodType(PortfolioCoordinator._on_cancel_failed, fake)
     event = SimpleNamespace(client_order_id="net-order", reason="LOCAL_NOT_SENT")
     PortfolioCoordinator.on_order_cancel_denied(fake, event)
     assert fake._working_id == "net-order"
