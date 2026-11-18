@@ -33,7 +33,7 @@ def run(state_root: Path, project: Path, tenant_id: str, task_id: str) -> None:
             tenant_id, parameters["account_id"],
             parameters["start"], parameters["end"], parameters["interval"],
             parameters["starting_balance"], parameters["quote_currency"],
-            publish_event=False,
+            publish_event=False, product=parameters.get("product", "futures_um"),
         )
         if result.get("tenant_id") != tenant_id or result.get("account_id") != parameters["account_id"]:
             raise RuntimeError("回测结果归属不一致。")
