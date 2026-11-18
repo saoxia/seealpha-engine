@@ -18,6 +18,7 @@ from nautilus_trader.model import Bar, BarType, Price, Quantity, TradeTick
 from core.market.instruments import bar_type_for, bar_window, instrument_id_for
 from core.paths import PROJECT_ROOT
 from engine.connectors.binance.pair_data import PairREST
+from engine.connectors.binance.spot import SpotREST
 from engine.pipeline.catalog import ParquetDataCatalog
 from engine.pipeline.config import load_settings
 from engine.pipeline.convert_binance_bars import write_record
@@ -41,7 +42,7 @@ def history_bounds(policy, catalog, now, *, retained_start_ns=None):
         return None, end
     base = policy["base_level"] if policy["base_level"] != "auto" else "1m"
     ranges = catalog.get_intervals(TradeTick if base == "tick" else Bar,
-                                 instrument_id_for(policy["symbol"]) if base == "tick" else bar_type_for(policy["symbol"], base)) if catalog else []
+                                 instrument_id_for(policy["symbol"], policy["product"]) if base == "tick" else bar_type_for(policy["symbol"], base, policy["product"])) if catalog else []
     starts = [int(a) // 1000000 for a, _ in ranges]
     if retained_start_ns is not None:
         starts.append(retained_start_ns // 1000000)
@@ -78,9 +79,9 @@ def install_bars(catalog, bars):
 async def backfill(policy, settings, *, rest=None, now=None):
     if not (PROJECT_ROOT / "data").is_dir():
         raise OSError("数据挂载不可用")
-    if policy["product"] != "futures_um":
+    if policy["product"] not in {"futures_um", "spot"}:
         raise ValueError("此追加入口当前仅支持 U 本位永续；期权请使用已有历史接口")
-    rest = rest or PairREST(symbols=(policy["symbol"],))
+    rest = rest or (SpotREST() if policy["product"] == "spot" else PairREST(symbols=(policy["symbol"],)))
     catalog = ParquetDataCatalog(settings.catalog_dir)
     start, end = history_bounds(policy, catalog, now or datetime.now(UTC))
     earliest = await rest.get("klines", symbol=policy["symbol"], interval="1m", startTime=0, limit=1)
@@ -102,14 +103,15 @@ async def backfill(policy, settings, *, rest=None, now=None):
         finish = min(day + timedelta(days=1), end)
         print(f"追加 {policy['symbol']} {day.date()}，仅补缺失", flush=True)
         if base == "tick":
-            request = DataRequest((policy["symbol"],), day, finish, bar_intervals=("1s",) if "1s" in levels else ())
+            request = DataRequest((policy["symbol"],), day, finish, bar_intervals=("1s",) if "1s" in levels else (),
+                                  market=policy["product"])
             await asyncio.to_thread(prepare_data, request, settings=replace(settings, symbols=request.symbols, intervals=("1s",) if "1s" in levels else ()))
         if base == "1s" or "1s" in levels and base != "tick":
-            request = DataRequest((policy["symbol"],), day, finish, bar_intervals=("1s",))
+            request = DataRequest((policy["symbol"],), day, finish, bar_intervals=("1s",), market=policy["product"])
             archives = await asyncio.to_thread(sync_archives, plan_daily_archives(request), settings.raw_dir)
             for archive in archives:
                 parts = [aggregate_trade_chunk(chunk, "1s") for chunk in iter_trade_archive(archive.path)]
-                bars = aggregate_parts_to_bars(parts, instrument, "1s", bar_type_for(policy["symbol"], "1s"))
+                bars = aggregate_parts_to_bars(parts, instrument, "1s", bar_type_for(policy["symbol"], "1s", policy["product"]))
                 bars = missing_bars(catalog, bars)
                 install_bars(catalog, bars)
                 written += len(bars)
@@ -138,7 +140,7 @@ async def backfill(policy, settings, *, rest=None, now=None):
                         raise ValueError("交易所周期边界无效")
                     if left < int(start.timestamp() * 1000) or right > int(end.timestamp() * 1000):
                         continue
-                    bars.append(Bar(BarType.from_str(bar_type_for(policy["symbol"], level)),
+                    bars.append(Bar(BarType.from_str(bar_type_for(policy["symbol"], level, policy["product"])),
                                     *(Price.from_str(str(row[i])) for i in range(1, 5)),
                                     Quantity.from_str(str(row[5])), (right - 1) * 1000000, (right - 1) * 1000000))
                 bars = missing_bars(catalog, bars)
@@ -171,7 +173,7 @@ def _history_archive_available(policy, settings, day, finish):
         normalize_source,
     )
 
-    spec = plan_daily_archives(DataRequest((policy["symbol"],), day, finish, bar_intervals=()))[0]
+    spec = plan_daily_archives(DataRequest((policy["symbol"],), day, finish, bar_intervals=(), market=policy["product"]))[0]
     if local_archive_is_verified(spec, settings.raw_dir) is not None:
         return True
     url = normalize_source(spec.source_path)
@@ -193,7 +195,8 @@ def _history_archive_available(policy, settings, day, finish):
 async def serve_history(policy, settings, root, *, rest=None):
     """Continuous source backfill. Checkpoints and change delivery are file-owned."""
     root.mkdir(parents=True, exist_ok=True)
-    rest = rest or PairREST(symbols=(policy["symbol"],))
+    settings = replace(settings, market=policy["product"])
+    rest = rest or (SpotREST() if policy["product"] == "spot" else PairREST(symbols=(policy["symbol"],)))
     checkpoint = root / "checkpoint.json"
     digest = history_configuration(policy)
     saved = json.loads(checkpoint.read_text()) if checkpoint.exists() else {}
@@ -337,7 +340,7 @@ async def serve_history(policy, settings, root, *, rest=None):
         await asyncio.gather(beat, return_exceptions=True)
 
 
-def _history_inputs(source, symbol, source_level, start_ms, end_ms):
+def _history_inputs(source, symbol, source_level, start_ms, end_ms, *, market="futures_um"):
     """Read hourly source ranges; expand at most 1,000 Arrow rows at a time.
 
     Tick shards can interleave, including within one millisecond. Reduce each
@@ -348,7 +351,7 @@ def _history_inputs(source, symbol, source_level, start_ms, end_ms):
     from nautilus_trader.model import NautilusDataType
 
     tick = source_level == "tick"
-    identifier = instrument_id_for(symbol) if tick else bar_type_for(symbol, source_level)
+    identifier = instrument_id_for(symbol, market) if tick else bar_type_for(symbol, source_level, market)
     data_type = NautilusDataType.TradeTick if tick else NautilusDataType.Bar
     fields = ["price", "size", "trade_id"] if tick else ["open", "high", "low", "close", "volume"]
     cursor = start_ms
@@ -394,7 +397,7 @@ def calculate_history_change(event, destination, *, completed_until):
     source_level = event["source"]
     source = ParquetDataCatalog(event["source_catalog"])
     target = ParquetDataCatalog(destination)
-    instrument_id = instrument_id_for(policy["symbol"])
+    instrument_id = instrument_id_for(policy["symbol"], policy["product"])
     instruments = source.instruments(instrument_ids=[instrument_id])
     if not instruments:
         raise ValueError("历史计算缺少合约精度；保留待办")
@@ -456,7 +459,7 @@ def calculate_history_change(event, destination, *, completed_until):
                 continue
             if any(value != value.quantize(price_step) for value in (opening, high, low, close)) or volume != volume.quantize(size_step):
                 raise ValueError("历史来源精度与合约不一致；保留待办")
-            bar = Bar(BarType.from_str(bar_type_for(policy["symbol"], level)),
+            bar = Bar(BarType.from_str(bar_type_for(policy["symbol"], level, policy["product"])),
                       *(Price.from_str(str(value.quantize(price_step))) for value in (opening, high, low, close)),
                       Quantity.from_str(str(volume.quantize(size_step))), (b - 1) * 1000000, (b - 1) * 1000000)
             bars.append(bar)
