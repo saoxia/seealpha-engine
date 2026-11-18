@@ -793,3 +793,43 @@ async def serve_history_batch(manifest, settings, managed_root, *, project=None)
         await asyncio.gather(*(task for _policy, task in jobs.values()), return_exceptions=True)
         if fetch is not None:
             await asyncio.gather(fetch, return_exceptions=True)
+
+
+def export_depth_replay(source_files, destination):
+    """Materialize captured, verified option L2 snapshots for *offline* RC9 replay.
+
+    The immutable JSON snapshots remain the evidence of origin. This writes a
+    separate research Catalog; it does not declare L2 history gap-free or alter
+    the production Catalog, subscriptions, or quote freshness/risk gates.
+    """
+    from engine.strategies.research_native import validated_depths
+
+    paths = tuple(Path(path) for path in source_files)
+    target = Path(destination)
+    if not paths or target.exists():
+        raise ValueError("期权盘口研究需要已有来源快照和新的独立输出目录")
+    values = []
+    identity = None
+    for path in paths:
+        snapshot = _load(path)
+        if snapshot["level"] != "depth":
+            raise ValueError("期权盘口研究不允许混入非盘口来源")
+        instrument, records = _decode(snapshot)
+        if identity is None:
+            identity = instrument.id
+        elif instrument.id != identity:
+            raise ValueError("期权盘口研究不允许混合不同合约")
+        values.extend(item for item, _record in records)
+    values.sort(key=lambda item: (item.ts_event, item.sequence))
+    validated_depths(values, identity)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir()
+    try:
+        ParquetDataCatalog(target).write_data(values)
+    except BaseException:
+        # Research-only destination was created by this function, so it is safe
+        # to discard on failure. Immutable source JSON is never modified.
+        shutil.rmtree(target)
+        raise
+    return {"instrument_id": str(identity), "snapshots": len(values),
+            "catalog_path": str(target), "historical_depth_complete": False}

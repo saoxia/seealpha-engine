@@ -17,6 +17,12 @@ SeeAlpha 的独立量化数据、行情、回测、模拟与交易执行内核�
 
 本仓库不含 SeeAlpha 的 `api/`、`web/`、业务数据库迁移或用户身份数据。Platform 应通过受认证、版本化 HTTP 接口调用独立部署的 Engine，不应导入本仓库的内部 Python 模块。
 
+## RC9 原生能力适配
+
+交易事件兼容、Arrow 流式回测、原生 Funding/Greeks/L2 数据、离线执行研究、
+安全边界与验收范围见 [RC9 原生能力记录](docs/RC9_NATIVE_CAPABILITIES.md)。
+本次不包含实盘启用或 Platform HTTP v2 契约变更。
+
 ## 本地开发与测试
 
 从仓库根目录执行：
