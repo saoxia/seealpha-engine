@@ -49,6 +49,7 @@ def main():
     policy = json.loads(args.policy) if args.policy else None
     args.symbols = [normalize_symbol(args.symbol, policy["product"] if policy else "futures_um")]
     args.duration_seconds = None
+    args.funding_dir = args.root.parent
     # The caller checks the mounted data directory; never silently recreate a lost mount.
     if not args.data_root.is_dir() or not args.root.resolve().is_relative_to(args.data_root.resolve()):
         parser.error("Data mount unavailable")

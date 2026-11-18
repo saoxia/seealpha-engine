@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from core.market.instruments import INTERVALS, bar_type_for, bar_window, normalize_symbol
 from engine.feed.pair_store import journal_chart, journal_inventory, journal_page
+from engine.feed.funding_service import read_funding
 from engine.pipeline.config import load_settings
 from engine.pipeline.data_management import (
     checked_request,
@@ -55,6 +56,11 @@ class Inventory(BaseModel):
     interval: str | None = None
     all_levels: bool = False
     symbols: list[str] = Field(default_factory=list, max_length=200)
+
+
+class FundingQuery(BaseModel):
+    symbol: str = Field(min_length=1, max_length=30)
+    limit: int = Field(default=100, ge=1, le=500)
 
 
 class Chart(BaseModel):
@@ -114,6 +120,20 @@ def safe(func):
         raise HTTPException(404, "Catalog 尚不存在，请先准备数据。") from None
     except (ValueError, TypeError) as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+@router.post("/funding")
+def funding(tenant_id: str, body: FundingQuery, request: Request):
+    """Latest unsettled estimate plus official settled observations."""
+    project = checked_tenant(request, tenant_id)
+
+    def run():
+        symbol = normalize_symbol(body.symbol, "futures_um")
+        with read_lease(project, symbol, "futures_um"):
+            path = project / "data/market_data/binance_um_1m/managed" / symbol / "funding.sqlite"
+            return read_funding(path, symbol, limit=body.limit)
+
+    return safe(run)
 
 
 @router.post("/datasets")

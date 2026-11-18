@@ -7,6 +7,7 @@ from core.market.models import DataError
 from engine.connectors.binance.pair_data import PairREST, PairTradeSocket
 
 from .clock import ServerClock
+from .funding_service import collect_funding, funding_start_ms
 from .pair_store import PairStore, journal_access
 from .service import write_status
 
@@ -51,10 +52,17 @@ async def serve_pair(policy, root, catalog, *, calculate=True):
             await stream.aclose()
 
     receiver = asyncio.create_task(receive())
+    funding_path = (root.parent if root.name == policy["base_level"] else root) / "funding.sqlite"
+    funding_task = asyncio.create_task(collect_funding(
+        policy["symbol"], funding_path, history_start_ms=funding_start_ms(policy),
+    ))
     pending_events = []
     snapshot_pending, retry_delay = False, 1
     try:
         while True:
+            if funding_task.done():
+                await funding_task
+                raise DataError("Funding collector stopped unexpectedly")
             if receiver.done():
                 await receiver
             if not pending_events:
@@ -112,7 +120,8 @@ async def serve_pair(policy, root, catalog, *, calculate=True):
             publish()
     finally:
         receiver.cancel()
-        await asyncio.gather(receiver, return_exceptions=True)
+        funding_task.cancel()
+        await asyncio.gather(receiver, funding_task, return_exceptions=True)
         try:
             publish(stopped=True)
         finally:
