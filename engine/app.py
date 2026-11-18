@@ -207,6 +207,7 @@ class BacktestBody(BaseModel):
     interval: str = Field(default="1m", pattern=r"^(1m|5m)$")
     starting_balance: str = Field(min_length=1, max_length=40)
     quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
+    product: Literal["futures_um", "spot"] = "futures_um"
 
 
 def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None = None) -> FastAPI:
@@ -548,7 +549,7 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
         try:
             return runtime.run_backtest(
                 tenant_id, account_id, body.start, body.end, body.interval,
-                body.starting_balance, body.quote_currency,
+                body.starting_balance, body.quote_currency, product=body.product,
             )
         except EngineConflict as error:
             conflict(error)
