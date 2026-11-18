@@ -2,9 +2,8 @@
 
 from decimal import Decimal
 
-import pytest
-
 import pandas as pd
+import pytest
 from nautilus_trader.model import Bar, BarType, Price, Quantity
 
 from engine.pipeline.catalog import BarDataWrangler, ParquetDataCatalog, TradeTickDataWrangler
