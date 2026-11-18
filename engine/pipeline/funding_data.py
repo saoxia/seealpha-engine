@@ -32,7 +32,7 @@ async def fetch_history(symbol, start_ms, end_ms, get_page, *, page_size=1000):
             endTime=end_ms - 1, limit=page_size,
         )
         if not isinstance(page, list):
-            raise ValueError("Funding history response must be a list")
+            raise TypeError("Funding history response must be a list")
         if not page:
             break
         previous = cursor - 1
