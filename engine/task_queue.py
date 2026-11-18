@@ -16,8 +16,8 @@ import json
 import logging
 import os
 import queue
-import sqlite3
 import re
+import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,13 +27,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from core.engine_contracts import EngineConflict
-from engine.store import Store
 from engine.data_manager.contracts import (
     DataJobRequest,
     PairDeleteRequest,
     PairHistoryJob,
     PolicyTrimRequest,
 )
+from engine.store import Store
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _TENANT = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
