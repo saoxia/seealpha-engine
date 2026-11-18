@@ -4,7 +4,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from nautilus_trader.model import FundingRateUpdate, InstrumentId, OptionGreeks
+from nautilus_trader.model import InstrumentId, OptionGreeks
 
 from engine.strategies.research_native import greeks_exposures, protective_bracket
 
@@ -16,7 +16,7 @@ def test_native_greeks_are_contract_adjusted_and_grouped_per_underlying():
         ts_event=100_000, ts_init=100_000,
     )
     result = greeks_exposures(
-        [(iid, "BTC", Decimal("2"), Decimal("0.1"))], [observation],
+        [(iid, "BTC", Decimal(2), Decimal("0.1"))], [observation],
         now_ns=110_000, max_age_ns=20_000,
     )
     assert result["BTC"]["delta"] == Decimal("0.10")
