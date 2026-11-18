@@ -22,39 +22,56 @@ from nautilus_trader.model import (
 
 
 def join_funding_updates(bar_batches, funding_updates, instrument_id):
-    """Merge ordered rate events with bounded Bar batches without buffering history.
+    """Merge two already ordered sources without sorting the full funding history.
 
-    Funding updates sharing a Bar timestamp are inserted ahead of that Bar.
-    The model distinguishes observed rate timestamps from next funding boundaries;
-    only upstream's settlement logic may create actual account cash flows.
+    A funding stream may be one-pass. Reject duplicate/out-of-order observations,
+    and never buffer more than 10,000 mixed events before the native replay.
     """
-    updates = iter(sorted(funding_updates, key=lambda event: event.ts_event))
-    next_rate = next(updates, None)
-    previous = None
+    max_events = 10_000
+    updates = iter(funding_updates)
+    previous_rate_ns = None
+
+    def advance():
+        nonlocal previous_rate_ns
+        item = next(updates, None)
+        if item is None:
+            return None
+        if item.instrument_id != instrument_id:
+            raise ValueError("Funding instrument differs from backtest instrument")
+        if not item.rate.is_finite():
+            raise ValueError("Non-finite funding rate")
+        if previous_rate_ns is not None and item.ts_event <= previous_rate_ns:
+            raise ValueError("Funding event time repeated or out of order")
+        previous_rate_ns = item.ts_event
+        return item
+
+    next_rate = advance()
+    events = []
     for batch in bar_batches:
-        events = []
         for bar in batch:
             if not isinstance(bar, Bar):
                 raise TypeError("Expected historical Bars")
             while next_rate is not None and next_rate.ts_event <= bar.ts_event:
-                if next_rate.instrument_id != instrument_id:
-                    raise ValueError("Funding instrument differs from backtest instrument")
-                if not next_rate.rate.is_finite():
-                    raise ValueError("Non-finite funding rate")
-                if previous is not None and next_rate.ts_event <= previous:
-                    raise ValueError("Funding event time repeated or out of order")
-                previous = next_rate.ts_event
                 events.append(next_rate)
-                next_rate = next(updates, None)
+                if len(events) == max_events:
+                    yield events
+                    events = []
+                next_rate = advance()
             events.append(bar)
+            if len(events) == max_events:
+                yield events
+                events = []
         if events:
             yield events
-    if next_rate is not None:
-        tail = list(chain([next_rate], updates))
-        for event in tail:
-            if event.instrument_id != instrument_id or not event.rate.is_finite():
-                raise ValueError("Invalid trailing funding event")
-        yield tail
+            events = []
+    while next_rate is not None:
+        events.append(next_rate)
+        if len(events) == max_events:
+            yield events
+            events = []
+        next_rate = advance()
+    if events:
+        yield events
 
 
 def greeks_exposures(positions, greeks, *, now_ns, max_age_ns):
