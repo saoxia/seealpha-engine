@@ -20,6 +20,8 @@ from engine.feed.service import write_status
 
 # Binance permits 1,024 streams per connection. Reserve headroom for high-volume
 # raw trades, control messages and isolated groups: 128 * 2 = 256 streams.
+LOGGER = logging.getLogger(__name__)
+
 MAX_FUTURES_SYMBOLS_PER_SOCKET = 128
 MARKET_SOCKET = "wss://fstream.binance.com/market/stream"
 
@@ -76,7 +78,7 @@ class FuturesCombinedSocket:
                         except TimeoutError:
                             continue
                         if not isinstance(message, dict):
-                            raise ValueError("Unexpected combined market message")
+                            raise TypeError("Unexpected combined market message")
                         if "id" in message:
                             if message.get("result", object()) is not None:
                                 raise ValueError("Binance rejected combined subscription")
@@ -86,7 +88,7 @@ class FuturesCombinedSocket:
                             continue
                         name, row = message.get("stream"), message.get("data")
                         if not isinstance(name, str) or not isinstance(row, dict):
-                            raise ValueError("Unexpected combined futures payload")
+                            raise TypeError("Unexpected combined futures payload")
                         symbol = row.get("s")
                         if symbol not in scope["members"]:
                             continue  # An in-flight event from an unsubscribed symbol.
@@ -202,7 +204,7 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                and not job["task"].done() and time.monotonic() < deadline):
             await asyncio.sleep(0.05)
         if not job["trades"].empty() or not job["funding"].empty():
-            logging.error("Futures %s stopped with unprocessed buffered messages", symbol)
+            LOGGER.error("Futures %s stopped with unprocessed buffered messages", symbol)
         await asyncio.sleep(0)  # Yield to the per-contract journal writer.
         job["task"].cancel()
         await asyncio.gather(job["task"], return_exceptions=True)
@@ -225,7 +227,7 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                     if policy["realtime_enabled"]:
                         desired[symbol] = {**policy, "symbol": symbol}
             except (OSError, ValueError, KeyError, TypeError) as exc:
-                logging.error("Invalid shared futures configuration: %s", exc)
+                LOGGER.error("Invalid shared futures configuration: %s", exc)
                 await asyncio.sleep(1)
                 continue
 
@@ -236,7 +238,7 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                 if jobs[symbol]["task"].done():
                     task = jobs[symbol]["task"]
                     if not task.cancelled() and task.exception() is not None:
-                        logging.error("Futures %s collector error: %s", symbol, task.exception())
+                        LOGGER.error("Futures %s collector error: %s", symbol, task.exception())
                     await stop(symbol)
                     retry_at[symbol] = time.monotonic() + 30
 
