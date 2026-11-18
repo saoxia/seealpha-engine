@@ -102,6 +102,8 @@ def run_rust_trade_converter(
     day_end_ns: int,
     bar_types: dict[str, str],
     batch_rows: int,
+    spot_trades: bool = False,
+    spot_microseconds: bool = False,
 ) -> RustManifest:
     """运行 Rust 核心并返回经过边界检查的 manifest。"""
     command = [
@@ -123,6 +125,12 @@ def run_rust_trade_converter(
         "--batch-rows",
         str(batch_rows),
     ]
+    if spot_trades:
+        command.append("--spot-trades")
+    if spot_microseconds:
+        if not spot_trades:
+            raise RustConversionError("现货微秒精度仅可用于现货成交归档")
+        command.append("--spot-microseconds")
     for interval, bar_type in bar_types.items():
         command.extend(("--bar", f"{interval}={bar_type}"))
     completed = subprocess.run(command, capture_output=True, text=True, check=False)

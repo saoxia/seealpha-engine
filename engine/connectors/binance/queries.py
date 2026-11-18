@@ -107,7 +107,8 @@ async def account_snapshot(
 
 
 def account_node(account, *, http_url=None, websocket_url=None, timeout=30,
-                 log_level=LogLevel.OFF, reconciliation_lookback_minutes=1, manual=False, manual_position_side=None):
+                 log_level=LogLevel.OFF, reconciliation_lookback_minutes=1, manual=False,
+                 manual_position_side=None, product="futures_um"):
     """Build a public native account node; manual execution requires explicit opt-in."""
     account_id = AccountId(f"BINANCE-{account['id']}")
     credentials = account["credentials"]
@@ -116,17 +117,21 @@ def account_node(account, *, http_url=None, websocket_url=None, timeout=30,
             "已保存的 API Key 与 Secret Key 相同，无法生成有效签名。"
             "请编辑账户，填写同一组 API 对应的 Key 和 Secret Key。"
         )
+    if product not in {"futures_um", "spot"}:
+        raise QueryError("不支持的 Binance 账户产品。")
+    product_type = BinanceProductType.SPOT if product == "spot" else BinanceProductType.USD_M
     config = BinanceExecutionClientConfig(
         account_id=account_id,
-        product_type=BinanceProductType.USD_M,
+        product_type=product_type,
         environment=environment(account["environment"]),
         api_key=credentials["apiKey"],
         api_secret=credentials["secret"],
         base_url_http=http_url,
         base_url_ws=websocket_url,
         use_ws_trading=False,
-        oms_type=OmsType.NETTING if manual and manual_position_side == "BOTH" else OmsType.HEDGING,
-        use_position_ids=True,
+        oms_type=(OmsType.NETTING if product == "spot" or manual and manual_position_side == "BOTH"
+                  else OmsType.HEDGING),
+        use_position_ids=product != "spot",
         instrument_provider=BinanceInstrumentProviderConfig(
             load_all=True,
             query_commission_rates=False,
@@ -160,7 +165,7 @@ def account_node(account, *, http_url=None, websocket_url=None, timeout=30,
         "BINANCE",
         BinanceDataClientFactory(),
         BinanceDataClientConfig(
-            product_type=BinanceProductType.USD_M,
+            product_type=product_type,
             environment=environment(account["environment"]),
             base_url_http=http_url,
             base_url_ws=websocket_url,

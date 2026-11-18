@@ -24,14 +24,15 @@ from core.paths import PROJECT_ROOT
 from .data_management import delete_planned_files, verify_planned_file
 
 
-def pair_deletion_roots(settings, project):
+def pair_deletion_roots(settings, project, product="futures_um"):
+    folder = "binance_spot_1m" if product == "spot" else "binance_um_1m"
     current = project / "data"
-    for part in ("market_data", "binance_um_1m", "managed"):
+    for part in ("market_data", folder, "managed"):
         current /= part
         if current.is_symlink():
             raise ValueError("实时数据目录包含符号链接，请先检查存储")
     return {"catalog": settings.catalog_dir, "raw": settings.raw_dir,
-            "state": settings.state_dir, "feed": project / "data/market_data/binance_um_1m/managed"}
+            "state": settings.state_dir, "feed": project / "data/market_data" / folder / "managed"}
 
 
 def pair_deletion_plan(symbol, product, settings, *, project=PROJECT_ROOT):
@@ -77,7 +78,7 @@ def pair_deletion_plan(symbol, product, settings, *, project=PROJECT_ROOT):
                 "start": "", "end": "", "delete_archives": True,
                 "message": "删除该标的所有到期日、方向及行权价的期权行情、来源归档和托管数据；保留合约定义、账户、交易记录及研究报告。"}
     symbol = normalize_symbol(symbol, product)
-    roots = pair_deletion_roots(settings, project)
+    roots = pair_deletion_roots(settings, project, product)
     identifier = instrument_id_for(symbol, product)
     folders = [("catalog", Path("data/trades") / identifier, "ticks"),
                ("catalog", Path("supplements") / identifier, "supplements")]
@@ -92,7 +93,7 @@ def pair_deletion_plan(symbol, product, settings, *, project=PROJECT_ROOT):
     else:
         for cadence in ("daily", "monthly"):
             for kind in ("trades", "aggTrades", "klines"):
-                relative = Path("futures/um") / cadence / kind / symbol
+                relative = Path("spot" if product == "spot" else "futures/um") / cadence / kind / symbol
                 folders.append(("raw", relative, "archives"))
                 for state_kind in ("converted", "failures"):
                     folders.append(("state", Path(state_kind) / relative, "state"))
@@ -174,14 +175,14 @@ def delete_pair_data(symbol, product, settings, *, expected_snapshot, project=PR
         # Refuse deletion of a manually running managed collector, even with a stale API state.
         for item in plan["files"]:
             if item["root"] == "feed" and Path(item["path"]).name == "writer.lock":
-                lease = stack.enter_context((pair_deletion_roots(settings, project)["feed"] / item["path"]).open("r"))
+                lease = stack.enter_context((pair_deletion_roots(settings, project, product)["feed"] / item["path"]).open("r"))
                 try:
                     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     raise ValueError("该交易对仍有采集进程运行，请先停止后重新预览") from None
         if plan["snapshot"] != expected_snapshot:
             raise ValueError("数据已变化，请重新预览删除范围")
-        result = delete_planned_files(plan, pair_deletion_roots(settings, project))
+        result = delete_planned_files(plan, pair_deletion_roots(settings, project, product))
         if pair_deletion_plan(symbol, product, settings, project=project)["file_count"]:
             raise ValueError("删除期间出现新数据，配置保留；请停止其他写入并重新预览")
         return result
@@ -273,14 +274,14 @@ def history_trim_plan(symbol, product, start, settings, *, project=PROJECT_ROOT)
     """Plan deletion before a UTC day, including row trimming across file boundaries."""
     from .catalog import _parse_filename_timestamps
 
-    if product != "futures_um" or start.tzinfo is None:
-        raise ValueError("配置范围裁剪当前仅支持 USD-M 和明确 UTC 日期")
+    if product not in {"futures_um", "spot"} or start.tzinfo is None:
+        raise ValueError("配置范围裁剪仅支持永续或现货与明确 UTC 日期")
     start = start.astimezone(UTC)
     if start.time() != datetime.min.time():
         raise ValueError("数据开始日期必须为 UTC 零点")
     cutoff = int(start.timestamp() * 1000)
     complete = pair_deletion_plan(symbol, product, settings, project=project)
-    roots = pair_deletion_roots(settings, project)
+    roots = pair_deletion_roots(settings, project, product)
     files, retained = [], []
     with ExitStack() as stack:
         for item in complete["files"]:
@@ -303,7 +304,7 @@ def history_trim_plan(symbol, product, start, settings, *, project=PROJECT_ROOT)
                     raise ValueError("行情文件名无法识别，不能安全裁剪")
                 if "bars" in parts:
                     identifier = path.parent.name
-                    intervals = [level for level in INTERVALS if bar_type_for(symbol, level) == identifier]
+                    intervals = [level for level in INTERVALS if bar_type_for(symbol, level, product) == identifier]
                     if not intervals:
                         raise ValueError("K 线周期无法识别，不能安全裁剪")
                     left, right = bar_window(intervals[0], cutoff)
@@ -385,7 +386,7 @@ def trim_pair_history(symbol, product, start, settings, *, expected_snapshot, pr
     plan = history_trim_plan(symbol, product, start, settings, project=project)
     if plan["snapshot"] != expected_snapshot:
         raise ValueError("数据已变化，请重新预览配置删除范围")
-    roots = pair_deletion_roots(settings, project)
+    roots = pair_deletion_roots(settings, project, product)
     with ExitStack() as leases:
         for item in pair_deletion_plan(symbol, product, settings, project=project)["files"]:
             if item["root"] == "feed" and Path(item["path"]).name == "writer.lock":

@@ -1,4 +1,4 @@
-"""Shared Binance USD-M naming and interval rules."""
+"""Shared Binance product identities and interval rules."""
 
 import re
 from datetime import UTC, date, datetime, timedelta
@@ -48,9 +48,13 @@ def normalize_symbol(symbol: str, market: str = SUPPORTED_MARKET) -> str:
             raise MarketConfigError("无效的 Binance 期权合约代码")
         date(2000 + int(match[1]), int(match[2]), int(match[3]))
         return normalized
-    if market != SUPPORTED_MARKET:
+    if market not in {SUPPORTED_MARKET, "spot"}:
         raise MarketConfigError("不支持的行情产品")
     normalized = symbol.strip().upper().replace("-", "").replace("/", "").replace("_", "")
+    if market == "spot":
+        if not re.fullmatch(r"[A-Z0-9]{3,30}", normalized):
+            raise MarketConfigError(f"无效的 Binance 现货交易对：{symbol!r}")
+        return normalized
     if not normalized or not normalized.endswith(("USDT", "USDC")) or not normalized[:-4].isalnum():
         raise MarketConfigError(f"无效的 USDT / USDC 交易对：{symbol!r}")
     return normalized
@@ -72,8 +76,10 @@ def instrument_id_for(symbol: str, market: str = SUPPORTED_MARKET) -> str:
     """返回 Binance 市场对应的 Nautilus InstrumentId。"""
     if market == "options":
         return f"{normalize_symbol(symbol, market)}.BINANCE"
+    if market == "spot":
+        return f"{normalize_symbol(symbol, market)}.BINANCE"
     if market != SUPPORTED_MARKET:
-        raise MarketConfigError("首版管道仅支持 Binance USD-M 永续合约")
+        raise MarketConfigError("不支持的 Binance 行情产品")
     return f"{symbol.upper()}-PERP.BINANCE"
 
 

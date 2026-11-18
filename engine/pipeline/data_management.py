@@ -50,7 +50,8 @@ def checked_request(symbol, start, end, intervals, settings, *, market="futures_
         from engine.pipeline.options_data import check_request
         check_request(request)
     else:
-        validate_request_against_settings(request, replace(settings, symbols=request.symbols, intervals=tuple(INTERVALS)))
+        validate_request_against_settings(request, replace(settings, market=market, symbols=request.symbols,
+                                                          intervals=tuple(INTERVALS)))
     return request
 
 
@@ -75,8 +76,8 @@ def coverage(request, settings):
     for spec, path in archive_entries(request, settings):
         record = read_record(record_path_for(path, settings.raw_dir, settings.state_dir))
         present = bool(record and record.get("status") == "ready" and catalog
-                       and record.get("instrument_id") == instrument_id_for(spec.symbol)
-                       and catalog_contains_record(catalog, instrument_id_for(spec.symbol),
+                       and record.get("instrument_id") == instrument_id_for(spec.symbol, spec.market)
+                       and catalog_contains_record(catalog, instrument_id_for(spec.symbol, spec.market),
                                                    record, request.bar_intervals))
         days.append({
             "day": spec.day.isoformat(), "symbol": spec.symbol,
@@ -104,6 +105,9 @@ def dataset_inventory(settings, *, interval=None, all_levels=False):
         identifier = str(instrument.id)
         if identifier.endswith(("USDT-PERP.BINANCE", "USDC-PERP.BINANCE")):
             symbols.add((identifier.removesuffix("-PERP.BINANCE"), "futures_um"))
+        elif (identifier.endswith(".BINANCE") and not isinstance(instrument, CryptoOption)
+              and "-PERP" not in identifier and "-" not in identifier):
+            symbols.add((identifier.removesuffix(".BINANCE"), "spot"))
         elif isinstance(instrument, CryptoOption) and identifier.endswith(".BINANCE"):
             symbol = identifier.removesuffix(".BINANCE")
             symbols.add((symbol, "options"))
@@ -335,7 +339,7 @@ def validate(request, settings):
     output, rather than making claims about unobserved exchange history.
     """
     catalog = open_catalog(settings)
-    instruments = catalog.instruments(instrument_ids=[instrument_id_for(request.symbols[0])])
+    instruments = catalog.instruments(instrument_ids=[instrument_id_for(request.symbols[0], request.market)])
     if not instruments:
         raise ValueError("Catalog 缺少合约定义")
     instrument = max(instruments, key=lambda item: item.ts_init)
@@ -349,10 +353,11 @@ def validate(request, settings):
             finish = begin + timedelta(days=1)
             before = fingerprint(settings, str(instrument.id), "trades")
 
-            def expected_rows(path=path, begin=begin, finish=finish):
+            def expected_rows(path=path, begin=begin, finish=finish, spec=spec):
                 previous_time = previous_id = None
                 wrangler = TradeTickDataWrangler(instrument)
-                for frame in iter_trade_archive(path):
+                micros = spec.market == "spot" and spec.day.isoformat() >= "2025-01-01"
+                for frame in iter_trade_archive(path, market=spec.market, microseconds=micros):
                     if (previous_time is not None and int(frame.iloc[0].timestamp) < previous_time
                             or previous_id is not None and int(frame.iloc[0].trade_id) <= previous_id):
                         raise ValueError("原始成交跨块倒序或重复")
@@ -362,7 +367,7 @@ def validate(request, settings):
                         "price": frame.price.to_numpy(), "quantity": frame.quantity.to_numpy(),
                         "side": frame.buyer_maker.map({True: "SELL", False: "BUY"}).to_numpy(),
                         "trade_id": frame.trade_id.astype(str).to_numpy(),
-                    }, index=pd.to_datetime(frame.timestamp.to_numpy(), unit="ms", utc=True))
+                    }, index=pd.to_datetime(frame.timestamp.to_numpy(), unit="us" if micros else "ms", utc=True))
                     for tick in wrangler.process(normalized):
                         if not pd.Timestamp(begin).value <= tick.ts_event < pd.Timestamp(finish).value:
                             raise ValueError("原始成交超出归档日期")
@@ -371,7 +376,7 @@ def validate(request, settings):
                                "aggressor_side": tick.aggressor_side.name}
 
             count = 0
-            actual = rows(settings, spec.symbol, begin, finish)
+            actual = rows(settings, spec.symbol, begin, finish, market=spec.market)
             try:
                 for expected, observed in zip_longest(expected_rows(), actual):
                     # Decimal string formatting may differ between Arrow and the model.
@@ -399,7 +404,7 @@ def validate(request, settings):
 
 
 def execute(action, request, settings, output, *, expected_snapshot=None, delete_archives=False):
-    settings = replace(settings, symbols=request.symbols,
+    settings = replace(settings, market=request.market, symbols=request.symbols,
                        intervals=tuple(dict.fromkeys((*settings.intervals, *(request.bar_intervals or ())))))
     if action in {"prepare", "materialize"} and any(level in {"3d", "1w", "1M"} for level in request.bar_intervals or ()):
         raise ValueError("跨日周期请使用交易对配置的历史追加任务")
@@ -425,7 +430,7 @@ def execute(action, request, settings, output, *, expected_snapshot=None, delete
             read_archive_checksum(path)
             local.append(SyncedArchive(spec, path))
         instruments = {request.symbols[0]: max(
-            catalog.instruments(instrument_ids=[instrument_id_for(request.symbols[0])]),
+            catalog.instruments(instrument_ids=[instrument_id_for(request.symbols[0], request.market)]),
             key=lambda item: item.ts_init,
         )}
         print("从本地已校验 trades 归档补齐派生 K 线；不下载、不强制重建", flush=True)
@@ -435,19 +440,19 @@ def execute(action, request, settings, output, *, expected_snapshot=None, delete
     if action == "export":
         output.parent.mkdir(parents=True, exist_ok=True)
         temporary = output.with_suffix(".part")
-        before = fingerprint(settings, instrument_id_for(request.symbols[0]), "trades")
+        before = fingerprint(settings, instrument_id_for(request.symbols[0], request.market), "trades")
         count = 0
         try:
             with temporary.open("x", encoding="utf-8", newline="") as target:
                 writer = csv.DictWriter(target, fieldnames=["ts_event_ns", "price", "size",
                                                            "aggressor_side", "trade_id"])
                 writer.writeheader()
-                for row in rows(settings, request.symbols[0], request.start, request.end):
+                for row in rows(settings, request.symbols[0], request.start, request.end, market=request.market):
                     writer.writerow(row)
                     count += 1
                 target.flush()
                 os.fsync(target.fileno())
-            if before != fingerprint(settings, instrument_id_for(request.symbols[0]), "trades"):
+            if before != fingerprint(settings, instrument_id_for(request.symbols[0], request.market), "trades"):
                 raise ValueError("导出期间数据发生变化，请重试")
             os.replace(temporary, output)
         finally:

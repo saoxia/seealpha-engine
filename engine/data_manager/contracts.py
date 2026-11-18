@@ -17,7 +17,7 @@ def normalize_scope(symbol, product):
 class DataRange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     symbol: str = Field(min_length=1, max_length=30)
-    product: Literal["futures_um", "options"] = "futures_um"
+    product: Literal["futures_um", "spot", "options"] = "futures_um"
     start: datetime
     end: datetime
     intervals: list[str] = Field(default_factory=lambda: ["1m"], max_length=16,
@@ -48,7 +48,7 @@ class DataJobRequest(DataDeletePlanRequest):
 
     @model_validator(mode="after")
     def validate_deletion(self):
-        if self.product == "futures_um" and self.action in {"prepare", "materialize"} and any(level in {"3d", "1w", "1M"} for level in self.intervals):
+        if self.product in {"futures_um", "spot"} and self.action in {"prepare", "materialize"} and any(level in {"3d", "1w", "1M"} for level in self.intervals):
             raise ValueError("跨日周期请使用交易对配置的历史追加任务")
         if self.action == "materialize" and not self.intervals:
             raise ValueError("生成 K 线需要选择 K 线级别")
@@ -64,7 +64,7 @@ class DataMarket(BaseModel):
     symbol: str
     base: str
     quote: str
-    product: Literal["futures_um", "options"] = "futures_um"
+    product: Literal["futures_um", "spot", "options"] = "futures_um"
     underlying: str | None = None
     expiry: int | None = None
     strike: str | None = None
@@ -81,15 +81,15 @@ class DataCapabilities(BaseModel):
     max_preview_minutes: int = 15
     realtime_ticks: bool = True
     realtime_base_levels: list[str] = Field(default_factory=lambda: ["tick", "1s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"])
-    realtime_products: list[str] = Field(default_factory=lambda: ["futures_um", "options"])
-    products: list[str] = Field(default_factory=lambda: ["futures_um", "options"])
+    realtime_products: list[str] = Field(default_factory=lambda: ["futures_um", "spot", "options"])
+    products: list[str] = Field(default_factory=lambda: ["futures_um", "spot", "options"])
     option_intervals: list[str] = Field(default_factory=lambda: ["1m", "5m", "15m"])
     option_historical_ticks: bool = False
     option_recent_limit: int = 500
 
 
 class DataDeletionPlan(BaseModel):
-    product: Literal["futures_um", "options"] = "futures_um"
+    product: Literal["futures_um", "spot", "options"] = "futures_um"
     snapshot: str
     file_count: int
     total_bytes: int
@@ -121,7 +121,7 @@ class DataPolicy(BaseModel):
     """Desired service parameters; runtime progress belongs to files."""
     model_config = ConfigDict(extra="forbid")
     symbol: str = Field(min_length=1, max_length=30)
-    product: Literal["futures_um", "options"] = "futures_um"
+    product: Literal["futures_um", "spot", "options"] = "futures_um"
     base_level: Literal["auto", "tick", "1s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"] = "1m"
     intervals: list[str] = Field(default_factory=list, max_length=16)
     realtime_enabled: bool = True
@@ -154,7 +154,7 @@ class DataPolicy(BaseModel):
         self.intervals = list(dict.fromkeys(self.intervals))
         if any(value not in INTERVALS for value in self.intervals):
             raise ValueError("请选择 Binance 支持的 K 线周期")
-        if self.product == "futures_um" and self.base_level != "auto":
+        if self.product in {"futures_um", "spot"} and self.base_level != "auto":
             if self.base_level == "1s":
                 self.base_level = "1m"
             self.intervals = list(INTERVALS)
@@ -195,7 +195,7 @@ class DataPolicySave(DataPolicy):
 class PairDeletePlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     symbol: str = Field(min_length=1, max_length=30)
-    product: Literal["futures_um", "options"] = "futures_um"
+    product: Literal["futures_um", "spot", "options"] = "futures_um"
 
     @model_validator(mode="after")
     def validate_symbol(self):

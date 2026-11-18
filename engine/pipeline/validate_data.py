@@ -111,7 +111,7 @@ def parse_buyer_maker(value: object) -> bool:
     raise DataValidationError(f"无效的 isBuyerMaker：{value!r}")
 
 
-def normalize_trade_frame(frame: pd.DataFrame) -> pd.DataFrame:
+def normalize_trade_frame(frame: pd.DataFrame, *, microseconds: bool = False) -> pd.DataFrame:
     """规范化并校验不依赖行顺序的 Trade 字段。"""
     missing = [column for column in TRADE_COLUMNS if column not in frame.columns]
     if missing:
@@ -130,8 +130,10 @@ def normalize_trade_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
     converted["trade_id"] = converted["trade_id"].astype("int64")
     converted["timestamp"] = converted["timestamp"].astype("int64")
-    if converted["timestamp"].max() >= 100_000_000_000_000:
-        raise DataValidationError("USD-M Trade 时间戳应为毫秒，但检测到了微秒级数值")
+    lower, upper = ((100_000_000_000_000, 100_000_000_000_000_000)
+                    if microseconds else (0, 100_000_000_000_000))
+    if converted["timestamp"].min() < lower or converted["timestamp"].max() >= upper:
+        raise DataValidationError("Trade 时间戳单位与归档来源不一致")
     if not (converted["price"] > 0).all():
         raise DataValidationError("Trade price 必须大于零")
     if not (converted["quantity"] > 0).all():

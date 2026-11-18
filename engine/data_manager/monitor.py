@@ -13,7 +13,7 @@ ROLES = ("collection", "history", "calculation")
 def observe(subscriptions, policy, now):
     root = subscriptions.root(policy)
     enabled = {"collection": policy.realtime_enabled, "history": policy.history_enabled,
-               "calculation": policy.product == "futures_um" and policy.base_level != "auto" and (policy.realtime_enabled or policy.history_enabled)}
+               "calculation": policy.product in {"futures_um", "spot"} and policy.base_level != "auto" and (policy.realtime_enabled or policy.history_enabled)}
     result = {}
     for role in ROLES:
         item = {"state": "STOPPED", "healthy": False, "backlog": None, "reason": "disabled"}
@@ -34,7 +34,7 @@ def observe(subscriptions, policy, now):
                 item.update(state="DEGRADED", reason="status_unavailable")
             processes = subscriptions.processes if role == "collection" else subscriptions.auxiliary
             symbol = ("ALL" if policy.product == "options" or
-                      policy.product == "futures_um" and policy.base_level != "auto" and role == "collection"
+                      policy.product in {"futures_um", "spot"} and policy.base_level != "auto" and role == "collection"
                       else policy.symbol)
             key = (policy.product, symbol) if role == "collection" else (policy.product, symbol, role)
             process = processes.get(key)

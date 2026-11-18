@@ -21,6 +21,7 @@ class BacktestParameters(BaseModel):
     interval: Literal["1m", "5m"] = "1m"
     starting_balance: str = Field(min_length=1, max_length=40)
     quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
+    product: Literal["futures_um", "spot"] = "futures_um"
 
 
 class WorkerSettingsUpdate(BaseModel):

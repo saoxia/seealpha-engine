@@ -85,7 +85,7 @@ class DataService:
         settings = load_settings()
         request = checked_request(payload.symbol, payload.start, payload.end,
                                   payload.intervals, settings, market=payload.product)
-        if request.market == "futures_um":
+        if request.market in {"futures_um", "spot"}:
             plan_daily_archives(request)
         return request, settings
 
@@ -154,7 +154,7 @@ class DataService:
                         if (item.product, item.symbol) == (policy.product, policy.symbol)), None)
             policy = self.subscriptions.resolve(policy, old)
             later = False
-            if policy.product == "futures_um" and policy.history_start is not None:
+            if policy.product in {"futures_um", "spot"} and policy.history_start is not None:
                 if policy.history_start >= datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0):
                     raise ValueError("数据开始日期须早于今天 UTC 零点")
                 if old is not None and old.history_mode == "start" and old.history_start is not None:

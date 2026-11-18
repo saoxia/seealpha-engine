@@ -8,12 +8,14 @@ import subprocess
 import sys
 import threading
 from contextlib import aclosing
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from core.engine_contracts import ENGINE_CONTRACT_HEADER, ENGINE_CONTRACT_VERSION
 from core.trading_contracts import TRADING_SYMBOL, CancelOrderValues, SubmitOrderValues
@@ -62,6 +64,64 @@ class CommandBody(Credentials):
             return values  # The action field already carries its own 422 validation error.
         schema = SubmitOrderValues if action == "submit" else CancelOrderValues
         return schema.model_validate(values).model_dump(mode="json")
+
+
+
+class SpotSubmitValues(BaseModel):
+    """Spot-only intent with no futures hedge, short or margin fields."""
+
+    model_config = ConfigDict(extra="forbid")
+    account_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    request_id: UUID
+    symbol: str = Field(pattern=r"^[A-Z0-9]{2,30}(?:USDT|USDC|FDUSD)$")
+    side: Literal["buy", "sell"]
+    order_type: Literal["limit", "market"]
+    quantity: str = Field(pattern=r"^\d{1,16}(?:\.\d{1,18})?$", max_length=35)
+    price: str | None = Field(default=None, pattern=r"^\d{1,16}(?:\.\d{1,18})?$", max_length=35)
+    time_in_force: Literal["GTC", "IOC", "FOK"] = "GTC"
+    post_only: bool = False
+    environment: Literal["production", "sandbox"]
+
+    @model_validator(mode="after")
+    def validate_spot(self):
+        if Decimal(self.quantity) <= 0:
+            raise ValueError("现货数量必须大于零")
+        if self.order_type == "limit" and (self.price is None or Decimal(self.price) <= 0):
+            raise ValueError("现货限价单需要有效价格")
+        if self.order_type == "market" and (
+            self.price is not None or self.post_only or self.time_in_force != "GTC"
+        ):
+            raise ValueError("现货市价单不能指定限价、Post Only 或限价有效期")
+        if self.post_only and self.time_in_force != "GTC":
+            raise ValueError("Post Only 仅允许 GTC")
+        return self
+
+
+class SpotCancelValues(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    account_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    request_id: UUID
+    symbol: str = Field(pattern=r"^[A-Z0-9]{2,30}(?:USDT|USDC|FDUSD)$")
+    client_order_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    environment: Literal["production", "sandbox"]
+
+
+class SpotCommandBody(Credentials):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["submit", "cancel"]
+    values: dict
+
+    @field_validator("values")
+    @classmethod
+    def validate_values(cls, values, info):
+        action = info.data.get("action")
+        schema = SpotSubmitValues if action == "submit" else SpotCancelValues
+        return schema.model_validate(values).model_dump(mode="json")
+
+
+class SpotTradingStateBody(Credentials):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(pattern=r"^[A-Z0-9]{2,30}(?:USDT|USDC|FDUSD)$")
 
 
 class TradingStateBody(Credentials):
@@ -147,6 +207,7 @@ class BacktestBody(BaseModel):
     interval: str = Field(default="1m", pattern=r"^(1m|5m)$")
     starting_balance: str = Field(min_length=1, max_length=40)
     quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
+    product: Literal["futures_um", "spot"] = "futures_um"
 
 
 def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None = None) -> FastAPI:
@@ -308,6 +369,22 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
     async def trading_state(tenant_id: str, account_id: str, body: TradingStateBody):
         try:
             return await runtime.trading_state(body.account(tenant_id, account_id), body.symbol)
+        except EngineConflict as error:
+            conflict(error)
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/spot/trading/state")
+    async def spot_trading_state(tenant_id: str, account_id: str, body: SpotTradingStateBody):
+        try:
+            return await runtime.trading_state(body.account(tenant_id, account_id), body.symbol)
+        except EngineConflict as error:
+            conflict(error)
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/spot/orders")
+    async def spot_order(tenant_id: str, account_id: str, body: SpotCommandBody):
+        if body.environment != body.values["environment"]:
+            raise HTTPException(422, "账户环境与现货委托环境不匹配")
+        try:
+            return await runtime.command(body.account(tenant_id, account_id), body.action, body.values)
         except EngineConflict as error:
             conflict(error)
 
@@ -473,6 +550,7 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
             return runtime.run_backtest(
                 tenant_id, account_id, body.start, body.end, body.interval,
                 body.starting_balance, body.quote_currency,
+                **({"product": "spot"} if body.product == "spot" else {}),
             )
         except EngineConflict as error:
             conflict(error)
