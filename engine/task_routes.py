@@ -23,6 +23,13 @@ class BacktestParameters(BaseModel):
     quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
 
 
+class WorkerSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_workers: int = Field(ge=1, le=8, strict=True)
+    timeout_seconds: int = Field(ge=1, le=86400, strict=True)
+
+
 class SubmitJob(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -54,6 +61,18 @@ def submit(tenant_id: str, body: SubmitJob, request: Request):
 @router.get("")
 def list_jobs(tenant_id: str, request: Request):
     return {"items": coordinator(request).list(tenant_id)}
+
+
+@router.get("/worker-settings")
+def worker_settings(tenant_id: str, request: Request):
+    return coordinator(request).worker_settings(tenant_id)
+
+
+@router.put("/worker-settings")
+def update_worker_settings(tenant_id: str, body: WorkerSettingsUpdate, request: Request):
+    return coordinator(request).update_worker_settings(
+        tenant_id, max_workers=body.max_workers, timeout_seconds=body.timeout_seconds,
+    )
 
 
 @router.get("/{identity}")
