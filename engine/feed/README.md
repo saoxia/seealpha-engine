@@ -245,6 +245,6 @@ Engine 内部只读接口：`POST /tenants/{tenant_id}/data/funding`，请求体
 
 ## U 本位合约共享 WebSocket（批量配置）
 
-显式 `tick` / `1m` 永续数据配置由租户级 `engine.feed.managed --futures-config` 共享采集进程接管，配置保留每交易对独立的 `collection.sqlite`、`funding.sqlite`、写锁、策略就绪门禁、历史和计算进程。一个 `/market/stream` WebSocket 订阅最多 128 个标的的 `@trade` 与 `@markPrice@1s`，共 256 条 stream；Binance 理论单连接为 1024 条，保留高成交量与重连安全余量。超过 128 标的自动在共享进程内分组建立下一条 WebSocket，不设置 128 个的全局上限。配置变更可动态订阅/退订，不会为新增标的重启其他标的的采集进程或清空历史。
+显式 `tick` / `1m` 永续数据配置由租户级 `engine.feed.managed --futures-config` 共享采集进程接管，配置保留每交易对独立的 `collection.sqlite`、`funding.sqlite`、写锁、策略就绪门禁、历史和计算进程。每组最多 128 个标的，分别由一条 `/public/stream` WebSocket 订阅原始 `@trade`，一条 `/market/stream` WebSocket 订阅 `@markPrice@1s`，共两条连接、各最多 128 条 stream；Binance 每连接理论上限 1024 条，保留高成交量与重连安全余量。超过 128 标的自动在共享进程内增加下一组两条 WebSocket，不设置 128 个的全局上限。配置变更可动态订阅/退订，不会为新增标的重启其他标的的采集进程或清空历史。
 
 写入仍由每个交易对单独处理并持有访问锁；删除时先从运行清单退订并等待对应写锁释放。队列背压不静默丢成交。旧 `base_level=auto` 分钟接口与期权共享采集保持现状。全部离线模拟测试不代替真实网络流量、连接 24 小时滚动或限流验收。

@@ -1,7 +1,8 @@
 """Shared, public USD-M futures transport with per-contract durable journals.
 
-One combined Binance market WebSocket carries two streams per symbol: raw
-trades and the funding estimate. Each contract retains its independent writer,
+Binance routes raw trades to /public and mark-price estimates to /market.
+Each channel is multiplexed across up to 128 symbols per socket. Every contract
+retains its independent writer,
 clock, queue, recovery checkpoint and SQLite journal.
 """
 
@@ -18,18 +19,23 @@ from core.market.instruments import normalize_symbol
 from engine.feed.pair_service import serve_pair
 from engine.feed.service import write_status
 
-# Binance permits 1,024 streams per connection. Reserve headroom for high-volume
-# raw trades, control messages and isolated groups: 128 * 2 = 256 streams.
+# Binance permits 1,024 streams per connection. Reserve high-volume headroom:
+# 128 trade streams on /public + 128 funding streams on /market per group.
 LOGGER = logging.getLogger(__name__)
 
 MAX_FUTURES_SYMBOLS_PER_SOCKET = 128
+PUBLIC_SOCKET = "wss://fstream.binance.com/public/stream"
 MARKET_SOCKET = "wss://fstream.binance.com/market/stream"
 
 
 class FuturesCombinedSocket:
     """Subscribe/unsubscribe in place; failed connections notify every pair."""
 
-    async def stream(self, scope):
+    async def stream(self, scope, *, channel="trade"):
+        if channel not in {"trade", "mark"}:
+            raise ValueError("Unknown futures stream channel")
+        endpoint = PUBLIC_SOCKET if channel == "trade" else MARKET_SOCKET
+        suffix = "@trade" if channel == "trade" else "@markPrice@1s"
         delay = 1
         while True:
             known = set(scope["members"])
@@ -37,7 +43,7 @@ class FuturesCombinedSocket:
                 if len(known) > MAX_FUTURES_SYMBOLS_PER_SOCKET:
                     raise ValueError("Too many USD-M symbols on one socket")
                 async with connect(
-                    MARKET_SOCKET, open_timeout=12, close_timeout=5,
+                    endpoint, open_timeout=12, close_timeout=5,
                     ping_interval=20, ping_timeout=30, max_queue=4096, max_size=65536,
                 ) as socket:
                     subscribed = set()
@@ -55,9 +61,7 @@ class FuturesCombinedSocket:
                                 next_id += 1
                                 await socket.send(json.dumps({
                                     "method": "SUBSCRIBE",
-                                    "params": [stream for symbol in sorted(additions)
-                                               for stream in (f"{symbol.lower()}@trade",
-                                                              f"{symbol.lower()}@markPrice@1s")],
+                                    "params": [f"{symbol.lower()}{suffix}" for symbol in sorted(additions)],
                                     "id": next_id,
                                 }))
                                 pending[next_id] = additions
@@ -65,9 +69,7 @@ class FuturesCombinedSocket:
                                 next_id += 1
                                 await socket.send(json.dumps({
                                     "method": "UNSUBSCRIBE",
-                                    "params": [stream for symbol in sorted(removed)
-                                               for stream in (f"{symbol.lower()}@trade",
-                                                              f"{symbol.lower()}@markPrice@1s")],
+                                    "params": [f"{symbol.lower()}{suffix}" for symbol in sorted(removed)],
                                     "id": next_id,
                                 }))
                             if additions or removed:
@@ -92,12 +94,13 @@ class FuturesCombinedSocket:
                         symbol = row.get("s")
                         if symbol not in scope["members"]:
                             continue  # An in-flight event from an unsubscribed symbol.
-                        if name == f"{symbol.lower()}@trade" and row.get("e") == "trade":
+                        if (channel == "trade" and name == f"{symbol.lower()}@trade"
+                                and row.get("e") == "trade"):
                             event = {"kind": "trade", "row": {
                                 "id": row["t"], "time": row["T"], "price": row["p"],
                                 "qty": row["q"], "isBuyerMaker": row["m"],
                             }}
-                        elif (name == f"{symbol.lower()}@markPrice@1s"
+                        elif (channel == "mark" and name == f"{symbol.lower()}@markPrice@1s"
                               and row.get("e") == "markPriceUpdate"):
                             event = {"kind": "mark", "row": row}
                         else:
@@ -105,7 +108,6 @@ class FuturesCombinedSocket:
                         delay = 1
                         known.add(symbol)
                         yield {"symbol": symbol, **event}
-                    # Never silently continue after a protocol/identity violation.
             except (WebSocketException, OSError, TimeoutError, ConnectionError,
                     ValueError, KeyError, TypeError) as exc:
                 for symbol in sorted(known | scope["members"]):
@@ -161,8 +163,8 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                     })
                     raise
 
-    async def receive(scope):
-        stream = socket_factory().stream(scope)
+    async def receive(scope, channel):
+        stream = socket_factory().stream(scope, channel=channel)
         try:
             async for event in stream:
                 symbol = event["symbol"]
@@ -171,13 +173,11 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                     continue
                 kind = event["kind"]
                 if kind in {"connected", "disconnected"}:
-                    targets = (job["trades"], job["funding"])
-                    delivered = {key: value for key, value in event.items() if key != "symbol"}
-                    for queue in targets:
-                        await queue.put(delivered)
-                elif kind == "trade":
+                    queue = job["trades"] if channel == "trade" else job["funding"]
+                    await queue.put({key: value for key, value in event.items() if key != "symbol"})
+                elif kind == "trade" and channel == "trade":
                     await job["trades"].put({"kind": "trade", "row": event["row"]})
-                elif kind == "mark":
+                elif kind == "mark" and channel == "mark":
                     await job["funding"].put({"kind": "mark", "row": event["row"]})
                 else:
                     raise ValueError("Unknown combined futures event")
@@ -187,11 +187,11 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
             for symbol in scope["members"]:
                 job = jobs.get(symbol)
                 if job is not None and not job["task"].done():
-                    for queue in (job["trades"], job["funding"]):
-                        try:
-                            queue.put_nowait({"kind": "disconnected", "error": "group_restarted"})
-                        except asyncio.QueueFull:
-                            job["task"].cancel()  # Fail closed rather than silently drop data.
+                    queue = job["trades"] if channel == "trade" else job["funding"]
+                    try:
+                        queue.put_nowait({"kind": "disconnected", "error": "group_restarted"})
+                    except asyncio.QueueFull:
+                        job["task"].cancel()  # Fail closed rather than silently drop data.
 
     async def stop(symbol):
         job = jobs[symbol]
@@ -253,9 +253,10 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
             assigned = set()
             for group_id, group in list(groups.items()):
                 group["scope"]["members"].intersection_update(active)
-                if not group["scope"]["members"] or group["task"].done():
-                    group["task"].cancel()
-                    await asyncio.gather(group["task"], return_exceptions=True)
+                if not group["scope"]["members"] or any(task.done() for task in group["tasks"]):
+                    for task in group["tasks"]:
+                        task.cancel()
+                    await asyncio.gather(*group["tasks"], return_exceptions=True)
                     if group["scope"]["members"]:
                         for symbol in group["scope"]["members"]:
                             job = jobs[symbol]
@@ -268,17 +269,24 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                 group = next((g for g in groups.values()
                               if len(g["scope"]["members"]) < MAX_FUTURES_SYMBOLS_PER_SOCKET), None)
                 if group is None:
-                    group = {"scope": {"members": set()}, "task": None}
+                    group = {"scope": {"members": set()}, "tasks": None}
                     groups[next_group] = group
                     next_group += 1
                 group["scope"]["members"].add(symbol)
             for group in groups.values():
-                if group["task"] is None:
-                    group["task"] = asyncio.create_task(receive(group["scope"]))
+                if group["tasks"] is None:
+                    group["tasks"] = [
+                        asyncio.create_task(receive(group["scope"], channel))
+                        for channel in ("trade", "mark")
+                    ]
             await asyncio.sleep(1)
     finally:
         for group in groups.values():
-            group["task"].cancel()
-        await asyncio.gather(*(g["task"] for g in groups.values()), return_exceptions=True)
+            for task in group["tasks"]:
+                task.cancel()
+        await asyncio.gather(
+            *(task for g in groups.values() for task in g["tasks"]),
+            return_exceptions=True,
+        )
         for symbol in list(jobs):
             await stop(symbol)

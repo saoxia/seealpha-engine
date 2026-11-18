@@ -13,48 +13,57 @@ from engine.feed.futures_service import (
 )
 
 
-def test_combined_futures_trade_and_funding_on_one_connection(monkeypatch):
+def test_trades_and_funding_use_two_category_specific_shared_connections(monkeypatch):
     async def scenario():
         urls, commands = [], []
+
         async def handler(socket):
             message = json.loads(await socket.recv())
             commands.append(message)
             assert message["method"] == "SUBSCRIBE"
-            assert set(message["params"]) == {
-                "ethusdt@trade", "ethusdt@markPrice@1s",
-                "btcusdt@trade", "btcusdt@markPrice@1s",
-            }
+            selected = set(message["params"])
+            if selected == {"ethusdt@trade", "btcusdt@trade"}:
+                row = {"e": "trade", "s": "ETHUSDT", "t": 4, "T": 200,
+                       "p": "100", "q": "2", "m": False}
+                payload = {"stream": "ethusdt@trade", "data": row}
+            else:
+                assert selected == {"ethusdt@markPrice@1s", "btcusdt@markPrice@1s"}
+                row = {"e": "markPriceUpdate", "s": "BTCUSDT",
+                       "E": 200, "T": 500, "r": "0.0001"}
+                payload = {"stream": "btcusdt@markPrice@1s", "data": row}
             await socket.send(json.dumps({"result": None, "id": message["id"]}))
-            await socket.send(json.dumps({"stream": "ethusdt@trade", "data": {
-                "e": "trade", "s": "ETHUSDT", "t": 4, "T": 200,
-                "p": "100", "q": "2", "m": False,
-            }}))
-            await socket.send(json.dumps({"stream": "btcusdt@markPrice@1s", "data": {
-                "e": "markPriceUpdate", "s": "BTCUSDT",
-                "E": 200, "T": 500, "r": "0.0001",
-            }}))
+            await socket.send(json.dumps(payload))
             await socket.wait_closed()
 
         async with serve(handler, "127.0.0.1", 0) as server:
             port = server.sockets[0].getsockname()[1]
+
             def local(url, **kwargs):
                 urls.append(url)
                 return connect(f"ws://127.0.0.1:{port}", **kwargs)
+
             monkeypatch.setattr("engine.feed.futures_service.connect", local)
             scope = {"members": {"ETHUSDT", "BTCUSDT"}}
-            stream = FuturesCombinedSocket().stream(scope)
-            received = [await asyncio.wait_for(anext(stream), 3) for _ in range(4)]
-            await stream.aclose()
-        assert len(urls) == 1
-        assert received[:2] == [
-            {"symbol": "BTCUSDT", "kind": "connected"},
-            {"symbol": "ETHUSDT", "kind": "connected"},
-        ]
-        assert received[2]["row"]["id"] == 4
-        assert received[2]["symbol"] == "ETHUSDT"
-        assert received[3]["kind"] == "mark"
-        assert received[3]["row"]["s"] == "BTCUSDT"
-        assert MAX_FUTURES_SYMBOLS_PER_SOCKET * 2 < 1024
+            trades = FuturesCombinedSocket().stream(scope, channel="trade")
+            funding = FuturesCombinedSocket().stream(scope, channel="mark")
+            try:
+                trade_events = [await asyncio.wait_for(anext(trades), 3) for _ in range(3)]
+                funding_events = [await asyncio.wait_for(anext(funding), 3) for _ in range(3)]
+            finally:
+                await trades.aclose()
+                await funding.aclose()
+
+        assert set(urls) == {
+            "wss://fstream.binance.com/public/stream",
+            "wss://fstream.binance.com/market/stream",
+        }
+        assert len(urls) == 2
+        assert trade_events[2]["kind"] == "trade"
+        assert trade_events[2]["row"]["id"] == 4
+        assert funding_events[2]["kind"] == "mark"
+        assert funding_events[2]["row"]["s"] == "BTCUSDT"
+        assert len(commands) == 2
+        assert MAX_FUTURES_SYMBOLS_PER_SOCKET < 1024
 
     asyncio.run(scenario())
 
@@ -105,11 +114,12 @@ def test_batch_fans_out_two_pairs_without_opening_per_symbol_sockets(tmp_path, m
         opened = []
 
         class FakeMarket:
-            async def stream(self, scope):
-                opened.append(scope)
+            async def stream(self, scope, *, channel):
+                opened.append((scope, channel))
                 for symbol in sorted(scope["members"]):
                     yield {"symbol": symbol, "kind": "connected"}
-                    yield {"symbol": symbol, "kind": "trade", "row": {"id": symbol}}
+                    if channel == "trade":
+                        yield {"symbol": symbol, "kind": "trade", "row": {"id": symbol}}
                 await asyncio.Event().wait()
 
         async def fake_serve(policy, root, catalog, *, calculate, trade_socket, funding_socket):
@@ -127,8 +137,9 @@ def test_batch_fans_out_two_pairs_without_opening_per_symbol_sockets(tmp_path, m
         try:
             await asyncio.wait_for(connected.wait(), 4)
             assert received == {"BTCUSDT": "BTCUSDT", "ETHUSDT": "ETHUSDT"}
-            assert len(opened) == 1
-            assert len(opened[0]["members"]) == 2
+            assert len(opened) == 2
+            assert {channel for _, channel in opened} == {"trade", "mark"}
+            assert all(len(scope["members"]) == 2 for scope, _ in opened)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
