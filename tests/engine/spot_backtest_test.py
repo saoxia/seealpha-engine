@@ -37,8 +37,8 @@ def spot_instrument():
         min_notional=Money(10, Currency.from_str("USDT")),
         max_price=Price.from_str("152588.43"),
         min_price=Price.from_str("29.91"),
-        margin_init=Decimal("0"),
-        margin_maint=Decimal("0"),
+        margin_init=Decimal(0),
+        margin_maint=Decimal(0),
         info={"project_fee_rates": {"maker": "0.0002", "taker": "0.0004"}},
         ts_event=1646199312128000000,
         ts_init=1646199342953849862,
@@ -54,7 +54,7 @@ def spot_catalog(root, start):
         bars.append(Bar(
             kind, instrument.make_price(o), instrument.make_price(h),
             instrument.make_price(l), instrument.make_price(c),
-            instrument.make_qty(Decimal("10")), stamp, stamp,
+            instrument.make_qty(Decimal(10)), stamp, stamp,
         ))
     catalog = ParquetDataCatalog(root)
     catalog.write_data([instrument])
