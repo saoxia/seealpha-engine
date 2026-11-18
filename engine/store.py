@@ -293,7 +293,7 @@ class Store:
             self._ensure()
             if unfinished:
                 rows = self.db.execute(
-                    "SELECT record_json FROM backtest_tasks WHERE status IN ('PENDING', 'RUNNING')"
+                    "SELECT record_json FROM backtest_tasks WHERE status IN ('PENDING', 'RUNNING', 'CANCELLING')"
                 ).fetchall()
             else:
                 rows = self.db.execute(
