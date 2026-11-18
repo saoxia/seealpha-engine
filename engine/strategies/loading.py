@@ -135,7 +135,7 @@ def run_issued_history(loads, bars, starting: Money):
     if len(groups) != 1:
         raise EngineConflict("一次回测只支持同一品种的已下发策略。")
     symbol, group = next(iter(groups.items()))
-    instrument = _instrument(symbol)
+    instrument = instrument if instrument is not None else _instrument(symbol)
     if starting.currency != instrument.quote_currency:
         raise EngineConflict("虚拟账户报价币种与策略品种不一致。")
     bar_type = bars[0].bar_type
@@ -153,7 +153,7 @@ def run_issued_history(loads, bars, starting: Money):
     return result
 
 
-def run_issued_history_stream(loads, batches, starting: Money, *, funding_updates=()):
+def run_issued_history_stream(loads, batches, starting: Money, *, funding_updates=(), instrument=None):
     """Execute one issued strategy set from bounded, ordered Catalog batches."""
     if not loads:
         raise EngineConflict("该租户账户没有已下发的策略。")
@@ -250,12 +250,15 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, s
             strategy.target_sink = sink
             bound.append((load, strategy))
         engine = BacktestEngine(backtest_engine_config())
+        from nautilus_trader.model import CurrencyPair
+
+        spot = isinstance(instrument, CurrencyPair)
         engine.add_venue(
             instrument.id.venue,
             OmsType.NETTING,
-            AccountType.MARGIN,
+            AccountType.CASH if spot else AccountType.MARGIN,
             [starting],
-            default_leverage=Decimal(5),
+            **({} if spot else {"default_leverage": Decimal(5)}),
             fee_model=instrument_fee_model(instrument),
         )
         engine.add_instrument(instrument)
