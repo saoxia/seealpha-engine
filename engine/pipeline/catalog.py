@@ -13,7 +13,12 @@ import pyarrow.compute as pc
 from nautilus_trader.model import (
     Bar,
     BarType,
+    FundingRateUpdate,
+    InstrumentClose,
+    InstrumentStatus,
     NautilusDataType,
+    OptionGreeks,
+    OrderBookDepth,
     TradeTick,
     register_custom_data_class,
 )
@@ -96,6 +101,15 @@ class ParquetDataCatalog:
             return self.native.write_bars(data)
         if isinstance(first, TradeTick):
             return self.native.write_trade_ticks(data)
+        for kind, write in (
+            (FundingRateUpdate, self.native.write_funding_rate_updates),
+            (OptionGreeks, self.native.write_option_greeks),
+            (OrderBookDepth, self.native.write_order_book_depths),
+            (InstrumentStatus, self.native.write_instrument_statuses),
+            (InstrumentClose, self.native.write_instrument_closes),
+        ):
+            if isinstance(first, kind):
+                return write(data)
         return self.native.write_instruments(data)
 
     def instruments(self, instrument_ids=None, **kwargs):
@@ -107,6 +121,31 @@ class ParquetDataCatalog:
     def trade_ticks(self, instrument_ids=None, start=None, end=None, **kwargs):
         return self.native.query_trade_ticks(
             identifiers=instrument_ids, start=_nanos(start), end=_nanos(end), **kwargs
+        )
+
+    def funding_rate_updates(self, instrument_ids=None, start=None, end=None):
+        return self.native.query_funding_rate_updates(
+            identifiers=instrument_ids, start=_nanos(start), end=_nanos(end),
+        )
+
+    def option_greeks(self, instrument_ids=None, start=None, end=None):
+        return self.native.query_option_greeks(
+            identifiers=instrument_ids, start=_nanos(start), end=_nanos(end),
+        )
+
+    def order_book_depths(self, instrument_ids=None, start=None, end=None):
+        return self.native.query_order_book_depths(
+            identifiers=instrument_ids, start=_nanos(start), end=_nanos(end),
+        )
+
+    def instrument_statuses(self, instrument_ids=None, start=None, end=None):
+        return self.native.query_instrument_statuses(
+            identifiers=instrument_ids, start=_nanos(start), end=_nanos(end),
+        )
+
+    def instrument_closes(self, instrument_ids=None, start=None, end=None):
+        return self.native.query_instrument_closes(
+            identifiers=instrument_ids, start=_nanos(start), end=_nanos(end),
         )
 
     def get_intervals(self, data_cls, identifier=None):

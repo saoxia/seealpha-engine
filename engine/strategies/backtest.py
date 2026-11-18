@@ -34,6 +34,41 @@ def catalog_directory(project):
     return Path(project) / "data" / "catalog"
 
 
+def read_history_batches(catalog_dir, symbol, interval, start, end, *, batch_size=50_000):
+    """Iterate bounded native Arrow batches while the caller holds a data read lease.
+
+    The Catalog query end is inclusive upstream; the Engine contract is [start, end).
+    No historical data is materialized before the backtest starts.
+    """
+    root = Path(catalog_dir)
+    if not root.is_dir():
+        return
+    from core.market.instruments import MarketConfigError, bar_type_for
+    from engine.pipeline.catalog import ParquetDataCatalog
+
+    try:
+        bar_type = bar_type_for(symbol, interval)
+        catalog = ParquetDataCatalog(root)
+        start_ns, end_ns = _nanos(start), _nanos(end)
+        previous_ns = None
+        for batch in catalog.bar_batches(bar_type, start_ns, end_ns, batch_size=batch_size):
+            selected = []
+            for bar in batch:
+                ts = int(bar.ts_event)
+                if not start_ns <= ts < end_ns:
+                    continue
+                if previous_ns is not None and ts <= previous_ns:
+                    raise EngineConflict("历史 K 线时间重复或倒退。")
+                if str(bar.bar_type) != str(bar_type):
+                    raise EngineConflict("历史 K 线品种或周期不一致。")
+                previous_ns = ts
+                selected.append(bar)
+            if selected:
+                yield selected
+    except (OSError, ValueError, MarketConfigError) as exc:
+        raise EngineConflict("本地行情目录无法读取。") from exc
+
+
 def read_history(catalog_dir, symbol, interval, start, end):
     """Return catalog bars in ``[start, end)``. Missing data is an empty list."""
     root = Path(catalog_dir)
