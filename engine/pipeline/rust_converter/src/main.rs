@@ -38,6 +38,10 @@ struct Args {
     day_start_ms: u64,
     #[arg(long)]
     day_end_ms: u64,
+    #[arg(long, default_value_t = false)]
+    spot_trades: bool,
+    #[arg(long, default_value_t = false)]
+    spot_microseconds: bool,
     #[arg(long, default_value_t = 250_000)]
     batch_rows: usize,
     /// Repeated value in the form INTERVAL=BAR_TYPE.
@@ -118,6 +122,7 @@ struct ParsedTrade {
     price: i128,
     size: i128,
     timestamp_ms: u64,
+    timestamp_ns: u64,
     buyer_maker: bool,
     quote: f64,
 }
@@ -437,10 +442,7 @@ fn append_trade(
     if previous_timestamp_ms.is_some_and(|previous| trade.timestamp_ms < previous) {
         return Err(invalid("Trade timestamp 必须单调递增"));
     }
-    let timestamp_ns = trade
-        .timestamp_ms
-        .checked_mul(1_000_000)
-        .ok_or_else(|| invalid("Trade timestamp overflow"))?;
+    let timestamp_ns = trade.timestamp_ns;
     first_ts.get_or_insert(timestamp_ns);
     *last_ts = Some(timestamp_ns);
     *previous_timestamp_ms = Some(trade.timestamp_ms);
@@ -557,10 +559,12 @@ fn run(args: Args) -> Result<Manifest> {
         if record_index == 0 && is_header(&record) {
             continue;
         }
-        if record.len() != 6 {
+        let expected_fields = if args.spot_trades { 7 } else { 6 };
+        if record.len() != expected_fields {
             return Err(invalid(format!(
-                "Trade 第 {} 行字段数应为 6，实际为 {}",
+                "Trade 第 {} 行字段数应为 {}，实际为 {}",
                 record_index + 1,
+                expected_fields,
                 record.len()
             )));
         }
@@ -570,9 +574,13 @@ fn run(args: Args) -> Result<Manifest> {
         let price = parse_fixed(&record[1], args.price_precision, "price")?;
         let size = parse_fixed(&record[2], args.size_precision, "quantity")?;
         let quote = parse_decimal(&record[3], "quote_quantity")?;
-        let timestamp_ms = record[4]
+        let raw_stamp = record[4]
             .parse::<u64>()
             .map_err(|_| invalid("Trade 字段 \"timestamp\" 包含非数值内容"))?;
+        let timestamp_ms = if args.spot_microseconds { raw_stamp / 1_000 } else { raw_stamp };
+        let timestamp_ns = raw_stamp
+            .checked_mul(if args.spot_microseconds { 1_000 } else { 1_000_000 })
+            .ok_or_else(|| invalid("Trade timestamp overflow"))?;
         let buyer_maker = match record[5].trim().to_ascii_lowercase().as_str() {
             "true" => true,
             "false" => false,
@@ -589,7 +597,7 @@ fn run(args: Args) -> Result<Manifest> {
             return Err(invalid("Trade quote_quantity 不能为负数"));
         }
         if timestamp_ms >= 100_000_000_000_000 {
-            return Err(invalid("USD-M Trade 时间戳应为毫秒，但检测到了微秒级数值"));
+            return Err(invalid("Trade timestamp unit does not match archive configuration"));
         }
         if timestamp_ms < args.day_start_ms || timestamp_ms >= args.day_end_ms {
             return Err(invalid("Trade timestamp 超出归档标注的 UTC 日期"));
@@ -599,6 +607,7 @@ fn run(args: Args) -> Result<Manifest> {
             price,
             size,
             timestamp_ms,
+            timestamp_ns,
             buyer_maker,
             quote: quote.to_string().parse::<f64>()?,
         };
