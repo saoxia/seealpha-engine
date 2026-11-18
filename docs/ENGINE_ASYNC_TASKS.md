@@ -47,6 +47,12 @@ Engine 意外重启时未完成的 `PENDING/RUNNING/CANCELLING` 标记为
 **独立 Python 子进程**并行执行，默认 1，允许 1–8；子进程复用已有 Engine
 Docker 镜像和本地 Catalog，不会为每次回测创建新 Docker 容器。
 `ENGINE_BACKTEST_TIMEOUT_SECONDS` 默认 3600 秒，范围 1–86400 秒。
+新增 `GET/PUT /tenants/{tenant_id}/jobs/worker-settings`，必须经过 Engine Token 认证；
+业务管理后台再经管理员会话转发。PUT 只接受 `max_workers` 和
+`timeout_seconds` 两个整数字段。首次没有持久化设置时使用以上环境默认值；
+保存后写入该 Engine 数据卷的 `book.sqlite`，**优先于环境默认值且重启保留**。
+提高 Worker 数量可即时启用新调度线程；降低数量不会强行终止已运行任务，
+只限制随后新启动的任务；修改执行超时仅影响新 Worker，不追溯已有任务。
 达到运行时限会终止子进程组并将任务标为 `FAILED`，可由用户显式重试。
 子进程在独立会话中运行，取消优先发 SIGTERM，短暂宽限后升级为 SIGKILL。
 日志保存于私有 `tasks/<tenant_id>/<task_id>.worker.log`；父进程核对
