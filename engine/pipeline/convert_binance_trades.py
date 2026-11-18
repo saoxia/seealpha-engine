@@ -49,7 +49,7 @@ CSV_CHUNK_ROWS = 250_000
 DEFAULT_BAR_INTERVALS = ("1s", "1m")
 
 
-def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS) -> Iterator[pd.DataFrame]:
+def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS, *, market="futures_um") -> Iterator[pd.DataFrame]:
     """逐块读取 trades CSV；重复 Trade ID 保留源文件中靠后的记录。"""
     try:
         with ZipFile(path) as archive:
@@ -76,7 +76,7 @@ def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS) -> Iterator
                 chunks = pd.read_csv(
                     file,
                     header=None,
-                    names=TRADE_COLUMNS,
+                    names=(*TRADE_COLUMNS, "is_best_match") if market == "spot" else TRADE_COLUMNS,
                     # 让 CSV 解析器直接生成数值列，避免先创建逐行字符串再解析。
                     # 混合内容的块仍由下方规范化函数严格校验。
                     # pandas 3.1 起各 float_precision 模式共用同一转换器，再传该参数只会告警。
@@ -272,6 +272,9 @@ def convert_trade_archive_with_rust(
                 day_end_ns=day_end_ns,
                 bar_types=requested_bars,
                 batch_rows=chunk_rows,
+                spot_trades=synced.spec.market == "spot",
+                spot_microseconds=(synced.spec.market == "spot"
+                                   and synced.spec.day.isoformat() >= "2025-01-01"),
             )
             intervals = [[manifest.trade.first_ts, manifest.trade.last_ts]]
             bar_records = {
@@ -381,6 +384,8 @@ def _convert_fresh_trade_archive(
             bar_intervals=bar_intervals,
         )
 
+    if synced.spec.market == "spot" and synced.spec.day.isoformat() >= "2025-01-01":
+        raise ConversionError("现货微秒成交归档需要完整 Rust 转换器；禁止降级为毫秒 Tick。")
     pending = pd.DataFrame(columns=TRADE_COLUMNS)
     intervals: list[list[int]] = []
     rows = 0
@@ -389,7 +394,7 @@ def _convert_fresh_trade_archive(
     aggregate_parts: dict[str, list[pd.DataFrame]] = {interval: [] for interval in bar_intervals}
 
     try:
-        for chunk in iter_trade_archive(synced.path, chunk_rows):
+        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market):
             for interval in bar_intervals:
                 aggregate_parts[interval].append(aggregate_trade_chunk(chunk, interval))
             first_time = int(chunk.iloc[0]["timestamp"])
@@ -594,7 +599,7 @@ def stage_missing_bars(
         parts = {interval: [] for interval in raw_intervals}
         day_start, day_end = day_bounds_ns(synced)
         previous_time = previous_id = None
-        for chunk in iter_trade_archive(synced.path, chunk_rows):
+        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market):
             first_time, last_time = (
                 int(chunk.iloc[0]["timestamp"]),
                 int(chunk.iloc[-1]["timestamp"]),
