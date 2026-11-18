@@ -12,6 +12,8 @@ from pathlib import Path
 from engine.runtime import EngineRuntime
 from engine.task_queue import TaskJournal, _validate_id, _validate_tenant
 
+_LOG = logging.getLogger(__name__)
+
 
 def run(state_root: Path, project: Path, tenant_id: str, task_id: str) -> None:
     tenant_id = _validate_tenant(tenant_id)
@@ -51,7 +53,7 @@ def main() -> None:
     try:
         run(args.state_root, args.project, args.tenant_id, args.task_id)
     except Exception:
-        logging.exception("Backtest worker aborted")
+        _LOG.exception("Backtest worker aborted")
         raise SystemExit(1) from None
 
 
