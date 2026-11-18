@@ -72,3 +72,30 @@ the separate SeeAlpha Platform. They require distinct data-source and
 cross-repository acceptance before enabling real trading.
 
 References: https://github.com/nautechsystems/nautilus_trader/releases/tag/v2.0.0rc9
+
+## Follow-up: bounded L2 replay and managed option book consumer
+
+- `run_depth_backtest` now accepts a one-pass depth iterator and validates time
+  ordering and instrument identity across batches of up to 50,000 snapshots
+  (10,000 by default). It feeds native `BacktestEngine.run(streaming=True)`,
+  clears processed input after each batch and calls `end()` exactly once.
+  The offline export helper retains its list-based compatibility validator;
+  the replay path does not use it.
+- The single-instrument option `market_events` collector now explicitly
+  requests `managed=True` depth-only L2 subscriptions, reads the native
+  `Cache.order_book` as the managed-book readiness check, and continues
+  archiving unmodified snapshot provenance. It does not create a second
+  Python L2 cache. Native integration tests check the resulting best bid/ask.
+- `batch_market_events` is a separate bounded combined-WebSocket raw evidence
+  collector: it does not run a Nautilus DataEngine. Its high-volume transport
+  and historical source bytes are unchanged. This change **does not** claim
+  that all batch collectors now have DataEngine-managed books.
+- These changes do not grant live execution, certify disconnected history,
+  or establish accurate queue position. Full CI and offline integration
+  tests are required before adoption in a deployed collector.
+
+The native `ParquetDataCatalog.depth_stream(instrument, start, end)` method
+uses the Rust/Arrow scanner and `OrderBookDepthDataWrangler` to supply
+bounded model records directly to `run_depth_backtest`, without first calling
+the list-returning `order_book_depths`. The time range is [start, end);
+callers remain responsible for retained source completeness and permissions.

@@ -82,7 +82,7 @@ def test_native_node_streams_history_reconnect_unsubscribe_and_shutdown(monkeypa
             def on_start(self):
                 self.subscribe_trades(ID, client_id=clients[0].client_id)
                 self.subscribe_quotes(ID, client_id=clients[0].client_id)
-                self.subscribe_book_depth(ID, BookType.L2_MBP, depth=5, client_id=clients[0].client_id)
+                self.subscribe_book_depth(ID, BookType.L2_MBP, depth=5, client_id=clients[0].client_id, managed=True)
                 self.subscribe_bars(BAR, client_id=clients[0].client_id)
                 self.request_bars(BAR, datetime.fromtimestamp(BASE / 1000, UTC),
                                   datetime.fromtimestamp((BASE + 60000) / 1000, UTC),
@@ -166,6 +166,10 @@ def test_native_node_streams_history_reconnect_unsubscribe_and_shutdown(monkeypa
                 assert len(trades) == 2 and quotes and books and len(bars) == 1 and history
                 assert cache.instrument(ID).multiplier == item.multiplier
                 assert cache.quote(ID).bid_price == quotes[-1].bid_price
+                managed_book = cache.order_book(ID)
+                assert managed_book is not None
+                assert str(managed_book.best_bid_price()) == str(books[-1].bids[0].price)
+                assert str(managed_book.best_ask_price()) == str(books[-1].asks[0].price)
                 state = clients[0].stream_status[f"{SYMBOL.lower()}@optionTrade"]
                 assert state["connected"] and state["gap_count"] == 1
                 assert "未补齐" in state["last_error"]

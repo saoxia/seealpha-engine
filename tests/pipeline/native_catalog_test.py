@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 import pandas as pd
+import pytest
 from nautilus_trader.model import Bar, BarType, Price, Quantity
 
 from engine.pipeline.catalog import BarDataWrangler, ParquetDataCatalog, TradeTickDataWrangler
@@ -66,3 +67,34 @@ def test_arrow_quantization_matches_native_instrument_for_half_ticks():
     sizes = ["1.0005","1.0015"]
     assert _decimal([Decimal(value) for value in sizes],3).to_pylist() == [
         instrument.make_qty(Decimal(value)).as_decimal() for value in sizes]
+
+
+def test_native_l2_depth_scanner_roundtrip_and_exclusive_end(tmp_path, monkeypatch):
+    from engine.connectors.binance import options, options_parsing
+    from tests.connectors.binance.options_queries_test import exchange_info
+
+    monkeypatch.setattr(options, "get", lambda *args, **kwargs: exchange_info())
+    instrument = options.instrument(options.markets()[0])
+    symbol = str(instrument.raw_symbol)
+    start = 1_793_145_600_000
+    values = [
+        options_parsing.depth(
+            instrument, {"s": symbol, "T": start + index * 100, "u": index + 1,
+                         "b": [["1000", "0.1"]], "a": [["1100", "0.2"]]},
+            10, (start + index * 100) * 1_000_000 + 1,
+        )
+        for index in range(5)
+    ]
+    catalog = ParquetDataCatalog(tmp_path)
+    catalog.write_data(values)
+    opened = (start + 100) * 1_000_000
+    closed = (start + 400) * 1_000_000
+    streamed = list(catalog.depth_stream(instrument, opened, closed, batch_size=2))
+    assert [(event.ts_event, event.sequence) for event in streamed] == [
+        (value.ts_event, value.sequence) for value in values[1:4]
+    ]
+    assert [str(event.bids[0].price) for event in streamed] == ["1000.000"] * 3
+    with pytest.raises(ValueError, match="batch size"):
+        list(catalog.depth_stream(instrument, opened, closed, batch_size=0))
+    with pytest.raises(ValueError, match="nonempty time range"):
+        list(catalog.depth_stream(instrument, closed, opened))

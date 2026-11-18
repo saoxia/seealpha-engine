@@ -46,3 +46,98 @@ def test_bracket_helper_requires_both_native_exits_reduce_only():
             fake, instrument_id="ETHUSDT-PERP.BINANCE", order_side="BUY",
             quantity="1", tp_price="2200.00", sl_trigger_price="1800.00",
         )
+
+
+def test_depth_batches_keep_global_order_and_bounded_memory(monkeypatch):
+    from engine.strategies import research_native as native
+
+    class Depth:
+        def __init__(self, instrument_id, ts_event):
+            self.instrument_id, self.ts_event = instrument_id, ts_event
+
+    monkeypatch.setattr(native, "OrderBookDepth", Depth)
+    identifier = InstrumentId.from_str("BTC-261225-85000-C.BINANCE")
+    data = [Depth(identifier, stamp) for stamp in range(1, 6)]
+    assert [len(batch) for batch in native.iter_validated_depth_batches(iter(data), identifier, batch_size=2)] == [2, 2, 1]
+    assert native.validated_depths(iter(data), identifier) == data
+    with pytest.raises(ValueError, match="repeated or regressing"):
+        list(native.iter_validated_depth_batches(iter([data[0], data[1], data[1]]), identifier, batch_size=2))
+    with pytest.raises(ValueError, match="No L2 snapshots"):
+        list(native.iter_validated_depth_batches(iter(()), identifier))
+    with pytest.raises(ValueError, match="batch size"):
+        list(native.iter_validated_depth_batches(iter(data), identifier, batch_size=0))
+    with pytest.raises(ValueError, match="instrument"):
+        list(native.iter_validated_depth_batches([Depth("WRONG", 10)], identifier))
+
+
+def test_depth_backtest_runs_streaming_and_disposes_on_failure(monkeypatch):
+    from engine.strategies import research_native as native
+
+    class Depth:
+        def __init__(self, instrument_id, ts_event):
+            self.instrument_id, self.ts_event = instrument_id, ts_event
+
+    monkeypatch.setattr(native, "OrderBookDepth", Depth)
+    identifier = InstrumentId.from_str("BTC-261225-85000-C.BINANCE")
+    instrument = SimpleNamespace(id=identifier)
+    produced, engines = [], []
+
+    def source(times):
+        for ts in times:
+            produced.append(ts)
+            yield Depth(identifier, ts)
+
+    class Engine:
+        def __init__(self, _config):
+            self.trace = []
+            self.disposed = False
+            engines.append(self)
+
+        def add_venue(self, *args, **kwargs):
+            assert kwargs["book_type"] == native.BookType.L2_MBP
+
+        def add_instrument(self, *_args):
+            pass
+
+        def add_strategies(self, *_args):
+            pass
+
+        def add_data(self, batch):
+            self.trace.append(("batch", tuple(item.ts_event for item in batch)))
+            # No read-ahead: each native run sees at most one new bounded batch.
+            assert len(produced) <= 2 * len([x for x in self.trace if x[0] == "batch"])
+
+        def run(self, *, streaming):
+            assert streaming is True
+            self.trace.append("run")
+
+        def clear_data(self):
+            self.trace.append("clear")
+
+        def end(self):
+            self.trace.append("end")
+
+        def get_result(self):
+            return {"ok": True}
+
+        def dispose(self):
+            self.disposed = True
+
+    monkeypatch.setattr(native, "BacktestEngine", Engine)
+    assert native.run_depth_backtest(instrument, source(range(1, 6)), "100 USDT", batch_size=2) == {"ok": True}
+    assert engines[0].trace == [
+        ("batch", (1, 2)), "run", "clear",
+        ("batch", (3, 4)), "run", "clear",
+        ("batch", (5,)), "run", "clear", "end",
+    ]
+    assert engines[0].disposed
+
+    produced.clear()
+    with pytest.raises(ValueError, match="repeated or regressing"):
+        native.run_depth_backtest(instrument, source([1, 2, 2]), "100 USDT", batch_size=2)
+    assert engines[1].disposed
+    assert "end" not in engines[1].trace
+    before = len(engines)
+    with pytest.raises(ValueError, match="No L2 snapshots"):
+        native.run_depth_backtest(instrument, iter(()), "100 USDT")
+    assert len(engines) == before

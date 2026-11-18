@@ -394,7 +394,10 @@ async def market_events(symbol, intervals, *, trades=False, depth=False):
             if trades:
                 self.subscribe_trades(identifier, client_id=client_id)
             if depth:
-                self.subscribe_book_depth(identifier, BookType.L2_MBP, depth=10, client_id=client_id)
+                # A depth-only subscription lets RC9 DataEngine own the cached L2 book.
+                self.subscribe_book_depth(
+                    identifier, BookType.L2_MBP, depth=10, client_id=client_id, managed=True,
+                )
             for level in intervals:
                 self.subscribe_bars(BarType.from_str(bar_type_for(symbol, level, "options")), client_id=client_id)
 
@@ -404,6 +407,10 @@ async def market_events(symbol, intervals, *, trades=False, depth=False):
                        "side": 1 if str(value.aggressor_side) == "BUY" else -1}})
 
         def on_book_depth(self, value):
+            # Do not mirror the book in Python; DataEngine updates the managed Cache.
+            # Preserve the original source snapshot for immutable collection evidence.
+            if self.cache.order_book(value.instrument_id) is None:
+                raise QueryError("期权原生 L2 盘口未进入 Cache")
             self.emit({"level": "depth", "row": {"s": symbol, "T": value.ts_event // 1000000,
                        "u": value.sequence, "received_ns": value.ts_init,
                        "b": [[str(order.price), str(order.size)] for order in value.bids],
