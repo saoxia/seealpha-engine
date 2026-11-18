@@ -7,7 +7,12 @@ recent trades are not advertised as complete historical ticks.
 from __future__ import annotations
 
 import time
+import asyncio
+import json
 from decimal import Decimal, InvalidOperation
+
+from websockets.asyncio.client import connect
+from websockets.exceptions import WebSocketException
 
 from core.market.instruments import INTERVALS, normalize_symbol
 from core.market.models import DataError
@@ -164,3 +169,36 @@ def _signed_number(value):
     if not number.is_finite():
         raise DataError("Invalid Spot ticker number")
     return format(number, "f")
+
+
+class SpotTradeSocket:
+    """Venue raw Spot trades, never aggregated trades or synthetic tick IDs."""
+
+    async def stream(self, symbol):
+        symbol = normalize_symbol(symbol, "spot")
+        delay = 1
+        while True:
+            try:
+                async with connect(
+                    f"wss://stream.binance.com:9443/ws/{symbol.lower()}@trade",
+                    open_timeout=12, close_timeout=5, ping_interval=20,
+                    ping_timeout=30, max_queue=1024, max_size=65536,
+                ) as socket:
+                    yield {"kind": "connected"}
+                    async for message in socket:
+                        row = json.loads(message)
+                        if (not isinstance(row, dict) or row.get("e") != "trade"
+                                or row.get("s") != symbol):
+                            raise ValueError("Unexpected Binance Spot trade identity")
+                        trade = {
+                            "id": row["t"], "time": row["T"], "price": row["p"],
+                            "qty": row["q"], "isBuyerMaker": row["m"],
+                        }
+                        yield {"kind": "trade", "row": trade}
+                        delay = 1
+                    raise ConnectionError("Spot trade WebSocket closed")
+            except (WebSocketException, OSError, TimeoutError, ConnectionError,
+                    ValueError, KeyError, TypeError) as exc:
+                yield {"kind": "disconnected", "error": f"{type(exc).__name__}: {exc}"}
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30)
