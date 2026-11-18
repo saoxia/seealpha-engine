@@ -61,16 +61,18 @@ class Subscriptions:
         self.lease = lease
 
     def root(self, policy):
-        root = self.project / "data/market_data/binance_um_1m/managed" / policy.symbol
+        folder = "binance_spot_1m" if policy.product == "spot" else "binance_um_1m"
+        root = self.project / "data/market_data" / folder / "managed" / policy.symbol
         return root if policy.base_level == "auto" else root / policy.base_level
 
     def journal_paths(self, policy):
         from core.market.instruments import INTERVALS
-        root = self.project / "data/market_data/binance_um_1m/managed" / policy.symbol
+        folder = "binance_spot_1m" if policy.product == "spot" else "binance_um_1m"
+        root = self.project / "data/market_data" / folder / "managed" / policy.symbol
         # A new minimum never hides older retained datasets. Known names only;
         # do not walk arbitrary directories or recreate an unavailable volume.
         paths = [self.root(policy) / "collection.sqlite", *(root / level / "collection.sqlite" for level in ("tick", *INTERVALS))]
-        return list(dict.fromkeys(path for path in paths if path.is_file())) if policy.product == "futures_um" else []
+        return list(dict.fromkeys(path for path in paths if path.is_file())) if policy.product in {"futures_um", "spot"} else []
 
     def _launch(self, command, log_name, access=None):
         """Ask the resident engine to fork feed/history. In-process mode keeps the same lock fds."""
@@ -111,10 +113,10 @@ class Subscriptions:
             self._start_options()
             return
         key = (policy.product, policy.symbol)
-        if policy.product == "futures_um" and policy.base_level != "auto":
-            self._start_futures()
+        if policy.product in {"futures_um", "spot"} and policy.base_level != "auto":
+            self._start_futures() if policy.product == "futures_um" else self._start_spot()
         roles = (["collection"] if policy.realtime_enabled and policy.base_level == "auto" else [])
-        if policy.base_level != "auto" and policy.product == "futures_um":
+        if policy.base_level != "auto" and policy.product in {"futures_um", "spot"}:
             if policy.realtime_enabled or policy.history_enabled:
                 roles.append("calculation")
             if policy.history_enabled:
@@ -147,14 +149,17 @@ class Subscriptions:
                     self._start_options()
                 self._claim()
                 self._publish_futures()
+                self._publish_spot()
                 # Retire known pre-multiplex per-pair collectors before opening
                 # the shared writer. Auto-mode legacy minute workers are retained.
                 for key in list(self.processes):
-                    if (key[0] == "futures_um" and key[1] != "ALL"
-                            and any(p.symbol == key[1] and p.base_level != "auto"
+                    if (key[0] in {"futures_um", "spot"} and key[1] != "ALL"
+                            and any(p.product == key[0] and p.symbol == key[1]
+                                    and p.base_level != "auto"
                                     for p in [*previous, *policies])):
                         self.manager._stop(self.processes.pop(key))
                 self._start_futures()
+                self._start_spot()
                 if previous:
                     self._claim()
                     for old in previous:
@@ -252,14 +257,16 @@ class Subscriptions:
 
     def resolve(self, policy, old=None):
         """Resolve input choices once to the UTC start stored in configuration."""
-        if policy.product == "futures_um" and policy.base_level == "auto":
+        if policy.product in {"futures_um", "spot"} and policy.base_level == "auto":
             policy = DataPolicy.model_validate({**policy.model_dump(), "base_level": "1m"})
-        if policy.history_enabled and policy.product == "futures_um":
+        if policy.history_enabled and policy.product in {"futures_um", "spot"}:
             start = policy.history_start
             if policy.history_mode == "all":
                 from engine.connectors.binance.pair_data import PairREST
+                from engine.connectors.binance.spot import SpotREST
                 try:
-                    rows = asyncio.run(PairREST(symbols=(policy.symbol,)).get(
+                    rest = SpotREST() if policy.product == "spot" else PairREST(symbols=(policy.symbol,))
+                    rows = asyncio.run(rest.get(
                         "klines", symbol=policy.symbol, interval="1m", startTime=0, limit=1))
                     if not rows:
                         raise ValueError("交易所没有可用历史")
@@ -301,7 +308,7 @@ class Subscriptions:
             if old is not None and policy.product == "options" and "-" in policy.symbol:
                 policy = policy.model_copy(update={"underlying": old.underlying or policy.underlying})
             policy = self.resolve(policy, old)
-            if (policy.product == "futures_um" and not allow_later_start and old is not None and old.history_mode == "start" and old.history_start is not None
+            if (policy.product in {"futures_um", "spot"} and not allow_later_start and old is not None and old.history_mode == "start" and old.history_start is not None
                     and policy.history_start is not None and policy.history_start > old.history_start):
                 raise HTTPException(409, "开始日期调晚须先预览并确认删除旧数据")
             same_collection = (old is not None and old.realtime_enabled and policy.realtime_enabled
@@ -344,6 +351,8 @@ class Subscriptions:
             self._publish_options()
         if any(p.product == "futures_um" for p in policies) or (self.manager.directory / "futures-runtime.json").exists():
             self._publish_futures()
+        if any(p.product == "spot" for p in policies) or (self.manager.directory / "spot-runtime.json").exists():
+            self._publish_spot()
 
     def _publish_options(self):
         from engine.pipeline.convert_binance_bars import write_record
@@ -428,8 +437,8 @@ class Subscriptions:
                 self._write([p.model_copy(update={"realtime_enabled": False, "history_enabled": False})
                              if p in members else p for p in policies])
                 self._stop_pair((product, symbol))
-                if product == "futures_um":
-                    self._start_futures()
+                if product in {"futures_um", "spot"}:
+                    self._start_futures() if product == "futures_um" else self._start_spot()
                     # A shared reader holds this same per-symbol access lease.
                     # Do not preview or delete until it has released its writes.
                     if members:
@@ -502,7 +511,7 @@ class Subscriptions:
             state.update(state="DEGRADED", data_ready=False, reason="invalid_status", bar_updates=[])
         process = self.processes.get((
             policy.product, "ALL" if policy.product == "options"
-            or policy.product == "futures_um" and policy.base_level != "auto" else policy.symbol,
+            or policy.product in {"futures_um", "spot"} and policy.base_level != "auto" else policy.symbol,
         ))
         if process is not None and process.poll() is not None and state.get("reason") != "expired":
             state.update(state="DEGRADED", data_ready=False, reason="process_exited", bar_updates=[])
