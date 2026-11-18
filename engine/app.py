@@ -8,9 +8,9 @@ import subprocess
 import sys
 import threading
 from contextlib import aclosing
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
-from decimal import Decimal
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
