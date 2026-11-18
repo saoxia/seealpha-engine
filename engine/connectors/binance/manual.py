@@ -259,7 +259,7 @@ class ManualCommand(Strategy):
         ):
             return
         if name in {"OrderAccepted", "OrderFilled", "OrderDenied", "OrderRejected", "OrderCanceled",
-                    "OrderCancelRejected", "OrderExpired"}:
+                    "OrderCancelRejected", "OrderCancelDenied", "OrderExpired"}:
             self.outcome = name
             self.finish()
 

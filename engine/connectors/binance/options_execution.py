@@ -412,7 +412,9 @@ class BinanceOptionsExecutionClient(ExecutionClient):
     async def _modify_order(self, command):
         order = self.cache.order(command.client_order_id)
         if order is not None and order.account_id == self.account_id:
-            self.generate_order_modify_rejected(order, order.venue_order_id, "期权不支持原地改单，请明确撤单后另下新单", self.clock.timestamp_ns())
+            self.generate_order_modify_denied(
+                order, "期权不支持原地改单，请明确撤单后另下新单", self.clock.timestamp_ns()
+            )
 
     async def _register_external_order(self, client_order_id, venue_order_id, instrument_id, strategy_id, ts_init):
         order = self.cache.order(client_order_id)

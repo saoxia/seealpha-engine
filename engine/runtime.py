@@ -224,7 +224,7 @@ class EngineRuntime:
                 if order is not None:
                     response.update(
                         status="completed", order=order,
-                        message=("撤单被拒绝，当前订单状态：" if result.get("outcome") == "OrderCancelRejected"
+                        message=("撤单被拒绝，当前订单状态：" if result.get("outcome") in {"OrderCancelRejected", "OrderCancelDenied"}
                                  else "交易所订单状态：") + order["status"],
                     )
                 self.store.save_request(tenant_id, account_id, request_id, body)
