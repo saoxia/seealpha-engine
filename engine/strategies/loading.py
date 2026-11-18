@@ -16,7 +16,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from nautilus_trader.backtest import BacktestEngine
-from nautilus_trader.config import BacktestEngineConfig, LoggerConfig
+from engine.strategies.backtest_engine import backtest_engine_config
 from nautilus_trader.model import AccountType, Bar, BarType, FundingRateUpdate, Money, OmsType
 
 from engine.runtime import EngineConflict
@@ -249,7 +249,7 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, s
 
             strategy.target_sink = sink
             bound.append((load, strategy))
-        engine = BacktestEngine(BacktestEngineConfig(logging=LoggerConfig(bypass_logging=True)))
+        engine = BacktestEngine(backtest_engine_config())
         engine.add_venue(
             instrument.id.venue,
             OmsType.NETTING,
