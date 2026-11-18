@@ -87,10 +87,12 @@ def greeks_exposures(positions, greeks, *, now_ns, max_age_ns):
     return result
 
 
-def validated_depths(depths, instrument_id):
-    """Validate an offline L2 snapshot series; gaps must be assessed upstream."""
+def iter_validated_depth_batches(depths, instrument_id, *, batch_size=10_000):
+    """Yield bounded, strictly ordered L2 batches without materializing the input."""
+    if type(batch_size) is not int or not 1 <= batch_size <= 50_000:
+        raise ValueError("L2 batch size must be between 1 and 50,000")
     previous = None
-    result = []
+    batch = []
     for depth in depths:
         if not isinstance(depth, OrderBookDepth):
             raise TypeError("Invalid depth snapshot model")
@@ -99,19 +101,31 @@ def validated_depths(depths, instrument_id):
         if previous is not None and depth.ts_event <= previous:
             raise ValueError("Depth sequence has repeated or regressing event times")
         previous = depth.ts_event
-        result.append(depth)
-    if not result:
+        batch.append(depth)
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+    if previous is None:
         raise ValueError("No L2 snapshots for replay")
-    return result
 
 
-def run_depth_backtest(instrument, depths, starting, strategies=(), *, fee_model=None):
-    """Explicitly offline L2 execution research using RC9 native matching.
+def validated_depths(depths, instrument_id):
+    """Compatibility list validator for bounded offline export; do not use for replay."""
+    return [depth for batch in iter_validated_depth_batches(depths, instrument_id)
+            for depth in batch]
 
-    Never routes live orders or claims a historical snapshot stream is gap-free.
-    Returns native reports only after a completed deterministic simulation.
+
+def run_depth_backtest(instrument, depths, starting, strategies=(), *,
+                       fee_model=None, batch_size=10_000):
+    """Run offline native L2 matching with bounded input and a single final end().
+
+    Source snapshots must already have provenance and gap coverage validation.
+    This streaming input does not model queue position or reconstruct missing data.
     """
-    values = validated_depths(depths, instrument.id)
+    batches = iter_validated_depth_batches(depths, instrument.id, batch_size=batch_size)
+    first = next(batches)  # Reject empty/invalid sources before opening the engine.
     engine = BacktestEngine(BacktestEngineConfig(logging=LoggerConfig(bypass_logging=True)))
     try:
         kwargs = {"book_type": BookType.L2_MBP}
@@ -124,8 +138,11 @@ def run_depth_backtest(instrument, depths, starting, strategies=(), *, fee_model
         engine.add_instrument(instrument)
         if strategies:
             engine.add_strategies(list(strategies))
-        engine.add_data(values)
-        engine.run()
+        for batch in chain([first], batches):
+            engine.add_data(batch)
+            engine.run(streaming=True)
+            engine.clear_data()
+        engine.end()
         return engine.get_result()
     finally:
         engine.dispose()
