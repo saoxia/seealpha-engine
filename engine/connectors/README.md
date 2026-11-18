@@ -118,3 +118,23 @@ connector 不依赖 API/数据库；命令登记、账户互斥和账本保存�
 满页二分时间，单毫秒饱和或身份/范围冲突拒绝确认覆盖。
 一次初始持仓、操作调度、持仓推算和存储仍归 API，不为展示注册执行客户端。
 详见 [期权操作与持仓推算](https://github.com/saoxia/SeeAlpha/blob/main/docs/OPERATIONS_API.md#期权操作与持仓推算2026-11-08)。
+
+
+## Binance Spot 公开行情查询（2026-11-19，第一阶段）
+
+`binance/spot.py` 通过 Binance 官方 `data-api.binance.vision/api/v3/` 公开数据端点，
+以独立的 `spot` 产品身份提供当前可交易市场目录、最多 1,000 根的 K 线页和最多
+1,000 条**近期**原始成交。通过 Engine 已认证的租户 HTTP 接口访问：
+
+- `POST /tenants/{tenant_id}/venue/catalog`，传 `{"product":"spot","environment":"production"}`
+- `POST /tenants/{tenant_id}/venue/spot/klines`，传 `symbol`、`interval`、`start_ms`、
+  `end_ms`（左闭右开）和可选 `limit`。返回 `next_start_ms` 供调用方继续请求，
+  `is_closed=false` 的形成中 K 线不能作为最终历史数据。
+- `POST /tenants/{tenant_id}/venue/spot/trades`，传 `symbol` 和可选 `limit`；
+  只代表交易所当前返回的近期成交，`complete_history=false`。
+
+现货 `BTCUSDT.BINANCE` 与永续 `BTCUSDT-PERP.BINANCE` 是不同品种和 BarType。
+固定公开端点白名单、数值验证、请求超时及重试复用已有传输，
+无 API Key、无交易命令、无现货账户访问。此阶段不启用现货持续 WebSocket、
+归档下载、Catalog 持久化、回测历史准备、现货订单或策略下单。
+现有 USD-M / 期权 Feed 和风控门禁不变；补齐完整现货数据链路须单独验收。
