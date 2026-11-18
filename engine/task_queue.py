@@ -395,7 +395,8 @@ class TaskCoordinator:
             process = subprocess.Popen(
                 self.command_factory(tenant_id, identity),
                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                cwd=getattr(self.runtime, "project", self.state_root),
+                # The code root is fixed; a tenant's data project is only an input path.
+                cwd=Path(__file__).resolve().parents[1],
                 env=_worker_environment(), start_new_session=True, close_fds=True,
             )
             with self.lock:
