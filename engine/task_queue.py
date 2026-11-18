@@ -1,13 +1,9 @@
 """Tenant-local, durable asynchronous task coordinator.
 
-Long-running backtests are queued inside the resident Engine process instead
-of holding a request connection open. Existing market-data jobs retain their
-subprocess owner and are exposed through the same task-view contract.
-
-Important: A running in-process backtest cannot be forcibly interrupted
-safely. Only queued backtests can be cancelled; active cancellation returns
-409 rather than reporting a false CANCELLED state. A process restart marks
-unknown unfinished attempts INTERRUPTED and requires an explicit retry.
+Backtests run in isolated child processes managed by a bounded thread-based
+supervisor. API requests never execute strategy code. Cancellation transitions
+RUNNING -> CANCELLING -> CANCELLED only after the child is reaped.
+Unconfirmed tasks remain INTERRUPTED on restart, never implicitly retried.
 """
 from __future__ import annotations
 
@@ -17,8 +13,13 @@ import logging
 import os
 import queue
 import re
+import signal
 import sqlite3
+import subprocess
+import sys
 import threading
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -26,7 +27,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from core.engine_contracts import EngineConflict
 from engine.data_manager.contracts import (
     DataJobRequest,
     PairDeleteRequest,
@@ -209,21 +209,84 @@ class TaskJournal:
             self.save(record)
 
 
-class TaskCoordinator:
-    """One bounded in-process backtest worker per Engine, plus data-job adapter."""
+@dataclass
+class _WorkerSlot:
+    process: subprocess.Popen | None = None
+    cancel_requested: bool = False
 
-    def __init__(self, runtime, market_data, state_root, *, capacity=16):
+
+def _worker_environment():
+    """Do not inherit Engine API keys, grants, or exchange credentials."""
+    allowed = {
+        "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR",
+        "VIRTUAL_ENV", "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE",
+        "LD_LIBRARY_PATH", "SSL_CERT_FILE",
+    }
+    return {name: value for name, value in os.environ.items() if name in allowed}
+
+
+def _stop_process(process):
+    """Terminate a worker process group, escalating only if it refuses to exit."""
+    if process.poll() is not None:
+        return True
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return False
+    return process.poll() is not None
+
+
+class TaskCoordinator:
+    """Bounded, process-isolated backtest pool plus the existing data-job adapter."""
+
+    def __init__(
+        self, runtime, market_data, state_root, *, capacity=16,
+        max_workers=1, timeout_seconds=3600, command_factory=None,
+    ):
+        if type(max_workers) is not int or not 1 <= max_workers <= 8:
+            raise ValueError("ENGINE_BACKTEST_MAX_WORKERS must be between 1 and 8")
+        if (isinstance(timeout_seconds, bool)
+                or not isinstance(timeout_seconds, (int, float))
+                or not 0.1 <= timeout_seconds <= 86400):
+            raise ValueError("ENGINE_BACKTEST_TIMEOUT_SECONDS must be between 0.1 and 86400")
         self.runtime = runtime
         self.market_data = market_data
-        # Keep the SQLite WAL file shared, but never share a connection between
-        # the resident Engine and the worker thread's task journal.
-        self.journal = TaskJournal(Path(state_root) / "tasks")
+        self.state_root = Path(state_root)
+        # The task journal uses its own SQLite connection to the existing WAL DB.
+        self.journal = TaskJournal(self.state_root / "tasks")
         self.lock = threading.RLock()
         self.pending = queue.Queue(maxsize=capacity)
         self.closed = False
-        self.worker = threading.Thread(target=self._loop, name="engine-backtest-jobs", daemon=True)
+        self.max_workers = max_workers
+        self.timeout_seconds = timeout_seconds
+        self.command_factory = command_factory or self._worker_command
+        self.running: dict[tuple[str, str], _WorkerSlot] = {}
         self.journal.recover_interrupted()
-        self.worker.start()
+        self.workers = [
+            threading.Thread(target=self._loop, name=f"engine-backtest-supervisor-{i}", daemon=True)
+            for i in range(max_workers)
+        ]
+        for worker in self.workers:
+            worker.start()
+
+    def _worker_command(self, tenant_id, identity):
+        return [
+            sys.executable, "-m", "engine.backtest_worker",
+            "--state-root", str(self.state_root),
+            "--project", str(self.runtime.project),
+            "--tenant-id", tenant_id, "--task-id", identity,
+        ]
 
     def _active(self, tenant_id):
         tenant_id = _validate_tenant(tenant_id)
@@ -297,8 +360,6 @@ class TaskCoordinator:
                     if job["fingerprint"] != fingerprint:
                         raise HTTPException(409, "相同幂等键不能用于不同任务参数。")
                     return self._public(job)
-            # A replay returns its original handle even if its strategy version
-            # was archived after the first durable submission.
             if not self.runtime.store.strategy_loads(
                 tenant_id, parameters["account_id"], include_archive=True,
             ):
@@ -319,19 +380,73 @@ class TaskCoordinator:
             self.pending.put_nowait((str(tenant_id), identity))
             return self._public(row)
 
+    def _execute(self, tenant_id, identity, slot):
+        """Block only a supervisor thread; never execute strategy code in Engine."""
+        with self.lock:
+            if slot.cancel_requested:
+                return "CANCELLED", "回测在启动前被取消。", None
+            if self.closed:
+                return "INTERRUPTED", "Engine 关闭时回测尚未开始。", None
+        path = self.journal._directory(tenant_id) / f"{identity}.worker.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as output:
+            process = subprocess.Popen(
+                self.command_factory(tenant_id, identity),
+                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                # The code root is fixed; a tenant's data project is only an input path.
+                cwd=Path(__file__).resolve().parents[1],
+                env=_worker_environment(), start_new_session=True, close_fds=True,
+            )
+            with self.lock:
+                slot.process = process
+            started = time.monotonic()
+            reason = None
+            while process.poll() is None:
+                with self.lock:
+                    if self.closed:
+                        reason = "shutdown"
+                    elif slot.cancel_requested:
+                        reason = "cancel"
+                if reason is None and time.monotonic() - started >= self.timeout_seconds:
+                    reason = "timeout"
+                if reason is not None:
+                    if not _stop_process(process):
+                        return "INTERRUPTED", "无法确认 Worker 已终止，禁止自动重试。", None
+                    break
+                try:
+                    process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    continue
+        if reason == "shutdown":
+            return "INTERRUPTED", "Engine 停止时回测中断。", None
+        if reason == "cancel":
+            return "CANCELLED", "已终止回测 Worker。", None
+        if reason == "timeout":
+            return "FAILED", "回测 Worker 超出运行时限。", None
+        if process.returncode != 0:
+            return "FAILED", "回测 Worker 异常退出，请检查 Engine 私有任务日志。", None
+        result = self.journal.read_result(tenant_id, identity)
+        if not isinstance(result, dict) or result.get("tenant_id") != tenant_id:
+            return "FAILED", "回测 Worker 返回结果归属无效。", None
+        return "SUCCEEDED", None, result
+
     def _loop(self):
         while True:
-            work = self.pending.get()
             try:
-                if work is None:
+                work = self.pending.get(timeout=0.25)
+            except queue.Empty:
+                if self.closed:
                     return
+                continue
+            try:
                 tenant_id, identity = work
+                key = (tenant_id, identity)
                 with self.lock:
                     record = self.journal.get(tenant_id, identity)
                     if record is None or record["status"] != "PENDING":
                         continue
                     if self.closed:
-                        # Never start queued work while Docker/Engine is exiting.
                         record.update(
                             status="INTERRUPTED", finished_at=_now(),
                             progress="interrupted", cancellable=False, retryable=True,
@@ -339,35 +454,44 @@ class TaskCoordinator:
                         )
                         self.journal.save(record)
                         continue
+                    self.running[key] = slot = _WorkerSlot()
                     record.update(
                         status="RUNNING", started_at=_now(),
-                        progress="running", cancellable=False,
+                        progress="running", cancellable=True,
                     )
                     self.journal.save(record)
                 try:
-                    parameters = record["parameters"]
-                    result = self.runtime.run_backtest(
-                        tenant_id, parameters["account_id"],
-                        parameters["start"], parameters["end"], parameters["interval"],
-                        parameters["starting_balance"], parameters["quote_currency"],
-                    )
-                    self.journal.result(tenant_id, identity, result)
-                    record.update(
-                        status="SUCCEEDED", progress="completed",
-                        result_ref=f"/tenants/{tenant_id}/jobs/{identity}/result",
-                    )
-                except EngineConflict as error:
-                    record.update(status="FAILED", progress="failed", error=error.message)
-                except Exception:  # noqa: BLE001 - untrusted strategy errors must be contained
-                    _LOG.exception("Engine backtest task failed (id=%s)", identity)
-                    record.update(status="FAILED", progress="failed",
-                                  error="回测执行失败，请检查 Engine 日志。")
-                record.update(finished_at=_now(), cancellable=False,
-                              retryable=record["status"] == "FAILED")
+                    status, error, result = self._execute(tenant_id, identity, slot)
+                except Exception:  # noqa: BLE001 - contain child launch and output failures
+                    _LOG.exception("Backtest worker failed (id=%s)", identity)
+                    status, error, result = "FAILED", "回测 Worker 启动或读取失败。", None
                 with self.lock:
+                    self.running.pop(key, None)
+                    record = self.journal.get(tenant_id, identity)
+                    if record is None:
+                        continue
+                    if self.closed:
+                        status, error = "INTERRUPTED", "Engine 停止时回测中断。"
+                    elif status != "INTERRUPTED" and slot.cancel_requested:
+                        status, error = "CANCELLED", "已终止回测 Worker。"
+                    if status == "SUCCEEDED":
+                        try:
+                            self.journal.store.add_event(tenant_id, record["parameters"]["account_id"], "backtest", result)
+                        except Exception:  # noqa: BLE001 - do not claim a partially committed result
+                            _LOG.exception("Cannot publish completed backtest (id=%s)", identity)
+                            status, error = "FAILED", "回测结果无法持久化。"
+                    if status != "SUCCEEDED":
+                        self.journal._path(tenant_id, identity, result=True).unlink(missing_ok=True)
+                    record.update(
+                        status=status, error=error, finished_at=_now(),
+                        progress="completed" if status == "SUCCEEDED" else status.lower(),
+                        result_ref=(f"/tenants/{tenant_id}/jobs/{identity}/result"
+                                    if status == "SUCCEEDED" else None),
+                        cancellable=False, retryable=status in {"FAILED", "CANCELLED", "INTERRUPTED"},
+                    )
                     self.journal.save(record)
-            except Exception:  # noqa: BLE001 - protect resident worker from task failures
-                _LOG.exception("Engine task state could not be persisted")
+            except Exception:  # noqa: BLE001 - keep supervisor alive on state failures
+                _LOG.exception("Engine backtest task state could not be persisted")
             finally:
                 self.pending.task_done()
 
@@ -409,15 +533,18 @@ class TaskCoordinator:
             return self._data_view(tenant_id, self._data(tenant_id).cancel(identity))
         with self.lock:
             record = self.journal.get(tenant_id, identity)
-            if record["status"] == "RUNNING":
-                raise HTTPException(
-                    409, "运行中的回测不可安全强制取消；请等待结束。排队中的任务可取消。",
-                )
             if record["status"] == "PENDING":
                 record.update(
                     status="CANCELLED", finished_at=_now(), progress="cancelled",
                     cancellable=False, retryable=True, error="任务在执行前被取消。",
                 )
+                self.journal.save(record)
+            elif record["status"] == "RUNNING":
+                slot = self.running.get((str(tenant_id), identity))
+                if slot is None:
+                    raise HTTPException(409, "回测 Worker 所有权未确认，无法保证安全取消。")
+                slot.cancel_requested = True
+                record.update(status="CANCELLING", progress="stopping", cancellable=False)
                 self.journal.save(record)
             return self._public(record)
 
@@ -432,9 +559,12 @@ class TaskCoordinator:
     def close(self):
         with self.lock:
             self.closed = True
-            # Running work is not falsely marked cancelled; restart recovery
-            # will mark any uncertain state INTERRUPTED after process death.
-            try:
-                self.pending.put_nowait(None)
-            except queue.Full:
-                pass
+        # Supervisors observe shutdown and terminate their process groups.
+        for worker in self.workers:
+            worker.join(timeout=9)
+        # A running process must not be abandoned if its supervisor failed.
+        with self.lock:
+            leftovers = [slot.process for slot in self.running.values() if slot.process is not None]
+        for process in leftovers:
+            _stop_process(process)
+        self.journal.store.close()

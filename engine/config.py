@@ -17,6 +17,8 @@ class EngineConfig:
     tenant_id: str | None = None
     tenant_purpose: str | None = None
     research_signing_key: str | None = None
+    backtest_max_workers: int = 1
+    backtest_timeout_seconds: int = 3600
 
     @classmethod
     def from_environment(cls):
@@ -32,4 +34,6 @@ class EngineConfig:
             tenant_id=os.getenv("ENGINE_TENANT_ID"),
             tenant_purpose=os.getenv("ENGINE_TENANT_PURPOSE"),
             research_signing_key=os.getenv("ENGINE_RESEARCH_SIGNING_KEY"),
+            backtest_max_workers=int(os.getenv("ENGINE_BACKTEST_MAX_WORKERS", "1")),
+            backtest_timeout_seconds=int(os.getenv("ENGINE_BACKTEST_TIMEOUT_SECONDS", "3600")),
         )

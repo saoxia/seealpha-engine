@@ -406,6 +406,7 @@ class EngineRuntime:
 
     def run_backtest(
         self, tenant_id, account_id, start, end, interval, starting_balance, quote_currency,
+        *, publish_event=True,
     ):
         """Run this tenant's issued loads on catalog history and keep the latest result."""
         from decimal import Decimal, InvalidOperation
@@ -469,7 +470,8 @@ class EngineRuntime:
             end=end_at.isoformat(),
             starting_balance=format(amount, "f"),
         )
-        self.store.add_event(tenant_id, account_id, "backtest", result)
+        if publish_event:
+            self.store.add_event(tenant_id, account_id, "backtest", result)
         return result
 
     def latest_backtest(self, tenant_id, account_id):
