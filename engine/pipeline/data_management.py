@@ -356,7 +356,8 @@ def validate(request, settings):
             def expected_rows(path=path, begin=begin, finish=finish):
                 previous_time = previous_id = None
                 wrangler = TradeTickDataWrangler(instrument)
-                for frame in iter_trade_archive(path):
+                micros = spec.market == "spot" and spec.day.isoformat() >= "2025-01-01"
+                for frame in iter_trade_archive(path, market=spec.market, microseconds=micros):
                     if (previous_time is not None and int(frame.iloc[0].timestamp) < previous_time
                             or previous_id is not None and int(frame.iloc[0].trade_id) <= previous_id):
                         raise ValueError("原始成交跨块倒序或重复")
@@ -366,7 +367,7 @@ def validate(request, settings):
                         "price": frame.price.to_numpy(), "quantity": frame.quantity.to_numpy(),
                         "side": frame.buyer_maker.map({True: "SELL", False: "BUY"}).to_numpy(),
                         "trade_id": frame.trade_id.astype(str).to_numpy(),
-                    }, index=pd.to_datetime(frame.timestamp.to_numpy(), unit="ms", utc=True))
+                    }, index=pd.to_datetime(frame.timestamp.to_numpy(), unit="us" if micros else "ms", utc=True))
                     for tick in wrangler.process(normalized):
                         if not pd.Timestamp(begin).value <= tick.ts_event < pd.Timestamp(finish).value:
                             raise ValueError("原始成交超出归档日期")
