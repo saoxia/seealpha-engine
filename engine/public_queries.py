@@ -64,11 +64,9 @@ class AccountRequest(BaseModel):
 @router.post("/catalog")
 async def market_catalog(tenant_id: str, request: PublicRequest):
     if request.product == "spot":
-        if request.environment != "production":
-            raise HTTPException(422, "现货公开行情仅开放正式环境")
         from engine.connectors.binance.spot import markets
 
-        return {"items": await markets()}
+        return {"items": await markets(environment=request.environment)}
     if request.product == "options":
         if request.environment != "production":
             raise ValueError("期权数据仅使用正式公开行情")
@@ -94,7 +92,7 @@ async def market_catalog(tenant_id: str, request: PublicRequest):
 
 class SpotDataRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    environment: Literal["production"] = "production"
+    environment: Literal["production", "sandbox"] = "production"
     symbol: str = Field(min_length=3, max_length=30)
 
     @field_validator("symbol")
@@ -132,24 +130,22 @@ async def spot_klines(tenant_id: str, request: SpotKlinesRequest):
     from engine.connectors.binance.spot import candles
 
     return await candles(request.symbol, request.interval, request.start_ms, request.end_ms,
-                         limit=request.limit)
+                         limit=request.limit, environment=request.environment)
 
 
 @router.post("/spot/trades")
 async def spot_trades(tenant_id: str, request: SpotTradesRequest):
     from engine.connectors.binance.spot import recent_trades
 
-    return await recent_trades(request.symbol, limit=request.limit)
+    return await recent_trades(request.symbol, limit=request.limit, environment=request.environment)
 
 
 @router.post("/tickers")
 async def tickers(tenant_id: str, request: PublicRequest):
     if request.product == "spot":
-        if request.environment != "production":
-            raise HTTPException(422, "现货公开行情仅支持正式环境")
         from engine.connectors.binance.spot import market_tickers
 
-        return await market_tickers()
+        return await market_tickers(environment=request.environment)
     if request.product == "options":
         raise HTTPException(422, "期权目录与行情须通过期权查询")
     return await manual.market_tickers(request.environment)
