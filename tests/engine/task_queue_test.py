@@ -1,6 +1,7 @@
 """Durable Engine job semantics: idempotency, isolation and fail-closed recovery."""
 import json
 import sqlite3
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -12,6 +13,50 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 from engine.task_queue import TaskCoordinator, TaskJournal
+
+
+FAKE_WORKER = """
+import json
+import os
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+root, tenant, identity, gate, fixed_balance = sys.argv[1:]
+root = Path(root)
+with sqlite3.connect(root / "book.sqlite") as conn:
+    row = conn.execute(
+        "SELECT record_json FROM backtest_tasks WHERE tenant_id=? AND id=?",
+        (tenant, identity),
+    ).fetchone()
+record = json.loads(row[0])
+(root / f"started-{identity}").write_text(str(os.getpid()))
+with (root / "child-calls.log").open("a") as handle:
+    handle.write(identity + "\\n")
+if gate:
+    while not Path(gate).exists():
+        time.sleep(0.02)
+result = {
+    "tenant_id": tenant, "account_id": record["parameters"]["account_id"],
+    "ending_balance": fixed_balance or record["parameters"]["starting_balance"],
+    "quote_currency": "USDT", "fills": [],
+    "env_clean": "ENGINE_TOKEN" not in os.environ,
+}
+output = root / "tasks" / tenant / f"{identity}.result.json"
+output.parent.mkdir(parents=True, exist_ok=True)
+staged = output.with_suffix(".tmp")
+staged.write_text(json.dumps(result))
+os.replace(staged, output)
+"""
+
+
+def fake_worker_factory(root, *, gate=None, balance=""):
+    root = str(root)
+    return lambda tenant, identity: [
+        sys.executable, "-c", FAKE_WORKER, root, tenant, identity,
+        str(gate) if gate is not None else "", balance,
+    ]
 
 
 class FakeRuntime:
@@ -89,7 +134,8 @@ def done(manager, tenant, identity):
 
 def test_durable_backtest_idempotency_and_result_are_tenant_scoped(tmp_path):
     runtime = FakeRuntime()
-    jobs = TaskCoordinator(runtime, FakeData(), tmp_path)
+    jobs = TaskCoordinator(runtime, FakeData(), tmp_path,
+                           command_factory=fake_worker_factory(tmp_path))
     try:
         initial = jobs.submit("1", "backtest", parameters(), idempotency_key="experiment-1")
         # Previously accepted requests must replay even when issuance is gone.
@@ -104,14 +150,16 @@ def test_durable_backtest_idempotency_and_result_are_tenant_scoped(tmp_path):
         assert result["status"] == "SUCCEEDED"
         assert result["result_ref"].endswith(initial["id"] + "/result")
         assert jobs.result("1", initial["id"])["ending_balance"] == "1000"
-        assert runtime.calls == 1
+        assert (tmp_path / "child-calls.log").read_text().splitlines() == [initial["id"]]
+        assert jobs.result("1", initial["id"])["env_clean"]
         assert "experiment-1" not in str(jobs.list("1"))
         with pytest.raises(HTTPException) as missing:
             jobs.get("2", initial["id"])
         assert missing.value.status_code == 404
     finally:
         jobs.close()
-    restarted = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path)
+    restarted = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path,
+                                  command_factory=fake_worker_factory(tmp_path))
     try:
         assert restarted.get("1", initial["id"])["status"] == "SUCCEEDED"
         assert restarted.result("1", initial["id"])["account_id"] == "desk"
@@ -120,8 +168,9 @@ def test_durable_backtest_idempotency_and_result_are_tenant_scoped(tmp_path):
 
 
 def test_queued_cancellation_and_interrupted_recovery(tmp_path):
-    gate = threading.Event()
-    jobs = TaskCoordinator(FakeRuntime(gate), FakeData(), tmp_path)
+    gate = tmp_path / "gate"
+    jobs = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path,
+                           command_factory=fake_worker_factory(tmp_path, gate=gate))
     try:
         first = jobs.submit("1", "backtest", parameters())
         deadline = time.monotonic() + 5
@@ -132,16 +181,15 @@ def test_queued_cancellation_and_interrupted_recovery(tmp_path):
         assert jobs.get("1", second["id"])["status"] == "PENDING"
         cancelled = jobs.cancel("1", second["id"])
         assert cancelled["status"] == "CANCELLED"
-        with pytest.raises(HTTPException) as refused:
-            jobs.cancel("1", first["id"])
-        assert refused.value.status_code == 409
-        gate.set()
-        assert done(jobs, "1", first["id"])["status"] == "SUCCEEDED"
+        stopping = jobs.cancel("1", first["id"])
+        assert stopping["status"] == "CANCELLING"
+        assert done(jobs, "1", first["id"])["status"] == "CANCELLED"
+        gate.touch()
         new = jobs.retry("1", second["id"])
         assert new["id"] != second["id"] and new["retry_of"] == second["id"]
         assert done(jobs, "1", new["id"])["status"] == "SUCCEEDED"
     finally:
-        gate.set()
+        gate.touch()
         jobs.close()
 
     journal = TaskJournal(tmp_path / "tasks")
@@ -153,7 +201,8 @@ def test_queued_cancellation_and_interrupted_recovery(tmp_path):
         "progress": "running", "error": None, "result_ref": None,
         "cancellable": False, "retryable": False,
     })
-    recovered = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path)
+    recovered = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path,
+                                command_factory=fake_worker_factory(tmp_path))
     try:
         row = recovered.get("1", "c" * 32)
         assert row["status"] == "INTERRUPTED"
@@ -167,7 +216,8 @@ def test_queued_cancellation_and_interrupted_recovery(tmp_path):
 
 def test_legacy_data_jobs_appear_in_same_lifecycle(tmp_path):
     manager = FakeData()
-    jobs = TaskCoordinator(FakeRuntime(), manager, tmp_path)
+    jobs = TaskCoordinator(FakeRuntime(), manager, tmp_path,
+                           command_factory=fake_worker_factory(tmp_path))
     try:
         value = jobs.submit("1", "data", {
             "action": "validate", "symbol": "ETHUSDT",
@@ -193,10 +243,7 @@ def test_real_engine_http_async_task_auth_validation_and_result(tmp_path, monkey
     runtime = app.state.runtime
     runtime.ensure_tenant("42", "development")
     monkeypatch.setattr(runtime.store, "strategy_loads", lambda *_a, **_kw: [{"ok": True}])
-    executed = []
-    monkeypatch.setattr(runtime, "run_backtest", lambda *args: executed.append(args) or {
-        "tenant_id": args[0], "ending_balance": "1010", "fills": [],
-    })
+    app.state.tasks.command_factory = fake_worker_factory(tmp_path / "state", balance="1010")
     body = {"kind": "backtest", "parameters": parameters(), "idempotency_key": "http-1"}
     headers = {"Authorization": "Bearer secret"}
 
@@ -218,7 +265,7 @@ def test_real_engine_http_async_task_auth_validation_and_result(tmp_path, monkey
         assert client.post(
             f"/tenants/42/jobs/{identity}/retry", headers=headers,
         ).status_code == 409
-    assert len(executed) == 1
+    assert len((tmp_path / "state" / "child-calls.log").read_text().splitlines()) == 1
     runtime.close()
 
 
@@ -297,7 +344,8 @@ def test_actual_nautilus_backtest_runs_inside_background_engine_worker(tmp_path)
 
 
 def test_backtest_task_metadata_uses_existing_engine_sqlite(tmp_path):
-    jobs = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path)
+    jobs = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path,
+                           command_factory=fake_worker_factory(tmp_path))
     try:
         task = jobs.submit("1", "backtest", parameters(), idempotency_key="db-key")
         assert done(jobs, "1", task["id"])["status"] == "SUCCEEDED"
@@ -357,3 +405,93 @@ def test_legacy_task_identity_mismatch_is_not_imported(tmp_path):
         TaskJournal(root)
     assert error.value.status_code == 503
     assert (folder / f"{identity}.record.json").exists()
+
+
+def test_bounded_workers_cancel_active_job_and_start_waiting_job(tmp_path):
+    gate = tmp_path / "release"
+    jobs = TaskCoordinator(FakeRuntime(), FakeData(), tmp_path, max_workers=2,
+                           command_factory=fake_worker_factory(tmp_path, gate=gate))
+    try:
+        first = jobs.submit("1", "backtest", parameters("one"))
+        second = jobs.submit("1", "backtest", parameters("two"))
+        third = jobs.submit("1", "backtest", parameters("three"))
+        deadline = time.monotonic() + 8
+        while not all((tmp_path / f"started-{item['id']}").exists() for item in (first, second)):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert jobs.get("1", third["id"])["status"] == "PENDING"
+        assert not (tmp_path / f"started-{third['id']}").exists()
+        assert jobs.cancel("1", first["id"])["status"] == "CANCELLING"
+        assert done(jobs, "1", first["id"])["status"] == "CANCELLED"
+        with pytest.raises(HTTPException) as missing:
+            jobs.result("1", first["id"])
+        assert missing.value.status_code == 409
+        deadline = time.monotonic() + 8
+        while not (tmp_path / f"started-{third['id']}").exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        gate.touch()
+        assert done(jobs, "1", second["id"])["status"] == "SUCCEEDED"
+        assert done(jobs, "1", third["id"])["status"] == "SUCCEEDED"
+    finally:
+        gate.touch()
+        jobs.close()
+
+
+def test_running_cancel_endpoint_is_authenticated_and_tenant_scoped(tmp_path):
+    gate = tmp_path / "release"
+    app = create_app(EngineConfig(
+        tmp_path / "state", "secret", project=tmp_path,
+        tenant_id="42", tenant_purpose="development",
+    ))
+    runtime = app.state.runtime
+    runtime.ensure_tenant("42", "development")
+    runtime.store.strategy_loads = lambda *_a, **_kw: [{"ok": True}]
+    app.state.tasks.command_factory = fake_worker_factory(tmp_path / "state", gate=gate)
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        with TestClient(app) as client:
+            result = client.post(
+                "/tenants/42/jobs", headers=headers,
+                json={"kind": "backtest", "parameters": parameters()},
+            )
+            assert result.status_code == 202
+            task_id = result.json()["id"]
+            deadline = time.monotonic() + 8
+            while not (tmp_path / "state" / f"started-{task_id}").exists():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            path = f"/tenants/42/jobs/{task_id}/cancel"
+            assert client.post(path).status_code == 401
+            assert client.post(path.replace("/42/", "/43/"), headers=headers).status_code == 403
+            canceled = client.post(path, headers=headers)
+            assert canceled.status_code == 200
+            assert canceled.json()["status"] in {"CANCELLING", "CANCELLED"}
+            assert done(app.state.tasks, "42", task_id)["status"] == "CANCELLED"
+    finally:
+        gate.touch()
+        app.state.tasks.close()
+        runtime.close()
+
+
+def test_worker_timeout_fails_without_exposing_result(tmp_path):
+    gate = tmp_path / "never-released"
+    jobs = TaskCoordinator(
+        FakeRuntime(), FakeData(), tmp_path, timeout_seconds=0.5,
+        command_factory=fake_worker_factory(tmp_path, gate=gate),
+    )
+    try:
+        task = jobs.submit("1", "backtest", parameters())
+        result = done(jobs, "1", task["id"])
+        assert result["status"] == "FAILED"
+        assert "时限" in result["error"]
+        assert result["retryable"] is True
+        assert not (tmp_path / "tasks" / "1" / f"{task['id']}.result.json").exists()
+    finally:
+        jobs.close()
+
+
+@pytest.mark.parametrize("count", [0, 9, -1, True])
+def test_worker_count_has_hard_limit(tmp_path, count):
+    with pytest.raises(ValueError, match="MAX_WORKERS"):
+        TaskCoordinator(FakeRuntime(), FakeData(), tmp_path, max_workers=count)
