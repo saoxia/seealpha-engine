@@ -248,7 +248,7 @@ def convert_trade_archive_with_rust(
         raise RustConversionError("Rust 转换器目前只支持本地文件 Catalog")
     instrument_id = str(instrument.id)
     requested_bars = {
-        interval: bar_type_for(synced.spec.symbol, interval) for interval in bar_intervals
+        interval: bar_type_for(synced.spec.symbol, interval, synced.spec.market) for interval in bar_intervals
     }
     for bar_type in requested_bars.values():
         if any(
@@ -457,7 +457,7 @@ def _convert_fresh_trade_archive(
 
         bar_records: dict[str, dict[str, int | str]] = {}
         for interval in bar_intervals:
-            expected_bar_type = bar_type_for(synced.spec.symbol, interval)
+            expected_bar_type = bar_type_for(synced.spec.symbol, interval, synced.spec.market)
             bars = aggregate_parts_to_bars(
                 aggregate_parts[interval],
                 instrument,
@@ -581,7 +581,7 @@ def stage_missing_bars(
             [frame],
             instrument,
             interval,
-            bar_type_for(synced.spec.symbol, interval),
+            bar_type_for(synced.spec.symbol, interval, synced.spec.market),
         )
         staged_catalog.write_data(bars)
         bars_record[interval] = {
@@ -616,7 +616,7 @@ def stage_missing_bars(
                 parts[interval],
                 instrument,
                 interval,
-                bar_type_for(synced.spec.symbol, interval),
+                bar_type_for(synced.spec.symbol, interval, synced.spec.market),
             )
             staged_catalog.write_data(bars)
             bars_record[interval] = {
@@ -696,7 +696,7 @@ def convert_trade_archive(
 
     # 任何不完整或未被记录管理的现有文件都保留，要求显式强制才能替换。
     targets = [(TradeTick, instrument_id)] if force or not ticks_ready else []
-    targets.extend((Bar, bar_type_for(synced.spec.symbol, interval)) for interval in missing_bars)
+    targets.extend((Bar, bar_type_for(synced.spec.symbol, interval, synced.spec.market)) for interval in missing_bars)
     for data_cls, identifier in targets:
         if not force and any(
             start < day_end and end >= day_start
