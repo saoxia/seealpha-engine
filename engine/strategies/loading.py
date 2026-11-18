@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.config import BacktestEngineConfig, LoggerConfig
-from nautilus_trader.model import AccountType, Bar, BarType, Money, OmsType
+from nautilus_trader.model import AccountType, Bar, BarType, FundingRateUpdate, Money, OmsType
 
 from engine.runtime import EngineConflict
 from engine.strategies.package import (
@@ -153,7 +153,7 @@ def run_issued_history(loads, bars, starting: Money):
     return result
 
 
-def run_issued_history_stream(loads, batches, starting: Money):
+def run_issued_history_stream(loads, batches, starting: Money, *, funding_updates=()):
     """Execute one issued strategy set from bounded, ordered Catalog batches."""
     if not loads:
         raise EngineConflict("该租户账户没有已下发的策略。")
@@ -173,8 +173,13 @@ def run_issued_history_stream(loads, batches, starting: Money):
     bar_type = first[0].bar_type
     if not str(bar_type).startswith(str(instrument.id)):
         raise EngineConflict("K 线品种与策略不一致。")
+    data = chain([first], iterator)
+    if funding_updates:
+        from engine.strategies.research_native import join_funding_updates
+
+        data = join_funding_updates(data, funding_updates, instrument.id)
     piece = _run_symbol(
-        symbol, group, instrument, bar_type, chain([first], iterator), starting, streaming=True,
+        symbol, group, instrument, bar_type, data, starting, streaming=True,
     )
     result = _assemble(loads, [piece], include_account=True)
     result["symbol"] = symbol
@@ -261,14 +266,18 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, s
             for batch in data:
                 if not batch:
                     continue
-                for bar in batch:
-                    if bar.bar_type != bar_type:
+                for item in batch:
+                    if isinstance(item, FundingRateUpdate):
+                        if item.instrument_id != instrument.id:
+                            raise EngineConflict("资金费率品种与策略不一致。")
+                        continue
+                    if not isinstance(item, Bar) or item.bar_type != bar_type:
                         raise EngineConflict("K 线品种或周期不一致。")
-                    if previous_ns is not None and bar.ts_event <= previous_ns:
+                    if previous_ns is not None and item.ts_event <= previous_ns:
                         raise EngineConflict("流式回测时间重复或倒退。")
-                    previous_ns = bar.ts_event
+                    previous_ns = item.ts_event
                     count += 1
-                engine.add_data(batch, sort=False)
+                engine.add_data(batch, sort=True)
                 engine.run(streaming=True)
                 engine.clear_data()
             if count == 0:
