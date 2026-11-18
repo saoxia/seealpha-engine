@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import queue
+import sqlite3
 import re
 import threading
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from core.engine_contracts import EngineConflict
+from engine.store import Store
 from engine.data_manager.contracts import (
     DataJobRequest,
     PairDeleteRequest,
@@ -72,11 +74,17 @@ def _validate_id(identity):
 
 
 class TaskJournal:
-    """Atomic JSON task envelopes with results kept in separate files."""
+    """SQLite task envelopes in the Engine book; large results stay as files.
 
-    def __init__(self, root):
+    A previous JSON task journal is imported once at startup. Legacy records
+    are renamed only after the database commit; never replay interrupted work.
+    """
+
+    def __init__(self, root, *, store=None):
         self.root = Path(root)
         self.lock = threading.RLock()
+        self.store = store if store is not None else Store(self.root.parent / "book.sqlite")
+        self._migrate_legacy()
 
     def _directory(self, tenant_id):
         return self.root / _validate_tenant(tenant_id)
@@ -104,9 +112,48 @@ class TaskJournal:
         finally:
             temporary.unlink(missing_ok=True)
 
+    @staticmethod
+    def _checked(record, tenant_id, identity):
+        if (not isinstance(record, dict) or record.get("id") != identity
+                or record.get("tenant_id") != str(tenant_id)
+                or record.get("kind") != "backtest"):
+            raise HTTPException(503, "任务归属记录无效，已拒绝读取。")
+        return record
+
+    def _migrate_legacy(self):
+        if not self.root.is_dir():
+            return
+        try:
+            for folder in self.root.iterdir():
+                if not folder.is_dir() or folder.is_symlink() or not _TENANT.fullmatch(folder.name):
+                    continue
+                for file in folder.glob("*.record.json"):
+                    identity = file.name.removesuffix(".record.json")
+                    if not _ID.fullmatch(identity):
+                        continue
+                    if file.is_symlink():
+                        raise HTTPException(503, "任务记录路径不可信，已拒绝迁移。")
+                    record = self._checked(
+                        json.loads(file.read_text(encoding="utf-8")), folder.name, identity,
+                    )
+                    self.store.save_task_record(record, if_absent=True)
+                    # Preserve the original audit bytes, but do not import again on restart.
+                    file.rename(file.with_name(file.name + ".migrated"))
+        except HTTPException:
+            raise
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            raise HTTPException(503, "旧任务记录迁移失败，原记录已保留。") from exc
+
     def save(self, record):
+        tenant_id = _validate_tenant(record["tenant_id"])
+        identity = record["id"]
+        _validate_id(identity)
+        self._checked(record, tenant_id, identity)
         with self.lock:
-            self._atomic(self._path(record["tenant_id"], record["id"]), record)
+            try:
+                self.store.save_task_record(record)
+            except (sqlite3.Error, ValueError) as exc:
+                raise HTTPException(503, "任务状态无法持久化。") from exc
 
     def result(self, tenant_id, identity, value):
         with self.lock:
@@ -122,47 +169,44 @@ class TaskJournal:
             raise HTTPException(503, "任务结果文件不可用。") from None
 
     def get(self, tenant_id, identity):
-        path = self._path(tenant_id, identity)
+        tenant_id = _validate_tenant(tenant_id)
+        _validate_id(identity)
         try:
-            row = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return None
-        except (OSError, ValueError):
-            raise HTTPException(503, "任务记录损坏，已保留原文件。") from None
-        if not isinstance(row, dict) or row.get("id") != identity or row.get("tenant_id") != str(tenant_id):
-            raise HTTPException(503, "任务归属记录无效，已拒绝读取。")
-        return row
+            row = self.store.task_record(tenant_id, identity)
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            raise HTTPException(503, "任务记录无法读取。") from exc
+        return None if row is None else self._checked(row, tenant_id, identity)
+
+    def find_idempotent(self, tenant_id, key):
+        tenant_id = _validate_tenant(tenant_id)
+        try:
+            row = self.store.task_for_key(tenant_id, key)
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            raise HTTPException(503, "任务幂等记录无法读取。") from exc
+        return None if row is None else self._checked(row, tenant_id, row.get("id"))
 
     def list(self, tenant_id):
-        folder = self._directory(tenant_id)
-        if not folder.is_dir():
-            return []
-        items = []
+        tenant_id = _validate_tenant(tenant_id)
         try:
-            for file in folder.glob("*.record.json"):
-                identity = file.name.removesuffix(".record.json")
-                if not _ID.fullmatch(identity):
-                    continue
-                items.append(self.get(tenant_id, identity))
-        except OSError:
-            raise HTTPException(503, "任务目录不可用。") from None
-        return [item for item in items if item is not None]
+            records = self.store.task_records(tenant_id)
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            raise HTTPException(503, "任务列表无法读取。") from exc
+        return [self._checked(row, tenant_id, row.get("id")) for row in records]
 
     def recover_interrupted(self):
-        """Never replay uncertain work automatically after Engine restart."""
-        if not self.root.is_dir():
-            return
-        for folder in self.root.iterdir():
-            if not folder.is_dir() or not _TENANT.fullmatch(folder.name):
-                continue
-            for record in self.list(folder.name):
-                if record["status"] in {"PENDING", "RUNNING"}:
-                    record.update(
-                        status="INTERRUPTED", finished_at=_now(),
-                        error="Engine 运行中断，执行结果未确认。可检查后显式重试。",
-                        progress="interrupted",
-                    )
-                    self.save(record)
+        """Fail closed on restart; do not resend a possibly completed job."""
+        try:
+            records = self.store.task_records(unfinished=True)
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            raise HTTPException(503, "任务恢复记录无法读取。") from exc
+        for record in records:
+            self._checked(record, record.get("tenant_id"), record.get("id"))
+            record.update(
+                status="INTERRUPTED", finished_at=_now(),
+                error="Engine 运行中断，执行结果未确认。可检查后显式重试。",
+                progress="interrupted", cancellable=False, retryable=True,
+            )
+            self.save(record)
 
 
 class TaskCoordinator:
@@ -171,7 +215,10 @@ class TaskCoordinator:
     def __init__(self, runtime, market_data, state_root, *, capacity=16):
         self.runtime = runtime
         self.market_data = market_data
-        self.journal = TaskJournal(Path(state_root) / "tasks")
+        self.journal = TaskJournal(
+            Path(state_root) / "tasks",
+            store=runtime.store if isinstance(runtime.store, Store) else None,
+        )
         self.lock = threading.RLock()
         self.pending = queue.Queue(maxsize=capacity)
         self.closed = False
@@ -246,9 +293,8 @@ class TaskCoordinator:
         fingerprint = _fingerprint(kind, parameters)
         with self.lock:
             if idempotency_key:
-                for job in self.journal.list(tenant_id):
-                    if job.get("idempotency_key") != idempotency_key:
-                        continue
+                job = self.journal.find_idempotent(tenant_id, idempotency_key)
+                if job is not None:
                     if job["fingerprint"] != fingerprint:
                         raise HTTPException(409, "相同幂等键不能用于不同任务参数。")
                     return self._public(job)
