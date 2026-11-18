@@ -40,8 +40,9 @@ def test_streamed_backtest_matches_one_shot_for_deterministic_bars(tmp_path):
 
     # _run_symbol requires issued strategy archives; tests use the same immutable
     # sample package in each run and compare economically relevant output fields.
-    from tests.engine.strategy_load_test import issued_payload, ema_archive, ema_parameters
     import base64
+
+    from tests.engine.strategy_load_test import ema_archive, ema_parameters, issued_payload
     payload = issued_payload(ema_archive(), "development", "stream", ema_parameters())
     load = {
         "tenant_id": "dev", "account_id": "desk", "issuance_id": "stream",
