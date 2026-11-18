@@ -79,8 +79,8 @@ class DataRequest:
             raise PipelineConfigError("至少需要一个交易对")
         if self.start >= self.end:
             raise PipelineConfigError("开始时间必须早于结束时间")
-        if self.market not in {SUPPORTED_MARKET, "options"}:
-            raise PipelineConfigError("数据请求仅支持 futures_um 或 options")
+        if self.market not in {SUPPORTED_MARKET, "spot", "options"}:
+            raise PipelineConfigError("数据请求仅支持 futures_um、spot 或 options")
         if self.market == "options":
             if self.data_type not in {"trades", "klines"}:
                 raise PipelineConfigError("期权仅支持近期 trades 或交易所 klines")
@@ -100,6 +100,7 @@ class ArchiveSpec:
     day: date
     source_path: str
     interval: str | None = None
+    market: str = SUPPORTED_MARKET
 
 
 @dataclass(frozen=True)
