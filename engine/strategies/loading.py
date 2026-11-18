@@ -10,8 +10,8 @@ import base64
 import shutil
 import tempfile
 from collections import defaultdict
-from itertools import chain
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from itertools import chain
 from pathlib import Path
 from uuid import uuid4
 
