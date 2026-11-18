@@ -15,7 +15,6 @@ from nautilus_trader.model import (
     AccountType,
     Bar,
     BookType,
-    FundingRateUpdate,
     OmsType,
     OptionGreeks,
     OrderBookDepth,
@@ -36,7 +35,7 @@ def join_funding_updates(bar_batches, funding_updates, instrument_id):
         events = []
         for bar in batch:
             if not isinstance(bar, Bar):
-                raise ValueError("Expected historical Bars")
+                raise TypeError("Expected historical Bars")
             while next_rate is not None and next_rate.ts_event <= bar.ts_event:
                 if next_rate.instrument_id != instrument_id:
                     raise ValueError("Funding instrument differs from backtest instrument")
@@ -71,7 +70,7 @@ def greeks_exposures(positions, greeks, *, now_ns, max_age_ns):
         iid = str(instrument_id)
         item = latest.get(iid)
         if not isinstance(item, OptionGreeks):
-            raise ValueError("Missing native option Greeks")
+            raise TypeError("Missing native option Greeks")
         if not 0 <= now_ns - item.ts_event <= max_age_ns:
             raise ValueError("Stale or future option Greeks")
         factor = Decimal(str(signed_qty)) * Decimal(str(multiplier))
@@ -93,8 +92,10 @@ def validated_depths(depths, instrument_id):
     previous = None
     result = []
     for depth in depths:
-        if not isinstance(depth, OrderBookDepth) or depth.instrument_id != instrument_id:
-            raise ValueError("Invalid depth snapshot instrument or model")
+        if not isinstance(depth, OrderBookDepth):
+            raise TypeError("Invalid depth snapshot model")
+        if depth.instrument_id != instrument_id:
+            raise ValueError("Invalid depth snapshot instrument")
         if previous is not None and depth.ts_event <= previous:
             raise ValueError("Depth sequence has repeated or regressing event times")
         previous = depth.ts_event
