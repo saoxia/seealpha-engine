@@ -131,7 +131,8 @@ def prepare_data(
         refresh=refresh_archives,
     )
     catalog = ParquetDataCatalog(str(settings.catalog_dir))
-    instruments = ensure_instruments(catalog, request.symbols, market=request.market)
+    instruments = (ensure_instruments(catalog, request.symbols, market="spot")
+                   if request.market == "spot" else ensure_instruments(catalog, request.symbols))
     requested_bar_intervals = request.bar_intervals or settings.intervals
     convert_trade_archives(
         archives,
