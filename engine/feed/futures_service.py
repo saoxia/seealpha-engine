@@ -26,15 +26,18 @@ LOGGER = logging.getLogger(__name__)
 MAX_FUTURES_SYMBOLS_PER_SOCKET = 128
 PUBLIC_SOCKET = "wss://fstream.binance.com/public/stream"
 MARKET_SOCKET = "wss://fstream.binance.com/market/stream"
+SPOT_SOCKET = "wss://stream.binance.com:9443/stream"
 
 
 class FuturesCombinedSocket:
     """Subscribe/unsubscribe in place; failed connections notify every pair."""
 
+    spot = False
+
     async def stream(self, scope, *, channel="trade"):
-        if channel not in {"trade", "mark"}:
-            raise ValueError("Unknown futures stream channel")
-        endpoint = PUBLIC_SOCKET if channel == "trade" else MARKET_SOCKET
+        if channel not in ({"trade"} if self.spot else {"trade", "mark"}):
+            raise ValueError("Unknown market stream channel")
+        endpoint = (SPOT_SOCKET if self.spot else PUBLIC_SOCKET) if channel == "trade" else MARKET_SOCKET
         suffix = "@trade" if channel == "trade" else "@markPrice@1s"
         delay = 1
         while True:
@@ -117,6 +120,12 @@ class FuturesCombinedSocket:
                 delay = min(delay * 2, 30)
 
 
+class SpotCombinedSocket(FuturesCombinedSocket):
+    """Spot uses its own public endpoint and never subscribes mark/funding."""
+
+    spot = True
+
+
 class QueueSocket:
     """Feed one contract from the shared stream without changing its journal."""
 
@@ -131,17 +140,21 @@ class QueueSocket:
             yield event
 
 
-async def serve_futures_batch(manifest, managed_root, catalog, *, project, socket_factory=FuturesCombinedSocket):
-    """One tenant-wide collector process; 128-symbol groups use separate sockets."""
+async def serve_futures_batch(manifest, managed_root, catalog, *, project,
+                              socket_factory=None, product="futures_um"):
+    """One tenant-wide collector per product, 128 symbols per public socket."""
+    if product not in {"futures_um", "spot"}:
+        raise ValueError("Unknown managed trading product")
+    socket_factory = socket_factory or (SpotCombinedSocket if product == "spot" else FuturesCombinedSocket)
     if not managed_root.is_dir():
-        raise OSError("USD-M managed storage mount unavailable")
+        raise OSError("Managed market storage mount unavailable")
     jobs, groups, retry_at = {}, {}, {}
     next_group = 0
 
     async def run(policy, job):
         symbol = policy["symbol"]
         root = managed_root / symbol / policy["base_level"]
-        access_path = project / "data/.locks/futures_um" / f"{symbol}.access.lock"
+        access_path = project / "data/.locks" / product / f"{symbol}.access.lock"
         access_path.parent.mkdir(parents=True, exist_ok=True)
         root.mkdir(parents=True, exist_ok=True)
         with access_path.open("a") as access:
@@ -220,10 +233,10 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                     raise ValueError("Invalid futures subscription manifest")
                 desired = {}
                 for policy in document["policies"]:
-                    symbol = normalize_symbol(policy["symbol"], "futures_um")
-                    if (policy["product"] != "futures_um" or policy["base_level"] not in {"tick", *INTERVALS}
+                    symbol = normalize_symbol(policy["symbol"], product)
+                    if (policy["product"] != product or policy["base_level"] not in {"tick", *INTERVALS}
                             or symbol in desired or type(policy.get("realtime_enabled")) is not bool):
-                        raise ValueError("Invalid or duplicate USD-M funding/trade policy")
+                        raise ValueError("Invalid or duplicate product trade policy")
                     if policy["realtime_enabled"]:
                         desired[symbol] = {**policy, "symbol": symbol}
             except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -277,7 +290,7 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                 if group["tasks"] is None:
                     group["tasks"] = [
                         asyncio.create_task(receive(group["scope"], channel))
-                        for channel in ("trade", "mark")
+                        for channel in (("trade",) if product == "spot" else ("trade", "mark"))
                     ]
             await asyncio.sleep(1)
     finally:
