@@ -30,9 +30,15 @@ Engine Docker 为每个租户维护独立的任务记录。业务 API 通过 HTT
 统一 API 将状态投影为 `RUNNING/SUCCEEDED/FAILED/CANCELLED/INTERRUPTED/UNKNOWN`；
 `UNKNOWN` 表示数据任务所有权未确认，不会擅自重试。
 
-回测任务的参数、任务状态、结果分别存于该 Engine 状态卷的
-`tasks/<tenant_id>/<task_id>.record.json` 和 `*.result.json`；
-原子写入，不暴露任意文件路径。大体量结果只经专门结果接口读取。
+回测任务的参数、状态、幂等键和创建时间存于 Engine 原有的
+`book.sqlite`（WAL）的 `backtest_tasks` 表，使用租户范围内的唯一幂等键约束。
+大体量结果仍原子写入 `tasks/<tenant_id>/<task_id>.result.json`，
+只经专门结果接口读取，不暴露任意文件路径。
+
+首次启动时，旧的 `*.record.json` 经身份核验后导入 SQLite，并在持久化
+成功后重命名为 `*.record.json.migrated` 保留审计副本；之后不再重复导入。
+恢复时仅将未确认完成的 `PENDING/RUNNING` 标记为 `INTERRUPTED`，
+不得自动重复执行。迁移前应备份状态卷，正式部署仍需独立验收升级与回滚。
 每个 Engine 最多排队 16 个回测，仅一个回测 worker 同时执行。
 这保留 Engine 本地 Catalog 和会话，避免长连接/重复容器初始化。
 
