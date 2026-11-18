@@ -6,9 +6,9 @@ recent trades are not advertised as complete historical ticks.
 
 from __future__ import annotations
 
-import time
 import asyncio
 import json
+import time
 from decimal import Decimal, InvalidOperation
 
 from websockets.asyncio.client import connect
