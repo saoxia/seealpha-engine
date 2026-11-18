@@ -17,11 +17,11 @@ class PublicREST:
     allowed_endpoints = frozenset({"time"})
 
     def __init__(
-        self, *, symbols=("BTCUSDT", "ETHUSDT"), timeout=12, attempts=4, minimum_interval=0.3
+        self, *, symbols=("BTCUSDT", "ETHUSDT"), timeout=12, attempts=4, minimum_interval=0.3, use_native=True
     ):
         from .native import NativeMarketData
 
-        self.source = NativeMarketData(symbols, timeout=timeout)
+        self.source = NativeMarketData(symbols, timeout=timeout) if use_native else None
         self.timeout, self.attempts = timeout, attempts
         self.minimum_interval = minimum_interval
         self.lock = asyncio.Lock()
