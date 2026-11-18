@@ -231,7 +231,8 @@ def test_engine_reuses_one_shared_futures_collector_for_multiple_symbols(tmp_pat
     manager.policy_repository.save([eth, disabled], tenant_id="42")
     manager.subscriptions.restore()
     assert len(commands) == 3  # One shared socket process and two calculation workers.
-    assert not stopped  # Disabling BTC does not stop ETH's shared connection.
+    assert len(stopped) == 1  # Only BTC calculation stops; ETH's shared collector survives.
+    assert manager.subscriptions.processes[("futures_um", "ALL")].poll() is None
     manifest = json.loads((manager.directory / "futures-runtime.json").read_text())
     assert [row["symbol"] for row in manifest["policies"] if row["realtime_enabled"]] == ["ETHUSDT"]
 
