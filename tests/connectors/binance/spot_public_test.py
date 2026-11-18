@@ -95,15 +95,15 @@ def test_recent_spot_trades_are_not_represented_as_complete_history():
 
 
 def test_spot_venue_http_authorization_validation_and_boundaries(tmp_path, monkeypatch):
-    async def fake_markets():
+    async def fake_markets(*, environment="production"):
         return [{"symbol": "ETH/USDT", "market_type": "spot", "base": "ETH",
                  "quote": "USDT", "expiry": None}]
 
-    async def fake_candles(symbol, interval, start_ms, end_ms, *, limit):
+    async def fake_candles(symbol, interval, start_ms, end_ms, *, limit, environment="production"):
         return {"product": "spot", "symbol": symbol, "interval": interval,
                 "candles": [], "next_start_ms": None, "source": "binance_spot_public_rest"}
 
-    async def fake_trades(symbol, *, limit):
+    async def fake_trades(symbol, *, limit, environment="production"):
         return {"product": "spot", "symbol": symbol, "trades": [],
                 "complete_history": False, "source": "binance_spot_public_rest"}
 
@@ -124,8 +124,10 @@ def test_spot_venue_http_authorization_validation_and_boundaries(tmp_path, monke
                               json={"product": "spot", "environment": "production"})
         assert listing.status_code == 200
         assert listing.json()["items"][0]["market_type"] == "spot"
-        assert client.post(base + "/catalog", headers=auth,
-                           json={"product": "spot", "environment": "sandbox"}).status_code == 422
+        sandbox_listing = client.post(base + "/catalog", headers=auth,
+                                      json={"product": "spot", "environment": "sandbox"})
+        assert sandbox_listing.status_code == 200
+        assert sandbox_listing.json()["items"][0]["market_type"] == "spot"
         candles = client.post(base + "/spot/klines", headers=auth, json={
             "symbol": "ETH/USDT", "interval": "1m", "start_ms": 1, "end_ms": 60001,
         })
