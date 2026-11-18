@@ -14,7 +14,7 @@ from .service import write_status
 
 
 async def serve_pair(policy, root, catalog, *, calculate=True, trade_socket=None, funding_socket=None):
-    product = policy["product"]
+    product = policy.get("product", "futures_um")
     if product not in {"spot", "futures_um"}:
         raise ValueError("不支持的原始逐笔采集产品")
     rest = (SpotREST() if product == "spot" else PairREST(symbols=(policy["symbol"],)))
