@@ -14,6 +14,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from nautilus_trader.common import LogLevel
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model import (
+    AccountId,
     ClientOrderId,
     InstrumentId,
     OrderSide,
@@ -164,6 +165,7 @@ class ManualCommand(Strategy):
             log_events=False, log_commands=False,
         ))
         self.account, self.instrument_id, self.command = account, instrument_id, command
+        self.spot = command.get("_product") == "spot"
         self.loop = asyncio.get_running_loop()
         self.completed = asyncio.Event()
         self.error, self.result, self.records = None, None, []
@@ -208,7 +210,10 @@ class ManualCommand(Strategy):
             p = self.command
             quantity = exact(p["quantity"], instrument.size_increment,
                              instrument.min_quantity, instrument.max_quantity)
-            if p["reduce_only"]:
+            if self.spot:
+                if p["reduce_only"]:
+                    raise ValueError("现货不支持 Reduce Only。")
+            elif p["reduce_only"]:
                 net = sum((Decimal(str(position.quantity)) * (1 if enum_text(position.side) == "long" else -1)
                            for position in self.cache.positions_open(instrument_id=self.instrument_id)
                            if p["position_side"] == "BOTH" or str(position.id).endswith("-" + p["position_side"])), Decimal(0))
@@ -235,9 +240,28 @@ class ManualCommand(Strategy):
             if (not p["reduce_only"] and instrument.min_notional is not None
                     and notional < instrument.min_notional.as_decimal()):
                 raise ValueError("委托金额低于交易所最小名义金额。")
+            if self.spot:
+                native_account = self.cache.account(AccountId(f"BINANCE-{self.account['id']}"))
+                if native_account is None:
+                    raise ValueError("现货账户余额尚未对账。")
+                balances = native_account.balances()
+                base_balance = balances.get(instrument.base_currency)
+                quote_balance = balances.get(instrument.quote_currency)
+                if p["side"] == "sell":
+                    if (base_balance is None
+                            or quantity > base_balance.free.as_decimal()):
+                        raise ValueError("现货可用资产不足，禁止裸卖空。")
+                else:
+                    # Use the venue instrument, reconciled free balance, and a
+                    # conservative quote buffer. The native RiskEngine remains
+                    # authoritative and may reject increased costs or slippage.
+                    required = notional * Decimal("1.01")
+                    if (quote_balance is None
+                            or required > quote_balance.free.as_decimal()):
+                        raise ValueError("现货报价资产不足以覆盖订单及费用。")
             self.result = order.client_order_id
             position_id = (PositionId(f"{self.instrument_id}-{p['position_side']}")
-                           if p["position_side"] != "BOTH" else None)
+                           if not self.spot and p["position_side"] != "BOTH" else None)
             self.submit_order(order, position_id=position_id)
         except (ValueError, RuntimeError):
             self.error = "下单校验失败，请检查价格、数量、最小金额和持仓方向。"
@@ -265,12 +289,24 @@ class ManualCommand(Strategy):
 
 
 async def _run(account, symbol, command, *, http_url=None, websocket_url=None, timeout=40, log_level=LogLevel.OFF):
-    context = account_context(account, symbol, http_url=http_url, include_risk=command["action"] == "snapshot")
-    command = resolve_command(command, context["position_mode"])
+    product = "futures_um" if symbol.endswith("-PERP") else "spot"
+    context = (account_context(account, symbol, http_url=http_url,
+                               include_risk=command["action"] == "snapshot")
+               if product == "futures_um" else
+               {"position_mode": "oneway", "positions": {}, "leverage": None})
+    if product == "spot":
+        if (command.get("reduce_only") or command.get("position_side") is not None
+                or command.get("position_effect", "open") != "open"
+                or command.get("expected_position_mode") is not None):
+            raise ManualValidationError("现货不支持做空、对冲持仓或 Reduce Only。")
+        command = {**command, "position_side": "BOTH", "reduce_only": False,
+                   "_product": "spot"}
+    else:
+        command = resolve_command(command, context["position_mode"])
     node, account_id = account_node(
         account, http_url=http_url, websocket_url=websocket_url, timeout=timeout,
         reconciliation_lookback_minutes=1440, manual=True, log_level=log_level,
-        manual_position_side=command.get("position_side"),
+        manual_position_side=command.get("position_side"), product=product,
     )
     strategy = ManualCommand(account, InstrumentId.from_str(f"{symbol}.BINANCE"), command)
     node.add_strategy(strategy)
@@ -294,7 +330,7 @@ async def _run(account, symbol, command, *, http_url=None, websocket_url=None, t
             raise QueryError("账户尚未就绪。")
         orders = [order_view(o) for o in cache.orders()
                   if o.instrument_id == strategy.instrument_id and (o.account_id == account_id or o.client_order_id == strategy.result)]
-        positions = [{"id": str(p.id), "symbol": str(p.instrument_id).removesuffix(".BINANCE"),
+        positions = [] if product == "spot" else [{"id": str(p.id), "symbol": str(p.instrument_id).removesuffix(".BINANCE"),
                       "side": enum_text(p.side), "quantity": str(p.quantity),
                       "entry_price": str(p.avg_px_open)}
                      for p in cache.positions_open(account_id=account_id)
