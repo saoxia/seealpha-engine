@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS strategy_loads (
     loaded_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, issuance_id)
 );
+CREATE TABLE IF NOT EXISTS backtest_worker_settings (
+    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+    max_workers INTEGER NOT NULL CHECK (max_workers BETWEEN 1 AND 8),
+    timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds BETWEEN 1 AND 86400)
+);
 CREATE TABLE IF NOT EXISTS backtest_tasks (
     tenant_id TEXT NOT NULL,
     id TEXT NOT NULL,
@@ -249,6 +254,30 @@ class Store:
             self._ensure()
             self.db.execute(sql, params)
 
+
+    def backtest_worker_settings(self):
+        """Engine-wide settings: each tenant container has its own SQLite volume."""
+        with self.lock:
+            self._ensure()
+            row = self.db.execute(
+                "SELECT max_workers, timeout_seconds FROM backtest_worker_settings WHERE singleton_id=1"
+            ).fetchone()
+        return dict(row) if row else None
+
+    def save_backtest_worker_settings(self, max_workers, timeout_seconds):
+        if (type(max_workers) is not int or not 1 <= max_workers <= 8
+                or type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 86400):
+            raise ValueError("Worker settings out of range")
+        with self.lock:
+            self._ensure()
+            self.db.execute(
+                """INSERT INTO backtest_worker_settings
+                   (singleton_id, max_workers, timeout_seconds) VALUES (1, ?, ?)
+                   ON CONFLICT(singleton_id) DO UPDATE SET
+                   max_workers=excluded.max_workers,
+                   timeout_seconds=excluded.timeout_seconds""",
+                (max_workers, timeout_seconds),
+            )
 
     def save_task_record(self, record, *, if_absent=False):
         """Persist a complete task envelope using the existing Engine WAL database."""
