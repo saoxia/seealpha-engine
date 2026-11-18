@@ -27,7 +27,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from core.engine_contracts import EngineConflict
 from engine.data_manager.contracts import (
     DataJobRequest,
     PairDeleteRequest,
