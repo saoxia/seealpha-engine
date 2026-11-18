@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-TRADING_SYMBOL = r"^[A-Z0-9]{2,30}(?:USDT|USDC)-PERP$"
+TRADING_SYMBOL = r"^[A-Z0-9]{2,30}(?:USDT|USDC|FDUSD)(?:-PERP)?$"
 
 
 class SubmitOrderValues(BaseModel):
@@ -39,6 +39,11 @@ class SubmitOrderValues(BaseModel):
             raise ValueError("市价单不能设置限价、Post Only 或限价有效期。")
         if self.post_only and self.time_in_force != "GTC":
             raise ValueError("Post Only 仅支持 GTC。")
+        if not self.symbol.endswith("-PERP") and (
+            self.reduce_only or self.position_side is not None
+            or self.position_effect != "open" or self.expected_position_mode is not None
+        ):
+            raise ValueError("现货仅支持买入或卖出现有资产，不支持仓位方向、做空和 Reduce Only。")
         if self.position_side in {"LONG", "SHORT"} and self.reduce_only:
             raise ValueError("双向持仓请按持仓方向和买卖方向平仓，不能传 Reduce Only。")
         return self
