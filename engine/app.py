@@ -166,7 +166,11 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
     app.include_router(venue_router)
     app.include_router(market_data_router)
     app.include_router(control_router)
-    app.state.tasks = TaskCoordinator(runtime, app.state.market_data, runtime.root)
+    app.state.tasks = TaskCoordinator(
+        runtime, app.state.market_data, runtime.root,
+        max_workers=config.backtest_max_workers,
+        timeout_seconds=config.backtest_timeout_seconds,
+    )
     app.include_router(task_router)
     # Mount a separate ASGI application: research grants must NEVER authenticate
     # against the administrative Engine HTTP API or its trading routes.
