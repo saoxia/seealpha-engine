@@ -82,6 +82,7 @@ async def backfill(policy, settings, *, rest=None, now=None):
     if policy["product"] not in {"futures_um", "spot"}:
         raise ValueError("此追加入口当前仅支持 U 本位永续；期权请使用已有历史接口")
     rest = rest or (SpotREST() if policy["product"] == "spot" else PairREST(symbols=(policy["symbol"],)))
+    settings = replace(settings, market=policy["product"])
     catalog = ParquetDataCatalog(settings.catalog_dir)
     start, end = history_bounds(policy, catalog, now or datetime.now(UTC))
     earliest = await rest.get("klines", symbol=policy["symbol"], interval="1m", startTime=0, limit=1)
@@ -95,7 +96,8 @@ async def backfill(policy, settings, *, rest=None, now=None):
         start = max(start, available)
     base = policy["base_level"] if policy["base_level"] != "auto" else "1m"
     levels = list(dict.fromkeys(([base] if base != "tick" else []) + policy["intervals"]))
-    instruments = await asyncio.to_thread(ensure_instruments, catalog, (policy["symbol"],))
+    instruments = await asyncio.to_thread(ensure_instruments, catalog, (policy["symbol"],),
+                                          market=policy["product"])
     instrument = instruments[policy["symbol"]]
     written = 0
     day = start
@@ -105,13 +107,23 @@ async def backfill(policy, settings, *, rest=None, now=None):
         if base == "tick":
             request = DataRequest((policy["symbol"],), day, finish, bar_intervals=("1s",) if "1s" in levels else (),
                                   market=policy["product"])
-            await asyncio.to_thread(prepare_data, request, settings=replace(settings, symbols=request.symbols, intervals=("1s",) if "1s" in levels else ()))
+            await asyncio.to_thread(prepare_data, request, settings=replace(settings, symbols=request.symbols,
+                                                                             intervals=("1s",) if "1s" in levels else ()))
         if base == "1s" or "1s" in levels and base != "tick":
             request = DataRequest((policy["symbol"],), day, finish, bar_intervals=("1s",), market=policy["product"])
-            archives = await asyncio.to_thread(sync_archives, plan_daily_archives(request), settings.raw_dir)
-            for archive in archives:
-                parts = [aggregate_trade_chunk(chunk, "1s") for chunk in iter_trade_archive(archive.path)]
-                bars = aggregate_parts_to_bars(parts, instrument, "1s", bar_type_for(policy["symbol"], "1s", policy["product"]))
+            if policy["product"] == "spot":
+                # The Spot archives since 2025 are microsecond-based. The Rust
+                # converter preserves event precision; never reparse as ms here.
+                await asyncio.to_thread(prepare_data, request, settings=replace(settings,
+                                        symbols=request.symbols, intervals=("1s",)))
+                bars = []
+            else:
+                archives = await asyncio.to_thread(sync_archives, plan_daily_archives(request), settings.raw_dir)
+                bars = []
+                for archive in archives:
+                    parts = [aggregate_trade_chunk(chunk, "1s") for chunk in iter_trade_archive(archive.path)]
+                    bars.extend(aggregate_parts_to_bars(parts, instrument, "1s",
+                                                bar_type_for(policy["symbol"], "1s", policy["product"])))
                 bars = missing_bars(catalog, bars)
                 install_bars(catalog, bars)
                 written += len(bars)
@@ -430,7 +442,8 @@ def calculate_history_change(event, destination, *, completed_until):
     aggregates = {level: {} for level in ranges}
     source_ms = 1000 if source_level == "1s" else 60000
     inputs = _history_inputs(source, policy["symbol"], source_level,
-                             min(left for left, _ in ranges.values()), max(right for _, right in ranges.values()))
+                             min(left for left, _ in ranges.values()), max(right for _, right in ranges.values()),
+                             market=policy["product"])
     try:
         for opening_ms, values in inputs:
             for level, (left, right) in ranges.items():
