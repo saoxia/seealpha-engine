@@ -2,16 +2,16 @@
 name = "seealpha-engine"
 version = "0.1.0"
 description = "Standalone SeeAlpha quantitative data, strategy and trading engine"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.13,<3.16"
 dependencies = [
-    "nautilus-trader==2.0.0rc8",
+    "nautilus-trader==2.0.0rc9",
     "numpy>=2.5.4",
     "pandas>=3.1.0",
     "pyarrow>=26.0.0",
     "websockets>=17.3",
-    "fastapi==0.141.1",
+    "fastapi==0.164.0",
     "pydantic>=2.14,<3",
-    "uvicorn==0.52.1",
+    "uvicorn==0.54.0",
 ]
 
 [dependency-groups]
