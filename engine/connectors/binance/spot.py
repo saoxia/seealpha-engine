@@ -24,15 +24,19 @@ class SpotREST(PublicREST):
     base_url = "https://data-api.binance.vision/api/v3/"
     allowed_endpoints = frozenset({"exchangeInfo", "klines", "trades", "ticker/24hr", "time"})
 
-    def __init__(self, *, timeout=12, attempts=4, minimum_interval=0.3):
+    def __init__(self, *, timeout=12, attempts=4, minimum_interval=0.3, environment="production"):
+        if environment not in {"production", "sandbox"}:
+            raise ValueError("Invalid Spot environment")
+        self.base_url = ("https://testnet.binance.vision/api/v3/" if environment == "sandbox"
+                         else "https://data-api.binance.vision/api/v3/")
         super().__init__(
             symbols=(), timeout=timeout, attempts=attempts,
             minimum_interval=minimum_interval, use_native=False,
         )
 
 
-async def markets(*, rest=None):
-    client = rest or SpotREST()
+async def markets(*, rest=None, environment="production"):
+    client = rest or SpotREST(environment=environment)
     response = await client.get("exchangeInfo")
     if not isinstance(response, dict) or not isinstance(response.get("symbols"), list):
         raise DataError("Invalid Binance Spot exchangeInfo response")
@@ -68,11 +72,11 @@ def _positive_number(value, *, zero=False):
     return format(amount, "f")
 
 
-async def candles(symbol, interval, start_ms, end_ms, *, limit=1000, rest=None):
+async def candles(symbol, interval, start_ms, end_ms, *, limit=1000, rest=None, environment="production"):
     symbol = normalize_symbol(symbol, "spot")
     if interval not in INTERVALS or not 0 <= start_ms < end_ms or not 1 <= limit <= 1000:
         raise ValueError("Invalid Spot candle request")
-    client = rest or SpotREST()
+    client = rest or SpotREST(environment=environment)
     rows = await client.get(
         "klines", symbol=symbol, interval=interval,
         startTime=start_ms, endTime=end_ms - 1, limit=limit,
@@ -109,11 +113,11 @@ async def candles(symbol, interval, start_ms, end_ms, *, limit=1000, rest=None):
     }
 
 
-async def recent_trades(symbol, *, limit=500, rest=None):
+async def recent_trades(symbol, *, limit=500, rest=None, environment="production"):
     symbol = normalize_symbol(symbol, "spot")
     if not 1 <= limit <= 1000:
         raise ValueError("Invalid Spot trade limit")
-    client = rest or SpotREST()
+    client = rest or SpotREST(environment=environment)
     rows = await client.get("trades", symbol=symbol, limit=limit)
     if not isinstance(rows, list) or len(rows) > limit:
         raise DataError("Invalid Binance Spot recent trades")
@@ -139,9 +143,9 @@ async def recent_trades(symbol, *, limit=500, rest=None):
             "source": "binance_spot_public_rest"}
 
 
-async def market_tickers(*, rest=None):
+async def market_tickers(*, rest=None, environment="production"):
     """Binance Spot public 24h snapshots; funding and open interest do not apply."""
-    client = rest or SpotREST(attempts=2)
+    client = rest or SpotREST(attempts=2, environment=environment)
     rows = await client.get("ticker/24hr")
     if not isinstance(rows, list):
         raise DataError("Invalid Binance Spot ticker response")
