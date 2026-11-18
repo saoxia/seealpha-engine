@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--intervals", nargs="+", choices=tuple(PERIODS))
     parser.add_argument("--options-config", type=Path, help="Runtime snapshot for the shared options collector")
     parser.add_argument("--futures-config", type=Path, help="Shared USD-M collector manifest")
+    parser.add_argument("--spot-config", type=Path, help="Shared Spot collector manifest")
     parser.add_argument("--policy", help="Validated pair configuration JSON")
     parser.add_argument("--warmup-minutes", type=int, default=60)
     parser.add_argument("--role", choices=("combined", "collection", "calculation"), default="combined")
@@ -31,9 +32,10 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     if not 15 <= args.warmup_minutes <= 135 * 1440:
         parser.error("Invalid warmup")
-    if args.futures_config:
-        if args.options_config or args.symbol or args.policy or args.role != "combined":
-            parser.error("Shared futures collector owns only USD-M subscriptions")
+    if args.futures_config or args.spot_config:
+        if (args.options_config or args.symbol or args.policy or args.role != "combined"
+                or args.futures_config and args.spot_config):
+            parser.error("Only one shared Spot or USD-M collector may be selected")
         if not args.data_root.is_dir() or not args.root.resolve().is_relative_to(args.data_root.resolve()):
             parser.error("Data mount unavailable")
         args.root.mkdir(parents=True, exist_ok=True)
@@ -42,7 +44,9 @@ def main():
             from .futures_service import serve_futures_batch
             try:
                 asyncio.run(serve_futures_batch(
-                    args.futures_config, args.root.parent, args.catalog, project=args.data_root.parent,
+                    args.spot_config or args.futures_config, args.root.parent, args.catalog,
+                    project=args.data_root.parent,
+                    product="spot" if args.spot_config else "futures_um",
                 ))
             except KeyboardInterrupt:
                 pass
