@@ -14,7 +14,6 @@ from engine.app import create_app
 from engine.config import EngineConfig
 from engine.task_queue import TaskCoordinator, TaskJournal
 
-
 FAKE_WORKER = """
 import json
 import os
