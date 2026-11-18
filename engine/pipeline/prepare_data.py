@@ -45,13 +45,15 @@ class DataNotReadyError(RuntimeError):
     """表示请求的数据完成处理后仍未达到严格就绪条件。"""
 
 
-async def load_missing_instruments(symbols: list[str]) -> dict[str, Instrument]:
-    """从 Binance 公开接口读取缺失的 USD-M 永续合约定义。"""
+async def load_missing_instruments(symbols: list[str], *, market="futures_um") -> dict[str, Instrument]:
+    """从 Binance 公开接口读取现货或 USD-M 合约定义。"""
+    if market not in {"futures_um", "spot"}:
+        raise DataNotReadyError("不支持的品种类型")
     config = BinanceDataClientConfig(
-        product_type=BinanceProductType.USD_M,
+        product_type=BinanceProductType.SPOT if market == "spot" else BinanceProductType.USD_M,
         environment=BinanceEnvironment.LIVE,
         instrument_provider=BinanceInstrumentProviderConfig(
-            load_all=False, load_ids=[instrument_id_for(symbol) for symbol in symbols],
+            load_all=False, load_ids=[instrument_id_for(symbol, market) for symbol in symbols],
             log_warnings=False,
         ),
     )
@@ -59,9 +61,9 @@ async def load_missing_instruments(symbols: list[str]) -> dict[str, Instrument]:
     by_id = {str(item.id): item for item in loaded}
     result = {}
     for symbol in symbols:
-        instrument = by_id.get(instrument_id_for(symbol))
+        instrument = by_id.get(instrument_id_for(symbol, market))
         if instrument is None:
-            raise DataNotReadyError(f"Binance 未返回合约定义：{instrument_id_for(symbol)}")
+            raise DataNotReadyError(f"Binance 未返回合约定义：{instrument_id_for(symbol, market)}")
         result[symbol] = instrument
     return result
 
@@ -69,9 +71,10 @@ async def load_missing_instruments(symbols: list[str]) -> dict[str, Instrument]:
 def ensure_instruments(
     catalog: ParquetDataCatalog,
     symbols: tuple[str, ...],
+    *, market="futures_um",
 ) -> dict[str, Instrument]:
     """优先使用 Catalog 中的定义，只为缺失交易对访问 Binance。"""
-    expected_ids = {symbol: instrument_id_for(symbol) for symbol in symbols}
+    expected_ids = {symbol: instrument_id_for(symbol, market) for symbol in symbols}
     existing = catalog.instruments(instrument_ids=list(expected_ids.values()))
     by_id = {str(instrument.id): instrument for instrument in existing}
     instruments = {
@@ -81,7 +84,7 @@ def ensure_instruments(
     }
     missing = [symbol for symbol in symbols if symbol not in instruments]
     if missing:
-        downloaded = asyncio.run(load_missing_instruments(missing))
+        downloaded = asyncio.run(load_missing_instruments(missing, market=market))
         catalog.write_data(list(downloaded.values()))
         instruments.update(downloaded)
     return instruments
@@ -128,7 +131,7 @@ def prepare_data(
         refresh=refresh_archives,
     )
     catalog = ParquetDataCatalog(str(settings.catalog_dir))
-    instruments = ensure_instruments(catalog, request.symbols)
+    instruments = ensure_instruments(catalog, request.symbols, market=request.market)
     requested_bar_intervals = request.bar_intervals or settings.intervals
     convert_trade_archives(
         archives,
