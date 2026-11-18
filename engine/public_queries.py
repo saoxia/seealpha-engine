@@ -10,7 +10,9 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from core.market.instruments import INTERVALS, normalize_symbol
 
 from engine.connectors.binance import assets, manual, queries
 
@@ -30,7 +32,7 @@ def wire(value):
 class PublicRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     environment: Literal["production", "sandbox"] = "production"
-    product: Literal["futures_um", "options"] = "futures_um"
+    product: Literal["futures_um", "spot", "options"] = "futures_um"
 
 
 class PriceRequest(BaseModel):
@@ -62,6 +64,12 @@ class AccountRequest(BaseModel):
 
 @router.post("/catalog")
 async def market_catalog(tenant_id: str, request: PublicRequest):
+    if request.product == "spot":
+        if request.environment != "production":
+            raise HTTPException(422, "现货公开行情仅开放正式环境")
+        from engine.connectors.binance.spot import markets
+
+        return {"items": await markets()}
     if request.product == "options":
         if request.environment != "production":
             raise ValueError("期权数据仅使用正式公开行情")
@@ -83,6 +91,56 @@ async def market_catalog(tenant_id: str, request: PublicRequest):
         })
     rows.sort(key=lambda item: item["symbol"])
     return {"items": rows}
+
+
+class SpotDataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment: Literal["production"] = "production"
+    symbol: str = Field(min_length=3, max_length=30)
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, value):
+        return normalize_symbol(value, "spot")
+
+
+class SpotKlinesRequest(SpotDataRequest):
+    interval: str = Field(min_length=2, max_length=3)
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(gt=0)
+    limit: int = Field(default=1000, ge=1, le=1000)
+
+    @field_validator("interval")
+    @classmethod
+    def validate_interval(cls, value):
+        if value not in INTERVALS:
+            raise ValueError("Unsupported Binance Spot interval")
+        return value
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.start_ms >= self.end_ms:
+            raise ValueError("现货历史起点必须早于结束时间")
+        return self
+
+
+class SpotTradesRequest(SpotDataRequest):
+    limit: int = Field(default=500, ge=1, le=1000)
+
+
+@router.post("/spot/klines")
+async def spot_klines(tenant_id: str, request: SpotKlinesRequest):
+    from engine.connectors.binance.spot import candles
+
+    return await candles(request.symbol, request.interval, request.start_ms, request.end_ms,
+                         limit=request.limit)
+
+
+@router.post("/spot/trades")
+async def spot_trades(tenant_id: str, request: SpotTradesRequest):
+    from engine.connectors.binance.spot import recent_trades
+
+    return await recent_trades(request.symbol, limit=request.limit)
 
 
 @router.post("/tickers")
