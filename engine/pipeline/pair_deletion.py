@@ -218,9 +218,9 @@ def _trim_sqlite(db, symbol, cutoff, *, apply=False):
         count += db.execute("SELECT count(*) FROM runtime_values WHERE name='started_ms' AND value<?", (cutoff,)).fetchone()[0]
         if apply:
             db.execute("UPDATE runtime_values SET value=max(value,?) WHERE name='started_ms'", (cutoff,))
-    if "funding_config" in tables:
-        if any(row[0] != symbol for row in db.execute("SELECT symbol FROM funding_config")):
-            raise ValueError("资金费率日志交易对与裁剪范围不一致")
+    if ("funding_config" in tables
+            and any(row[0] != symbol for row in db.execute("SELECT symbol FROM funding_config"))):
+        raise ValueError("资金费率日志交易对与裁剪范围不一致")
     if "config" in tables:
         columns = {row[1] for row in db.execute("PRAGMA table_info(config)")}
         if "symbol" in columns:
