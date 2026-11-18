@@ -15,7 +15,7 @@ import time
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
-from core.market.instruments import normalize_symbol
+from core.market.instruments import INTERVALS, normalize_symbol
 from engine.feed.pair_service import serve_pair
 from engine.feed.service import write_status
 
@@ -221,7 +221,7 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                 desired = {}
                 for policy in document["policies"]:
                     symbol = normalize_symbol(policy["symbol"], "futures_um")
-                    if (policy["product"] != "futures_um" or policy["base_level"] not in {"tick", "1m"}
+                    if (policy["product"] != "futures_um" or policy["base_level"] not in {"tick", *INTERVALS}
                             or symbol in desired or type(policy.get("realtime_enabled")) is not bool):
                         raise ValueError("Invalid or duplicate USD-M funding/trade policy")
                     if policy["realtime_enabled"]:
