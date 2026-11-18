@@ -227,7 +227,7 @@ async def reconcile_day(policy, settings, rest, source, day, finish, available_m
     written, conflicts = 0, []
     if candidates:
         catalog = ParquetDataCatalog(settings.catalog_dir)
-        instrument = (await asyncio.to_thread(ensure_instruments, catalog, (policy["symbol"],), market=policy["product"])))[policy["symbol"]]
+        instrument = (await asyncio.to_thread(ensure_instruments, catalog, (policy["symbol"],), market=policy["product"]))[policy["symbol"]]
         writing = asyncio.create_task(asyncio.to_thread(repair_candidates, policy, settings, catalog, source, candidates, day, instrument))
         try:
             written, conflicts = await asyncio.shield(writing)
