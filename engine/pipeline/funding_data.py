@@ -62,6 +62,19 @@ async def fetch_history(symbol, start_ms, end_ms, get_page, *, page_size=1000):
     return result
 
 
+async def fetch_binance_history(symbol, start_ms, end_ms, *, page_size=1000):
+    """Use only Binance's public, bounded fundingRate endpoint (no account data)."""
+    from engine.connectors.binance.transport import PublicREST
+
+    class FundingREST(PublicREST):
+        allowed_endpoints = frozenset({"fundingRate"})
+
+    transport = FundingREST(symbols=(symbol,), timeout=12, attempts=4, minimum_interval=0.4)
+    return await fetch_history(
+        symbol, start_ms, end_ms, transport.get, page_size=page_size,
+    )
+
+
 def persist_history(catalog, observations):
     """Write verified native observations without overwriting existing intervals."""
     if not observations:
