@@ -23,7 +23,7 @@ def test_native_greeks_are_contract_adjusted_and_grouped_per_underlying():
     assert result["BTC"]["gamma"] == Decimal("0.004")
     with pytest.raises(ValueError, match="Stale"):
         greeks_exposures(
-            [(iid, "BTC", Decimal("2"), Decimal("0.1"))], [observation],
+            [(iid, "BTC", Decimal(2), Decimal("0.1"))], [observation],
             now_ns=200_000, max_age_ns=20_000,
         )
 
