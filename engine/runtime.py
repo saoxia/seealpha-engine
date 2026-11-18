@@ -439,7 +439,7 @@ class EngineRuntime:
         if len(symbols) != 1:
             raise EngineConflict("一次回测只支持同一品种的已下发策略。")
         symbol = next(iter(symbols))
-        if not self._has_subscription_intent(tenant_id, symbol):
+        if not self._has_subscription_intent(tenant_id, symbol, product):
             raise EngineConflict("开发租户尚未声明该品种的行情订阅。")
         try:
             amount = Decimal(str(starting_balance))
@@ -497,10 +497,11 @@ class EngineRuntime:
             return None
         return event["body"]
 
-    def _has_subscription_intent(self, tenant_id, symbol):
+    def _has_subscription_intent(self, tenant_id, symbol, product="futures_um"):
         wanted = str(symbol).upper()
         return any(
-            str(row["symbol"]).upper() == wanted and row["role"] == "intent"
+            str(row["symbol"]).upper() == wanted and row.get("product", "futures_um") == product
+            and row["role"] == "intent"
             for row in self.store.tenant_subscriptions(tenant_id)
         )
 
