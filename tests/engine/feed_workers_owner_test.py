@@ -50,10 +50,12 @@ def test_engine_only_starts_and_stops_futures_feed_and_history(tmp_path, monkeyp
     manager.subscriptions.restore()
     assert len(commands) == 3
     assert {row[1] for row in commands} == {
-        "ETHUSDT-collection.log", "ETHUSDT-calculation.log", "ETHUSDT-history.log",
+        "futures-collection.log", "ETHUSDT-calculation.log", "ETHUSDT-history.log",
     }
-    assert all(row[2] == ("ETHUSDT", "futures_um", True) for row in commands)
-    collection = manager.subscriptions.processes[("futures_um", "ETHUSDT")]
+    assert [row[2] for row in commands if row[1] == "futures-collection.log"] == [None]
+    assert all(row[2] == ("ETHUSDT", "futures_um", True)
+               for row in commands if row[1] != "futures-collection.log")
+    collection = manager.subscriptions.processes[("futures_um", "ALL")]
     manager.subscriptions.restore()
     assert len(commands) == 3  # A policy refresh never duplicates active workers.
     disabled = policy.model_copy(update={"realtime_enabled": False, "history_enabled": False})
@@ -158,7 +160,7 @@ def test_engine_http_sync_starts_and_stops_workers_with_tenant_authorization(tmp
         first = client.post(path, json=enabled, headers=headers)
         assert first.status_code == 200, first.text
         assert len(started) == 2  # Feed collection plus bar calculation.
-        assert all(access == ("ETHUSDT", "futures_um", True) for _, access, _ in started)
+        assert {access for _, access, _ in started} == {None, ("ETHUSDT", "futures_um", True)}
         again = client.post(path, json=enabled, headers=headers)
         assert again.status_code == 200
         assert len(started) == 2
@@ -212,4 +214,29 @@ def test_engine_option_delete_waits_for_access_lease_and_preserves_files(tmp_pat
 
     manager.subscriptions.pause_for_deletion("BTCUSDT", "options")
     assert evidence.read_text() == "retained"
+    manager.close()
+
+
+def test_engine_reuses_one_shared_futures_collector_for_multiple_symbols(tmp_path, monkeypatch):
+    manager, commands, stopped = engine_manager(tmp_path, monkeypatch)
+    eth = DataPolicy(symbol="ETHUSDT", base_level="tick", realtime_enabled=True)
+    btc = DataPolicy(symbol="BTCUSDT", base_level="1m", realtime_enabled=True)
+    manager.subscriptions._write([eth, btc])
+    manager.subscriptions.restore()
+    assert len([row for row in commands if row[1] == "futures-collection.log"]) == 1
+    assert set(manager.subscriptions.processes) == {("futures_um", "ALL")}
+    assert len(json.loads((manager.directory / "futures-runtime.json").read_text())["policies"]) == 2
+
+    disabled = btc.model_copy(update={"realtime_enabled": False})
+    manager.policy_repository.save([eth, disabled], tenant_id="42")
+    manager.subscriptions.restore()
+    assert len(commands) == 3  # One shared socket process and two calculation workers.
+    assert len(stopped) == 1  # Only BTC calculation stops; ETH's shared collector survives.
+    assert manager.subscriptions.processes[("futures_um", "ALL")].poll() is None
+    manifest = json.loads((manager.directory / "futures-runtime.json").read_text())
+    assert [row["symbol"] for row in manifest["policies"] if row["realtime_enabled"]] == ["ETHUSDT"]
+
+    manager.policy_repository.save([eth.model_copy(update={"realtime_enabled": False}), disabled], tenant_id="42")
+    manager.subscriptions.restore()
+    assert len(stopped) == 3  # Shared collection and both calculation workers stop.
     manager.close()

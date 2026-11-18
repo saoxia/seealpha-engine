@@ -12,7 +12,7 @@ from .pair_store import PairStore, journal_access
 from .service import write_status
 
 
-async def serve_pair(policy, root, catalog, *, calculate=True):
+async def serve_pair(policy, root, catalog, *, calculate=True, trade_socket=None, funding_socket=None):
     rest = PairREST(symbols=(policy["symbol"],))
     clock = ServerClock()
     with journal_access(root):
@@ -43,7 +43,7 @@ async def serve_pair(policy, root, catalog, *, calculate=True):
 
     async def receive():
         # Backpressure never silently drops a trade when the writer is slower.
-        stream = PairTradeSocket().stream(policy["symbol"])
+        stream = (trade_socket or PairTradeSocket()).stream(policy["symbol"])
         try:
             async for event in stream:
                 await queue.put(event)
@@ -55,6 +55,7 @@ async def serve_pair(policy, root, catalog, *, calculate=True):
     funding_path = (root.parent if root.name == policy["base_level"] else root) / "funding.sqlite"
     funding_task = asyncio.create_task(collect_funding(
         policy["symbol"], funding_path, history_start_ms=funding_start_ms(policy),
+        socket=funding_socket,
     ))
     pending_events = []
     snapshot_pending, retry_delay = False, 1

@@ -111,7 +111,9 @@ class Subscriptions:
             self._start_options()
             return
         key = (policy.product, policy.symbol)
-        roles = (["collection"] if policy.realtime_enabled else [])
+        if policy.product == "futures_um" and policy.base_level != "auto":
+            self._start_futures()
+        roles = (["collection"] if policy.realtime_enabled and policy.base_level == "auto" else [])
         if policy.base_level != "auto" and policy.product == "futures_um":
             if policy.realtime_enabled or policy.history_enabled:
                 roles.append("calculation")
@@ -143,6 +145,16 @@ class Subscriptions:
                     self._claim()
                     self._publish_options()
                     self._start_options()
+                self._claim()
+                self._publish_futures()
+                # Retire known pre-multiplex per-pair collectors before opening
+                # the shared writer. Auto-mode legacy minute workers are retained.
+                for key in list(self.processes):
+                    if (key[0] == "futures_um" and key[1] != "ALL"
+                            and any(p.symbol == key[1] and p.base_level != "auto"
+                                    for p in [*previous, *policies])):
+                        self.manager._stop(self.processes.pop(key))
+                self._start_futures()
                 if previous:
                     self._claim()
                     for old in previous:
@@ -319,6 +331,8 @@ class Subscriptions:
                     self.last_error = None
                 except (OSError, HTTPException) as exc:
                     self.last_error = str(exc)
+            if policy.product == "futures_um" and policy.base_level != "auto":
+                self._start_futures()
             return self._public(policy)
 
     def _write(self, policies):
@@ -328,6 +342,8 @@ class Subscriptions:
         self.policies = list(policies)
         if any(p.product == "options" for p in policies) or (self.manager.directory / "options-runtime.json").exists():
             self._publish_options()
+        if any(p.product == "futures_um" for p in policies) or (self.manager.directory / "futures-runtime.json").exists():
+            self._publish_futures()
 
     def _publish_options(self):
         from engine.pipeline.convert_binance_bars import write_record
@@ -335,6 +351,43 @@ class Subscriptions:
         values = [p.model_dump(mode="json") for p in self.policies or [] if p.product == "options" and "-" in p.symbol]
         write_record(path, {"version": 1, "policies": values})
         return path
+
+    def _publish_futures(self):
+        """Publish current per-symbol choices atomically for the shared data node."""
+        from engine.pipeline.convert_binance_bars import write_record
+
+        path = self.manager.directory / "futures-runtime.json"
+        records = [
+            p.model_dump(mode="json") for p in self.policies or []
+            if p.product == "futures_um" and p.base_level != "auto"
+        ]
+        write_record(path, {"version": 1, "policies": records})
+        return path
+
+    def _start_futures(self):
+        """One shared collector process, internally sharded by stream capacity."""
+        enabled = any(
+            p.product == "futures_um" and p.base_level != "auto" and p.realtime_enabled
+            for p in self.policies or []
+        )
+        key = ("futures_um", "ALL")
+        existing = self.processes.get(key)
+        if not enabled:
+            if existing is not None:
+                self.manager._stop(self.processes.pop(key))
+            return
+        if existing is not None and existing.poll() is None:
+            return
+        self.manager.require_storage(write=True)
+        path = self._publish_futures()
+        root = self.project / "data/market_data/binance_um_1m/managed/.futures"
+        command = [
+            sys.executable, "-m", "engine.feed.managed",
+            "--futures-config", str(path), "--root", str(root),
+            "--data-root", str(self.project / "data"),
+            "--catalog", str(self.project / "data/catalog"),
+        ]
+        self.processes[key] = self._launch(command, "futures-collection.log")
 
     def _start_options(self):
         """Two shared processes; no contract-sized process or inherited FD lists."""
@@ -375,6 +428,20 @@ class Subscriptions:
                 self._write([p.model_copy(update={"realtime_enabled": False, "history_enabled": False})
                              if p in members else p for p in policies])
                 self._stop_pair((product, symbol))
+                if product == "futures_um":
+                    self._start_futures()
+                    # A shared reader holds this same per-symbol access lease.
+                    # Do not preview or delete until it has released its writes.
+                    if members:
+                        deadline = time.monotonic() + 5
+                        while True:
+                            try:
+                                self.manager._lease(symbol, product, access=True).close()
+                                break
+                            except HTTPException as exc:
+                                if exc.status_code != 409 or time.monotonic() >= deadline:
+                                    raise HTTPException(409, "合约采集尚未停止，请稍后重试。") from None
+                                time.sleep(0.05)
                 if product == "options":
                     # Both batch workers must finish writes for every selected
                     # contract before taking a stable deletion preview.
@@ -433,7 +500,10 @@ class Subscriptions:
                     state.update(state="DEGRADED", data_ready=False, reason="status_expired", bar_updates=[])
         except (OSError, ValueError, TypeError):
             state.update(state="DEGRADED", data_ready=False, reason="invalid_status", bar_updates=[])
-        process = self.processes.get((policy.product, "ALL" if policy.product == "options" else policy.symbol))
+        process = self.processes.get((
+            policy.product, "ALL" if policy.product == "options"
+            or policy.product == "futures_um" and policy.base_level != "auto" else policy.symbol,
+        ))
         if process is not None and process.poll() is not None and state.get("reason") != "expired":
             state.update(state="DEGRADED", data_ready=False, reason="process_exited", bar_updates=[])
         elif not policy.realtime_enabled:
