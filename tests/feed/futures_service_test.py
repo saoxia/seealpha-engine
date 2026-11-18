@@ -77,7 +77,7 @@ def test_rejects_more_than_bounded_group_without_network(monkeypatch):
         class NeverConnect:
             def __call__(self, *args, **kwargs):
                 raise AssertionError("Should reject group before consuming events")
-        # The socket enforces group size before sending a subscription.
+        # The socket enforces group size before attempting any network call.
         monkeypatch.setattr("engine.feed.futures_service.connect", NeverConnect())
         scope = {"members": {f"A{i}USDT" for i in range(MAX_FUTURES_SYMBOLS_PER_SOCKET + 1)}}
         stream = FuturesCombinedSocket().stream(scope)

@@ -33,6 +33,8 @@ class FuturesCombinedSocket:
         while True:
             known = set(scope["members"])
             try:
+                if len(known) > MAX_FUTURES_SYMBOLS_PER_SOCKET:
+                    raise ValueError("Too many USD-M symbols on one socket")
                 async with connect(
                     MARKET_SOCKET, open_timeout=12, close_timeout=5,
                     ping_interval=20, ping_timeout=30, max_queue=4096, max_size=65536,
@@ -185,7 +187,10 @@ async def serve_futures_batch(manifest, managed_root, catalog, *, project, socke
                 job = jobs.get(symbol)
                 if job is not None and not job["task"].done():
                     for queue in (job["trades"], job["funding"]):
-                        await queue.put({"kind": "disconnected", "error": "group_restarted"})
+                        try:
+                            queue.put_nowait({"kind": "disconnected", "error": "group_restarted"})
+                        except asyncio.QueueFull:
+                            job["task"].cancel()  # Fail closed rather than silently drop data.
 
     async def stop(symbol):
         job = jobs.pop(symbol)
