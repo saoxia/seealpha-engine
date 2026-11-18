@@ -67,6 +67,6 @@ def persist_history(catalog, observations):
     if not observations:
         return 0
     if any(type(event) is not FundingRateUpdate for event in observations):
-        raise ValueError("Only native funding observations may be persisted")
+        raise TypeError("Only native funding observations may be persisted")
     catalog.write_data(observations)
     return len(observations)
