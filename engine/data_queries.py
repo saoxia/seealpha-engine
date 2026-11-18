@@ -39,7 +39,7 @@ _LEVELS = ("tick", *INTERVALS)
 
 class Range(BaseModel):
     symbol: str = Field(min_length=1, max_length=30)
-    product: Literal["futures_um", "options"] = "futures_um"
+    product: Literal["futures_um", "spot", "options"] = "futures_um"
     start: datetime
     end: datetime
     intervals: list[str] = Field(default_factory=lambda: ["1m"], max_length=16)
@@ -53,6 +53,7 @@ class Page(Range):
 
 
 class Inventory(BaseModel):
+    product: Literal["futures_um", "spot"] = "futures_um"
     interval: str | None = None
     all_levels: bool = False
     symbols: list[str] = Field(default_factory=list, max_length=200)
@@ -65,6 +66,7 @@ class FundingQuery(BaseModel):
 
 class Chart(BaseModel):
     symbol: str
+    product: Literal["futures_um", "spot"] = "futures_um"
     interval: Literal["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"] = "1m"
     base_level: str | None = None
 
@@ -79,9 +81,10 @@ def checked_tenant(request, tenant_id):
     return runtime.project
 
 
-def journal_paths(project: Path, symbol: str):
-    symbol = normalize_symbol(symbol, "futures_um")
-    base = project / "data/market_data/binance_um_1m/managed" / symbol
+def journal_paths(project: Path, symbol: str, product="futures_um"):
+    symbol = normalize_symbol(symbol, product)
+    folder = "binance_spot_1m" if product == "spot" else "binance_um_1m"
+    base = project / "data/market_data" / folder / "managed" / symbol
     return [path for path in (
         base / "collection.sqlite",
         *(base / level / "collection.sqlite" for level in _LEVELS),
@@ -146,9 +149,9 @@ def datasets(tenant_id: str, body: Inventory, request: Request):
         settings = replace(load_settings(), intervals=tuple(INTERVALS))
         items = dataset_inventory(settings, interval=body.interval, all_levels=body.all_levels)
         for symbol in dict.fromkeys(body.symbols):
-            with read_lease(project, symbol, "futures_um"):
-                found = [entry for path in journal_paths(project, symbol)
-                         for entry in journal_inventory(path, symbol)]
+            with read_lease(project, symbol, body.product):
+                found = [entry for path in journal_paths(project, symbol, body.product)
+                         for entry in journal_inventory(path, symbol, product=body.product)]
             for item in found:
                 if not body.all_levels and item["level"] != (body.interval or "tick"):
                     continue
@@ -246,8 +249,8 @@ def data_page(tenant_id: str, body: Page, request: Request):
         if body.interval and body.interval not in INTERVALS:
             raise ValueError("K 线周期未配置")
         with read_lease(project, body.symbol, body.product):
-            if body.journal and body.product == "futures_um":
-                for path in journal_paths(project, query.symbols[0]):
+            if body.journal and body.product in {"futures_um", "spot"}:
+                for path in journal_paths(project, query.symbols[0], body.product):
                     try:
                         result = journal_page(
                             path, body.interval or "tick", int(query.start.timestamp() * 1000),
@@ -289,7 +292,7 @@ def chart(tenant_id: str, body: Chart, request: Request):
     project = checked_tenant(request, tenant_id)
 
     def run():
-        symbol = normalize_symbol(body.symbol, "futures_um")
+        symbol = normalize_symbol(body.symbol, body.product)
         settings = load_settings()
         now = int(time.time() * 1000)
         left = bar_window(body.interval, now)[0]
@@ -297,11 +300,12 @@ def chart(tenant_id: str, body: Chart, request: Request):
         start = left - 299 * width
         candles = {}
         live = False
-        with read_lease(project, symbol, "futures_um"):
+        with read_lease(project, symbol, body.product):
             if settings.catalog_dir.is_dir():
                 source = rows(
                     settings, symbol, datetime.fromtimestamp(start / 1000, UTC),
                     datetime.fromtimestamp(now / 1000, UTC), interval=body.interval,
+                    market=body.product,
                 )
                 try:
                     for row in source:
@@ -314,7 +318,7 @@ def chart(tenant_id: str, body: Chart, request: Request):
                 finally:
                     source.close()
             if body.base_level is not None:
-                for path in reversed(journal_paths(project, symbol)):
+                for path in reversed(journal_paths(project, symbol, body.product)):
                     for value in journal_chart(path, body.interval, start, now + 1):
                         opening = value["start_ms"]
                         candles[opening] = {
@@ -323,7 +327,8 @@ def chart(tenant_id: str, body: Chart, request: Request):
                             "is_closed": value["is_closed"],
                             **{key: value[key] for key in ("open", "high", "low", "close", "volume")},
                         }
-                base = project / "data/market_data/binance_um_1m/managed" / symbol
+                folder = "binance_spot_1m" if body.product == "spot" else "binance_um_1m"
+                base = project / "data/market_data" / folder / "managed" / symbol
                 if body.base_level != "auto":
                     base = base / body.base_level
                 states = [_status(base / "status.json"),
