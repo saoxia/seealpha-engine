@@ -68,9 +68,22 @@ def observed_state(evidence, cache, observer):
         observer.unsubscribe_mark_prices(InstrumentId.from_str(obsolete))
         observer.marks.pop(obsolete, None)
     observer.subscribed.intersection_update(active)
+    # Native RC9 Cache is authoritative for the most recent update where it has
+    # one. The callback copy remains a fallback for the event/cache publication
+    # boundary; retain strict timestamp ordering when choosing the source.
+    marks = {}
+    for key in active:
+        candidate = observer.marks.get(key)
+        cached = cache.mark_price(InstrumentId.from_str(key))
+        if cached is not None:
+            native = {"price": str(cached.value), "time": cached.ts_event // 1_000_000}
+            if candidate is None or native["time"] >= candidate["time"]:
+                candidate = native
+        if candidate is not None:
+            marks[key] = candidate
     return {"wallet": {currency: str(item["walletBalance"]) for currency, item in evidence["assets"].items()},
             "positions": sorted(positions, key=lambda p: p["id"]),
-            "marks": {key: observer.marks[key] for key in active if key in observer.marks},
+            "marks": marks,
             "account_time": evidence["observed_at"] * 1000}
 
 

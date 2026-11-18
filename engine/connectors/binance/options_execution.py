@@ -261,8 +261,11 @@ class BinanceOptionsExecutionClient(ExecutionClient):
         return report
 
     async def _poll(self):
+        # Bound EAPI reconciliation pressure after a failure; the risk gate
+        # remains closed until a complete authoritative sync succeeds.
+        delay = 2
         while not self._closing:
-            await asyncio.sleep(2)
+            await asyncio.sleep(delay)
             try:
                 async with self._sync_lock:
                     await self._account()
@@ -276,8 +279,10 @@ class BinanceOptionsExecutionClient(ExecutionClient):
                             continue
                         await self._observe(order)
                     self._last_sync, self._last_error = self.clock.timestamp_ns(), None
+                    delay = 2
             except (QueryError, ValueError, KeyError, TypeError, ArithmeticError):
                 self._last_error = "期权账户或订单核对未完成；禁止新增风险"
+                delay = min(delay * 2, 30)
 
     def _validate(self, order):
         item = self._item(order.instrument_id)
