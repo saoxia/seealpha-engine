@@ -157,7 +157,7 @@ def datasets(tenant_id: str, body: Inventory, request: Request):
                     continue
                 existing = next((row for row in items
                                  if row["symbol"] == item["symbol"] and row["level"] == item["level"]
-                                 and row.get("product", "futures_um") == "futures_um"), None)
+                                 and row.get("product", "futures_um") == body.product), None)
                 if existing:
                     existing["event_ranges_ns"] = sorted(
                         [*existing["event_ranges_ns"], *item["event_ranges_ns"]],
@@ -175,16 +175,16 @@ def latest(tenant_id: str, body: Inventory, request: Request):
     project = checked_tenant(request, tenant_id)
 
     def run():
-        symbols = list(dict.fromkeys(normalize_symbol(symbol, "futures_um") for symbol in body.symbols))
+        symbols = list(dict.fromkeys(normalize_symbol(symbol, body.product) for symbol in body.symbols))
         settings = load_settings()
         if not symbols or not settings.catalog_dir.is_dir():
             return dict.fromkeys(symbols)
         catalog = open_catalog(settings)
         result = {}
         for symbol in symbols:
-            with read_lease(project, symbol, "futures_um"):
+            with read_lease(project, symbol, body.product):
                 stamp = catalog.native.query_last_timestamp(
-                    NautilusDataType.Bar, bar_type_for(symbol, "1s"),
+                    NautilusDataType.Bar, bar_type_for(symbol, "1s", body.product),
                 )
             result[symbol] = str(stamp) if stamp is not None else None
         return result
