@@ -373,6 +373,38 @@ class Subscriptions:
         write_record(path, {"version": 1, "policies": records})
         return path
 
+    def _publish_spot(self):
+        """Atomic Spot manifest; separate from futures funding and journals."""
+        from engine.pipeline.convert_binance_bars import write_record
+
+        path = self.manager.directory / "spot-runtime.json"
+        records = [p.model_dump(mode="json") for p in self.policies or []
+                   if p.product == "spot" and p.base_level != "auto"]
+        write_record(path, {"version": 1, "policies": records})
+        return path
+
+    def _start_spot(self):
+        enabled = any(p.product == "spot" and p.base_level != "auto" and p.realtime_enabled
+                      for p in self.policies or [])
+        key = ("spot", "ALL")
+        existing = self.processes.get(key)
+        if not enabled:
+            if existing is not None:
+                self.manager._stop(self.processes.pop(key))
+            return
+        if existing is not None and existing.poll() is None:
+            return
+        self.manager.require_storage(write=True)
+        path = self._publish_spot()
+        root = self.project / "data/market_data/binance_spot_1m/managed/.spot"
+        command = [
+            sys.executable, "-m", "engine.feed.managed",
+            "--spot-config", str(path), "--root", str(root),
+            "--data-root", str(self.project / "data"),
+            "--catalog", str(self.project / "data/catalog"),
+        ]
+        self.processes[key] = self._launch(command, "spot-collection.log")
+
     def _start_futures(self):
         """One shared collector process, internally sharded by stream capacity."""
         enabled = any(
