@@ -13,7 +13,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from core.market.instruments import INTERVALS, normalize_symbol
-
 from engine.connectors.binance import assets, manual, queries
 
 router = APIRouter(prefix="/tenants/{tenant_id}/venue", tags=["engine-venue"])
