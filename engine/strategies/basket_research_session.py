@@ -205,11 +205,11 @@ class BasketResearchSession:
                 raise BasketPlanError("资金费腿间偏差约束无效") from exc
             if not drift.is_finite() or drift < 0 or drift > self.max_leg_drift:
                 raise BasketPlanError("成员腿间偏差不得宽于研究风险限制")
-        if self.policy == "option_protected" and constraints:
-            if constraints.get("hedges_filled_before_risk") is not True or (
-                constraints.get("atomic_reconciliation") is not True
-            ):
-                raise BasketPlanError("必须保留保护腿优先及成交核对约束")
+        if self.policy == "option_protected" and constraints and (
+            constraints.get("hedges_filled_before_risk") is not True
+            or constraints.get("atomic_reconciliation") is not True
+        ):
+            raise BasketPlanError("必须保留保护腿优先及成交核对约束")
         lookup = {(leg.product, leg.symbol): leg for leg in self._subscriptions[member_id]}
         parsed = {}
         for row in targets:
