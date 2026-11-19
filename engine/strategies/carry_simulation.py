@@ -116,12 +116,12 @@ def _perp_unrealized(engine, instrument):
 class _NativeCarryCoordinator(Strategy):
     """One component owns both legs. Never submit from an issued demo package."""
 
-    def __init__(self, spot, perp, spot_bar, perp_bar):
-        super().__init__(StrategyConfig(order_id_tag="CARRY", close_positions_on_stop=False))
-        self.spot = spot
-        self.perp = perp
-        self.spot_bar = spot_bar
-        self.perp_bar = perp_bar
+    def __init__(self, config):
+        super().__init__(config)
+        self.spot = None
+        self.perp = None
+        self.spot_bar = None
+        self.perp_bar = None
         self.desired = Decimal(0)
         self.current_bars = {}
         self.last_pair_ts = None
@@ -129,6 +129,11 @@ class _NativeCarryCoordinator(Strategy):
         self.rejected = []
         self.fills = []
         self.orders = []
+
+    def bind_instruments(self, spot, perp, spot_bar, perp_bar):
+        """Bind verified simulation-only contracts before engine registration."""
+        self.spot, self.perp = spot, perp
+        self.spot_bar, self.perp_bar = spot_bar, perp_bar
 
     def on_start(self):
         self.subscribe_bars(self.spot_bar)
@@ -288,6 +293,9 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
         engine.add_instrument(spot)
         engine.add_instrument(perp)
         coordinator = _NativeCarryCoordinator(
+            StrategyConfig(order_id_tag="CARRY", close_positions_on_stop=False),
+        )
+        coordinator.bind_instruments(
             spot, perp,
             BarType.from_str(f"{spot.id}-{interval_size}-MINUTE-LAST-EXTERNAL"),
             BarType.from_str(f"{perp.id}-{interval_size}-MINUTE-LAST-EXTERNAL"),

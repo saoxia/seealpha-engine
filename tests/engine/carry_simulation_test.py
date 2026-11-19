@@ -124,6 +124,10 @@ def test_runtime_requires_issued_carry_package_and_rejects_unauthorized_http(tmp
     with TestClient(app) as client:
         denied = client.post("/tenants/dev/accounts/desk/carry-backtests", json=body)
         assert denied.status_code == 401
+        assert client.put(
+            "/tenants/dev", headers={"Authorization": "Bearer private"},
+            json={"purpose": "development"},
+        ).status_code == 200
         assert client.get(
             "/tenants/dev/accounts/desk/carry-backtests/latest",
             headers={"Authorization": "Bearer private"},
