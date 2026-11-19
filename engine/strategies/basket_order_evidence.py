@@ -133,10 +133,13 @@ def reconcile_order_evidence(
         raise BasketReconciliationError("权威仓位数量格式无效")
     if len({item.client_order_id for item in evidence}) != len(evidence):
         raise BasketReconciliationError("委托客户端身份重复")
-    if len({item.venue_order_id for item in evidence}) != len(evidence):
-        raise BasketReconciliationError("交易所委托身份重复")
-    if len({item.execution_id for item in evidence}) != len(evidence):
-        raise BasketReconciliationError("成交事件身份重复")
+    # Exchange order and trade IDs may overlap across product namespaces.
+    venue_ids = {
+        (item.leg.product, item.leg.symbol, item.venue_order_id)
+        for item in evidence if item.venue_order_id
+    }
+    if len(venue_ids) != len([item for item in evidence if item.venue_order_id]):
+        raise BasketReconciliationError("同一产品合约交易所委托身份重复")
 
     state = checkpoint
     terminal = {}
@@ -147,13 +150,14 @@ def reconcile_order_evidence(
             raise BasketReconciliationError("交易所委托证据不属于已绑定腿")
         if (
             not isinstance(row.venue_order_id, str)
-            or not 1 <= len(row.venue_order_id) <= 64
+            or len(row.venue_order_id) > 64
             or not row.venue_order_id.isascii()
-            or not row.venue_order_id.isalnum()
+            or (row.venue_order_id and not row.venue_order_id.isalnum())
             or not isinstance(row.execution_id, str)
-            or not 1 <= len(row.execution_id) <= 64
+            or len(row.execution_id) > 64
             or not row.execution_id.isascii()
-            or not row.execution_id.isalnum()
+            or (row.execution_id and not row.execution_id.isalnum())
+            or (row.filled_quantity > 0 and not (row.venue_order_id and row.execution_id))
             or not isinstance(row.filled_quantity, Decimal)
             or not row.filled_quantity.is_finite()
             or row.filled_quantity < 0
