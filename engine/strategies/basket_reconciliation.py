@@ -46,7 +46,7 @@ class BasketCheckpoint:
     request_id: str = ""
     fills: tuple[tuple[LegId, Decimal], ...] = ()
     used_request_ids: tuple[str, ...] = ()
-    seen_events: tuple[tuple[str, LegId, Decimal], ...] = ()
+    seen_events: tuple[tuple[str, str, LegId, Decimal], ...] = ()
     events: tuple[JournalEvent, ...] = ()
     reason: str = ""
 
@@ -195,9 +195,9 @@ def record_cumulative_fill(
     if not isinstance(leg, LegId):
         raise BasketReconciliationError("成交组合腿无效")
     cumulative = _quantity(cumulative)
-    for old_id, old_leg, old_quantity in checkpoint.seen_events:
+    for old_request, old_id, old_leg, old_quantity in checkpoint.seen_events:
         if old_id == event_id:
-            if old_leg == leg and old_quantity == cumulative:
+            if old_request == request_id and old_leg == leg and old_quantity == cumulative:
                 return checkpoint
             raise BasketReconciliationError("成交事件身份冲突，必须冻结核对")
     phase_deltas = {change.leg: change.quantity_delta for change in checkpoint.pending_phase.changes}
@@ -217,7 +217,7 @@ def record_cumulative_fill(
     return replace(
         checkpoint,
         fills=tuple(sorted(fills.items())),
-        seen_events=checkpoint.seen_events + ((event_id, leg, cumulative),),
+        seen_events=checkpoint.seen_events + ((request_id, event_id, leg, cumulative),),
         events=_event(checkpoint, event),
     )
 
