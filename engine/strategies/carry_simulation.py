@@ -1,10 +1,11 @@
 """Offline native Spot + USD-M funding-carry basket simulation.
 
-Only already-issued development strategy parameters reach this runner. Two
+Only hash-verified issued development strategy packages reach this runner. Two
 synthetic *simulation* venues maintain isolated CASH and MARGIN accounts. The
 matching, commissions, order status and funding settlements remain native
 NautilusTrader behavior, never an approximation from the bar close.
 """
+from contextlib import ExitStack
 from decimal import Decimal, InvalidOperation
 
 from nautilus_trader.backtest import BacktestEngine
@@ -30,8 +31,8 @@ from engine.strategies.basket_targets import (
     BasketPlanError,
     LegEvidence,
     LegId,
-    MemberLegTarget,
 )
+from engine.strategies.issued_basket import issued_basket_members
 from engine.strategies.strategy_config import StrategyConfig
 from nautilus_support import instrument_fee_model
 
@@ -209,47 +210,9 @@ def _equity(engine, spot, perp, spot_price):
     return spot_value, derivatives
 
 
-def _target(loads, *, last_bar, last_rate, now_ns):
-    symbol = loads[0]["parameters"]["symbol"]
-    quantity = Decimal(0)
-    member_targets = []
-    leg_spot = LegId(str(loads[0]["tenant_id"]), str(loads[0]["account_id"]), "spot", symbol)
-    leg_perp = LegId(str(loads[0]["tenant_id"]), str(loads[0]["account_id"]), "futures_um", symbol)
-    if last_bar is not None and last_rate is not None:
-        sprice, pprice, bar_ns = last_bar
-        basis = abs((pprice / sprice - 1) * 10_000)
-        for load in loads:
-            params = load["parameters"]
-            age = int(params["max_age_seconds"]) * 1_000_000_000
-            if (
-                0 <= now_ns - bar_ns <= age
-                and 0 <= now_ns - last_rate.ts_event <= age
-                and last_rate.rate >= _decimal(params["min_funding_rate"], "最低费率")
-                and basis <= _decimal(params["max_basis_bps"], "最大基差")
-            ):
-                proposed = min(
-                    _decimal(params["allocation"], "分配数量", positive=True),
-                    _decimal(params["risk_limit"], "风险上限", positive=True),
-                )
-            else:
-                proposed = Decimal(0)
-            member_targets.extend((
-                MemberLegTarget(str(load["issuance_id"]), leg_spot, proposed),
-                MemberLegTarget(str(load["issuance_id"]), leg_perp, -proposed),
-            ))
-            quantity += proposed
-    else:
-        for load in loads:
-            member_targets.extend((
-                MemberLegTarget(str(load["issuance_id"]), leg_spot, Decimal(0)),
-                MemberLegTarget(str(load["issuance_id"]), leg_perp, Decimal(0)),
-            ))
-    return quantity, member_targets, leg_spot, leg_perp
-
-
 def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
                      interval, starting_spot, starting_perpetual, max_gross_notional):
-    """Simulate two native venues on one backtest clock from verified history.
+    """Run published targets from issued packages on two simulated venues.
 
     A failed/partial hedge aborts the *research result* instead of quietly
     continuing; this is not real-money compensation or atomic execution.
@@ -257,14 +220,13 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
     if not loads or len(loads) > 16:
         raise EngineConflict("组合回测要求 1 到 16 个已授权资金费策略。")
     if any(
-        row["code_key"] != "demo_funding_carry"
-        or row["grant_purpose"] != "development"
+        row["grant_purpose"] != "development"
         or row["tenant_id"] != loads[0]["tenant_id"]
         or row["account_id"] != loads[0]["account_id"]
         or row["parameters"]["symbol"] != loads[0]["parameters"]["symbol"]
         for row in loads
     ):
-        raise EngineConflict("组合回测只允许同账户下发的 Funding Carry 开发策略。")
+        raise EngineConflict("组合回测只允许同账户已下发的开发策略。")
     if interval not in {"1m", "5m"}:
         raise EngineConflict("组合回测只允许 1m/5m 历史。")
     interval_size = 1 if interval == "1m" else 5
@@ -281,7 +243,12 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
     start_perp = _money(starting_perpetual, "USDT")
     engine = BacktestEngine(backtest_engine_config())
     coordinator = None
+    resources = ExitStack()
     try:
+        members = resources.enter_context(issued_basket_members(
+            loads, perp,
+            BarType.from_str(f"{perp.id}-{interval_size}-MINUTE-LAST-EXTERNAL"),
+        ))
         engine.add_venue(
             spot.id.venue, OmsType.NETTING, AccountType.CASH, [start_spot],
             fee_model=instrument_fee_model(spot), default_leverage=Decimal(1),
@@ -329,8 +296,13 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
             if event.kind != "bars" or event.spot is None or event.perpetual is None:
                 raise EngineConflict("组合历史包含无效记录。")
             sbar, pbar = _sim_bar(event.spot, spot), _sim_bar(event.perpetual, perp)
-            desired, targets, leg_spot, leg_perp = _target(
-                loads, last_bar=previous_bar, last_rate=previous_rate, now_ns=event.ts_ns,
+            leg_spot = LegId(
+                str(loads[0]["tenant_id"]), str(loads[0]["account_id"]),
+                "spot", loads[0]["parameters"]["symbol"],
+            )
+            leg_perp = LegId(
+                str(loads[0]["tenant_id"]), str(loads[0]["account_id"]),
+                "futures_um", loads[0]["parameters"]["symbol"],
             )
             spot_pos = _position(engine, spot) if active else Decimal(0)
             perp_pos = _position(engine, perp) if active else Decimal(0)
@@ -360,29 +332,57 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
                     max_gross_notional=cap,
                     max_leg_drift=max_drift,
                 )
+                # Drive the native matcher with published targets from the
+                # exact issued strategy package, not duplicated Engine signals.
                 for load in loads:
                     member_id = str(load["issuance_id"])
                     publisher = research.member(member_id)
-                    publisher.subscribe_market_bundle(
-                        symbol=load["parameters"]["symbol"],
-                        products=("spot", "futures_um"),
-                        data=("closed_bars", "funding_rate", "account_positions"),
-                    )
-                    own = [target for target in targets if target.member_id == member_id]
-                    publisher.publish_basket(
-                        targets=[
-                            {"product": target.leg.product, "symbol": target.leg.symbol,
-                             "quantity": format(target.signed_quantity, "f")}
-                            for target in own
-                        ],
-                        constraints={"atomic_hedge": True, "max_leg_drift": str(max_drift)},
-                    )
+                    member = members[member_id]
+                    max_age = int(load["parameters"]["max_age_seconds"]) * 1_000_000_000
+                    if (
+                        previous_bar is not None and previous_rate is not None
+                        and 0 <= event.ts_ns - previous_bar[2] <= max_age
+                        and 0 <= event.ts_ns - previous_rate.ts_event <= max_age
+                    ):
+                        member.propose(publisher, {
+                            "now_ns": event.ts_ns,
+                            "spot": {"price": str(previous_bar[0]), "ts_ns": previous_bar[2]},
+                            "perpetual": {
+                                "price": str(previous_bar[1]), "ts_ns": previous_bar[2],
+                            },
+                            "funding": {
+                                "rate": str(previous_rate.rate),
+                                "ts_ns": int(previous_rate.ts_event),
+                            },
+                            "positions": {
+                                "spot": str(spot_pos), "perpetual": str(perp_pos),
+                            },
+                        })
+                    else:
+                        # Missing or stale market evidence => zero target, never
+                        # synthesize a funding rate or carry the last bar forward.
+                        publisher.subscribe_market_bundle(**member.subscription)
+                        publisher.publish_basket(
+                            targets=[
+                                {
+                                    "product": "spot",
+                                    "symbol": load["parameters"]["symbol"],
+                                    "quantity": "0",
+                                },
+                                {
+                                    "product": "futures_um",
+                                    "symbol": load["parameters"]["symbol"],
+                                    "quantity": "0",
+                                },
+                            ],
+                            constraints={
+                                "atomic_hedge": True, "max_leg_drift": str(max_drift),
+                            },
+                        )
                 decision = research.plan()
-                if (
-                    dict(decision.plan.targets)[leg_spot] != desired
-                    or dict(decision.plan.targets)[leg_perp] != -desired
-                ):
-                    raise BasketPlanError("成员发布目标与组合模拟数量不一致")
+                desired = dict(decision.plan.targets)[leg_spot]
+                if dict(decision.plan.targets)[leg_perp] != -desired:
+                    raise BasketPlanError("策略未发布等额现货和永续对冲目标")
                 next_target = tuple(decision.plan.targets)
                 if next_target != previous_target:
                     target_events.append({
@@ -450,3 +450,4 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
         }
     finally:
         engine.dispose()
+        resources.close()

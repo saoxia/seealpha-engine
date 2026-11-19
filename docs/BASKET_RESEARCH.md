@@ -156,3 +156,12 @@ API 密钥、下单、撤单、重试、自动补偿或真实账户可用性判�
 单元测试：`uv run pytest -q tests/engine/basket_targets_test.py tests/engine/basket_history_test.py tests/engine/basket_reconciliation_test.py tests/engine/basket_journal_store_test.py`。
 
 测试覆盖同一腿跨成员净额、跨产品保留独立腿、先保护后开仓、退出先减险、预算、步长、当前仓位缺失、偏差以及期权覆盖与到期标识。尚不构成多市场回测或生产验收。
+
+
+## 单一已下发策略的跨产品开发模拟（2026-11-20）
+
+新增 `POST /tenants/{tenant_id}/accounts/{account_id}/issued-spot-perp-backtests`（`issuance_id`、`start`、`end`、`interval`、`starting_spot_balance`、`starting_perpetual_balance`、`max_gross_notional`），以及 `GET .../issued-spot-perp-backtests/latest`。仅限开发租户和已下发、归档 SHA-256 与授权身份一致的单个策略包。仍须订阅同标的 Spot/UM 的独立历史数据和经过证实的资金费率，保留原有研究最大敞口与跨腿偏差门禁。历史数据不齐则拒绝，不推断缺口。
+
+策略在自己的 `on_start()` 中用 `subscribe_market_bundle(symbol=...,products=("spot","futures_um"),data=("closed_bars","funding_rate","account_positions"))` 声明数据需求，在 `on_market_snapshot(snapshot)` 中调用 `publish_basket(targets=[{"product":"spot","symbol":"ETHUSDT","quantity":"0.1"},{"product":"futures_um","symbol":"ETHUSDT","quantity":"-0.1"}],constraints={"atomic_hedge":True,"max_leg_drift":"0.001"})`，同一快照只能提交完整组合，未提交、重复或不满足等额对冲将拒绝回测。引擎将每个已发行实例隔离加载，读取已发布的**策略原生**目标，经现有 `BasketResearchSession` 净额与预算校验后，分别在 NautilusTrader 模拟 Spot CASH、UM MARGIN 场所产生订单与成交，报告中记录逐腿成交和权益曲线。
+
+该接口不开放跨产品实盘下单，`atomic_hedge` 是策略提出的约束而非真实交易所的原子事务。缺失行情、腿间偏差、拒单或不完整成交须终止研究，不可自动盲重发。现阶段**未**开放任意产品对、任意多腿组合的通用单策略回测，也未开放统一 Options 行权/到期实际执行；期权保护 Demo 仍走原有专用模拟入口。生产行为、密钥与账户状态均不变。

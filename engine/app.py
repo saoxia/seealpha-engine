@@ -244,6 +244,12 @@ class CarryBacktestBody(BaseModel):
     max_gross_notional: str = Field(min_length=1, max_length=40)
 
 
+class IssuedSpotPerpBacktestBody(CarryBacktestBody):
+    """One issued strategy, two verified products and separate simulated funds."""
+
+    issuance_id: str = Field(min_length=1, max_length=64)
+
+
 class ProtectedOptionBacktestBody(BaseModel):
     """Pre-expiry options + perpetual research, no live funds or order access."""
 
@@ -637,6 +643,29 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
             conflict(error)
         if found is None:
             raise HTTPException(404, "还没有回测结果。")
+        return found
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/issued-spot-perp-backtests")
+    def run_issued_spot_perp_backtest(
+        tenant_id: str, account_id: str, body: IssuedSpotPerpBacktestBody,
+    ):
+        try:
+            return runtime.run_spot_perp_strategy_backtest(
+                tenant_id, account_id, body.issuance_id, body.start, body.end,
+                body.interval, body.starting_spot_balance,
+                body.starting_perpetual_balance, body.max_gross_notional,
+            )
+        except EngineConflict as error:
+            conflict(error)
+
+    @app.get("/tenants/{tenant_id}/accounts/{account_id}/issued-spot-perp-backtests/latest")
+    def latest_issued_spot_perp_backtest(tenant_id: str, account_id: str):
+        try:
+            found = runtime.latest_spot_perp_strategy_backtest(tenant_id, account_id)
+        except EngineConflict as error:
+            conflict(error)
+        if found is None:
+            raise HTTPException(404, "还没有已下发多产品策略回测结果。")
         return found
 
     @app.post("/tenants/{tenant_id}/accounts/{account_id}/carry-backtests")

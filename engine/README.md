@@ -78,7 +78,7 @@ uv run python -m engine
 
 ## 跨产品目标规划（研究阶段）
 
-已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按租户/账户/产品/合约组合多成员目标，校验研究用现货+永续与永续+期权的风险顺序；**不会实际执行、回测或下发这些多腿组合**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
+已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按租户/账户/产品/合约组合多成员目标；研究态可将已下发策略的现货+永续目标送入原生双 Venue 模拟撮合，**不会产生真实跨产品订单**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
 
 双市场研究数据同步器 `EngineRuntime.iter_funding_carry_history` 可在开发租户已订阅现货和永续时，从真实 Catalog 严格对齐 K 线并按原始时间插入资金费观测；不产生订单、结算或收益报告，暂不对外开放 HTTP。
 
@@ -104,3 +104,12 @@ uv run python -m engine
 `packages/` 和构建依赖，不包含业务后台和前端源码。跨进程错误与账户结果类型
 在 `core/engine_contracts.py` 定义。源码已迁至独立仓库，Platform 尚未切换；详见
 [后续 API 解耦清单](../docs/STANDALONE_MIGRATION.md)。
+
+
+## 单一已下发策略的跨产品开发模拟（2026-11-20）
+
+新增 `POST /tenants/{tenant_id}/accounts/{account_id}/issued-spot-perp-backtests`（`issuance_id`、`start`、`end`、`interval`、`starting_spot_balance`、`starting_perpetual_balance`、`max_gross_notional`），以及 `GET .../issued-spot-perp-backtests/latest`。仅限开发租户和已下发、归档 SHA-256 与授权身份一致的单个策略包。仍须订阅同标的 Spot/UM 的独立历史数据和经过证实的资金费率，保留原有研究最大敞口与跨腿偏差门禁。历史数据不齐则拒绝，不推断缺口。
+
+策略在自己的 `on_start()` 中用 `subscribe_market_bundle(symbol=...,products=("spot","futures_um"),data=("closed_bars","funding_rate","account_positions"))` 声明数据需求，在 `on_market_snapshot(snapshot)` 中调用 `publish_basket(targets=[{"product":"spot","symbol":"ETHUSDT","quantity":"0.1"},{"product":"futures_um","symbol":"ETHUSDT","quantity":"-0.1"}],constraints={"atomic_hedge":True,"max_leg_drift":"0.001"})`，同一快照只能提交完整组合，未提交、重复或不满足等额对冲将拒绝回测。引擎将每个已发行实例隔离加载，读取已发布的**策略原生**目标，经现有 `BasketResearchSession` 净额与预算校验后，分别在 NautilusTrader 模拟 Spot CASH、UM MARGIN 场所产生订单与成交，报告中记录逐腿成交和权益曲线。
+
+该接口不开放跨产品实盘下单，`atomic_hedge` 是策略提出的约束而非真实交易所的原子事务。缺失行情、腿间偏差、拒单或不完整成交须终止研究，不可自动盲重发。现阶段**未**开放任意产品对、任意多腿组合的通用单策略回测，也未开放统一 Options 行权/到期实际执行；期权保护 Demo 仍走原有专用模拟入口。生产行为、密钥与账户状态均不变。
