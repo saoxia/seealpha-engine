@@ -3,7 +3,6 @@ from fastapi.testclient import TestClient
 
 from engine.app import create_app
 from engine.config import EngineConfig
-
 from engine.pipeline.models import PipelineSettings
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48

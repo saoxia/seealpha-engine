@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from engine.app import create_app
 from engine.config import EngineConfig
-
 from engine.runtime import numeric_id
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
