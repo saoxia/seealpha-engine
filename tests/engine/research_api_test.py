@@ -20,7 +20,7 @@ from engine.research_auth import (
 )
 
 SECRET = "research-signing-key-for-tests-00000000000000"
-ADMIN = "engine-admin-token-for-tests"
+ADMIN = "engine-admin-token-for-tests-" + "a" * 48
 DATASET = "futures_um:ETHUSDT:1m"
 STRATEGY = "account:desk"
 OPS = [
@@ -294,7 +294,7 @@ def test_research_mount_does_not_share_admin_credentials(tmp_path, monkeypatch):
     config = EngineConfig(
         state_dir=runtime.root, token=ADMIN, project=tmp_path,
         tenant_id="dev", tenant_purpose="development",
-        research_signing_key=SECRET,
+        research_signing_key=SECRET, auth_mode="token",
     )
     app = create_app(config, runtime)
     try:

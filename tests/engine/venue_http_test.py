@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
+
 
 def test_public_venue_query_tenant_identity_and_contract(tmp_path, monkeypatch):
     from engine.connectors.binance import assets, manual
@@ -16,9 +18,9 @@ def test_public_venue_query_tenant_identity_and_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(
         assets, "asset_price", lambda env, currency: {"price": Decimal("1.000000001"), "priced_at": 123},
     )
-    app = create_app(EngineConfig(tmp_path / "state", "private", project=tmp_path, tenant_id="23", tenant_purpose="development"))
+    app = create_app(EngineConfig(tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token", tenant_id="23", tenant_purpose="development"))
     with TestClient(app) as client:
-        auth = {"Authorization": "Bearer private"}
+        auth = {"Authorization": f"Bearer {TEST_TOKEN}"}
         assert client.post("/tenants/23/venue/tickers", json={"environment": "production"}).status_code == 401
         assert client.post("/tenants/24/venue/tickers", headers=auth, json={"environment": "production"}).status_code == 403
         assert client.post("/tenants/23/venue/tickers", headers=auth, json={"environment": "production"}).json()["rows"]["ETHUSDT"]["last_price"] == "2000"
@@ -82,7 +84,7 @@ def test_production_venue_history_and_precision_are_isolated(tmp_path, monkeypat
     monkeypatch.setattr(options, "get", lambda name: {"serverTime": 123})
     monkeypatch.setattr(options_account, "BinanceOptionsAccountClient", FakeOptionsClient)
     app = create_app(EngineConfig(
-        tmp_path / "state", "private", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="77", tenant_purpose="production",
     ))
     app.state.runtime.ensure_tenant("77", "production")
@@ -90,7 +92,7 @@ def test_production_venue_history_and_precision_are_isolated(tmp_path, monkeypat
         "environment": "production", "api_key": "key", "api_secret": "secret",
         "account_id": "5", "account_name": "Account", "exchange": "binance",
     }
-    headers = {"Authorization": "Bearer private"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     with TestClient(app) as client:
         assets_response = client.post("/tenants/77/venue/asset-account", headers=headers, json=payload)
         assert assets_response.status_code == 200

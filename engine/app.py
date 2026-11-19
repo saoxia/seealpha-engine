@@ -1,4 +1,4 @@
-"""Internal HTTP API. The business backend is the only intended client."""
+"""Engine HTTP API for standalone or Platform-managed deployments."""
 
 import hmac
 import json
@@ -246,6 +246,15 @@ class CarryBacktestBody(BaseModel):
 
 def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None = None) -> FastAPI:
     config = config or EngineConfig.from_environment()
+    if config.auth_mode not in {"none", "token"}:
+        raise ValueError("ENGINE_AUTH_MODE must be none or token")
+    if config.auth_mode == "token":
+        if not isinstance(config.token, str) or len(config.token) < 32 or any(
+            char in config.token for char in "\r\n"
+        ):
+            raise ValueError("ENGINE_TOKEN must contain at least 32 characters in token mode")
+    elif config.host not in {"127.0.0.1", "::1", "localhost"}:
+        raise ValueError("Unauthenticated Engine must listen on loopback")
     runtime = runtime or EngineRuntime(config.state_dir, config.project)
 
     def authorized(authorization: str = Header(default="")):
@@ -253,7 +262,10 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
         if len(authorization) != len(expected) or not hmac.compare_digest(authorization, expected):
             raise HTTPException(401, "引擎令牌无效。")
 
-    app = FastAPI(title="SeeAlpha Engine", version="0.1.0", dependencies=[Depends(authorized)])
+    app = FastAPI(
+        title="SeeAlpha Engine", version="0.1.0",
+        dependencies=[Depends(authorized)] if config.auth_mode == "token" else [],
+    )
     app.state.runtime = runtime
     app.state.market_data = EngineDataService(
         config.tenant_id or "1", project=runtime.project, state_root=runtime.root,

@@ -10,14 +10,16 @@ from core.engine_contracts import ENGINE_CONTRACT_HEADER, ENGINE_CONTRACT_VERSIO
 from engine.app import create_app
 from engine.config import EngineConfig
 
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
+
 
 def test_engine_container_rejects_other_tenant_and_purpose(tmp_path):
     config = EngineConfig(
-        tmp_path / "state", token="secret", project=tmp_path,
+        tmp_path / "state", token=TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     )
     app = create_app(config)
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     with TestClient(app) as http:
         denied = http.put(
             "/tenants/43", headers=headers, json={"purpose": "development"},

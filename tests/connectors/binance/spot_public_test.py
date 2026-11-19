@@ -111,10 +111,10 @@ def test_spot_venue_http_authorization_validation_and_boundaries(tmp_path, monke
     monkeypatch.setattr(spot, "candles", fake_candles)
     monkeypatch.setattr(spot, "recent_trades", fake_trades)
     app = create_app(EngineConfig(
-        tmp_path / "state", "private", project=tmp_path, tenant_id="23",
+        tmp_path / "state", "integration-spot-test-token-" + "x" * 48, project=tmp_path, auth_mode="token", tenant_id="23",
         tenant_purpose="development",
     ))
-    auth = {"Authorization": "Bearer private"}
+    auth = {"Authorization": "Bearer integration-spot-test-token-" + "x" * 48}
     base = "/tenants/23/venue"
     with TestClient(app) as client:
         assert client.post(base + "/catalog", json={"product": "spot"}).status_code == 401

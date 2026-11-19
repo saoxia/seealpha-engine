@@ -11,6 +11,8 @@ from engine.config import EngineConfig
 from engine.data_manager.contracts import DataPolicy
 from engine.data_manager.service import DataService
 
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
+
 
 class Worker:
     def __init__(self):
@@ -124,7 +126,7 @@ def test_engine_options_use_two_shared_workers_and_durable_manifest(tmp_path, mo
 def test_engine_http_sync_starts_and_stops_workers_with_tenant_authorization(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
@@ -142,7 +144,7 @@ def test_engine_http_sync_starts_and_stops_workers_with_tenant_authorization(tmp
 
     monkeypatch.setattr(manager.subscriptions, "_launch", launch)
     monkeypatch.setattr(manager, "_stop", stop)
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     path = "/tenants/42/data/control/sync"
     enabled = {"policies": [{"symbol": "ETHUSDT", "base_level": "1m",
                              "realtime_enabled": True, "history_enabled": False}]}

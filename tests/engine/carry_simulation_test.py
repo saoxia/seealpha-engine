@@ -114,7 +114,7 @@ def test_runtime_requires_issued_carry_package_and_rejects_unauthorized_http(tmp
             )
     finally:
         runtime.close()
-    app = create_app(EngineConfig(tmp_path / "other_state", token="private", project=tmp_path))
+    app = create_app(EngineConfig(tmp_path / "other_state", token="integration-test-private-token-" + "x" * 48, auth_mode="token", project=tmp_path))
     body = {
         "start": start.isoformat(),
         "end": (start + timedelta(minutes=19)).isoformat(),
@@ -125,12 +125,12 @@ def test_runtime_requires_issued_carry_package_and_rejects_unauthorized_http(tmp
         denied = client.post("/tenants/dev/accounts/desk/carry-backtests", json=body)
         assert denied.status_code == 401
         assert client.put(
-            "/tenants/dev", headers={"Authorization": "Bearer private"},
+            "/tenants/dev", headers={"Authorization": "Bearer integration-test-private-token-" + "x" * 48},
             json={"purpose": "development"},
         ).status_code == 200
         assert client.get(
             "/tenants/dev/accounts/desk/carry-backtests/latest",
-            headers={"Authorization": "Bearer private"},
+            headers={"Authorization": "Bearer integration-test-private-token-" + "x" * 48},
         ).status_code == 404
 
 
@@ -175,7 +175,7 @@ def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
         "archive": base64.b64encode(archive).decode(),
     }
     runtime.receive_strategy("dev", payload)
-    app = create_app(EngineConfig(tmp_path / "state", token="engine-test", project=tmp_path),
+    app = create_app(EngineConfig(tmp_path / "state", token="integration-test-engine-token-" + "x" * 48, auth_mode="token", project=tmp_path),
                      runtime=runtime)
     body = {
         "start": start.isoformat(),
@@ -184,7 +184,7 @@ def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
         "starting_perpetual_balance": "1000", "max_gross_notional": "1000",
     }
     try:
-        headers = {"Authorization": "Bearer engine-test"}
+        headers = {"Authorization": "Bearer integration-test-engine-token-" + "x" * 48}
         with TestClient(app) as client:
             run = client.post(
                 "/tenants/dev/accounts/desk/carry-backtests",
