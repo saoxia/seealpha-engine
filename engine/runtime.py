@@ -458,9 +458,9 @@ class EngineRuntime:
 
     def run_backtest(
         self, tenant_id, account_id, start, end, interval, starting_balance, quote_currency,
-        *, publish_event=True, product="futures_um",
+        *, publish_event=True, product="futures_um", candidate=None,
     ):
-        """Run this tenant's issued loads on product-scoped catalog history."""
+        """Run an issued strategy or one normalized, Engine-owned research candidate."""
         from decimal import Decimal, InvalidOperation
 
         from nautilus_trader.model import Money
@@ -479,9 +479,22 @@ class EngineRuntime:
         row = self.store.tenant(tenant_id)
         if row["purpose"] != "development":
             raise EngineConflict("历史回测只在开发租户上运行。")
-        loads = self.store.strategy_loads(tenant_id, account_id, include_archive=True)
-        if not loads:
-            raise EngineConflict("该租户账户没有已下发的策略。")
+        if candidate is None:
+            loads = self.store.strategy_loads(tenant_id, account_id, include_archive=True)
+            if not loads:
+                raise EngineConflict("该租户账户没有已下发的策略。")
+        else:
+            # Never import generated Python; only a validated recipe reaches
+            # the Engine-owned CandidateSignal via the existing simulation path.
+            from engine.strategies.candidate_template import candidate_load
+
+            if set(candidate) != {"candidate_id", "package_hash", "recipe"}:
+                raise EngineConflict("Candidate research identity invalid")
+            loads = [candidate_load(
+                candidate["recipe"], tenant_id=str(tenant_id), account_id=str(account_id),
+                candidate_id=candidate["candidate_id"],
+                package_hash=candidate["package_hash"],
+            )]
         if any(
             item["grant_purpose"] != "development" or str(item["tenant_id"]) != str(tenant_id)
             for item in loads

@@ -240,8 +240,10 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, s
     try:
         for index, load in enumerate(group):
             strategy, namespace, directory = _load_member(load, instrument, bar_type, f"E{index}")
-            namespaces.append(namespace)
-            directories.append(directory)
+            if namespace is not None:
+                namespaces.append(namespace)
+            if directory is not None:
+                directories.append(directory)
             allocation = Decimal(load["parameters"]["allocation"])
 
             def sink(strategy, holding, coordinator=coordinator, allocation=allocation,
@@ -358,6 +360,14 @@ def _prepare_archive(archive, metadata, parameters, tenant_id, issuance_id):
 
 
 def _load_member(load, instrument, bar_type, order_id_tag):
+    if load.get("_trusted_candidate") is True:
+        from engine.strategies.candidate_template import CandidateSignal, validate_candidate
+
+        parameters = validate_candidate(load["parameters"])
+        strategy = build_strategy(
+            CandidateSignal, parameters, instrument, bar_type, order_id_tag,
+        )
+        return strategy, None, None
     archive = load.get("archive")
     if not isinstance(archive, (bytes, bytearray)) or not archive:
         raise EngineConflict("策略下发缺少包内容。")

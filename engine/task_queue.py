@@ -409,10 +409,26 @@ class TaskCoordinator:
                     if job["fingerprint"] != fingerprint:
                         raise HTTPException(409, "相同幂等键不能用于不同任务参数。")
                     return self._public(job)
-            if not self.runtime.store.strategy_loads(
-                tenant_id, parameters["account_id"], include_archive=True,
-            ):
-                raise HTTPException(409, "该租户账户没有已下发的策略。")
+            candidate = parameters.get("_candidate")
+            if candidate is None:
+                if not self.runtime.store.strategy_loads(
+                    tenant_id, parameters["account_id"], include_archive=True,
+                ):
+                    raise HTTPException(409, "该租户账户没有已下发的策略。")
+            else:
+                from engine.strategies.candidate_template import validate_candidate
+
+                if (not isinstance(candidate, dict)
+                        or set(candidate) != {"candidate_id", "package_hash", "recipe"}
+                        or not isinstance(candidate["candidate_id"], str)
+                        or not re.fullmatch(r"[0-9a-f]{32}", candidate["candidate_id"])
+                        or not isinstance(candidate["package_hash"], str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", candidate["package_hash"])):
+                    raise HTTPException(422, "Candidate identity invalid")
+                try:
+                    validate_candidate(candidate["recipe"])
+                except ValueError:
+                    raise HTTPException(422, "Candidate recipe invalid") from None
             if self.pending.full():
                 raise HTTPException(429, "该 Engine 的回测等待队列已满。")
             identity = uuid4().hex
@@ -535,7 +551,7 @@ class TaskCoordinator:
                         status, error = "INTERRUPTED", "Engine 停止时回测中断。"
                     elif status != "INTERRUPTED" and slot.cancel_requested:
                         status, error = "CANCELLED", "已终止回测 Worker。"
-                    if status == "SUCCEEDED":
+                    if status == "SUCCEEDED" and record["parameters"].get("_candidate") is None:
                         try:
                             self.journal.store.add_event(tenant_id, record["parameters"]["account_id"], "backtest", result)
                         except Exception:  # noqa: BLE001 - do not claim a partially committed result

@@ -48,10 +48,32 @@ Engine 只提供 `engine.research_auth.sign_research_grant()` 作为可信 Platf
 
 这限制的是**受控回测执行路径**，不是 Harness 在沙箱里探索算法、编写代码或分析授权数据的能力。
 
+
+## 受限 AI 候选策略回测（首期实施）
+
+`POST /research/v1/candidate-backtests` 已为显式授权的**开发研究任务**增加独立操作 `candidates:submit`。原 `/v1/backtests` 仍只回测已下发策略，互不改变。
+
+候选包 ZIP（最多 64 KiB）**严格仅有** `seealpha-package.json` 与 `strategy.py`；前者限定 `format/name/title/version/entry_point=strategy:CANDIDATE`，后者**只允许**一条 Python 字面量赋值：
+
+```python
+CANDIDATE = {
+    "kind": "ema_cross",
+    "symbol": "ETHUSDT",
+    "fast_period": 8,
+    "slow_period": 21,
+    "allocation": "1",
+    "risk_limit": "1",
+}
+```
+
+允许的 `kind`：`ema_cross`、`ema_revert`、`sma_cross`、`sma_revert`。仅一个 `futures_um:symbol:1m|5m`、固定开发目的、模拟模式、账户作用域、短时 Research Grant。Engine 在调用 `TaskCoordinator` 前重新解包、静态解析 Python AST 并校验 SHA-256；**绝不 import/exec/eval AI 源码**。Worker 复用 NautilusTrader、现有有界任务队列/取消/超时/幂等机制，但只创建 Engine 自己维护的 `CandidateSignal`。候选回测不写入已下发策略清单，也不自动进入生产。
+
+请求包含 `candidate_id`（32 位小写十六进制）、`package_hash`（SHA-256）、`archive`（base64）、`strategy_ref`、`dataset_refs`、`start/end`、`starting_balance`、`quote_currency` 和 `idempotency_key`。查询结果复用 `GET /v1/backtests/{id}`，完成时返回关联的候选 ID/哈希/规范化规则与回测结果。相同幂等键不同规则会拒绝；研究任务不能读取其他任务回测。
+
+**重要限制**：本期支持 AI 生成的**受限策略描述代码**，并不支持任意 Python 策略类或第三方依赖。现有回测 Worker 的子进程**不是完整的恶意代码沙箱**；只有受信任的 Engine 代码会被执行。要允许自由 Python，仍需后续独立最小权限容器、禁网、只读数据、独立 uid、资源限制和拒绝越权的实测验收。这里没有声称支持任意 Python。
+
 ## 与 Harness 的接入状态
 
-Harness 已有匹配的 `EngineResearchClient` / `ResearchTools`（它不会直接获得 Engine 管理令牌）。本次 Engine 实现使 HTTP 合同具备对应服务端代码，但还没有 Platform 颁发研究 grant、隔离的 Harness 工具网关或真实 Agent 调用。
+现选定调用链是 Harness → Platform 任务级代理 → Engine Research API。Platform 已实现开发租户授权、短期能力与模拟回测命令，Harness 已提供受限 Python/CLI Client。无须部署 Gateway/MCP；Agent 不掌握 Engine 管理令牌或 Research Grant。
 
-**必须先把 Harness 的不可信 SDK Shell 与持有研究凭据的可信工具网关隔离**，再提供给模型使用，否则 Shell 可能读取令牌或直接调用任意 Engine 端点。
-
-本次只允许模拟/CI 验证；实机、真实模型、真实数据量、跨仓库端到端、生产部署由用户另行选择时间。
+仍需真实开发容器、真实数据、AI 模型多轮策略研究的跨仓库端到端验收。Harness 自由 Shell 目前可读取自己的受限任务能力，不能视作不可信多租户的强隔离。

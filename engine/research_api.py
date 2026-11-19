@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from engine.strategies.candidate_package import decode_candidate_archive
 from engine.research_auth import (
     ENGINE_HEADER,
     ENGINE_VERSION,
@@ -54,6 +55,26 @@ class BacktestRequest(BaseModel):
     starting_balance: str = Field(min_length=1, max_length=40)
     quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
     parameters: dict = Field(default_factory=dict)
+    idempotency_key: str = Field(
+        min_length=1, max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+    )
+
+
+class CandidateBacktestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: Literal["development"]
+    execution: Literal["simulation"]
+    candidate_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    package_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    archive: str = Field(min_length=1, max_length=90_000, repr=False)
+    strategy_ref: str = Field(min_length=1, max_length=128)
+    dataset_refs: list[str] = Field(min_length=1, max_length=1)
+    start: str = Field(min_length=10, max_length=40)
+    end: str = Field(min_length=10, max_length=40)
+    starting_balance: str = Field(min_length=1, max_length=40)
+    quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
     idempotency_key: str = Field(
         min_length=1, max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
@@ -212,6 +233,56 @@ def create_research_app(config, runtime, tasks):
         job = tasks.submit(
             config.tenant_id, "backtest", params, idempotency_key=idem,
         )
+        return _public_backtest(job)
+
+    @app.post("/v1/candidate-backtests", status_code=202)
+    def submit_candidate(body: CandidateBacktestRequest, claims: dict = grant_dependency):
+        # The code archive is parsed statically; Python is NEVER imported or
+        # executed. A trusted Engine-owned CandidateSignal runs in the Worker.
+        try:
+            strategy_ref = identifier(body.strategy_ref)
+            dataset = identifier(body.dataset_refs[0])
+        except ValueError:
+            raise HTTPException(422, "Invalid candidate research reference") from None
+        require_op(claims, "candidates:submit", strategy=strategy_ref, dataset=dataset)
+        match = _ACCOUNT.fullmatch(strategy_ref)
+        if match is None:
+            raise HTTPException(422, "Candidate requires a scoped development account")
+        try:
+            market, symbol, interval = dataset.split(":")
+        except ValueError:
+            raise HTTPException(422, "Invalid candidate dataset") from None
+        if market != "futures_um" or interval not in {"1m", "5m"}:
+            raise HTTPException(422, "Candidate currently supports futures 1m/5m")
+        if dataset not in {row["id"] for row in snapshots._discover()}:
+            raise HTTPException(404, "Candidate dataset does not exist")
+        try:
+            _archive, parsed = decode_candidate_archive(
+                body.archive, expected_hash=body.package_hash,
+            )
+            if parsed["recipe"]["symbol"] != symbol:
+                raise ValueError("Candidate symbol outside dataset")
+            params = BacktestParameters(
+                account_id=match.group(1),
+                start=body.start, end=body.end, interval=interval,
+                starting_balance=body.starting_balance,
+                quote_currency=body.quote_currency,
+            ).model_dump(mode="json")
+            from engine.strategies.backtest import parse_window
+
+            parse_window(body.start, body.end, interval)
+        except (ValueError, EngineConflict):
+            raise HTTPException(422, "Candidate package or backtest window invalid") from None
+        params["_candidate"] = {
+            "candidate_id": body.candidate_id,
+            "package_hash": body.package_hash,
+            "recipe": parsed["recipe"],
+        }
+        idem = (
+            "research." + sha256(claims["task_id"].encode()).hexdigest()[:32] + "."
+            + sha256(("candidate." + body.idempotency_key).encode()).hexdigest()[:32]
+        )
+        job = tasks.submit(config.tenant_id, "backtest", params, idempotency_key=idem)
         return _public_backtest(job)
 
     @app.get("/v1/backtests/{backtest_id}")

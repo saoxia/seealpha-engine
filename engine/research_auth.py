@@ -23,6 +23,7 @@ _IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _OPS = frozenset({
     "datasets:read", "snapshots:create", "snapshots:read",
     "backtests:submit", "backtests:read", "backtests:cancel",
+    "candidates:submit",
 })
 
 
