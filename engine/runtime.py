@@ -678,7 +678,8 @@ class EngineRuntime:
         from datetime import timedelta
         from decimal import Decimal, InvalidOperation
 
-        from core.market.instruments import instrument_id_for
+        from nautilus_trader.model import CryptoOption, CryptoPerpetual
+
         from engine.data_queries import read_lease
         from engine.pipeline.catalog import ParquetDataCatalog
         from engine.strategies.backtest import catalog_directory, parse_window
@@ -687,7 +688,6 @@ class EngineRuntime:
             read_option_protection_evidence,
         )
         from engine.strategies.protected_simulation import run_native_protected
-        from nautilus_trader.model import CryptoOption, CryptoPerpetual
 
         self.assert_runnable(tenant_id, "backtest")
         tenant = self.store.tenant(tenant_id)
