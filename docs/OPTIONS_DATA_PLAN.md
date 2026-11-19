@@ -67,3 +67,9 @@ connector 职责内使用固定公开 REST 端点补充，不调用上游私有�
 
 - [NautilusTrader Binance 集成](https://nautilustrader.io/docs/latest/integrations/binance/)
 - [Binance 期权市场数据接口](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-options/api/rest-api/market-data)
+
+## 期权买卖盘报价采集（B3-B，2026-11-19）
+
+管理式期权采集现同时订阅 `bookTicker`，存储来自原生 `QuoteTick` 的买价、卖价、对应数量及交易所事件时间，并保留接收时间。写入前保存带 SHA-256 指纹的 `raw/options/<contract>/quote/<UTC day>/<sha256>.json` 快照，再经原有同合约锁、临时 Parquet 和原子安装流程写入 native Catalog。已有文件冲突、同毫秒异值、交易所时间越界都拒绝；中断后通过已保存的来源重放安装，不造新报价。
+
+**不可恢复部分：** 交易所提供实时 `bookTicker`，但并不保证可以通过公开 REST 补齐任意断线期间的历史买一卖一盘口。因此只允许恢复已持久化的原始快照。未观察到的盘口空窗继续由 Feed 记录为缺口，历史保护回测会对报价时效失败关闭，不允许声称已取得完整历史买卖盘。
