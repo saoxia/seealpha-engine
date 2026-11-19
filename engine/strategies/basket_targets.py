@@ -123,12 +123,15 @@ def plan_basket(
     max_gross_notional: Decimal,
     policy: Literal["funding_carry", "option_protected"],
     max_leg_drift: Decimal = Decimal(0),
+    emergency_unwind: bool = False,
 ) -> BasketPlan:
     """Net identical instruments only; plan risk-reduction and hedge order.
 
     Strictly research-only. Callers must not translate phases into live orders.
     Missing positions, stale quotes, unsupported products and unsafe coverage
     fail closed. The budget is deliberately *gross*, not delta-netted.
+    emergency_unwind is an explicit research-only flatten mode for a damaged
+    hedge; it never grants an order route and never permits new exposure.
     """
     if not member_targets or len(member_targets) > 64:
         raise BasketPlanError("组合目标不能为空，最多支持64条成员目标")
@@ -140,6 +143,8 @@ def plan_basket(
         raise BasketPlanError("最大腿间偏差不能为负")
     if policy not in {"funding_carry", "option_protected"}:
         raise BasketPlanError("未知跨产品组合策略")
+    if type(emergency_unwind) is not bool:
+        raise BasketPlanError("紧急减险标记必须为布尔值")
 
     targets = defaultdict(lambda: Decimal(0))
     seen = set()
@@ -168,6 +173,12 @@ def plan_basket(
         if leg.product in {"spot", "options"} and (desired < 0 or current < 0):
             raise BasketPlanError("此阶段不支持借币卖空或卖出裸期权")
 
+    if emergency_unwind and (
+        any(quantity != 0 for quantity in targets.values())
+        or not any(quantity != 0 for quantity in positions.values())
+    ):
+        raise BasketPlanError("紧急减险仅允许对已有非零仓位提出全部归零目标")
+
     futures = sorted(leg for leg in legs if leg.product == "futures_um")
     if len(futures) != 1:
         raise BasketPlanError("组合必须恰好包含一条 USD-M 永续腿")
@@ -179,8 +190,9 @@ def plan_basket(
         spot = spots[0]
         if targets[spot] < 0 or targets[perp] > 0 or targets[spot] + targets[perp] != 0:
             raise BasketPlanError("现货多头与永续空头必须等额对冲")
-        if positions[spot] + positions[perp] > max_leg_drift or (
-            positions[spot] + positions[perp] < -max_leg_drift
+        if not emergency_unwind and (
+            positions[spot] + positions[perp] > max_leg_drift
+            or positions[spot] + positions[perp] < -max_leg_drift
         ):
             raise BasketPlanError("现有资金费组合腿间偏差超过上限")
     else:
@@ -195,7 +207,10 @@ def plan_basket(
         for leg in options:
             if (
                 targets[leg] * evidence[leg].multiplier < abs(targets[perp])
-                or positions[leg] * evidence[leg].multiplier < abs(positions[perp])
+                or (
+                    not emergency_unwind
+                    and positions[leg] * evidence[leg].multiplier < abs(positions[perp])
+                )
             ):
                 raise BasketPlanError("期权保护数量不足，禁止裸露永续方向仓位")
 
@@ -211,7 +226,10 @@ def plan_basket(
     if policy == "funding_carry":
         if any(changes.values()):
             phases.append(BasketPhase(
-                "coordinated_spot_perpetual_required",
+                (
+                    "emergency_coordinated_unwind"
+                    if emergency_unwind else "coordinated_spot_perpetual_required"
+                ),
                 tuple(LegChange(leg, changes[leg]) for leg in sorted(legs) if changes[leg]),
             ))
     else:
@@ -238,7 +256,8 @@ def plan_basket(
             ("release_protection_after_risk_reduction", release),
         ):
             if rows:
-                phases.append(BasketPhase(name, tuple(rows)))
+                phase_name = f"emergency_{name}" if emergency_unwind else name
+                phases.append(BasketPhase(phase_name, tuple(rows)))
 
     # A target-only cap is insufficient: a sequential multi-venue transition can
     # temporarily carry both old and new legs. Assume any ordering *within* each
