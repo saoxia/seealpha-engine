@@ -77,7 +77,8 @@ def test_wrong_fee_price_source_quantity_or_duplicate_event_rejected():
     contracts, positions, records = _case()
     variants = (
         (replace(records[0], record_source="candle_close_estimate"), "来源"),
-        (replace(records[0], settlement_index_price=Decimal(1750)), "交割价"),
+        (replace(records[0], settlement_index_price=Decimal(1750),
+                 gross_credit=Decimal(10), net_credit=Decimal(8)), "交割价"),
         (replace(records[0], gross_credit=Decimal(10)), "总额"),
         (replace(records[0], exercise_fee=Decimal(21)), "费用"),
         (replace(records[0], net_credit=Decimal(17)), "费用"),
