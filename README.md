@@ -48,7 +48,7 @@ cargo build --locked --release --manifest-path engine/pipeline/rust_converter/Ca
 uv run python -m engine
 ```
 
-开发默认只监听 `127.0.0.1:8766`。环境变量参见 [engine/README.md](engine/README.md)。仅本地开发允许默认令牌；任何共享部署必须提供新的私有 `ENGINE_TOKEN`。所有实盘、账户连接、状态卷数据迁移都需要单独批准。
+开发默认只监听 `127.0.0.1:8766`。环境变量参见 [engine/README.md](engine/README.md)。本机独立启动默认 `ENGINE_AUTH_MODE=none`，不需要令牌，仅允许监听回环地址。Platform 托管的容器必须显式配置 `ENGINE_AUTH_MODE=token`，并由 Platform 生成、保存及注入专属的 `ENGINE_TOKEN`（至少 32 字符）。无效模式、缺失令牌或试图将无鉴权服务绑定到外部地址都会拒绝启动。所有实盘、账户连接、状态卷数据迁移都需要单独批准。
 
 也可从本仓库根目录构建容器：
 

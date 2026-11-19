@@ -103,16 +103,16 @@ jobs:
       - name: Local synthetic HTTP smoke (no exchange credentials)
         run: |
           docker run -d --name seealpha-engine-ci -p 127.0.0.1:18766:8766 \
-            -e ENGINE_HOST=0.0.0.0 -e ENGINE_TOKEN=ci-engine-token \
+            -e ENGINE_HOST=0.0.0.0 -e ENGINE_AUTH_MODE=token -e ENGINE_TOKEN=ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef \
             -e ENGINE_TENANT_ID=42 -e ENGINE_TENANT_PURPOSE=development \
             seealpha-engine:ci
           trap 'docker logs seealpha-engine-ci || true; docker rm -f seealpha-engine-ci || true' EXIT
           for i in $(seq 1 50); do
-            if curl -fsS --max-time 2 -H 'Authorization: Bearer ci-engine-token' http://127.0.0.1:18766/health > /tmp/engine-health.json; then
+            if curl -fsS --max-time 2 -H 'Authorization: Bearer ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef' http://127.0.0.1:18766/health > /tmp/engine-health.json; then
               break
             fi
             sleep 1
           done
           python -c 'import json; d=json.load(open("/tmp/engine-health.json")); assert d["contract_version"] == "2"'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/health)" = 401
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-engine-token' http://127.0.0.1:18766/tenants/99/jobs)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef' http://127.0.0.1:18766/tenants/99/jobs)" = 403

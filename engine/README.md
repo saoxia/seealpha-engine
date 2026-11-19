@@ -38,16 +38,17 @@ uv run python -m engine
 | --- | --- | --- |
 | `ENGINE_HOST` | `127.0.0.1` | 监听地址 |
 | `ENGINE_PORT` | `8766` | 监听端口 |
-| `ENGINE_TOKEN` | `seealpha-local-engine` | 服务间 Bearer 令牌，仅限本机开发 |
+| `ENGINE_AUTH_MODE` | `none` | `none`：本机无令牌；`token`：强制校验 Bearer |
+| `ENGINE_TOKEN` | 空 | `token` 模式要求外部生成且至少 32 字符的私有令牌 |
 | `ENGINE_STATE` | `.local/state/engine` | SQLite 目录 |
 | `ENGINE_PROJECT` | 仓库根目录 | 行情锁和数据路径 |
 | `ENGINE_RESEARCH_SIGNING_KEY` | 不设置（关闭） | 仅固定开发租户启用研究 HTTP v1 所需的独立签名密钥 |
 
-业务 API 使用同名 `ENGINE_URL`（默认 `http://127.0.0.1:8766`）和 `ENGINE_TOKEN`。
+单机独立 Engine 默认无鉴权，仅可监听 `127.0.0.1`、`::1` 或 `localhost`。业务 API 在独立本机模式无需配置 `ENGINE_TOKEN`；Platform 托管 Docker 必须配置 `ENGINE_AUTH_MODE=token`，将 Platform 生成的强随机 `ENGINE_TOKEN` 注入容器，客户端携带相同令牌。
 先启动引擎，再启动 API。公开行情不需要交易所密钥。手动交易和账户查询由 API 解密后，
 按 `account_id` 把密钥放进当次请求；引擎不保存主密钥，也不把密钥写入 SQLite。
 
-内部路由都要求 `Authorization: Bearer <ENGINE_TOKEN>`，并且路径带 `account_id`：
+在 `token` 模式下内部路由要求 `Authorization: Bearer <ENGINE_TOKEN>`；默认 `none` 模式无需此请求头。主要路由包括：
 
 - `GET /health`
 - `POST/DELETE /accounts/{account_id}/connections`
