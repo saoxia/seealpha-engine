@@ -525,6 +525,7 @@ def test_python_candidate_opt_in_and_hmac_isolation(service):
 
 def test_python_candidate_package_is_never_imported_by_api():
     import base64
+
     from engine.strategies.python_candidate import inspect_python_candidate
 
     # Static inspection may accept Python imports; it must not execute them.
@@ -551,6 +552,7 @@ def test_python_candidate_rejects_archive_path_escape_and_secret_parameters():
     import hashlib
     import json
     import zipfile
+
     from engine.strategies.python_candidate import inspect_python_candidate
 
     stream = io.BytesIO()
