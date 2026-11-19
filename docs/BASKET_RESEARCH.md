@@ -56,6 +56,16 @@ Engine 增加特殊的已下发 `demo_funding_carry` 策略组合研究入口：
 
 **这只是期权保护组合的历史数据证据门禁；尚未提供一条有历史报价覆盖的生产采集链路、真正的多腿期权模拟撮合、行权与到期记账或实盘执行。** 当前 `demo_option_hedged_bollinger` 仍不标注为可回测。
 
+## B3-C：原生保护腿先成交的期权组合研究回测
+
+新增 `run_native_protected`，将单个开发租户、同账户已授权 `demo_option_hedged_bollinger` 归档内的 `BollingerModel` 用作信号提议源（不复制策略算法），然后由独立的 NautilusTrader `BacktestEngine` 在 `SIM_OPT` 的 USDT CASH 账户以及 `SIM_UM` 的 MARGIN 账户模拟订单和净额仓位。读取先前验证过的 native Catalog 期权真实 QuoteTick（含买卖数量）和原始永续 K 线，保留期权双翼合约乘数与不同产品间净额隔离。
+
+组合调度器以真正的 `OrderFilled` 事件推进阶段，不把下发目标或订单接受当成交：**先买 PUT 和 CALL 并逐笔确认足够覆盖 → 才可扩大永续方向仓位**，退出时先减永续再释放保护。订单被拒、撤销、剩余数量未知、腿间覆盖不足或资金/权利金超预算直接停止回测，不发布成功回测记录。报告含订单、逐笔成交、原生费用、净持仓、按可观察 bid 估值的权益曲线和成员目标时间戳；正式交易权限与既有 Demo `on_start` 仍保持禁用。
+
+仅允许 `POST /tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests` 开发内研究入口：必须有三腿历史订阅与合约、原始策略归档哈希、独立两账户资金和总名义预算；`GET .../protected-option-backtests/latest` 查询归档结果。
+
+**边界：** 本阶段不包含已到期/到期当日的行权与结算价核算。因为无可核验的交易所交割和行权证据，`read_option_protection_evidence` 会拒绝涉及到期的区间，报告标注 `settlement_accounting=not_in_window_expiry_requires_verified_settlement`。也不能从现有公开 API 恢复任意断线期的历史 BBO，缺口由历史报价时效门禁拒绝。订单按 native 模拟运行，并非真实交易所跨产品原子订单或实际部分成交补偿。
+
 ## 尚未实现的关键条件
 
 - 真实的多腿 `publish_basket`、`subscribe_market_bundle`、独立现金/保证金与资金费/期权权利金/到期模拟。
