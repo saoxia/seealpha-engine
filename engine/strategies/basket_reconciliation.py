@@ -109,7 +109,7 @@ def _fingerprint(plan: BasketPlan) -> str:
         "targets": _pairs_wire(plan.targets),
         "phases": [
             {"name": phase.name, "changes": _pairs_wire(
-                ((change.leg, change.quantity_delta) for change in phase.changes)
+                (change.leg, change.quantity_delta) for change in phase.changes
             )}
             for phase in plan.phases
         ],
