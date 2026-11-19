@@ -2,9 +2,20 @@
 from decimal import Decimal
 
 import pytest
-from nautilus_trader.model import Bar, BarType, Price, Quantity
+from nautilus_trader.backtest import BacktestEngine
+from nautilus_trader.model import (
+    AccountType,
+    Bar,
+    BarType,
+    Money,
+    OmsType,
+    Price,
+    Quantity,
+    Venue,
+)
 
 from core.market.instruments import bar_type_for
+from engine.strategies.backtest_engine import backtest_engine_config
 from engine.strategies.basket_generic_runtime import (
     BasketMemberRegistration,
     GenericBasketRuntime,
@@ -19,6 +30,7 @@ from engine.strategies.basket_targets import (
     LegId,
 )
 from engine.strategies.strategy_config import StrategyConfig
+from nautilus_support import TestInstrumentProvider, instrument_fee_model
 
 _TS = 60_000_000_000 * 1001
 
@@ -106,3 +118,50 @@ def test_native_strategy_rejects_duplicate_and_lookahead_bar_or_wrong_member():
     _unused, alpha, beta, spot_type, perp_type, _seen = _gate()
     with pytest.raises(BasketPlanError, match="未声明"):
         alpha.on_bar(_bar(perp_type, _TS))
+
+
+def test_actual_nautilus_backtest_engine_dispatches_two_strategy_lifecycles():
+    """Registered Nautilus strategies see the same native Bar exactly once."""
+    perp = TestInstrumentProvider.ethusdt_perp_binance()
+    leg = LegId("tenant", "account", "futures_um", "ETHUSDT")
+    a, b = NativeMember(), NativeMember()
+    runtime = GenericBasketRuntime(
+        tenant_id="tenant", account_id="account",
+        members=(
+            BasketMemberRegistration("member-a", (leg,), a),
+            BasketMemberRegistration("member-b", (leg,), b),
+        ),
+        max_age_ns=1000, max_gross_notional=Decimal(1000),
+    )
+    def source(ts, _bars):
+        return (
+            {leg: Decimal(0)},
+            {leg: LegEvidence(Decimal(100), Decimal("0.1"), Decimal(1), ts)},
+        )
+
+    gate = NativeBasketBarGate(runtime, source)
+    bar_type = BarType.from_str(bar_type_for("ETHUSDT", "1m", "futures_um"))
+    a.bind_basket_gate(gate, "member-a", (bar_type,))
+    b.bind_basket_gate(gate, "member-b", (bar_type,))
+    engine = BacktestEngine(backtest_engine_config())
+    try:
+        engine.add_venue(
+            Venue("BINANCE"), OmsType.NETTING, AccountType.MARGIN,
+            [Money.from_str("1000 USDT")],
+            fee_model=instrument_fee_model(perp), default_leverage=Decimal(5),
+        )
+        engine.add_instrument(perp)
+        engine.add_strategy(a)
+        engine.add_strategy(b)
+        engine.add_data([
+            _bar(bar_type, _TS), _bar(bar_type, _TS + 60_000_000_000),
+        ], sort=True)
+        engine.run()
+        engine.end()
+        assert a.calls == [_TS, _TS + 60_000_000_000]
+        assert b.calls == a.calls
+        assert len(gate.decisions) == 2
+        assert all(not decision.executable for decision in gate.decisions)
+        assert dict(gate.decisions[-1].plan.targets)[leg] == Decimal("0.2")
+    finally:
+        engine.dispose()
