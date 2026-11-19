@@ -178,7 +178,7 @@ def test_reject_intermediate_gross_risk_even_when_endpoints_fit_budget():
     assert allowed.executable is False
 
 
-def test_reject_preexisting_gross_exposure_above_cap_even_for_flatten_plan():
+def test_overbudget_account_can_strictly_reduce_to_flat_but_cannot_add_transient_risk():
     spot = _leg("spot", "ETHUSDT")
     perp = _leg("futures_um", "ETHUSDT")
     positions = {spot: Decimal("0.3"), perp: Decimal("-0.3")}
