@@ -154,10 +154,12 @@ class BasketResearchSession:
                 raise BasketPlanError("通用组合腿结构无效")
             requested = tuple((row["product"], row["symbol"]) for row in legs)
             if (
-                len(requested) != len(set(requested))
-                or set(requested) != {(leg.product, leg.symbol) for leg in required_legs}
+                not requested or len(requested) != len(set(requested))
+                or not set(requested).issubset(
+                    {(leg.product, leg.symbol) for leg in required_legs}
+                )
             ):
-                raise BasketPlanError("通用组合订阅必须完整且与授权产品合约腿一致")
+                raise BasketPlanError("通用组合订阅必须声明不重复的授权产品合约腿")
         else:
             if not isinstance(symbol, str) or legs:
                 raise BasketPlanError("对冲策略订阅协议无效")
@@ -182,7 +184,12 @@ class BasketResearchSession:
         previous = self._subscriptions.get(member_id)
         if previous is not None and previous != frozenset(required_legs):
             raise BasketPlanError("相同成员不能重新绑定其他组合腿")
-        self._subscriptions[member_id] = frozenset(required_legs)
+        if self.policy == "generic":
+            declared = {leg for leg in required_legs
+                        if (leg.product, leg.symbol) in requested}
+            self._subscriptions[member_id] = frozenset(declared)
+        else:
+            self._subscriptions[member_id] = frozenset(required_legs)
 
     def _publish(
         self, member_id: str, *,
@@ -206,8 +213,8 @@ class BasketResearchSession:
             or not all(char.isalnum() or char in "-_.:" for char in request_id)
         ):
             raise BasketPlanError("组合请求幂等标识无效")
-        if not isinstance(targets, list) or len(targets) != len(self.positions):
-            raise BasketPlanError("必须申报当前组合所有腿，包括零目标")
+        if not isinstance(targets, list) or len(targets) != len(self._subscriptions[member_id]):
+            raise BasketPlanError("必须申报当前策略订阅的所有组合腿，包括零目标")
         if constraints is not None and not isinstance(constraints, dict):
             raise BasketPlanError("约束协议无效")
         # Demanded atomicity is an *intent*, not a guarantee. Reject unknown
@@ -251,8 +258,8 @@ class BasketResearchSession:
             if not quantity.is_finite():
                 raise BasketPlanError("组合目标数量非有限 Decimal")
             parsed[leg] = quantity
-        if set(parsed) != set(self.positions):
-            raise BasketPlanError("组合目标腿不完整")
+        if set(parsed) != set(self._subscriptions[member_id]):
+            raise BasketPlanError("成员组合目标腿不完整")
         intent = tuple(MemberLegTarget(member_id, leg, parsed[leg]) for leg in sorted(parsed))
         old = self._intents.get(member_id)
         if old is not None:
@@ -273,6 +280,8 @@ class BasketResearchSession:
             item for member_id in sorted(self._intents)
             for item in self._intents[member_id][1]
         ]
+        if {target.leg for target in targets} != set(self.positions):
+            raise BasketPlanError("全部策略成员未覆盖授权组合的所有产品合约腿")
         plan = plan_basket(
             targets, self.positions, self.evidence,
             now_ns=self.now_ns, max_age_ns=self.max_age_ns,
