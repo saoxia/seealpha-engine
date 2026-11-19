@@ -7,8 +7,8 @@ a complete research target published through BasketResearchMember.
 """
 from contextlib import contextmanager
 from pathlib import Path
-from types import MethodType
 from tempfile import TemporaryDirectory
+from types import MethodType
 from uuid import uuid4
 
 from engine.runtime import EngineConflict
