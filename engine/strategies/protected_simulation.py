@@ -273,7 +273,10 @@ class _NativeProtectedCoordinator(Strategy):
             self._verify_phase(self.current_phase)
             if not self.failed:
                 try:
-                    self.reconciler.confirm_phase(dict(self.ledger))
+                    self.reconciler.confirm_phase({
+                        leg: _position(self, instrument)
+                        for leg, instrument in self.instruments.items()
+                    })
                 except BasketPlanError as exc:
                     self.failed.append(str(exc))
             self.current_phase = None
@@ -322,7 +325,10 @@ class _NativeProtectedCoordinator(Strategy):
             orders.append(order)
         try:
             self.reconciler.open_phase(
-                phase_order_ids, observed_positions=dict(self.ledger),
+                phase_order_ids, observed_positions={
+                    leg: _position(self, instrument)
+                    for leg, instrument in self.instruments.items()
+                },
                 now_ns=int(self.evidence.ts_ns),
             )
         except BasketPlanError as exc:

@@ -227,8 +227,9 @@ class BasketReconciliation:
         if type(index) is not int or not 0 <= index <= len(plan.phases):
             tracker._deny("组合检查点阶段无效")
         ids = checkpoint.get("used_order_ids")
-        if (not isinstance(ids, list) or len(ids) != len(set(ids))
-                or any(not isinstance(x, str) or not x for x in ids)):
+        if (not isinstance(ids, list)
+                or any(not isinstance(x, str) or not 1 <= len(x) <= 128 or not x.strip()
+                       for x in ids) or len(ids) != len(set(ids))):
             tracker._deny("组合检查点订单身份无效")
         tracker._used_ids = set(ids)
         tracker.phase_index = index
@@ -239,7 +240,8 @@ class BasketReconciliation:
             format(tracker.positions[leg], "f") for leg, _ in plan.targets
         ]:
             tracker._deny("组合检查点仓位与已确认阶段不匹配")
-        if checkpoint.get("active") is not False:
+        if (checkpoint.get("active") is not False
+                or checkpoint.get("pending_order_ids") != []):
             tracker.freeze("恢复时存在未确认的组合订单，必须独立对账")
         if checkpoint.get("frozen_reason"):
             tracker.freeze(str(checkpoint["frozen_reason"]))
