@@ -1,5 +1,6 @@
 """Resident engine facts and the only place account, manual, and valuation nodes are built."""
 
+import asyncio
 import contextlib
 import fcntl
 import hashlib
@@ -8,6 +9,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -176,18 +178,31 @@ class EngineRuntime:
         return result
 
     async def trading_state(self, account, symbol):
-        return await self._manual_execute(account, symbol, {"action": "snapshot"})
+        result = await self._manual_execute(account, symbol, {"action": "snapshot"})
+        if symbol.endswith("-PERP"):
+            from engine.connectors.binance import manual_algo
+            try:
+                result["algo_orders"] = await asyncio.to_thread(manual_algo.open_orders, account, symbol)
+                result["algo_checked_at"] = int(time.time() * 1000)
+                result["algo_error"] = None
+            except QueryError:
+                # Missing permissions or transient errors cannot be interpreted as "no orders".
+                result["algo_orders"] = None
+                result["algo_checked_at"] = None
+                result["algo_error"] = "无法读取交易所条件单；请到交易所核对，不应假定没有挂单。"
+        return result
 
     async def command(self, account, action, values):
         tenant_id = self._tenant_of(account)
         self.assert_runnable(tenant_id, "live")
         account_id, environment = account["id"], account["environment"]
-        if action not in {"submit", "cancel"} or values["environment"] != environment:
+        if action not in {"submit", "cancel", "algo_submit", "algo_cancel", "leverage"} or values["environment"] != environment:
             raise EngineConflict("交易操作或账户环境不匹配。")
         request_id = str(uuid.UUID(values["request_id"]))
         fingerprint = hashlib.sha256(json.dumps([action, values], sort_keys=True).encode()).hexdigest()
         client_order_id = (
-            "SA" + uuid.UUID(request_id).hex if action == "submit" else values["client_order_id"]
+            "SA" + uuid.UUID(request_id).hex if action in {"submit", "algo_submit"} else
+            values.get("client_order_id") or values.get("client_algo_id")
         )
         path = self.lock_path(tenant_id, account_id, environment)
         with path.open("a") as lock:
@@ -205,17 +220,31 @@ class EngineRuntime:
                 "status": "unknown", "order": None, "message": UNKNOWN,
             }
             body = {
-                "fingerprint": fingerprint, "response": response, "symbol": values["symbol"],
+                "fingerprint": fingerprint, "response": response, "symbol": values["symbol"], "action": action,
+                "target_leverage": values.get("leverage"), "client_algo_id": values.get("client_algo_id"),
                 "account_revision": values["account_revision"], "environment": environment,
                 "records": [], "ledger_synced": False,
             }
             self.store.save_request(tenant_id, account_id, request_id, body)
             try:
-                result = await self._manual_execute(
-                    account, values["symbol"], {**values, "action": action, "client_order_id": client_order_id},
-                )
+                if action in {"algo_submit", "algo_cancel", "leverage"}:
+                    from engine.connectors.binance import manual_algo
+                    result = await manual_algo.execute(account, action, values, client_order_id)
+                else:
+                    result = await self._manual_execute(
+                        account, values["symbol"], {**values, "action": action, "client_order_id": client_order_id},
+                    )
                 if "validation_error" in result:
                     response.update(status="completed", message=result["validation_error"])
+                    self.store.save_request(tenant_id, account_id, request_id, body)
+                    return body
+                if action in {"algo_submit", "algo_cancel", "leverage"}:
+                    if result.get("algo_order"):
+                        response.update(status="completed", algo_order=result["algo_order"],
+                                        message=result["message"])
+                    elif result.get("leverage"):
+                        response.update(status="completed", leverage=result["leverage"],
+                                        message=result["message"])
                     self.store.save_request(tenant_id, account_id, request_id, body)
                     return body
                 order = result.get("result")
@@ -250,6 +279,29 @@ class EngineRuntime:
             ):
                 raise EngineConflict("账户配置已变化，不能使用新凭据核对原委托。")
             if stored["response"]["status"] == "unknown":
+                action = stored.get("action")
+                if action in {"algo_submit", "algo_cancel", "leverage"}:
+                    from engine.connectors.binance import manual_algo
+                    try:
+                        if action == "leverage":
+                            client = manual_algo.SignedFutures(account)
+                            current = await asyncio.to_thread(manual_algo.current_leverage, client,
+                                                              stored["symbol"].removesuffix("-PERP"))
+                            if current == stored.get("target_leverage"):
+                                stored["response"].update(status="completed", leverage=current,
+                                                          message="已从交易所核对到目标杠杆。")
+                        else:
+                            client_id = (stored["response"]["client_order_id"] if action == "algo_submit"
+                                         else stored.get("client_algo_id"))
+                            order = await asyncio.to_thread(
+                                manual_algo.query_algo, account, stored["symbol"], client_id)
+                            if action == "algo_submit" or not order["open"]:
+                                stored["response"].update(status="completed", algo_order=order,
+                                                          message="已从交易所核对到条件单：" + order["status"])
+                    except QueryError:
+                        pass  # Absence, transport failures and unconfirmed writes remain unknown.
+                    self.store.save_request(tenant_id, account_id, request_id, stored)
+                    return stored
                 result = await self.trading_state(account, stored["symbol"])
                 order = next(
                     (row for row in result["orders"]
@@ -522,6 +574,86 @@ class EngineRuntime:
             yield from iter_carry_history(
                 catalog_directory(self.project), symbol, interval, start_at, end_at,
             )
+
+    def run_funding_carry_backtest(
+        self, tenant_id, account_id, start, end, interval,
+        starting_spot_balance, starting_perpetual_balance, max_gross_notional,
+        *, publish_event=True,
+    ):
+        """Backtest an issued carry basket with separate native venue accounts.
+
+        Research-only: NEVER reaches credentials, live order routes or the
+        production trading runtime. The demo package's own code is not loaded
+        into the simulation; the Engine implements its verified target rules.
+        """
+        from core.market.instruments import instrument_id_for
+        from engine.data_queries import read_lease
+        from engine.pipeline.catalog import ParquetDataCatalog
+        from engine.strategies.backtest import catalog_directory, parse_window
+        from engine.strategies.carry_simulation import run_native_carry
+
+        self.assert_runnable(tenant_id, "backtest")
+        if self.store.tenant(tenant_id)["purpose"] != "development":
+            raise EngineConflict("组合回测仅允许开发租户。")
+        start_at, end_at, interval = parse_window(start, end, interval)
+        loads = self.store.strategy_loads(tenant_id, account_id)
+        if not loads or len(loads) > 16:
+            raise EngineConflict("账户必须已下发 1 到 16 个资金费演示策略。")
+        if any(
+            str(row["tenant_id"]) != str(tenant_id)
+            or str(row["account_id"]) != str(account_id)
+            or row["grant_purpose"] != "development"
+            or row["code_key"] != "demo_funding_carry"
+            for row in loads
+        ):
+            raise EngineConflict("仅允许本租户开发授权的 Funding Carry 策略。")
+        symbols = {row["parameters"]["symbol"] for row in loads}
+        if len(symbols) != 1 or next(iter(symbols)) not in {"ETHUSDT", "BTCUSDT"}:
+            raise EngineConflict("资金费策略品种不一致或不受支持。")
+        symbol = next(iter(symbols))
+        if not all(
+            self._has_subscription_intent(tenant_id, symbol, product)
+            for product in ("spot", "futures_um")
+        ):
+            raise EngineConflict("组合回测必须具有现货及永续独立历史订阅。")
+        if not (self.project / "data").is_dir():
+            raise EngineConflict("租户历史目录不可用。")
+        from contextlib import ExitStack
+
+        with ExitStack() as leases:
+            for product in ("futures_um", "spot"):
+                leases.enter_context(read_lease(self.project, symbol, product))
+            catalog = ParquetDataCatalog(catalog_directory(self.project))
+            spot_id = instrument_id_for(symbol, "spot")
+            perp_id = instrument_id_for(symbol, "futures_um")
+            spot_rows = catalog.instruments(instrument_ids=[spot_id])
+            perp_rows = catalog.instruments(instrument_ids=[perp_id])
+            spot = next((x for x in spot_rows if str(x.id) == spot_id), None)
+            perp = next((x for x in perp_rows if str(x.id) == perp_id), None)
+            if spot is None or perp is None:
+                raise EngineConflict("历史 Catalog 缺少现货或永续原生合约定义。")
+            result = run_native_carry(
+                loads,
+                self.iter_funding_carry_history(
+                    tenant_id, symbol, start_at.isoformat(), end_at.isoformat(), interval,
+                ),
+                spot, perp, interval=interval,
+                starting_spot=starting_spot_balance,
+                starting_perpetual=starting_perpetual_balance,
+                max_gross_notional=max_gross_notional,
+            )
+        result.update(
+            interval=interval, start=start_at.isoformat(), end=end_at.isoformat(),
+        )
+        if publish_event:
+            self.store.add_event(tenant_id, account_id, "carry_backtest", result)
+        return result
+
+    def latest_carry_backtest(self, tenant_id, account_id):
+        if self.store.tenant(tenant_id) is None:
+            raise EngineConflict("租户不存在。")
+        event = self.store.latest_event(tenant_id, account_id, "carry_backtest")
+        return None if event is None else event["body"]
 
     def latest_backtest(self, tenant_id, account_id):
         if self.store.tenant(tenant_id) is None:

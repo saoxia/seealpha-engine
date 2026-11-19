@@ -18,7 +18,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from core.engine_contracts import ENGINE_CONTRACT_HEADER, ENGINE_CONTRACT_VERSION
-from core.trading_contracts import TRADING_SYMBOL, CancelOrderValues, SubmitOrderValues
+from core.trading_contracts import (
+    TRADING_SYMBOL,
+    AlgoCancelValues,
+    AlgoOrderValues,
+    CancelOrderValues,
+    LeverageChangeValues,
+    SubmitOrderValues,
+)
 from engine.config import EngineConfig
 from engine.connectors.binance.queries import QueryError
 from engine.data_manager.routes import router as control_router
@@ -65,6 +72,22 @@ class CommandBody(Credentials):
         schema = SubmitOrderValues if action == "submit" else CancelOrderValues
         return schema.model_validate(values).model_dump(mode="json")
 
+
+
+
+class ProfessionalCommandBody(Credentials):
+    """Strict Engine boundary: Platform authorizes user; Engine validates venue intent."""
+
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["algo_submit", "algo_cancel", "leverage"]
+    values: dict
+
+    @field_validator("values")
+    @classmethod
+    def validate_values(cls, values, info):
+        schema = {"algo_submit": AlgoOrderValues, "algo_cancel": AlgoCancelValues,
+                  "leverage": LeverageChangeValues}.get(info.data.get("action"))
+        return schema.model_validate(values).model_dump(mode="json") if schema else values
 
 
 class SpotSubmitValues(BaseModel):
@@ -208,6 +231,17 @@ class BacktestBody(BaseModel):
     starting_balance: str = Field(min_length=1, max_length=40)
     quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
     product: Literal["futures_um", "spot"] = "futures_um"
+
+class CarryBacktestBody(BaseModel):
+    """Research-only funding carry with explicitly independent USDT budgets."""
+
+    model_config = ConfigDict(extra="forbid")
+    start: str = Field(min_length=10, max_length=40)
+    end: str = Field(min_length=10, max_length=40)
+    interval: Literal["1m", "5m"] = "1m"
+    starting_spot_balance: str = Field(min_length=1, max_length=40)
+    starting_perpetual_balance: str = Field(min_length=1, max_length=40)
+    max_gross_notional: str = Field(min_length=1, max_length=40)
 
 
 def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None = None) -> FastAPI:
@@ -397,6 +431,16 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
         except EngineConflict as error:
             conflict(error)
 
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/trading/controls")
+    async def professional_command(tenant_id: str, account_id: str, body: ProfessionalCommandBody):
+        if body.environment != body.values["environment"]:
+            raise HTTPException(422, "账户环境与条件单/杠杆设置不一致。")
+        try:
+            return await runtime.command(body.account(tenant_id, account_id), body.action, body.values)
+        except EngineConflict as error:
+            conflict(error)
+
     @app.get("/tenants/{tenant_id}/accounts/{account_id}/orders")
     def orders(tenant_id: str, account_id: str, environment: str):
         return {"orders": runtime.store.orders(tenant_id, account_id, environment)}
@@ -564,6 +608,27 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
         if found is None:
             raise HTTPException(404, "还没有回测结果。")
         return found
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/carry-backtests")
+    def run_carry_backtest(tenant_id: str, account_id: str, body: CarryBacktestBody):
+        try:
+            return runtime.run_funding_carry_backtest(
+                tenant_id, account_id, body.start, body.end, body.interval,
+                body.starting_spot_balance, body.starting_perpetual_balance,
+                body.max_gross_notional,
+            )
+        except EngineConflict as error:
+            conflict(error)
+
+    @app.get("/tenants/{tenant_id}/accounts/{account_id}/carry-backtests/latest")
+    def latest_carry_backtest(tenant_id: str, account_id: str):
+        try:
+            result = runtime.latest_carry_backtest(tenant_id, account_id)
+        except EngineConflict as error:
+            conflict(error)
+        if result is None:
+            raise HTTPException(404, "还没有资金费组合回测结果。")
+        return result
 
     @app.post("/tenants/{tenant_id}/accounts/{account_id}/valuation")
     async def valuation(tenant_id: str, account_id: str, body: Credentials):

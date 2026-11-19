@@ -81,6 +81,8 @@ uv run python -m engine
 
 双市场研究数据同步器 `EngineRuntime.iter_funding_carry_history` 可在开发租户已订阅现货和永续时，从真实 Catalog 严格对齐 K 线并按原始时间插入资金费观测；不产生订单、结算或收益报告，暂不对外开放 HTTP。
 
+开发租户还可通过内部 `/tenants/{tenant_id}/accounts/{account_id}/carry-backtests` 运行已下发 Funding Carry 的原生双 Venue CASH/MARGIN 回测，并通过 `carry-backtests/latest` 获取组合账户曲线；该研究入口不启动 Demo 自身回调、不开放真实下单，详见 [研究阶段边界](../docs/BASKET_RESEARCH.md)。
+
 ## Research API
 
 单独的 `/research/v1/*` 只接收任务级研究授权，不使用管理 `ENGINE_TOKEN`。支持 Catalog 库存、后台 Parquet 快照及开发租户的已下发策略回测；当前受限于现有 Engine 的 1m/5m、单账户回测能力。启用条件、安全限制及客户端合同见 [Research API](../docs/RESEARCH_API.md)。
