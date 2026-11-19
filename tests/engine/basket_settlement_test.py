@@ -12,7 +12,6 @@ from engine.strategies.basket_settlement import (
 )
 from engine.strategies.basket_targets import LegId
 
-
 NOW = 1_800_000_000_000_000_000
 EXPIRY = NOW - 1_000_000_000
 
@@ -28,7 +27,7 @@ def _case():
     settlement = (
         VerifiedOptionSettlement(
             put, "exercise-put", NOW, Decimal(1700), Decimal("0.2"),
-            Decimal(20), Decimal("2"), Decimal(18),
+            Decimal(20), Decimal(2), Decimal(18),
         ),
         VerifiedOptionSettlement(
             call, "exercise-call", NOW, Decimal(1700), Decimal("0.2"),
