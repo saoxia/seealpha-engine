@@ -5,7 +5,11 @@ import pytest
 
 from engine.strategies.basket_reconciliation import BasketReconciliation
 from engine.strategies.basket_targets import (
-    BasketPlanError, LegEvidence, LegId, MemberLegTarget, plan_basket,
+    BasketPlanError,
+    LegEvidence,
+    LegId,
+    MemberLegTarget,
+    plan_basket,
 )
 
 
@@ -38,7 +42,7 @@ def _open(tracker, now=101):
 
 
 def test_hedge_first_requires_complete_fills_and_independent_confirmation():
-    plan, positions, perp, put, call = _plan()
+    plan, positions, _perp, put, call = _plan()
     tracker = BasketReconciliation(plan, positions, run_id="research-1")
     phase, ids = _open(tracker)
     assert phase.name == "acquire_and_confirm_protection"
