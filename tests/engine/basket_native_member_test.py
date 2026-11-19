@@ -107,7 +107,7 @@ def test_native_strategy_bar_barrier_waits_until_all_members_share_one_timestamp
 
 
 def test_native_strategy_rejects_duplicate_and_lookahead_bar_or_wrong_member():
-    gate, alpha, beta, spot_type, perp_type, _seen = _gate()
+    _unused, alpha, beta, spot_type, perp_type, _seen = _gate()
     alpha.on_bar(_bar(spot_type, _TS))
     with pytest.raises(BasketPlanError, match="重复"):
         alpha.on_bar(_bar(spot_type, _TS))
