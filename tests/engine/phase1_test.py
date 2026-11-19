@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 
 from engine.app import create_app
 from engine.config import EngineConfig
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.runtime import numeric_id
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -21,8 +23,8 @@ def test_engine_keeps_per_account_orders_gaps_and_no_secrets(tmp_path, monkeypat
         return {"result": order, "records": [{"trade_id": "fill-" + command["client_order_id"], "symbol": symbol}]}
 
     monkeypatch.setattr("engine.connectors.binance.manual.execute", execute)
-    app = create_app(EngineConfig(tmp_path / "state", token="engine-test", project=tmp_path))
-    headers = {"Authorization": "Bearer engine-test"}
+    app = create_app(EngineConfig(tmp_path / "state", token=TEST_TOKEN, auth_mode="token", project=tmp_path))
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     order = {
         "environment": "production", "api_key": "key-one", "api_secret": "secret-one",
         "action": "submit",
@@ -132,8 +134,8 @@ def test_trading_state_is_query_only_and_unknown_reconciliation_is_durable(tmp_p
         }
 
     monkeypatch.setattr("engine.connectors.binance.manual.execute", execute)
-    app = create_app(EngineConfig(tmp_path / "state", token="engine-test", project=tmp_path))
-    headers = {"Authorization": "Bearer engine-test"}
+    app = create_app(EngineConfig(tmp_path / "state", token=TEST_TOKEN, auth_mode="token", project=tmp_path))
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     credentials = {"environment": "production", "api_key": "test-key", "api_secret": "test-secret"}
     path = "/tenants/7/accounts/11"
     with TestClient(app) as http:

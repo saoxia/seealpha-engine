@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 
 from engine.app import create_app
 from engine.config import EngineConfig
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.data_manager.contracts import PairHistoryJob
 from engine.data_manager.repository import StorageUnavailable
 from engine.data_manager.service import DataService
@@ -118,13 +120,13 @@ def test_engine_corrupt_task_evidence_fails_closed_without_replacement(tmp_path)
 def test_engine_http_job_list_detail_cancel_and_tenant_isolation(tmp_path):
     (tmp_path / "data").mkdir()
     app = create_app(EngineConfig(
-        tmp_path / "engine-state", "secret", project=tmp_path,
+        tmp_path / "engine-state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
     entry = job(status="succeeded")
     app.state.market_data.repository.save_job(entry)
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     root = "/tenants/42/data/control"
     with TestClient(app) as client:
         assert client.post(root + "/jobs").status_code == 401
@@ -161,7 +163,7 @@ def test_engine_http_job_list_detail_cancel_and_tenant_isolation(tmp_path):
 def test_engine_export_rejects_symlink_escape_and_missing_file(tmp_path):
     (tmp_path / "data").mkdir()
     app = create_app(EngineConfig(
-        tmp_path / "engine-state", "secret", project=tmp_path,
+        tmp_path / "engine-state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
@@ -172,7 +174,7 @@ def test_engine_export_rejects_symlink_escape_and_missing_file(tmp_path):
     destination = export_dir / f"{entry['id']}.csv"
     destination.write_text("timestamp,price\\n1,2000\\n")
     url = f"/tenants/42/data/control/exports/{entry['id']}"
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     with TestClient(app) as client:
         assert client.get(url).status_code == 401
         assert client.get(url.replace("/42/", "/99/"), headers=headers).status_code == 403
@@ -194,12 +196,12 @@ def test_engine_rejects_unconfirmed_or_stale_pair_deletion_without_data_loss(tmp
     archive.parent.mkdir(parents=True)
     archive.write_bytes(b"retained-evidence")
     app = create_app(EngineConfig(
-        tmp_path / "engine-state", "secret", project=tmp_path,
+        tmp_path / "engine-state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
     route = "/tenants/42/data/control/job/start"
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     payload = {
         "action": "delete_pair", "symbol": "ETHUSDT",
         "product": "futures_um", "deletion_snapshot": "0" * 64,

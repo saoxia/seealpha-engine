@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from engine.app import create_app
 from engine.config import EngineConfig
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.data_manager.contracts import DataPolicy
 from engine.data_manager.repository import PolicyRepository, StorageUnavailable
 from engine.data_manager.service import DataService
@@ -14,11 +16,11 @@ from engine.data_manager.service import DataService
 def test_engine_persists_market_policy_and_rejects_cross_tenant(tmp_path):
     (tmp_path / "data").mkdir()
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     body = {"policies": [{"symbol": "ETHUSDT", "realtime_enabled": False}]}
 
     with TestClient(app) as client:
@@ -57,14 +59,14 @@ def test_engine_persists_market_policy_and_rejects_cross_tenant(tmp_path):
 def test_engine_restores_policy_after_process_recreation(tmp_path):
     (tmp_path / "data").mkdir()
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
     with TestClient(app) as client:
         res = client.post("/tenants/42/data/control/sync", json={
             "policies": [{"symbol": "ETHUSDT", "realtime_enabled": False}],
-        }, headers={"Authorization": "Bearer secret"})
+        }, headers={"Authorization": f"Bearer {TEST_TOKEN}"})
         assert res.status_code == 200
     app.state.runtime.close()
 
@@ -90,11 +92,11 @@ def test_tenant_policy_repository_never_accepts_cross_tenant_or_corrupt_state(tm
 def test_engine_owns_service_health_sampling_and_expired_evidence(tmp_path):
     (tmp_path / "data").mkdir()
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     with TestClient(app) as client:
         monitor = app.state.market_data.monitor
         sample = monitor.sample()

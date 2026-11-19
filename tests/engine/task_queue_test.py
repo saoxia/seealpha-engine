@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 
 from engine.app import create_app
 from engine.config import EngineConfig
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.task_queue import TaskCoordinator, TaskJournal
 
 FAKE_WORKER = """
@@ -236,7 +238,7 @@ def test_legacy_data_jobs_appear_in_same_lifecycle(tmp_path):
 
 def test_real_engine_http_async_task_auth_validation_and_result(tmp_path, monkeypatch):
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     runtime = app.state.runtime
@@ -244,7 +246,7 @@ def test_real_engine_http_async_task_auth_validation_and_result(tmp_path, monkey
     monkeypatch.setattr(runtime.store, "strategy_loads", lambda *_a, **_kw: [{"ok": True}])
     app.state.tasks.command_factory = fake_worker_factory(tmp_path / "state", balance="1010")
     body = {"kind": "backtest", "parameters": parameters(), "idempotency_key": "http-1"}
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
 
     with TestClient(app) as client:
         assert client.post("/tenants/42/jobs", json=body).status_code == 401
@@ -313,7 +315,7 @@ def test_actual_nautilus_backtest_runs_inside_background_engine_worker(tmp_path)
     start = datetime(2024, 1, 1, tzinfo=UTC)
     write_crossover_catalog(tmp_path / "data" / "catalog", start)
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="dev", tenant_purpose="development",
     ))
     runtime = app.state.runtime
@@ -324,7 +326,7 @@ def test_actual_nautilus_backtest_runs_inside_background_engine_worker(tmp_path)
     with TestClient(app) as client:
         response = client.post(
             "/tenants/dev/jobs",
-            headers={"Authorization": "Bearer secret"},
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
             json={"kind": "backtest", "parameters": {
                 **_window(start), "account_id": "desk",
             }},
@@ -334,7 +336,7 @@ def test_actual_nautilus_backtest_runs_inside_background_engine_worker(tmp_path)
         assert done(app.state.tasks, "dev", identity)["status"] == "SUCCEEDED"
         result = client.get(
             f"/tenants/dev/jobs/{identity}/result",
-            headers={"Authorization": "Bearer secret"},
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
         )
         assert result.status_code == 200, result.text
         assert result.json()["bar_count"] > 0
@@ -440,14 +442,14 @@ def test_bounded_workers_cancel_active_job_and_start_waiting_job(tmp_path):
 def test_running_cancel_endpoint_is_authenticated_and_tenant_scoped(tmp_path):
     gate = tmp_path / "release"
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     runtime = app.state.runtime
     runtime.ensure_tenant("42", "development")
     runtime.store.strategy_loads = lambda *_a, **_kw: [{"ok": True}]
     app.state.tasks.command_factory = fake_worker_factory(tmp_path / "state", gate=gate)
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     try:
         with TestClient(app) as client:
             result = client.post(
@@ -577,12 +579,12 @@ def test_decreasing_worker_limit_does_not_terminate_running_jobs(tmp_path):
 
 def test_worker_settings_http_admin_token_and_validation(tmp_path):
     app = create_app(EngineConfig(
-        tmp_path / "state", "secret", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="dev", tenant_purpose="development",
     ))
     runtime = app.state.runtime
     runtime.ensure_tenant("dev", "development")
-    headers = {"Authorization": "Bearer secret"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
     with TestClient(app) as client:
         path = "/tenants/dev/jobs/worker-settings"
         assert client.get(path).status_code == 401

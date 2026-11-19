@@ -3,6 +3,8 @@ from fastapi.testclient import TestClient
 
 from engine.app import create_app
 from engine.config import EngineConfig
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.pipeline.models import PipelineSettings
 
 
@@ -17,11 +19,11 @@ def test_tenant_data_reads_reject_unauthorized_and_other_tenant(tmp_path, monkey
     )
     monkeypatch.setattr(data_queries, "load_settings", lambda: settings)
     app = create_app(EngineConfig(
-        tmp_path / "state", "private", project=tmp_path,
+        tmp_path / "state", TEST_TOKEN, project=tmp_path, auth_mode="token",
         tenant_id="42", tenant_purpose="development",
     ))
     app.state.runtime.ensure_tenant("42", "development")
-    headers = {"Authorization": "Bearer private"}
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
 
     with TestClient(app) as client:
         assert client.post("/tenants/42/data/datasets", json={}).status_code == 401
