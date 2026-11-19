@@ -147,3 +147,68 @@ def test_no_cross_tenant_netting_or_stale_market_evidence():
             now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
             max_gross_notional=Decimal(1000), policy="funding_carry",
         )
+
+
+def test_reject_intermediate_gross_risk_even_when_endpoints_fit_budget():
+    """Mixed-direction changes can temporarily exceed both endpoint exposures."""
+    spot = _leg("spot", "ETHUSDT")
+    perp = _leg("futures_um", "ETHUSDT")
+    positions = {spot: Decimal("0.1"), perp: Decimal("-0.3")}
+    targets = [
+        MemberLegTarget("one", spot, Decimal("0.2")),
+        MemberLegTarget("one", perp, Decimal("-0.2")),
+    ]
+    # Initial and target gross = (0.4 * 2000) = 800, below the 900 cap.
+    # If spot changes first, interim gross = (0.2 + 0.3) * 2000 = 1000.
+    with pytest.raises(BasketPlanError, match="阶段临时敞口"):
+        plan_basket(
+            targets, positions, _evidence(positions),
+            now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
+            max_gross_notional=Decimal(900), policy="funding_carry",
+            max_leg_drift=Decimal("0.2"),
+        )
+    # The worst-case interleaving equals the cap, which is allowed.
+    allowed = plan_basket(
+        targets, positions, _evidence(positions),
+        now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
+        max_gross_notional=Decimal(1000), policy="funding_carry",
+        max_leg_drift=Decimal("0.2"),
+    )
+    assert allowed.gross_target_notional == Decimal(800)
+    assert allowed.executable is False
+
+
+def test_reject_preexisting_gross_exposure_above_cap_even_for_flatten_plan():
+    spot = _leg("spot", "ETHUSDT")
+    perp = _leg("futures_um", "ETHUSDT")
+    positions = {spot: Decimal("0.3"), perp: Decimal("-0.3")}
+    flat = [
+        MemberLegTarget("one", spot, Decimal(0)),
+        MemberLegTarget("one", perp, Decimal(0)),
+    ]
+    with pytest.raises(BasketPlanError, match="当前仓位"):
+        plan_basket(
+            flat, positions, _evidence(positions),
+            now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
+            max_gross_notional=Decimal(1000), policy="funding_carry",
+        )
+
+
+def test_bounded_protection_first_phases_remain_research_only():
+    put = _leg("options", "ETH-261225-1800-P")
+    call = _leg("options", "ETH-261225-2200-C")
+    perp = _leg("futures_um", "ETHUSDT")
+    positions = {put: Decimal(0), call: Decimal(0), perp: Decimal(0)}
+    targets = [MemberLegTarget("x", put, Decimal("0.2")),
+               MemberLegTarget("x", call, Decimal("0.2")),
+               MemberLegTarget("x", perp, Decimal("0.2"))]
+    plan = plan_basket(
+        targets, positions, _evidence(positions),
+        now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
+        max_gross_notional=Decimal("401"), policy="option_protected",
+    )
+    assert [phase.name for phase in plan.phases] == [
+        "acquire_and_confirm_protection",
+        "increase_directional_risk_after_protection",
+    ]
+    assert plan.executable is False
