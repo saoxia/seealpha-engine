@@ -68,8 +68,10 @@ def install_research_mcp(
     if not registry or len(registry) != len(defined):
         raise ValueError("Research MCP tools must have distinct names")
 
+    auth_dependency = Depends(authenticate)
+
     @app.post("/mcp")
-    async def mcp(request: Request, claims: dict = Depends(authenticate)):
+    async def mcp(request: Request, claims: dict = auth_dependency):
         # No browser clients or cross-origin access: refuse all Origin headers,
         # including "null". Service-to-service MCP callers do not send Origin.
         if request.headers.get("origin") is not None:

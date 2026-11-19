@@ -689,7 +689,7 @@ def test_mcp_reuses_backtest_queue_permissions_and_idempotency(service):
     try:
         with TestClient(app) as client:
             first = _mcp_call(client, "submit_backtest", body).json()["result"]
-            assert first["isError"] is not True if "isError" in first else True
+            assert first.get("isError") is not True
             job_id = first["structuredContent"]["backtest_id"]
             assert first["structuredContent"]["status"] == "queued"
             second = _mcp_call(client, "submit_backtest", body).json()["result"]
