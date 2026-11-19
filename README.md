@@ -85,3 +85,9 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 ## 当前明确未验收
 
 跨仓库独立发布、双仓库完整 HTTP 回归、真实交易账户、长时间行情运行、生产状态卷备份恢复与正式切换尚未完成。此次提交只建立新仓库的独立源码、构建和测试基线。详见 [迁移边界](docs/STANDALONE_MIGRATION.md) 和 [Platform 跨仓库接入预演](docs/PLATFORM_INTEGRATION.md)。
+
+## License and community / 许可证与社区
+
+本仓库的项目自有核心代码拟采用 [Apache License 2.0](LICENSE)，允许按许可证免费使用、修改、分发和商业经营；官方托管、私有策略及其他服务另行约定。示例策略包可能采用目录级 MIT 许可证，详见相应 LICENSE。
+
+详见 [贡献指南](CONTRIBUTING.md)、[CLA 草案（尚未生效）](CLA.md)、[自愿商业登记](COMMERCIAL_USE.md)、[品牌政策](TRADEMARKS.md)、[漏洞报告](SECURITY.md) 和 [第三方许可说明](THIRD_PARTY_NOTICES.md)。商业登记完全自愿。
