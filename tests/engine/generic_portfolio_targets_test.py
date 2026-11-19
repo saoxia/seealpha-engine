@@ -21,7 +21,7 @@ def leg(product, symbol, account="account"):
 def plan(rows, positions, cap="5000", evidence=None):
     if evidence is None:
         evidence = {
-            key: LegEvidence(Decimal("1000"), Decimal("0.1"), Decimal(1), NOW)
+            key: LegEvidence(Decimal(1000), Decimal("0.1"), Decimal(1), NOW)
             for key in positions
         }
     return plan_basket(
