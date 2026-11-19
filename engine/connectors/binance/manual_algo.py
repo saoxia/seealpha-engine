@@ -14,7 +14,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .manual import ManualValidationError, exact, execute as native_execute
+from .manual import ManualValidationError, exact
+from .manual import execute as native_execute
 from .queries import QueryError
 
 BASES = {"production": "https://fapi.binance.com", "sandbox": "https://testnet.binancefuture.com"}
@@ -73,7 +74,7 @@ class SignedFutures:
             if 400 <= exc.code < 500 and exc.code not in {408, 429}:
                 raise VenueRejected("交易所明确拒绝该操作，请核对账户权限、参数与仓位。") from None
             raise QueryError("交易所响应异常，操作结果待核实；不得重新发送。") from None
-        except Exception:
+        except Exception:  # noqa: BLE001 - sanitize all transport failures without exposing signed requests.
             raise QueryError("交易所连接失败，操作结果待核实；不得重新发送。") from None
         if len(data) > 512 * 1024:
             raise QueryError("交易所响应过大，结果待核实。")
