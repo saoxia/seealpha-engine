@@ -593,3 +593,225 @@ def test_engine_job_views_do_not_return_python_archive_to_clients():
     assert "archive" not in view["parameters"]["_candidate"]
     assert "BASE64-SECRET-SOURCE" not in str(view)
     assert job["parameters"]["_candidate"]["archive"] == "BASE64-SECRET-SOURCE"
+
+
+# Optional Engine-native MCP is deliberately a research-only interface.
+def _mcp_app(service):
+    from dataclasses import replace
+
+    _, _, runtime, tasks = service
+    config = replace(EngineConfig(
+        state_dir=runtime.root, token=ADMIN, project=runtime.project,
+        tenant_id="dev", tenant_purpose="development",
+        research_signing_key=SECRET,
+    ), research_mcp_enabled=True)
+    return create_research_app(config, runtime, tasks)
+
+
+def _mcp_headers(**kwargs):
+    return {
+        "Authorization": headers(**kwargs)["Authorization"],
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-11-25",
+    }
+
+
+def _mcp_call(client, method, arguments=None, *, identity=1, token_headers=None):
+    params = {"name": method, "arguments": arguments or {}}
+    return client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": identity, "method": "tools/call", "params": params},
+        headers=token_headers or _mcp_headers(),
+    )
+
+
+def test_mcp_is_off_without_explicit_opt_in(service):
+    client, _, _, _ = service
+    assert client.post(
+        "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+        headers=_mcp_headers(),
+    ).status_code == 404
+
+
+def test_mcp_initialize_and_discovery_are_scoped(service):
+    app = _mcp_app(service)
+    try:
+        with TestClient(app) as client:
+            init = client.post("/mcp", json={
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25",
+                           "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}},
+            }, headers=_mcp_headers())
+            assert init.status_code == 200
+            assert init.json()["result"]["protocolVersion"] == "2025-11-25"
+            assert "tools" in init.json()["result"]["capabilities"]
+            assert client.post(
+                "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                headers=_mcp_headers(),
+            ).status_code == 202
+            assert client.get("/mcp", headers=_mcp_headers()).status_code == 405
+            tools = client.post(
+                "/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                headers=_mcp_headers(),
+            ).json()["result"]["tools"]
+            names = {t["name"] for t in tools}
+            assert names == {
+                "list_datasets", "create_snapshot", "get_snapshot",
+                "submit_backtest", "get_backtest", "cancel_backtest",
+            }
+            candidate_tools = client.post(
+                "/mcp", json={"jsonrpc": "2.0", "id": 5, "method": "tools/list"},
+                headers=_mcp_headers(ops=["candidates:submit"]),
+            ).json()["result"]["tools"]
+            assert [row["name"] for row in candidate_tools] == [
+                "submit_candidate_backtest",
+            ]
+            assert all(t["inputSchema"]["type"] == "object" for t in tools)
+            assert "submit_python_candidate_backtest" not in names
+            assert not any("order_submit" in name or "trade" in name for name in names)
+            limited = client.post(
+                "/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"},
+                headers=_mcp_headers(ops=["backtests:read"]),
+            ).json()["result"]["tools"]
+            assert [row["name"] for row in limited] == ["get_backtest"]
+            denied = _mcp_call(client, "submit_backtest", token_headers=_mcp_headers(
+                ops=["backtests:read"],
+            ))
+            assert denied.json()["error"]["code"] == -32602
+    finally:
+        app.state.snapshots.close()
+
+
+def test_mcp_reuses_backtest_queue_permissions_and_idempotency(service):
+    _, _, _, tasks = service
+    app = _mcp_app(service)
+    body = {
+        "purpose": "development", "execution": "simulation",
+        "strategy_ref": STRATEGY, "dataset_refs": [DATASET],
+        "start": "2026-01-01", "end": "2026-01-02",
+        "starting_balance": "10000", "quote_currency": "USDT",
+        "parameters": {}, "idempotency_key": "mcp-backtest-1",
+    }
+    try:
+        with TestClient(app) as client:
+            first = _mcp_call(client, "submit_backtest", body).json()["result"]
+            assert first.get("isError") is not True
+            job_id = first["structuredContent"]["backtest_id"]
+            assert first["structuredContent"]["status"] == "queued"
+            second = _mcp_call(client, "submit_backtest", body).json()["result"]
+            assert second["structuredContent"]["backtest_id"] == job_id
+            assert len(tasks.records) == 1
+            unknown = _mcp_call(
+                client, "get_backtest", {"backtest_id": job_id},
+                token_headers=_mcp_headers(task_id="wrong-task"),
+            ).json()["result"]
+            assert unknown["isError"] is True
+            assert "HTTP 404" in unknown["content"][0]["text"]
+            tasks.records[job_id]["status"] = "SUCCEEDED"
+            result = _mcp_call(
+                client, "get_backtest", {"backtest_id": job_id},
+            ).json()["result"]["structuredContent"]
+            assert result["result"]["net_pnl"] == "12.34"
+            denied = _mcp_call(client, "submit_backtest", {**body, "execution": "live"})
+            assert denied.json()["result"]["isError"] is True
+            assert len(tasks.records) == 1
+            cancelled = _mcp_call(
+                client, "cancel_backtest", {"backtest_id": job_id},
+            ).json()["result"]["structuredContent"]
+            assert cancelled["status"] == "cancelled"
+    finally:
+        app.state.snapshots.close()
+
+
+def test_mcp_snapshots_and_candidate_reuse_existing_research(service):
+    app = _mcp_app(service)
+    try:
+        with TestClient(app) as client:
+            discovered = _mcp_call(client, "list_datasets").json()["result"]
+            assert discovered["structuredContent"]["datasets"][0]["id"] == DATASET
+            snap = _mcp_call(client, "create_snapshot", {
+                "dataset_id": DATASET, "start": "2026-01-01",
+                "end": "2026-01-02", "format": "parquet",
+            }).json()["result"]["structuredContent"]
+            snapshot_id = snap["snapshot_id"]
+            app.state.snapshots.pool.shutdown(wait=True)
+            metadata = _mcp_call(client, "get_snapshot", {
+                "snapshot_id": snapshot_id,
+            }).json()["result"]["structuredContent"]
+            assert metadata["status"] == "ready"
+            assert len(metadata["sha256"]) == 64
+            # MCP only returns metadata. It never injects Parquet bytes into AI.
+            assert "content" not in metadata
+            raw, digest = _candidate_archive()
+            submitted = _mcp_call(
+                client, "submit_candidate_backtest", _candidate_body(raw, digest),
+                token_headers=_mcp_headers(ops=["candidates:submit"]),
+            ).json()["result"]
+            assert submitted["structuredContent"]["status"] == "queued"
+            restricted = _mcp_call(
+                client, "submit_candidate_backtest", _candidate_body(raw, digest),
+                token_headers=_mcp_headers(ops=["backtests:submit"]),
+            ).json()
+            assert restricted["error"]["code"] == -32602
+    finally:
+        app.state.snapshots.close()
+
+
+def test_mcp_auth_transport_errors_and_no_mutating_notifications(service):
+    app = _mcp_app(service)
+    try:
+        with TestClient(app) as client:
+            ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+            assert client.post("/mcp", json=ping).status_code == 401
+            admin = _mcp_headers()
+            admin["Authorization"] = f"Bearer {ADMIN}"
+            assert client.post("/mcp", json=ping, headers=admin).status_code == 401
+            assert client.post(
+                "/mcp", json=ping, headers=_mcp_headers(tenant_id="another"),
+            ).status_code == 403
+            assert client.post(
+                "/mcp", json=ping, headers={**_mcp_headers(), "Origin": "https://evil.example"},
+            ).status_code == 403
+            assert client.post(
+                "/mcp", json=ping, headers={
+                    **_mcp_headers(), "MCP-Protocol-Version": "unsupported",
+                },
+            ).status_code == 400
+            assert client.post(
+                "/mcp", content=b"{invalid", headers={
+                    **_mcp_headers(), "Content-Type": "application/json",
+                },
+            ).json()["error"]["code"] == -32700
+            assert client.post(
+                "/mcp", json=[ping], headers=_mcp_headers(),
+            ).json()["error"]["code"] == -32600
+            assert client.post(
+                "/mcp", json={"jsonrpc": "2.0", "method": "tools/call", "params": {
+                    "name": "submit_backtest", "arguments": {},
+                }}, headers=_mcp_headers(),
+            ).json()["error"]["code"] == -32600
+            assert client.post(
+                "/mcp", json={"jsonrpc": "2.0", "id": 4, "method": "orders/submit"},
+                headers=_mcp_headers(),
+            ).json()["error"]["code"] == -32601
+            assert client.post(
+                "/mcp", content=b" " * (512 * 1024 + 1),
+                headers={**_mcp_headers(), "Content-Type": "application/json"},
+            ).status_code == 413
+    finally:
+        app.state.snapshots.close()
+
+
+def test_mcp_configuration_fails_closed_without_development_research_key(tmp_path):
+    from engine.app import create_app
+
+    for config in (
+        EngineConfig(state_dir=tmp_path / "one", research_mcp_enabled=True),
+        EngineConfig(
+            state_dir=tmp_path / "two", tenant_id="production",
+            tenant_purpose="production", research_signing_key=SECRET,
+            research_mcp_enabled=True,
+        ),
+    ):
+        with pytest.raises(ValueError, match="Research MCP requires"):
+            create_app(config)

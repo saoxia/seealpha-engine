@@ -91,3 +91,7 @@ CANDIDATE = {
 现选定调用链是 Harness → Platform 任务级代理 → Engine Research API。Platform 已实现开发租户授权、短期能力与模拟回测命令，Harness 已提供受限 Python/CLI Client。无须部署 Gateway/MCP；Agent 不掌握 Engine 管理令牌或 Research Grant。
 
 仍需真实开发容器、真实数据、AI 模型多轮策略研究的跨仓库端到端验收。Harness 自由 Shell 目前可读取自己的受限任务能力，不能视作不可信多租户的强隔离。
+
+## 可选 MCP 适配（不替代 Research HTTP）
+
+显式设置 `ENGINE_RESEARCH_MCP_ENABLED=true` 时，固定开发租户可使用同一 ASGI 应用内的 `POST /research/mcp`（MCP Streamable HTTP，JSON-only、无会话）。MCP 工具复用本页的授权、数据集校验、候选包和原有 TaskCoordinator，不提供实盘命令或任意 Shell；默认关闭，现有 Harness 不会自动切换。详见 [Engine 原生 MCP Research 接口](MCP_RESEARCH.md)。

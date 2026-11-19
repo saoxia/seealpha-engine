@@ -120,13 +120,9 @@ def create_research_app(config, runtime, tasks):
         response.headers[ENGINE_HEADER] = ENGINE_VERSION
         return response
 
-    def grant(
-        authorization: str = Header(default=""),
-        engine_version: str = Header(default="", alias=ENGINE_HEADER),
-        research_version: str = Header(default="", alias=RESEARCH_HEADER),
-    ) -> dict:
-        if engine_version != ENGINE_VERSION or research_version != RESEARCH_VERSION:
-            raise HTTPException(426, "Research contract version mismatch")
+    def authenticate(authorization: str = Header(default="")) -> dict:
+        # Shared authentication for HTTP Research and MCP. Version headers
+        # belong to HTTP v1, not to MCP's own protocol negotiation.
         scheme, _, bearer = authorization.partition(" ")
         if scheme.lower() != "bearer" or not bearer:
             raise HTTPException(401, "Research authorization required")
@@ -143,6 +139,15 @@ def create_research_app(config, runtime, tasks):
         ):
             raise HTTPException(403, "Research requires an active development tenant")
         return claims
+
+    def grant(
+        authorization: str = Header(default=""),
+        engine_version: str = Header(default="", alias=ENGINE_HEADER),
+        research_version: str = Header(default="", alias=RESEARCH_HEADER),
+    ) -> dict:
+        if engine_version != ENGINE_VERSION or research_version != RESEARCH_VERSION:
+            raise HTTPException(426, "Research contract version mismatch")
+        return authenticate(authorization)
 
     grant_dependency = Depends(grant)
 
@@ -369,5 +374,90 @@ def create_research_app(config, runtime, tasks):
         require_op(claims, "backtests:cancel")
         _scoped_backtest(backtest_id, claims)
         return _public_backtest(tasks.cancel(config.tenant_id, backtest_id))
+
+    if config.research_mcp_enabled:
+        from engine.research_mcp import ResearchTool, install_research_mcp
+
+        def reference(arguments: dict, field: str) -> str:
+            if set(arguments) != {field}:
+                raise ValueError("Invalid research reference arguments")
+            return identifier(arguments[field])
+
+        def schema_for(field: str) -> dict:
+            return {
+                "type": "object",
+                "properties": {field: {"type": "string", "minLength": 1, "maxLength": 128}},
+                "required": [field],
+                "additionalProperties": False,
+            }
+
+        def no_args(arguments: dict, claims: dict) -> dict:
+            if arguments:
+                raise ValueError("No arguments expected")
+            return datasets(claims)
+
+        mcp_tools = [
+            ResearchTool(
+                "list_datasets", "datasets:read",
+                "List the current grant's permitted research datasets and coverage.",
+                {"type": "object", "properties": {}, "additionalProperties": False},
+                no_args,
+            ),
+            ResearchTool(
+                "create_snapshot", "snapshots:create",
+                "Queue an immutable, task-scoped Parquet research snapshot.",
+                SnapshotRequest.model_json_schema(),
+                lambda args, claims: create_snapshot(
+                    SnapshotRequest.model_validate(args), claims,
+                ),
+            ),
+            ResearchTool(
+                "get_snapshot", "snapshots:read",
+                "Inspect the status and SHA-256 of an owned research snapshot. "
+                "Binary data remains at the authenticated HTTP endpoint.",
+                schema_for("snapshot_id"),
+                lambda args, claims: get_snapshot(reference(args, "snapshot_id"), claims),
+            ),
+            ResearchTool(
+                "submit_backtest", "backtests:submit",
+                "Queue a simulation using an already-issued development strategy.",
+                BacktestRequest.model_json_schema(),
+                lambda args, claims: submit_backtest(
+                    BacktestRequest.model_validate(args), claims,
+                ),
+            ),
+            ResearchTool(
+                "get_backtest", "backtests:read",
+                "Get the status and result of an owned research backtest.",
+                schema_for("backtest_id"),
+                lambda args, claims: get_backtest(reference(args, "backtest_id"), claims),
+            ),
+            ResearchTool(
+                "cancel_backtest", "backtests:cancel",
+                "Request cancellation of an owned research backtest.",
+                schema_for("backtest_id"),
+                lambda args, claims: cancel_backtest(reference(args, "backtest_id"), claims),
+            ),
+            ResearchTool(
+                "submit_candidate_backtest", "candidates:submit",
+                "Simulate a statically validated, restricted candidate ZIP. "
+                "Never executes the candidate Python source.",
+                CandidateBacktestRequest.model_json_schema(),
+                lambda args, claims: submit_candidate(
+                    CandidateBacktestRequest.model_validate(args), claims,
+                ),
+            ),
+        ]
+        if config.research_python_enabled:
+            mcp_tools.append(ResearchTool(
+                "submit_python_candidate_backtest", "python_candidates:submit",
+                "Run an explicitly enabled trusted Python candidate in the "
+                "development Engine's existing backtest worker. Not a secure sandbox.",
+                PythonCandidateBacktestRequest.model_json_schema(),
+                lambda args, claims: submit_python_candidate(
+                    PythonCandidateBacktestRequest.model_validate(args), claims,
+                ),
+            ))
+        install_research_mcp(app, authenticate, tuple(mcp_tools))
 
     return app
