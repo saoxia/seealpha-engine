@@ -8,7 +8,6 @@ from decimal import Decimal
 import pytest
 from nautilus_trader.model import Bar, BarType, CryptoPerpetual
 
-from core.market.instruments import bar_type_for
 from engine.runtime import EngineConflict
 from engine.strategies.basket_targets import LegId
 from engine.strategies.generic_simulation import run_native_generic_portfolio
@@ -74,7 +73,7 @@ def _frames(contracts, *, count=14):
     start = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1_000_000_000)
     bars = {}
     for leg, instrument in contracts.items():
-        bar_type = BarType.from_str(bar_type_for(leg.symbol, "1m", leg.product))
+        bar_type = BarType.from_str(f"{instrument.id}-1-MINUTE-LAST-EXTERNAL")
         bars[leg] = [
             Bar(
                 bar_type,
