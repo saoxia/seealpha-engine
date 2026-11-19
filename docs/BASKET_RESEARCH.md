@@ -29,6 +29,23 @@ Engine 内部 `EngineRuntime.iter_funding_carry_history(...)` 仅在开发租户
 
 **时区与覆盖限制：** 使用 UTC 时间窗口 `[start,end)`；当前校验两个产品数据的首尾窗口和中段连续性，但仍不证明资金费观测是无缺口的最终结算事实。回测执行前仍须补齐这些检查，不可用这批输入宣称真实收益。
 
+## B2：双独立账户原生模拟（开发租户研究版）
+
+Engine 增加特殊的已下发 `demo_funding_carry` 策略组合研究入口：
+
+`POST /tenants/{tenant_id}/accounts/{account_id}/carry-backtests`
+
+请求必须明确提供 `start`、`end`、`interval`、`starting_spot_balance`、`starting_perpetual_balance` 和 `max_gross_notional`。不接受交易密钥、生产租户、未下发或其他策略包。结果保留在 Engine `carry_backtest` 事件里，可通过 `GET .../carry-backtests/latest` 查询。
+
+实现方式：使用单个 NautilusTrader BacktestEngine，借由**模拟专用 Venue ID** 将同一交易所的 Spot `CASH` 与 USD-M `MARGIN` 分隔，合约及 K 线数据来自获准的真实 Catalog；仅重映射 Venue 身份，不重写撮合。使用原生 MarketOrder、FeeModel、Account、FundingRateUpdate 和净持仓事件；计算独立账户和合并的资产曲线。发出多腿目标之前验证真实当前仓位、步长、组合名义金额和腿间偏差；若模拟撮合发现不对冲或拒单，停止回测并拒绝返回成功报告。最多 20000 根对齐 K 线，以限制同步 HTTP 回测工作负载。
+
+**重要边界：**
+- B2 研究入口从已由 Platform 授权并下发的 demo 参数计算组合目标，**没有调用 Demo 包自身的 `on_market_snapshot` 或 `publish_basket`**；同策略代码运行的统一协议仍需完成
+- 交易所没有原子跨产品成交；原生模拟的双订单和失败中止不意味着真实交易所的原子性/异常补偿能力
+- 报告中的 `funding_observations` 是原始历史费率证据，资金费结算由 Nautilus 原生机制模拟；尚无单独经对账的资金费归因或生产适配
+- 成交依赖 K 线模拟撮合（而非 Tick/L2 真实成交）；滑点、盘口冲击和真实部分成交仍不具备可用证据
+- 不开放实盘、不改变原单合约执行，不宣称 Funding Carry 策略已具备生产权限
+
 ## 尚未实现的关键条件
 
 - 真实的多腿 `publish_basket`、`subscribe_market_bundle`、独立现金/保证金与资金费/期权权利金/到期模拟。
