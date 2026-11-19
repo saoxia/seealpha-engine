@@ -21,7 +21,6 @@ from core.market.instruments import (
     normalize_symbol,
 )
 from engine.pipeline.catalog import ParquetDataCatalog
-from engine.runtime import EngineConflict
 from engine.strategies.backtest import _nanos, parse_window, read_history
 from engine.strategies.basket_finance_ledger import (
     BasketContract,
