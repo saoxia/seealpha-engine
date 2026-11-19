@@ -15,6 +15,7 @@ from engine.strategies.basket_generic_runtime import (
     BasketMemberRegistration,
     GenericBasketRuntime,
 )
+from engine.strategies.basket_journal_store import BasketJournalStore
 from engine.strategies.basket_settlement import VerifiedOptionSettlement
 from engine.strategies.basket_targets import BasketPlanError, LegEvidence, LegId
 
@@ -261,3 +262,24 @@ def test_absent_real_exercise_evidence_freezes_without_synthetic_payout():
     assert result["status"] == "frozen"
     assert "期权到期" in result["freeze_reason"]
     assert result["ending_balance"] != "100"  # premium was paid, no invented expiry income
+
+
+def test_simulated_phase_journal_survives_restart_and_refuses_double_fill(tmp_path):
+    store = BasketJournalStore(tmp_path / "private")
+    replay, frames, (_spot, _um), _models = _carry(spot_ask_size="0.15")
+    replay.journal_store = store
+    result = replay.run(frames, start_ns=_START, end_ns=_END)
+    assert result["status"] == "frozen"
+    assert replay.checkpoint.status == "frozen"
+    assert result["phase_audits"][-1]["status"] == "frozen"
+    loaded = store.load(replay._journal_identity, replay.checkpoint.plan)
+    assert loaded.checkpoint == replay.checkpoint
+    restarted, frames_again, _, _ = _carry(spot_ask_size="0.15")
+    restarted.journal_store = store
+    denied = restarted.run(
+        frames_again, start_ns=_START, end_ns=_END,
+    )
+    assert denied["status"] == "frozen"
+    assert "重启前必须核对" in denied["freeze_reason"]
+    assert not denied["fills"]
+    assert store.load(replay._journal_identity, replay.checkpoint.plan) == loaded
