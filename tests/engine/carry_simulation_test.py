@@ -1,7 +1,9 @@
 """Native dual-account carry simulation with real Catalog fixtures and no credentials."""
 
 import base64
+import io
 import json
+import zipfile
 from datetime import timedelta
 from decimal import Decimal
 
@@ -19,10 +21,64 @@ from tests.engine.basket_history_test import _dataset, _range
 from tests.engine.spot_backtest_test import spot_instrument
 
 
-def _load(member="A", *, quantity="0.1", purpose="development"):
+_BASKET_SOURCE = """
+from decimal import Decimal
+from nautilus_trader.trading import Strategy
+
+def prepare(parameters):
+    return dict(parameters)
+
+class DemoFundingCarry(Strategy):
+    def on_start(self):
+        self.subscribe_market_bundle(
+            symbol=self.parameters["symbol"],
+            products=("spot", "futures_um"),
+            data=("closed_bars", "funding_rate", "account_positions"),
+        )
+
+    def on_market_snapshot(self, snapshot):
+        params = self.parameters
+        spot = Decimal(snapshot["spot"]["price"])
+        perpetual = Decimal(snapshot["perpetual"]["price"])
+        basis = abs((perpetual / spot - Decimal(1)) * 10000)
+        rate = Decimal(snapshot["funding"]["rate"])
+        quantity = (
+            Decimal(params["allocation"])
+            if rate >= Decimal(params["min_funding_rate"])
+            and basis <= Decimal(params["max_basis_bps"])
+            else Decimal(0)
+        )
+        self.publish_basket(
+            targets=[
+                {"product": "spot", "symbol": params["symbol"], "quantity": str(quantity)},
+                {"product": "futures_um", "symbol": params["symbol"],
+                 "quantity": str(-quantity)},
+            ],
+            constraints={"atomic_hedge": True, "max_leg_drift": params["max_leg_drift"]},
+        )
+"""
+
+
+def _archive(source=_BASKET_SOURCE):
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as package:
+        package.writestr("seealpha-package.json", json.dumps({
+            "format": 1, "name": "demo_funding_carry", "version": "1",
+            "entry_point": "strategy:DemoFundingCarry",
+        }))
+        package.writestr("strategy.py", source)
+    archive = stream.getvalue()
+    return archive, parse_metadata(archive)
+
+
+def _load(member="A", *, quantity="0.1", purpose="development", source=_BASKET_SOURCE):
+    archive, meta = _archive(source)
     return {
         "tenant_id": "dev", "account_id": "desk", "issuance_id": member,
-        "code_key": "demo_funding_carry", "grant_purpose": purpose,
+        "code_key": meta.name, "version": meta.version,
+        "entry_point": meta.entry_point, "package_hash": meta.digest,
+        "archive": archive,
+        "grant_purpose": purpose,
         "parameters": {
             "symbol": "ETHUSDT",
             "allocation": quantity, "risk_limit": quantity,
@@ -166,14 +222,7 @@ def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
         "format": 1, "name": "demo_funding_carry", "version": "1",
         "entry_point": "strategy:DemoFundingCarry",
     }), encoding="utf-8")
-    (root / "strategy.py").write_text(
-        "from nautilus_trader.trading import Strategy\n"
-        "def prepare(params):\n"
-        "    return dict(params)\n"
-        "class DemoFundingCarry(Strategy):\n"
-        "    pass\n",
-        encoding="utf-8",
-    )
+    (root / "strategy.py").write_text(_BASKET_SOURCE, encoding="utf-8")
     archive = archive_directory(root)
     meta = parse_metadata(archive)
     start, runtime = _history(tmp_path)
@@ -217,3 +266,28 @@ def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
             assert denied.status_code == 409
     finally:
         runtime.close()
+
+def test_issued_strategy_source_controls_both_legs(tmp_path):
+    # If Engine secretly recomputes a demo signal, this test would still trade.
+    always_flat = _BASKET_SOURCE.replace(
+        '        quantity = (\\n', '        quantity = (\\n',
+    ).replace(
+        '        self.publish_basket(\\n', '        quantity = Decimal(0)\\n        self.publish_basket(\\n',
+    )
+    result = _simulate(tmp_path, loads=[_load(source=always_flat)])
+    assert result["orders"] == []
+    assert result["fills"] == []
+    assert all(
+        all(leg["quantity"] == "0" for leg in row["targets"])
+        for row in result["target_events"]
+    )
+
+
+def test_incomplete_basket_publication_fails_closed(tmp_path):
+    incomplete = _BASKET_SOURCE.replace(
+        '{"product": "futures_um", "symbol": params["symbol"],\\n'
+        '                 "quantity": str(-quantity)},',
+        '',
+    )
+    with pytest.raises(EngineConflict, match="所有腿|组合目标|完整"):
+        _simulate(tmp_path, loads=[_load(source=incomplete)])
