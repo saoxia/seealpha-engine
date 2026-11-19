@@ -5,6 +5,7 @@ This is a scope-bound adapter for the Demo `subscribe_market_bundle` and
 sender. A real data adapter must supply authoritative account/market evidence.
 """
 
+import hashlib
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -164,9 +165,15 @@ class BasketResearchSession:
     def _publish(
         self, member_id: str, *,
         targets: list[dict],
-        request_id: str,
+        request_id: str | None,
         constraints: dict | None = None,
     ) -> None:
+        if request_id is None:
+            # The archived Demo API does not provide an order key. Bind a
+            # stable *research intent* identity to the member and snapshot.
+            # This never becomes a client_order_id for a live venue.
+            raw = f"{self.tenant_id}:{self.account_id}:{member_id}:{self.now_ns}"
+            request_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         if self._decision is not None:
             raise BasketPlanError("同一市场快照已锁定，不允许修改目标")
         if member_id not in self._subscriptions:
@@ -278,7 +285,7 @@ class ResearchBasketMember:
         )
 
     def publish_basket(
-        self, *, targets: list[dict], request_id: str,
+        self, *, targets: list[dict], request_id: str | None = None,
         constraints: dict | None = None,
     ) -> None:
         self._session._publish(
