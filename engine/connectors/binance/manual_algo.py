@@ -184,8 +184,11 @@ def command_sync(account, action, values, client_id, *, http_url=None, snapshot=
         mode = snapshot["position_mode"]
         if values["expected_position_mode"] != mode:
             raise ManualValidationError("持仓模式已改变，请刷新后重新确认。")
-        qty = exact(values["quantity"], snapshot["instrument"]["size_increment"],
-                    snapshot["instrument"]["min_quantity"])
+        try:
+            qty = exact(values["quantity"], snapshot["instrument"]["size_increment"],
+                        snapshot["instrument"]["min_quantity"])
+        except (ValueError, ArithmeticError):
+            raise ManualValidationError("条件单数量或最小数量不符合交易所规则。") from None
         side = values["side"]
         closing_leg = "BOTH" if mode == "oneway" else ("LONG" if side == "sell" else "SHORT")
         available = Decimal(0)
@@ -200,12 +203,15 @@ def command_sync(account, action, values, client_id, *, http_url=None, snapshot=
         step = snapshot["instrument"]["price_increment"]
         for field in ("trigger_price", "price", "activation_price"):
             if values.get(field) is not None:
-                exact(values[field], step)
+                try:
+                    exact(values[field], step)
+                except (ValueError, ArithmeticError):
+                    raise ManualValidationError("条件单价格不符合交易所精度及范围限制。") from None
         order_type = values["order_type"]
         payload = {
             "algoType": "CONDITIONAL", "symbol": symbol, "side": side.upper(),
             "type": order_type, "positionSide": closing_leg,
-            "quantity": values["quantity"], "workingType": values["working_type"],
+            "quantity": values["quantity"], "workingType": values.get("working_type", "MARK_PRICE"),
             "clientAlgoId": client_id,
         }
         if mode == "oneway":
