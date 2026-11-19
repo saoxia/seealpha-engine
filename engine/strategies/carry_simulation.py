@@ -305,6 +305,8 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
         previous_rate = None
         curve = []
         funding = []
+        target_events = []
+        previous_target = None
         active = 0
         for event in events:
             if event.kind == "funding":
@@ -381,6 +383,19 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
                     or dict(decision.plan.targets)[leg_perp] != -desired
                 ):
                     raise BasketPlanError("成员发布目标与组合模拟数量不一致")
+                next_target = tuple(decision.plan.targets)
+                if next_target != previous_target:
+                    target_events.append({
+                        "ts_ns": event.ts_ns,
+                        "member_count": decision.member_count,
+                        "targets": [
+                            {"product": leg.product, "symbol": leg.symbol,
+                             "quantity": format(quantity, "f")}
+                            for leg, quantity in next_target
+                        ],
+                        "executable": False,
+                    })
+                    previous_target = next_target
             except BasketPlanError as exc:
                 raise EngineConflict(str(exc)) from exc
             coordinator.desired = desired
@@ -428,6 +443,7 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
             "orders": coordinator.orders,
             "fills": coordinator.fills,
             "funding_observations": funding,
+            "target_events": target_events,
             "equity_curve": curve,
             "funding_accounting": "nautilus_native_settlement_from_recorded_observations",
             "venue_accounts": {"spot": "CASH", "futures_um": "MARGIN"},
