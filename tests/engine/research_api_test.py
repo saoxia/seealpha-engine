@@ -658,8 +658,14 @@ def test_mcp_initialize_and_discovery_are_scoped(service):
             assert names == {
                 "list_datasets", "create_snapshot", "get_snapshot",
                 "submit_backtest", "get_backtest", "cancel_backtest",
-                "submit_candidate_backtest",
             }
+            candidate_tools = client.post(
+                "/mcp", json={"jsonrpc": "2.0", "id": 5, "method": "tools/list"},
+                headers=_mcp_headers(ops=["candidates:submit"]),
+            ).json()["result"]["tools"]
+            assert [row["name"] for row in candidate_tools] == [
+                "submit_candidate_backtest",
+            ]
             assert all(t["inputSchema"]["type"] == "object" for t in tools)
             assert "submit_python_candidate_backtest" not in names
             assert not any("order_submit" in name or "trade" in name for name in names)
