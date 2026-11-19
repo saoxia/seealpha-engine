@@ -293,7 +293,7 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
         engine.add_instrument(spot)
         engine.add_instrument(perp)
         coordinator = _NativeCarryCoordinator(
-            StrategyConfig(order_id_tag="CARRY", close_positions_on_stop=False),
+            StrategyConfig(order_id_tag="CARRY"),
         )
         coordinator.bind_instruments(
             spot, perp,
