@@ -99,7 +99,7 @@ def test_native_strategy_rejects_duplicate_and_lookahead_bar_or_wrong_member():
     alpha.on_bar(_bar(spot_type, _TS))
     with pytest.raises(BasketPlanError, match="重复"):
         alpha.on_bar(_bar(spot_type, _TS))
-    gate, alpha, beta, spot_type, perp_type, _seen = _gate()
+    _unused, alpha, beta, spot_type, perp_type, _seen = _gate()
     alpha.on_bar(_bar(spot_type, _TS))
     with pytest.raises(BasketPlanError, match="前一时间戳"):
         beta.on_bar(_bar(perp_type, _TS + 60_000_000_000))

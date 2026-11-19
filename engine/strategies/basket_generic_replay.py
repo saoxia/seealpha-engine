@@ -282,7 +282,7 @@ class GenericBasketReplay:
                 )
                 raw_id = (
                     f"{self.runtime.tenant_id}:{self.runtime.account_id}:{ts_ns}"
-                ).encode("utf-8")
+                ).encode()
                 self._journal_identity = (
                     "research-" + hashlib.sha256(raw_id).hexdigest()[:32]
                 )
