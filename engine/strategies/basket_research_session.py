@@ -26,6 +26,7 @@ from engine.strategies.basket_targets import (
 _MAX_MEMBERS = 16
 _REQUIRED_DATA = {
     "funding_carry": frozenset({"closed_bars", "funding_rate", "account_positions"}),
+    "generic_research": frozenset({"closed_bars", "quotes", "account_positions"}),
     "option_protected": frozenset({
         "closed_bars", "option_quotes", "option_instruments", "positions",
     }),
@@ -120,10 +121,11 @@ class BasketResearchSession:
 
     def _subscribe(
         self, member_id: str, *,
-        symbol: str,
+        symbol: str | None,
         products: tuple[str, ...],
         data: tuple[str, ...],
         option_symbols: tuple[str, ...] = (),
+        legs: tuple[LegId, ...] = (),
     ) -> None:
         if self._decision is not None or member_id in self._intents:
             raise BasketPlanError("组合已经形成目标，不能更改历史订阅")
@@ -138,17 +140,33 @@ class BasketResearchSession:
             or set(data) != _REQUIRED_DATA[self.policy]
         ):
             raise BasketPlanError("订阅必须提供完整且无重复的策略证据")
-        expected_products = (
-            {"spot", "futures_um"}
-            if self.policy == "funding_carry" else {"futures_um", "options"}
-        )
-        if set(products) != expected_products:
-            raise BasketPlanError("跨产品订阅类型与策略不匹配")
-        required_legs = set(self.positions)
+        if self.policy == "generic_research":
+            if (
+                not isinstance(legs, tuple) or not 1 <= len(legs) <= 64
+                or len(set(legs)) != len(legs)
+                or not all(isinstance(leg, LegId) for leg in legs)
+                or not set(legs).issubset(self.positions)
+                or set(products) != {leg.product for leg in legs}
+                or option_symbols != tuple(sorted(
+                    leg.symbol for leg in legs if leg.product == "options"
+                ))
+            ):
+                raise BasketPlanError("通用研究订阅必须显式绑定完整且已授权的成员腿")
+            required_legs = set(legs)
+        else:
+            if legs:
+                raise BasketPlanError("专用策略不能混用通用成员腿订阅")
+            expected_products = (
+                {"spot", "futures_um"}
+                if self.policy == "funding_carry" else {"futures_um", "options"}
+            )
+            if set(products) != expected_products:
+                raise BasketPlanError("跨产品订阅类型与策略不匹配")
+            required_legs = set(self.positions)
         if self.policy == "funding_carry":
             if option_symbols or any(leg.symbol != symbol for leg in required_legs):
                 raise BasketPlanError("资金费订阅必须精确匹配 Spot/UM 标的")
-        else:
+        elif self.policy == "option_protected":
             futures = [leg for leg in required_legs if leg.product == "futures_um"]
             options = {leg.symbol for leg in required_legs if leg.product == "options"}
             if (
@@ -184,7 +202,7 @@ class BasketResearchSession:
             or not all(char.isalnum() or char in "-_.:" for char in request_id)
         ):
             raise BasketPlanError("组合请求幂等标识无效")
-        if not isinstance(targets, list) or len(targets) != len(self.positions):
+        if not isinstance(targets, list) or len(targets) != len(self._subscriptions[member_id]):
             raise BasketPlanError("必须申报当前组合所有腿，包括零目标")
         if constraints is not None and not isinstance(constraints, dict):
             raise BasketPlanError("约束协议无效")
@@ -193,6 +211,7 @@ class BasketResearchSession:
         allowed = (
             {"atomic_hedge", "max_leg_drift"} if self.policy == "funding_carry"
             else {"hedges_filled_before_risk", "atomic_reconciliation"}
+            if self.policy == "option_protected" else set()
         )
         if constraints and (set(constraints) - allowed):
             raise BasketPlanError("未知多腿执行约束")
@@ -228,8 +247,8 @@ class BasketResearchSession:
             if not quantity.is_finite():
                 raise BasketPlanError("组合目标数量非有限 Decimal")
             parsed[leg] = quantity
-        if set(parsed) != set(self.positions):
-            raise BasketPlanError("组合目标腿不完整")
+        if set(parsed) != self._subscriptions[member_id]:
+            raise BasketPlanError("组合成员目标腿不完整")
         intent = tuple(MemberLegTarget(member_id, leg, parsed[leg]) for leg in sorted(parsed))
         old = self._intents.get(member_id)
         if old is not None:
@@ -246,6 +265,8 @@ class BasketResearchSession:
             return self._decision
         if not self._subscriptions or set(self._intents) != set(self._subscriptions):
             raise BasketPlanError("仍有成员未发布当前时间点的完整组合目标")
+        if set().union(*self._subscriptions.values()) != set(self.positions):
+            raise BasketPlanError("未声明完整组合持仓腿，禁止静默遗失仓位")
         targets = [
             item for member_id in sorted(self._intents)
             for item in self._intents[member_id][1]
@@ -276,12 +297,13 @@ class ResearchBasketMember:
         self.member_id = member_id
 
     def subscribe_market_bundle(
-        self, *, symbol: str, products: tuple[str, ...], data: tuple[str, ...],
-        option_symbols: tuple[str, ...] = (),
+        self, *, symbol: str | None = None, products: tuple[str, ...] = (),
+        data: tuple[str, ...], option_symbols: tuple[str, ...] = (),
+        legs: tuple[LegId, ...] = (),
     ) -> None:
         self._session._subscribe(
             self.member_id, symbol=symbol, products=products, data=data,
-            option_symbols=option_symbols,
+            option_symbols=option_symbols, legs=legs,
         )
 
     def publish_basket(
