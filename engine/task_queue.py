@@ -351,8 +351,22 @@ class TaskCoordinator:
 
     @staticmethod
     def _public(row):
-        return {key: value for key, value in row.items()
-                if key not in {"fingerprint", "idempotency_key"}}
+        view = {
+            key: value for key, value in row.items()
+            if key not in {"fingerprint", "idempotency_key"}
+        }
+        parameters = view.get("parameters")
+        if isinstance(parameters, dict):
+            candidate = parameters.get("_candidate")
+            if isinstance(candidate, dict) and "archive" in candidate:
+                view["parameters"] = {
+                    **parameters,
+                    "_candidate": {
+                        key: value for key, value in candidate.items()
+                        if key != "archive"
+                    },
+                }
+        return view
 
     def _data_view(self, tenant_id, row):
         status = _DATA_STATUS.get(row["status"], "UNKNOWN")

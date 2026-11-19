@@ -574,3 +574,22 @@ def test_python_candidate_rejects_archive_path_escape_and_secret_parameters():
             package_hash=hashlib.sha256(raw).hexdigest(),
             symbol="ETHUSDT",
         )
+
+
+def test_engine_job_views_do_not_return_python_archive_to_clients():
+    from engine.task_queue import TaskCoordinator
+
+    job = {
+        "id": "a" * 32, "fingerprint": "private", "idempotency_key": "private",
+        "parameters": {
+            "account_id": "desk",
+            "_candidate": {
+                "mode": "python", "candidate_id": "c" * 32,
+                "package_hash": "d" * 64, "archive": "BASE64-SECRET-SOURCE",
+            },
+        },
+    }
+    view = TaskCoordinator._public(job)
+    assert "archive" not in view["parameters"]["_candidate"]
+    assert "BASE64-SECRET-SOURCE" not in str(view)
+    assert job["parameters"]["_candidate"]["archive"] == "BASE64-SECRET-SOURCE"
