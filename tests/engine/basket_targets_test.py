@@ -205,7 +205,7 @@ def test_bounded_protection_first_phases_remain_research_only():
     plan = plan_basket(
         targets, positions, _evidence(positions),
         now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
-        max_gross_notional=Decimal("401"), policy="option_protected",
+        max_gross_notional=Decimal(401), policy="option_protected",
     )
     assert [phase.name for phase in plan.phases] == [
         "acquire_and_confirm_protection",
