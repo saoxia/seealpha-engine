@@ -617,13 +617,12 @@ class EngineRuntime:
     def run_funding_carry_backtest(
         self, tenant_id, account_id, start, end, interval,
         starting_spot_balance, starting_perpetual_balance, max_gross_notional,
-        *, publish_event=True,
+        *, publish_event=True, issuance_id=None,
     ):
         """Backtest an issued carry basket with separate native venue accounts.
 
-        Research-only: NEVER reaches credentials, live order routes or the
-        production trading runtime. The demo package's own code is not loaded
-        into the simulation; the Engine implements its verified target rules.
+        Research-only: NEVER reaches credentials or the live order routes.
+        Signal callbacks come from verified archives, never duplicated rules.
         """
         from core.market.instruments import instrument_id_for
         from engine.data_queries import read_lease
@@ -635,17 +634,29 @@ class EngineRuntime:
         if self.store.tenant(tenant_id)["purpose"] != "development":
             raise EngineConflict("组合回测仅允许开发租户。")
         start_at, end_at, interval = parse_window(start, end, interval)
-        loads = self.store.strategy_loads(tenant_id, account_id)
+        loads = self.store.strategy_loads(
+            tenant_id, account_id, include_archive=True,
+        )
+        if issuance_id is not None:
+            if (
+                not isinstance(issuance_id, str)
+                or not 1 <= len(issuance_id) <= 64
+            ):
+                raise EngineConflict("指定的组合策略下发编号无效。")
+            loads = [
+                load for load in loads
+                if str(load["issuance_id"]) == issuance_id
+            ]
         if not loads or len(loads) > 16:
-            raise EngineConflict("账户必须已下发 1 到 16 个资金费演示策略。")
+            raise EngineConflict("账户必须已下发 1 到 16 个组合开发策略。")
         if any(
             str(row["tenant_id"]) != str(tenant_id)
             or str(row["account_id"]) != str(account_id)
             or row["grant_purpose"] != "development"
-            or row["code_key"] != "demo_funding_carry"
+            or (issuance_id is None and row["code_key"] != "demo_funding_carry")
             for row in loads
         ):
-            raise EngineConflict("仅允许本租户开发授权的 Funding Carry 策略。")
+            raise EngineConflict("仅允许本租户开发授权的跨产品策略。")
         symbols = {row["parameters"]["symbol"] for row in loads}
         if len(symbols) != 1 or next(iter(symbols)) not in {"ETHUSDT", "BTCUSDT"}:
             raise EngineConflict("资金费策略品种不一致或不受支持。")
@@ -687,6 +698,33 @@ class EngineRuntime:
         if publish_event:
             self.store.add_event(tenant_id, account_id, "carry_backtest", result)
         return result
+
+    def run_spot_perp_strategy_backtest(
+        self, tenant_id, account_id, issuance_id, start, end, interval,
+        starting_spot_balance, starting_perpetual_balance, max_gross_notional,
+    ):
+        """Replay ONE issued strategy across Spot/UM accounts (development only).
+
+        Reuses the approved two-market history, native fills and research risk
+        coordinator. This route never enables multi-venue live order sending.
+        """
+        result = self.run_funding_carry_backtest(
+            tenant_id, account_id, start, end, interval,
+            starting_spot_balance, starting_perpetual_balance,
+            max_gross_notional, publish_event=False, issuance_id=issuance_id,
+        )
+        result["mode"] = "issued_spot_perp_development_only"
+        result["issuance_id"] = issuance_id
+        self.store.add_event(tenant_id, account_id, "issued_spot_perp_backtest", result)
+        return result
+
+    def latest_spot_perp_strategy_backtest(self, tenant_id, account_id):
+        if self.store.tenant(tenant_id) is None:
+            raise EngineConflict("租户不存在。")
+        event = self.store.latest_event(
+            tenant_id, account_id, "issued_spot_perp_backtest",
+        )
+        return None if event is None else event["body"]
 
     def latest_carry_backtest(self, tenant_id, account_id):
         if self.store.tenant(tenant_id) is None:
