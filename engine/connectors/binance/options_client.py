@@ -594,10 +594,13 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                                 await output.put({"level": "transport", "symbol": symbol, "channel": channel,
                                                   "connected": expected <= confirmed})
                             last_status, delay = monotonic(), 1
-            except (ConnectionClosed, ConnectionError, OSError, TimeoutError, ValueError, KeyError, TypeError):
+            except (ConnectionClosed, ConnectionError, OSError, TimeoutError, ValueError, KeyError, TypeError) as exc:
                 for symbol in active:
-                    await output.put({"level": "transport", "symbol": symbol, "channel": channel,
-                                      "connected": False, "gap": True})
+                    await output.put({
+                        "level": "transport", "symbol": symbol, "channel": channel,
+                        "connected": False, "gap": True,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30)
 
@@ -625,7 +628,10 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                 gaps[symbol] = gaps.get(symbol, 0) + int(event.get("gap", False))
                 current_ticks = ticks if scope is None else selection(symbols)[1]
                 connected = channel_state.get("bars", False) and (not depth and symbol not in current_ticks or channel_state.get("trades", False))
-                yield {"level": "status", "symbol": symbol, "connected": connected, "gap_count": gaps[symbol]}
+                yield {
+                    "level": "status", "symbol": symbol, "connected": connected,
+                    "gap_count": gaps[symbol], "last_error": event.get("error"),
+                }
             else:
                 yield event
     finally:

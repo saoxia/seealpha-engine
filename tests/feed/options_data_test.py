@@ -15,7 +15,7 @@ def test_stream_flush_checkpoint_reconnect_and_expiry(tmp_path, monkeypatch):
         calls.append(kwargs)
         return {"expiry_ms": expiry, "records_written": len(kwargs.get("events", []))}
     monkeypatch.setattr(options_service.CatalogHistory, "options_evidence", evidence)
-    async def stream(symbol, intervals, *, trades, depth):
+    async def stream(symbol, intervals, *, trades, depth, quotes=False):
         nonlocal now
         assert trades and intervals == ["1m", "5m", "15m"]
         connections.append(symbol)
@@ -61,7 +61,7 @@ def test_batch_collector_applies_single_contract_stop_and_keeps_shared_transport
         return {"expiry_ms": template["expiry"], "records_written": 0, "repaired_until_ms": int(time.time() * 1000)}
     monkeypatch.setattr(options_service.CatalogHistory, "options_evidence", evidence)
     transports = []
-    async def stream(items, *, tick_symbols, scope, depth):
+    async def stream(items, *, tick_symbols, scope, depth, quotes=False):
         assert depth and set(tick_symbols) == {str(item.raw_symbol) for item in items}
         transports.append(scope)
         while True:
@@ -137,7 +137,7 @@ def test_batch_worker_flushes_all_accepted_events_before_releasing_access(tmp_pa
         calls.extend(kwargs.get("events", []))
         return {"expiry_ms": int(time.time() * 1000) + 60000, "records_written": len(kwargs.get("events", []))}
     monkeypatch.setattr(options_service.CatalogHistory, "options_evidence", evidence)
-    async def stream(symbol, intervals, *, trades, depth):
+    async def stream(symbol, intervals, *, trades, depth, quotes=False):
         assert trades and depth
         yield {"level": "status", "connected": True, "gap_count": 0}
         for identity in range(5):
@@ -170,7 +170,7 @@ def test_expiring_batch_worker_flushes_previously_accepted_queue_tail(tmp_path, 
         # Collection discovers expiry after transport has already queued two events.
         return {"expiry_ms": int(time.time() * 1000) - 1, "records_written": len(kwargs.get("events", []))}
     monkeypatch.setattr(options_service.CatalogHistory, "options_evidence", evidence)
-    async def stream(items, *, tick_symbols, scope, depth):
+    async def stream(items, *, tick_symbols, scope, depth, quotes=False):
         for identity in (1, 2):
             yield {"level": "tick", "symbol": item["symbol"], "row": {"id": identity}}
         queued.set()

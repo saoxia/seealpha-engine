@@ -574,6 +574,10 @@ def test_batch_market_events_forward_option_book_ticker_with_source_timestamp(mo
             try:
                 async with asyncio.timeout(10):
                     async for event in stream:
+                        if event.get("level") == "status" and event.get("last_error"):
+                            raise AssertionError(
+                                f"期权报价流未成功解析: {event['last_error']}; subscribed={subscribed}"
+                            )
                         if event.get("level") == "quote":
                             assert event["symbol"] == SYMBOL
                             assert event["row"]["T"] == BASE
