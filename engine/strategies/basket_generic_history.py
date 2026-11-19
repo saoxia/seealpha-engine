@@ -41,17 +41,38 @@ def read_generic_quote_history(
     legs: tuple[LegId, ...], clock_leg: LegId,
     start: str, end: str, interval: str,
     max_quote_age_ns: int,
+    fee_rates: dict[LegId, Decimal],
+    um_margin_ratios: dict[LegId, Decimal],
 ) -> tuple[tuple[BasketContract, ...], tuple[BasketReplayFrame, ...]]:
     """Read complete source BBO from catalog and align on a native Bar clock.
 
     Return synthetic research *valuation* marks from quote midpoints; these
-    are NOT exchange mark-price or actual executable close reports. Fees are
-    extracted from native contract taker rates. Explicit funding and exercise
+    are NOT exchange mark-price or actual executable close reports. Caller must
+    supply account-specific fee rates and UM margin ratios; neither may be
+    inferred from the instrument definition. Explicit funding and exercise
     records must be added by the calling development controller; absence of
     such records is never interpreted as proof that no settlement occurred.
     """
     if not isinstance(legs, tuple) or not 1 <= len(legs) <= 64:
         raise BasketPlanError("通用原生历史必须提供组合腿")
+    if (
+        not isinstance(fee_rates, dict) or set(fee_rates) != set(legs)
+        or not isinstance(um_margin_ratios, dict)
+        or set(um_margin_ratios) != {
+            leg for leg in legs if leg.product == "futures_um"
+        }
+    ):
+        raise BasketPlanError("通用回测要求每腿账户费率及所有 UM 保证金比例证据")
+    if any(
+        not isinstance(value, Decimal) or not value.is_finite()
+        or value < 0 or value > Decimal("0.1")
+        for value in fee_rates.values()
+    ) or any(
+        not isinstance(value, Decimal) or not value.is_finite()
+        or not Decimal(0) < value <= Decimal(1)
+        for value in um_margin_ratios.values()
+    ):
+        raise BasketPlanError("账户手续费率及 UM 保证金比例必须是明确有限的 Decimal")
     if (
         len(set(legs)) != len(legs) or not all(isinstance(leg, LegId) for leg in legs)
         or len({(leg.tenant_id, leg.account_id) for leg in legs}) != 1
@@ -110,7 +131,7 @@ def read_generic_quote_history(
                 if leg.product == "options" else Decimal(1)
             )
             step_size = instrument.size_increment.as_decimal()
-            taker_fee = Decimal(str(instrument.taker_fee))
+            taker_fee = fee_rates[leg]
             expiry = int(instrument.expiration_ns) if leg.product == "options" else None
             strike = (
                 instrument.strike_price.as_decimal()
@@ -118,7 +139,7 @@ def read_generic_quote_history(
             )
             contract = BasketContract(
                 leg, step_size, unit, taker_fee,
-                Decimal("0.2") if leg.product == "futures_um" else Decimal(0),
+                um_margin_ratios[leg] if leg.product == "futures_um" else Decimal(0),
                 expiry_ns=expiry, strike=strike,
             )
         except (AttributeError, TypeError, ValueError) as exc:

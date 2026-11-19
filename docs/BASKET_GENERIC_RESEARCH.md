@@ -24,6 +24,9 @@
 
 ## 多产品历史与交易成本
 
+- `read_generic_quote_history` 要求调用方分别提供各腿账户实际
+  taker 手续费率和全部 UM 腿初始保证金比例。Nautilus 原生合约元数据不保证
+  带有账户级费率，不得在通用收益研究中隐式使用默认手续费。
 - `read_generic_quote_history` 从原生 Parquet Catalog 取出真实产品合约、
   NautilusTrader `QuoteTick` 和参考 Spot/UM `Bar` 时钟（1m/5m，
   最多 24 小时）；三种产品都必须具备真实 BBO 和有效卖买深度。

@@ -47,6 +47,8 @@ def test_actual_catalog_spot_um_bbo_and_native_bar_alignment(tmp_path):
     contracts, frames = read_generic_quote_history(
         root, legs=(spot_leg, perp_leg), clock_leg=perp_leg,
         start=a, end=b, interval="1m", max_quote_age_ns=1000,
+        fee_rates={spot_leg: Decimal("0.0004"), perp_leg: Decimal("0.0004")},
+        um_margin_ratios={perp_leg: Decimal("0.2")},
     )
     assert len(contracts) == 2
     assert len(frames) == len(spots) == len(futures)
@@ -74,6 +76,8 @@ def test_native_quote_gap_is_rejected_without_candle_close_substitution(tmp_path
         read_generic_quote_history(
             root, legs=(spot_leg, perp_leg), clock_leg=perp_leg,
             start=a, end=b, interval="1m", max_quote_age_ns=1000,
+            fee_rates={spot_leg: Decimal("0.0004"), perp_leg: Decimal("0.0004")},
+            um_margin_ratios={perp_leg: Decimal("0.2")},
         )
 
 
@@ -102,6 +106,8 @@ def test_native_um_and_option_bbo_share_actual_bar_clock(tmp_path):
         root, legs=(um, put, call), clock_leg=um,
         start=start.isoformat(), end=(start + timedelta(minutes=4)).isoformat(),
         interval="1m", max_quote_age_ns=1000,
+        fee_rates={leg: Decimal("0.0004") for leg in (um, put, call)},
+        um_margin_ratios={um: Decimal("0.2")},
     )
     assert len(frames) == 3
     assert {q.leg for q in frames[0].quotes} == {um, put, call}
@@ -141,6 +147,8 @@ def test_native_catalog_one_call_generic_two_leg_backtest_with_financial_audit(t
         max_quote_age_ns=1000,
         max_gross_notional=Decimal(1000),
         expected_funding={},
+        fee_rates={spot_leg: Decimal("0.0004"), perp_leg: Decimal("0.0004")},
+        um_margin_ratios={perp_leg: Decimal("0.2")},
     )
     assert report["status"] == "completed"
     assert report["native_matching"] is False

@@ -34,6 +34,8 @@ def run_generic_catalog_research(
     interval: str,
     starting_cash: dict[str, Decimal],
     max_quote_age_ns: int,
+    fee_rates: dict[LegId, Decimal],
+    um_margin_ratios: dict[LegId, Decimal],
     max_gross_notional: Decimal,
     slippage_bps: Decimal = Decimal(0),
     expected_funding: dict[int, tuple[LegId, ...]] | None = None,
@@ -68,6 +70,8 @@ def run_generic_catalog_research(
         catalog_dir, legs=runtime.legs, clock_leg=clock_leg,
         start=start, end=end, interval=interval,
         max_quote_age_ns=max_quote_age_ns,
+        fee_rates=fee_rates,
+        um_margin_ratios=um_margin_ratios,
     )
     funding: dict[int, list[VerifiedFundingCash]] = {}
     for item in funding_cash:
