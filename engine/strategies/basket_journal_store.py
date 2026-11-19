@@ -11,10 +11,10 @@ import os
 import re
 import stat
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 from engine.strategies.basket_reconciliation import (
     BasketCheckpoint,
