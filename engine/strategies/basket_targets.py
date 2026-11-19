@@ -121,7 +121,7 @@ def plan_basket(
     now_ns: int,
     max_age_ns: int,
     max_gross_notional: Decimal,
-    policy: Literal["funding_carry", "option_protected"],
+    policy: Literal["generic", "funding_carry", "option_protected"],
     max_leg_drift: Decimal = Decimal(0),
     emergency_unwind: bool = False,
 ) -> BasketPlan:
@@ -141,7 +141,7 @@ def plan_basket(
     _finite(max_leg_drift, "最大腿间偏差")
     if max_leg_drift < 0:
         raise BasketPlanError("最大腿间偏差不能为负")
-    if policy not in {"funding_carry", "option_protected"}:
+    if policy not in {"generic", "funding_carry", "option_protected"}:
         raise BasketPlanError("未知跨产品组合策略")
     if type(emergency_unwind) is not bool:
         raise BasketPlanError("紧急减险标记必须为布尔值")
@@ -180,10 +180,13 @@ def plan_basket(
         raise BasketPlanError("紧急减险仅允许对已有非零仓位提出全部归零目标")
 
     futures = sorted(leg for leg in legs if leg.product == "futures_um")
-    if len(futures) != 1:
+    if policy != "generic" and len(futures) != 1:
         raise BasketPlanError("组合必须恰好包含一条 USD-M 永续腿")
-    perp = futures[0]
-    if policy == "funding_carry":
+    perp = futures[0] if futures else None
+    if policy == "generic":
+        if len(legs) > 16:
+            raise BasketPlanError("通用组合最多允许16条不同产品或标的腿")
+    elif policy == "funding_carry":
         spots = [leg for leg in legs if leg.product == "spot"]
         if len(legs) != 2 or len(spots) != 1 or spots[0].symbol != perp.symbol:
             raise BasketPlanError("资金费策略必须为同标的一条现货腿和一条永续腿")
@@ -223,7 +226,23 @@ def plan_basket(
 
     changes = {leg: targets[leg] - positions[leg] for leg in legs}
     phases = []
-    if policy == "funding_carry":
+    if policy == "generic":
+        # Generic policy has no implicit hedge relationship. Split reversals
+        # and strictly reduce existing exposures before opening/increasing risk.
+        reductions, increases = [], []
+        for leg in sorted(legs):
+            old, new = positions[leg], targets[leg]
+            if old and (old * new <= 0 or abs(new) < abs(old)):
+                smaller = Decimal(0) if old * new <= 0 else new
+                reductions.append(LegChange(leg, smaller - old))
+            if new and (old * new <= 0 or abs(new) > abs(old)):
+                from_quantity = Decimal(0) if old * new <= 0 else old
+                increases.append(LegChange(leg, new - from_quantity))
+        if reductions:
+            phases.append(BasketPhase("reduce_existing_exposure", tuple(reductions)))
+        if increases:
+            phases.append(BasketPhase("increase_new_exposure", tuple(increases)))
+    elif policy == "funding_carry":
         if any(changes.values()):
             phases.append(BasketPhase(
                 (
