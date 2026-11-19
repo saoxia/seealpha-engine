@@ -291,3 +291,55 @@ def test_incomplete_basket_publication_fails_closed(tmp_path):
     )
     with pytest.raises(EngineConflict, match="所有腿|组合目标|完整"):
         _simulate(tmp_path, loads=[_load(source=incomplete)])
+
+def test_issued_spot_perp_http_stays_development_only(tmp_path):
+    archive, meta = _archive()
+    start, runtime = _history(tmp_path)
+    payload = {
+        "account_id": "desk", "issuance_id": "single-strategy",
+        "code_key": meta.name, "version": meta.version,
+        "grant_purpose": "development", "parameters": _load()["parameters"],
+        "entry_point": meta.entry_point, "package_hash": meta.digest,
+        "archive": base64.b64encode(archive).decode(),
+    }
+    runtime.receive_strategy("dev", payload)
+    app = create_app(
+        EngineConfig(tmp_path / "state", token="test-issued-basket-token-" + "x" * 48,
+                     auth_mode="token", project=tmp_path),
+        runtime=runtime,
+    )
+    url = "/tenants/dev/accounts/desk/issued-spot-perp-backtests"
+    request = {
+        "issuance_id": "single-strategy",
+        "start": start.isoformat(),
+        "end": (start + timedelta(minutes=19)).isoformat(),
+        "interval": "1m",
+        "starting_spot_balance": "1000",
+        "starting_perpetual_balance": "1000",
+        "max_gross_notional": "1000",
+    }
+    try:
+        with TestClient(app) as client:
+            assert client.post(url, json=request).status_code == 401
+            headers = {
+                "Authorization": "Bearer test-issued-basket-token-" + "x" * 48,
+            }
+            response = client.post(url, json=request, headers=headers)
+            assert response.status_code == 200, response.text
+            result = response.json()
+            assert result["mode"] == "issued_spot_perp_development_only"
+            assert result["issuance_id"] == "single-strategy"
+            assert {item["venue"] for item in result["orders"]} == {
+                "SIM_SPOT", "SIM_UM",
+            }
+            assert result["fills"]
+            assert client.get(
+                url + "/latest", headers=headers,
+            ).json() == result
+            denied = client.post(
+                url, json={**request, "issuance_id": "wrong"},
+                headers=headers,
+            )
+            assert denied.status_code == 409
+    finally:
+        runtime.close()
