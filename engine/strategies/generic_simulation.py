@@ -9,7 +9,16 @@ from contextlib import ExitStack
 from decimal import Decimal
 
 from nautilus_trader.backtest import BacktestEngine
-from nautilus_trader.model import AccountType, Bar, BarType, OmsType, OrderSide, TimeInForce
+from nautilus_trader.model import (
+    AccountType,
+    BarType,
+    CryptoPerpetual,
+    CurrencyPair,
+    OmsType,
+    OrderSide,
+    TimeInForce,
+    Venue,
+)
 from nautilus_trader.trading import Strategy
 
 from engine.runtime import EngineConflict
@@ -29,7 +38,6 @@ from engine.strategies.issued_basket import issued_basket_members
 from engine.strategies.strategy_config import StrategyConfig
 from nautilus_support import instrument_fee_model
 
-from nautilus_trader.model import CryptoPerpetual, CurrencyPair, Venue
 
 _VENUES = {"spot": Venue("SIM_SPOT"), "futures_um": Venue("SIM_UM")}
 _STEP_NS = {"1m": 60_000_000_000, "5m": 300_000_000_000}
@@ -146,10 +154,9 @@ def _portfolio_equity(engine, contracts, closing):
                  for leg in matching), Decimal(0),
             )
         else:
-            amount += sum(
-                (_perp_unrealized(engine, contracts[leg])
-                 for leg in matching), Decimal(0),
-            )
+            # Portfolio.unrealized_pnls(venue) already sums ALL instruments.
+            # Never multiply the same venue PnL by the number of legs.
+            amount += _perp_unrealized(engine, contracts[matching[0]])
         by_product[product] = amount
     return by_product
 
