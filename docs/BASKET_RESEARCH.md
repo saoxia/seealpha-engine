@@ -1,4 +1,4 @@
-# 跨产品组合目标与历史数据同步（Research-only A / B1）
+# 跨产品组合研究：目标规划、历史模拟与可恢复事件账本
 
 关联 Platform [P0 总任务 #107](https://github.com/saoxia/SeeAlpha/issues/107)。
 
@@ -66,6 +66,18 @@ Engine 增加特殊的已下发 `demo_funding_carry` 策略组合研究入口：
 
 **边界：** 本阶段不包含已到期/到期当日的行权与结算价核算。因为无可核验的交易所交割和行权证据，`read_option_protection_evidence` 会拒绝涉及到期的区间，报告标注 `settlement_accounting=not_in_window_expiry_requires_verified_settlement`。也不能从现有公开 API 恢复任意断线期的历史 BBO，缺口由历史报价时效门禁拒绝。订单按 native 模拟运行，并非真实交易所跨产品原子订单或实际部分成交补偿。
 
+## 阶段账本：研究态恢复与并发写入保护（后续独立切片）
+
+现有 `engine/strategies/basket_reconciliation.py` 对**不可执行**的 BasketPlan 记录阶段 begin、可信累计成交、最终成交确认及全部腿权威仓位快照。未知订单状态必须冻结，不自动重发；在完整确认前不能进入下一风险增加阶段。
+
+`engine/strategies/basket_journal_store.py` 现提供明确的研究态文件存储：
+
+- `BasketJournalStore(private_directory).save(basket_id, checkpoint, expected_revision=...)`：比较并交换式写入，初次保存需 `expected_revision=None`；同内容重复提交幂等，不同内容的旧 revision 明确报冲突。
+- `load(basket_id, plan)`：校验内容哈希、计划指纹和完整事件回放；重启后待确认阶段仍为待确认，冻结状态不会自行恢复。
+- 跨进程 POSIX 文件锁、同目录临时文件 + `os.replace`、文件及目录 `fsync`；记录和目录仅允许当前用户访问，拒绝符号链接和不规范的 basket_id。
+
+调用者必须在任何可能引发外部副作用的行为**之前**提交 begin 阶段持久化，并基于 Engine/交易所权威订单与仓位证据推进状态。这里不包含任何执行器、网络接口或真实订单适配器。SHA-256 revision 只能发现意外损坏或并发版本冲突，**不能**防止已获得同 UID 文件写权限的恶意进程伪造历史；研究 Worker 仍非强安全沙箱。落盘后仍需外部备份与恢复演练，不等于具有完整事务语义的正式资金订单账本。
+
 ## 阶段级毛名义风险预算（Research-only）
 
 规划器不仅校验目标总名义金额，也校验**已有仓位**和每个阶段内可能出现的最大临时敞口。各腿按已验证的价格和合约乘数计量；同一阶段即使允许多腿目标，也不能假设交易所跨产品原子成交，因此对任意腿间先后次序取保守上界。超过预算则拒绝新增风险，不允许依赖净额抵消掩盖实际资金占用。如果已有仓位因行情变动等原因超出预算，只允许逐阶段严格、单调降低毛名义敞口的退出计划，不能阻断纯减险平仓。
@@ -74,14 +86,13 @@ Engine 增加特殊的已下发 `demo_funding_carry` 策略组合研究入口：
 
 ## 尚未实现的关键条件
 
-- 真实的多腿 `publish_basket`、`subscribe_market_bundle`、独立现金/保证金与资金费/期权权利金/到期模拟。
-- 多产品 Catalog 已具备双市场 1m/5m 严格时间对齐输入，但尚无撮合、独立账户、资金费结算与统一权益曲线；目前两个跨产品 Demo **仍不可实际回测**。
-- 多腿成交状态机、持久幂等、部分成交和超时结果未知的冻结恢复；真实交易所跨产品并不存在跨账户原子成交保证。
-- 真实行情合约的期权到期日、卖盘深度、报价和乘数核验、价格滑点/费用/保证金门禁，以及订单/资金对账。
-- Platform 的授权、开发与正式环境区分、AI 研究工具入口及任何真实资金权限。
+- 通用策略包 `publish_basket` / `subscribe_market_bundle` 协议及跨任意策略的统一 Engine 运行时。现有 Funding Carry 与保护期权回测是**特化研究入口**，并非通用策略实盘接口。
+- 真实多腿下单/撤单、状态机与交易所回报的持久连接、价格与资金重新验证、部分成交补偿、未知状态对账，以及真实资金权限。研究态阶段账本**不得**直接接入生产订单发送。
+- 期权到期行权/交割结算、市场冲击与真实部分成交的可靠模型，长期历史 QuoteTick 覆盖和经过验证的资金费归因。
+- 跨环境多版本恢复演练、真实账户沙盒测试、长期运行故障注入与生产独立审批。
 
 ## 验证
 
-单元测试：`uv run pytest -q tests/engine/basket_targets_test.py tests/engine/basket_history_test.py`。
+单元测试：`uv run pytest -q tests/engine/basket_targets_test.py tests/engine/basket_history_test.py tests/engine/basket_reconciliation_test.py tests/engine/basket_journal_store_test.py`。
 
 测试覆盖同一腿跨成员净额、跨产品保留独立腿、先保护后开仓、退出先减险、预算、步长、当前仓位缺失、偏差以及期权覆盖与到期标识。尚不构成多市场回测或生产验收。
