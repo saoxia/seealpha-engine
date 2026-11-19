@@ -356,7 +356,7 @@ class BinanceOptionsDataClient(MarketDataClient):
             await self._unsubscribe_stream(f"{str(item.raw_symbol).lower()}@kline_{period}")
 
 
-async def market_events(symbol, intervals, *, trades=False, depth=False):
+async def market_events(symbol, intervals, *, trades=False, depth=False, quotes=False):
     """Public data-only native node stream for the managed collector.
 
     Native objects stay on this event loop. A bounded callback queue fails
@@ -393,6 +393,8 @@ async def market_events(symbol, intervals, *, trades=False, depth=False):
             identifier = InstrumentId.from_str(f"{symbol}.BINANCE")
             if trades:
                 self.subscribe_trades(identifier, client_id=client_id)
+            if quotes:
+                self.subscribe_quotes(identifier, client_id=client_id)
             if depth:
                 # A depth-only subscription lets RC9 DataEngine own the cached L2 book.
                 self.subscribe_book_depth(
@@ -405,6 +407,16 @@ async def market_events(symbol, intervals, *, trades=False, depth=False):
             self.emit({"level": "tick", "row": {"symbol": symbol, "id": int(str(value.trade_id)),
                        "time": value.ts_event // 1000000, "price": str(value.price), "qty": str(value.size),
                        "side": 1 if str(value.aggressor_side) == "BUY" else -1}})
+
+        def on_quote(self, value):
+            self.emit({
+                "level": "quote", "row": {
+                    "s": symbol, "T": value.ts_event // 1_000_000,
+                    "b": str(value.bid_price), "a": str(value.ask_price),
+                    "B": str(value.bid_size), "A": str(value.ask_size),
+                    "received_ns": value.ts_init,
+                },
+            })
 
         def on_book_depth(self, value):
             # Do not mirror the book in Python; DataEngine updates the managed Cache.
@@ -442,7 +454,7 @@ async def market_events(symbol, intervals, *, trades=False, depth=False):
             if value is not None:
                 yield value
             states = clients[0].stream_status if clients else {}
-            expected = len(intervals) + int(trades) + int(depth)
+            expected = len(intervals) + int(trades) + int(depth) + int(quotes)
             connected = len(states) == expected and all(state["connected"] for state in states.values())
             failed = any(state["last_error"] and not state["connected"] for state in states.values())
             if monotonic() - last_status >= 1 or failed:
@@ -463,7 +475,7 @@ async def market_events(symbol, intervals, *, trades=False, depth=False):
         node.dispose()
 
 
-async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth=False):
+async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth=False, quotes=False):
     """Combined streams, at most 64 contracts per socket group, with live updates.
 
     Native parsing and contract units are shared with the DataClient. The optional
@@ -495,7 +507,7 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
             active = []
             try:
                 items, wanted_ticks = selection(members)
-                active = list(items) if market else [symbol for symbol in items if depth or symbol in wanted_ticks]
+                active = list(items) if market else [symbol for symbol in items if depth or quotes or symbol in wanted_ticks]
                 if not active:
                     await asyncio.sleep(1)
                     continue
@@ -505,12 +517,12 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                     request_id, last_status, last_scope = 0, 0, None
                     while True:
                         items, wanted_ticks = selection(members)
-                        active = list(items) if market else [symbol for symbol in items if depth or symbol in wanted_ticks]
+                        active = list(items) if market else [symbol for symbol in items if depth or quotes or symbol in wanted_ticks]
                         desired = {}
                         for symbol in active:
-                            levels = PERIODS if market else (("tick",) if symbol in wanted_ticks else ()) + (("depth",) if depth else ())
+                            levels = PERIODS if market else (("tick",) if symbol in wanted_ticks else ()) + (("depth",) if depth else ()) + (("quote",) if quotes else ())
                             for level in levels:
-                                suffix = f"kline_{level}" if market else "optionTrade" if level == "tick" else "depth10@100ms"
+                                suffix = f"kline_{level}" if market else "optionTrade" if level == "tick" else "depth10@100ms" if level == "depth" else "bookTicker"
                                 desired[f"{symbol.lower()}@{suffix}"] = (symbol, level)
                         signature = tuple(sorted(desired))
                         if signature != last_scope:
@@ -551,6 +563,7 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                                 if name is None:
                                     name = (f"{row['s'].lower()}@optionTrade" if row.get("e") == "trade" else
                                             f"{row['s'].lower()}@depth10@100ms" if row.get("e") == "depthUpdate" else
+                                            f"{row['s'].lower()}@bookTicker" if "b" in row and "a" in row else
                                             f"{row['s'].lower()}@kline_{row['k']['i']}")
                                 if name in retired:
                                     continue  # Already unsubscribed, with explicitly identified in-flight data.
@@ -562,8 +575,15 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                                     received = time.time_ns()
                                     value = parsing.depth(item, row, 10, received)
                                     payload = {**row, "received_ns": received}
+                                elif level == "quote":
+                                    received = time.time_ns()
+                                    value = parsing.quote(item, row, received)
+                                    payload = {**row, "received_ns": received}
                                 else:
-                                    value, payload = (parsing.bar_event(item, level, row) if market else parsing.trade_event(item, row))
+                                    value, payload = (
+                                        parsing.bar_event(item, level, row)
+                                        if market else parsing.trade_event(item, row)
+                                    )
                                 if value is not None:
                                     if value.ts_event > time.time_ns() + 5_000_000_000 or value.ts_event > item.expiration_ns:
                                         raise ValueError("期权实时事件时间超前或超过到期日")
@@ -574,10 +594,13 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                                 await output.put({"level": "transport", "symbol": symbol, "channel": channel,
                                                   "connected": expected <= confirmed})
                             last_status, delay = monotonic(), 1
-            except (ConnectionClosed, ConnectionError, OSError, TimeoutError, ValueError, KeyError, TypeError):
+            except (ConnectionClosed, ConnectionError, OSError, TimeoutError, ValueError, KeyError, TypeError) as exc:
                 for symbol in active:
-                    await output.put({"level": "transport", "symbol": symbol, "channel": channel,
-                                      "connected": False, "gap": True})
+                    await output.put({
+                        "level": "transport", "symbol": symbol, "channel": channel,
+                        "connected": False, "gap": True,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30)
 
@@ -586,7 +609,7 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
     for offset in range(0, len(symbols), 64):
         members = symbols[offset:offset + 64]
         tasks.append(asyncio.create_task(receive(members, market=True)))
-        if depth or scope is not None or any(symbol in ticks for symbol in members):
+        if depth or quotes or scope is not None or any(symbol in ticks for symbol in members):
             tasks.append(asyncio.create_task(receive(members, market=False)))
     try:
         while True:
@@ -605,7 +628,10 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                 gaps[symbol] = gaps.get(symbol, 0) + int(event.get("gap", False))
                 current_ticks = ticks if scope is None else selection(symbols)[1]
                 connected = channel_state.get("bars", False) and (not depth and symbol not in current_ticks or channel_state.get("trades", False))
-                yield {"level": "status", "symbol": symbol, "connected": connected, "gap_count": gaps[symbol]}
+                yield {
+                    "level": "status", "symbol": symbol, "connected": connected,
+                    "gap_count": gaps[symbol], "last_error": event.get("error"),
+                }
             else:
                 yield event
     finally:

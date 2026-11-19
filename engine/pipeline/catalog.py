@@ -88,7 +88,7 @@ class ParquetDataCatalog:
         self.native = NativeCatalog(self.path, **kwargs)
 
     def _make_path(self, data_cls, identifier=None):
-        name = {Bar: "bars", TradeTick: "trades"}.get(data_cls)
+        name = {Bar: "bars", TradeTick: "trades", QuoteTick: "quotes"}.get(data_cls)
         if name is None:
             if identifier is None:
                 return str(Path(self.path) / "features")
@@ -183,7 +183,11 @@ class ParquetDataCatalog:
         )
 
     def get_intervals(self, data_cls, identifier=None):
-        data_type = {Bar: NautilusDataType.Bar, TradeTick: NautilusDataType.TradeTick}[data_cls]
+        data_type = {
+            Bar: NautilusDataType.Bar,
+            TradeTick: NautilusDataType.TradeTick,
+            QuoteTick: NautilusDataType.QuoteTick,
+        }[data_cls]
         return self.native.get_intervals(data_type, identifier)
 
     def bar_batches(self, bar_type, start, end, batch_size=50_000):
@@ -203,7 +207,11 @@ class ParquetDataCatalog:
                 yield wrangler.process_record_batch_bytes(_ipc(batch.slice(offset, batch_size)))
 
     def delete_data_range(self, data_cls, identifier=None, start=None, end=None):
-        data_type = {Bar: NautilusDataType.Bar, TradeTick: NautilusDataType.TradeTick}[data_cls]
+        data_type = {
+            Bar: NautilusDataType.Bar,
+            TradeTick: NautilusDataType.TradeTick,
+            QuoteTick: NautilusDataType.QuoteTick,
+        }[data_cls]
         return self.native.delete_data_range(data_type, identifier, _nanos(start), _nanos(end))
 
     def supplement_catalog(self, instrument_id):

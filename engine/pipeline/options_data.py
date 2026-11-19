@@ -18,6 +18,7 @@ from pathlib import Path
 from nautilus_trader.model import (
     Bar,
     CryptoOption,
+    QuoteTick,
     TradeTick,
 )
 
@@ -30,6 +31,7 @@ from core.market.instruments import (
 from engine.connectors.binance import options
 from engine.connectors.binance.options_parsing import bar as parse_bar
 from engine.connectors.binance.options_parsing import depth as parse_depth
+from engine.connectors.binance.options_parsing import quote as parse_quote
 from engine.connectors.binance.options_parsing import trade as parse_trade
 from engine.connectors.binance.queries import QueryError
 from engine.pipeline.catalog import ParquetDataCatalog
@@ -80,7 +82,7 @@ def source_paths(request, settings, *, include_pending=False):
     day, last = request.start.date(), (request.end - timedelta(microseconds=1)).date()
     result = []
     while day <= last:
-        for level in ("tick", "depth", *PERIODS):
+        for level in ("tick", "depth", "quote", *PERIODS):
             folder = _safe(settings.raw_dir, root / level / day.isoformat())
             if folder.exists():
                 for path in folder.iterdir():
@@ -99,8 +101,12 @@ def source_paths(request, settings, *, include_pending=False):
 def _decode(snapshot):
     instrument = CryptoOption.from_dict(snapshot["instrument"])
     symbol, level = str(instrument.raw_symbol), snapshot["level"]
-    sources = {"tick": ("eapi/v1/trades", "ws/optionTrade"), "depth": ("ws/depth",)}
-    if (snapshot["product"] != "options" or level not in ("tick", "depth", *PERIODS)
+    sources = {
+        "tick": ("eapi/v1/trades", "ws/optionTrade"),
+        "depth": ("ws/depth",),
+        "quote": ("ws/bookTicker",),
+    }
+    if (snapshot["product"] != "options" or level not in ("tick", "depth", "quote", *PERIODS)
             or str(instrument.id) != instrument_id_for(symbol, "options")
             or snapshot["source"] not in sources.get(level, ("eapi/v1/klines", "ws/kline"))):
         raise ValueError("无效的期权来源类型")
@@ -121,6 +127,29 @@ def _decode(snapshot):
             key = f"{item.ts_event}:{item.sequence}"
             record = {"ts_event_ns": str(item.ts_event), "sequence": item.sequence,
                       "bids": row["b"], "asks": row["a"]}
+        elif level == "quote":
+            if (
+                type(row.get("received_ns")) is not int
+                or not 0 <= row["received_ns"] < 2**64
+                or row.get("s") != symbol
+                or type(row.get("T")) is not int
+            ):
+                raise ValueError("期权买卖盘来源时间与合约身份无效")
+            item = parse_quote(instrument, row, row["received_ns"])
+            if (
+                not first * 1_000_000 <= item.ts_event < last * 1_000_000
+                or item.ts_event > instrument.expiration_ns
+                or item.ask_price.as_decimal() <= 0
+                or item.ask_size.as_decimal() <= 0
+                or item.bid_price > item.ask_price
+            ):
+                raise ValueError("期权盘口报价无效或超过到期边界")
+            key = str(item.ts_event)
+            record = {
+                "ts_event_ns": key,
+                "bid_price": str(item.bid_price), "ask_price": str(item.ask_price),
+                "bid_size": str(item.bid_size), "ask_size": str(item.ask_size),
+            }
         elif level == "tick":
             if row.get("symbol", symbol) != symbol or type(row["time"]) is not int:
                 raise ValueError("期权成交合约或时间不一致")
@@ -237,7 +266,25 @@ def _install(path, settings, device, *, merge=False):
     if level == "depth":
         # Depth history is the immutable raw snapshot; there is no derived Bar/Tick.
         return 0
-    existing = _existing(settings, instrument, level, snapshot["start_ms"], snapshot["end_ms"])
+    if level == "quote":
+        rows = catalog.quote_ticks(
+            instrument_ids=[str(instrument.id)],
+            start=snapshot["start_ms"] * 1_000_000,
+            end=snapshot["end_ms"] * 1_000_000 - 1,
+        )
+        existing = {}
+        for quote in rows:
+            key = str(quote.ts_event)
+            record = {
+                "ts_event_ns": key,
+                "bid_price": str(quote.bid_price), "ask_price": str(quote.ask_price),
+                "bid_size": str(quote.bid_size), "ask_size": str(quote.ask_size),
+            }
+            if key in existing and existing[key] != record:
+                raise ValueError("期权原生历史报价存在同时间戳冲突")
+            existing[key] = record
+    else:
+        existing = _existing(settings, instrument, level, snapshot["start_ms"], snapshot["end_ms"])
     missing = []
     for item, record in values:
         key = record["trade_id" if level == "tick" else "ts_event_ns"]
@@ -247,8 +294,14 @@ def _install(path, settings, device, *, merge=False):
             missing.append(item)
     if not missing:
         return 0
-    identifier = str(instrument.id) if level == "tick" else bar_type_for(str(instrument.raw_symbol), level, "options")
-    ranges = catalog.get_intervals(TradeTick if level == "tick" else Bar, identifier)
+    identifier = (
+        str(instrument.id) if level in {"tick", "quote"}
+        else bar_type_for(str(instrument.raw_symbol), level, "options")
+    )
+    ranges = catalog.get_intervals(
+        TradeTick if level == "tick" else QuoteTick if level == "quote" else Bar,
+        identifier,
+    )
     if merge:
         return _merge_missing(catalog, settings, instrument, level, missing, device)
     if level == "tick" and ranges and missing[0].ts_event <= max(right for _left, right in ranges):
@@ -258,7 +311,7 @@ def _install(path, settings, device, *, merge=False):
     with tempfile.TemporaryDirectory(prefix=".options-stage-", dir=settings.catalog_dir.parent) as stage:
         staged = ParquetDataCatalog(stage)
         staged.write_data(missing)
-        kind = "trades" if level == "tick" else "bars"
+        kind = "trades" if level == "tick" else "quotes" if level == "quote" else "bars"
         relative = Path("data") / kind / identifier
         target = _safe(settings.catalog_dir, settings.catalog_dir / relative)
         target.mkdir(parents=True, exist_ok=True)
@@ -482,8 +535,8 @@ def _merge_missing(catalog, settings, instrument, level, missing, device):
     """Fill holes with atomic single-file replacement, preserving known records."""
     from engine.pipeline.catalog import _parse_filename_timestamps
 
-    identifier = str(instrument.id) if level == "tick" else bar_type_for(str(instrument.raw_symbol), level, "options")
-    kind = "trades" if level == "tick" else "bars"
+    identifier = str(instrument.id) if level in {"tick", "quote"} else bar_type_for(str(instrument.raw_symbol), level, "options")
+    kind = "trades" if level == "tick" else "quotes" if level == "quote" else "bars"
     folder = _safe(settings.catalog_dir, settings.catalog_dir / "data" / kind / identifier)
     folder.mkdir(parents=True, exist_ok=True)
     remaining = list(missing)
@@ -498,8 +551,13 @@ def _merge_missing(catalog, settings, instrument, level, missing, device):
         boundaries.append((left, right))
         if not additions:
             continue
-        original = (catalog.trade_ticks(instrument_ids=[identifier], start=left, end=right) if level == "tick" else
-                    catalog.bars(bar_types=[identifier], start=left, end=right))
+        original = (
+            catalog.trade_ticks(instrument_ids=[identifier], start=left, end=right)
+            if level == "tick"
+            else catalog.quote_ticks(instrument_ids=[identifier], start=left, end=right)
+            if level == "quote"
+            else catalog.bars(bar_types=[identifier], start=left, end=right)
+        )
         merged = sorted([*original, *additions], key=lambda value: (value.ts_event, int(str(value.trade_id)) if level == "tick" else 0))
         with tempfile.TemporaryDirectory(prefix=".options-stage-", dir=settings.catalog_dir.parent) as stage:
             ParquetDataCatalog(stage).write_data(merged)
@@ -545,15 +603,18 @@ def persist_live(symbol, events, settings, *, recover=False, definition=None):
         now = int(datetime.now(UTC).timestamp() * 1000)
         for event in events:
             level, row = event["level"], event["row"]
-            stamp = row["time"] if level == "tick" else row["T"] if level == "depth" else row[0]
-            closed = stamp if level in {"tick", "depth"} else row[6] + 1
+            stamp = row["time"] if level == "tick" else row["T"] if level in {"depth", "quote"} else row[0]
+            closed = stamp if level in {"tick", "depth", "quote"} else row[6] + 1
             if type(stamp) is not int or closed > now or closed * 1000000 > instrument.expiration_ns:
                 raise ValueError("期权实时来源未闭合、时间超前或超过到期边界")
             day = stamp // 86400000 * 86400000
             groups.setdefault((level, day), []).append(row)
         for (level, day), rows in sorted(groups.items()):
             snapshot = {"product": "options", "level": level, "start_ms": day, "end_ms": day + 86400000,
-                        "fetched_ms": now, "source": {"tick": "ws/optionTrade", "depth": "ws/depth"}.get(level, "ws/kline"),
+                        "fetched_ms": now, "source": {
+                            "tick": "ws/optionTrade", "depth": "ws/depth",
+                            "quote": "ws/bookTicker",
+                        }.get(level, "ws/kline"),
                         "instrument": instrument.to_dict(), "payload": rows}
             path, _count = _save(snapshot, settings, device)
             written += _install(path, settings, device, merge=True)

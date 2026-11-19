@@ -36,7 +36,8 @@ async def serve_options(policy, root, catalog, *, stream_factory=None, definitio
                      "valid_until_ms": now + 5000, "reason": reason or error or ("repair_pending" if repair_task is not None else "collecting_options"),
                      "symbols": {policy["symbol"]: {"last_websocket_ms": last_update, "last_update_ms": last_update}},
                      "backlog": len(pending), "last_error": error, "gap_count": gaps,
-                     "historical_tick_complete": False, "allow_new_risk": False, "expiry_ms": expiry})
+                     "historical_tick_complete": False, "historical_quote_complete": False,
+                     "allow_new_risk": False, "expiry_ms": expiry})
 
     def save_checkpoint():
         temporary = checkpoint.with_suffix(".json.tmp")
@@ -66,7 +67,13 @@ async def serve_options(policy, root, catalog, *, stream_factory=None, definitio
         metadata = await persist(recover=True)
         expiry = metadata["expiry_ms"]
         while int(time.time() * 1000) < expiry:
-            stream = (stream_factory or market_events)(policy["symbol"], ["1m", "5m", "15m"], trades=True, depth=True)
+            stream = (
+                stream_factory(policy["symbol"], ["1m", "5m", "15m"], trades=True, depth=True)
+                if stream_factory is not None else market_events(
+                    policy["symbol"], ["1m", "5m", "15m"],
+                    trades=True, depth=True, quotes=True,
+                )
+            )
             repaired = False
             try:
                 async for event in stream:
@@ -240,7 +247,7 @@ async def serve_batch(manifest, managed_root, catalog, *, project=None):
 
     async def receive(scope):
         items, ticks = scope["selection"]
-        stream = batch_market_events(items, tick_symbols=ticks, scope=scope, depth=True)
+        stream = batch_market_events(items, tick_symbols=ticks, scope=scope, depth=True, quotes=True)
         try:
             async for event in stream:
                 job = jobs.get(event["symbol"])

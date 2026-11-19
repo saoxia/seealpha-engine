@@ -14,6 +14,7 @@ from nautilus_trader.core import UUID4
 from nautilus_trader.live import LiveNode
 from nautilus_trader.model import BarType, BookType, InstrumentId, TraderId
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
 
 from engine.connectors.binance import options, options_client, options_parsing
 from engine.connectors.binance.options_client import (
@@ -374,6 +375,11 @@ def test_managed_market_events_use_native_public_subscriptions(monkeypatch):
             if "@optionTrade" in stream:
                 await socket.send(json.dumps({"e": "trade", "T": BASE, "s": SYMBOL, "t": 8,
                                               "p": "1000", "q": "0.1", "m": False, "X": "MARKET"}))
+            elif "@bookTicker" in stream:
+                await socket.send(json.dumps({
+                    "s": SYMBOL, "T": BASE, "b": "1000", "a": "1100",
+                    "B": "0.10", "A": "0.20",
+                }))
             elif "@depth" in stream:
                 await socket.send(json.dumps({"e": "depthUpdate", "T": BASE, "s": SYMBOL, "u": 9,
                                               "b": [["1000", "0.1"]], "a": [["1100", "0.2"]]}))
@@ -386,21 +392,26 @@ def test_managed_market_events_use_native_public_subscriptions(monkeypatch):
             address = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
             monkeypatch.setattr(options_client, "PUBLIC_WS", address)
             monkeypatch.setattr(options_client, "MARKET_WS", address)
-            stream = options_client.market_events(SYMBOL, ["1m"], trades=True, depth=True)
+            stream = options_client.market_events(SYMBOL, ["1m"], trades=True, depth=True, quotes=True)
             records = []
             try:
                 async with asyncio.timeout(10):
                     async for event in stream:
                         if event["level"] != "status":
                             records.append(event)
-                        if len(records) == 3:
+                        if len(records) == 4:
                             break
             finally:
                 await stream.aclose()
-            assert set(subscribed) == {SYMBOL.lower() + suffix for suffix in ("@optionTrade", "@kline_1m", "@depth10@100ms")}
-            assert {row["level"] for row in records} == {"tick", "1m", "depth"}
+            assert set(subscribed) == {SYMBOL.lower() + suffix for suffix in ("@optionTrade", "@kline_1m", "@depth10@100ms", "@bookTicker")}
+            assert {row["level"] for row in records} == {"tick", "1m", "depth", "quote"}
             assert next(row["row"] for row in records if row["level"] == "tick")["id"] == 8
             assert next(row["row"] for row in records if row["level"] == "depth")["b"] == [["1000.000", "0.10"]]
+            quote = next(row["row"] for row in records if row["level"] == "quote")
+            assert quote["T"] == BASE
+            assert quote["a"] == "1100.000"
+            assert quote["A"] == "0.20"
+            assert quote["received_ns"] > 0
     asyncio.run(scenario())
     gc.collect()
 
@@ -531,4 +542,50 @@ def test_batch_depth_and_tick_share_public_socket_and_preserve_evidence(monkeypa
             assert records["depth"]["b"] == [["1000.000", "0.10"]]
             assert records["depth"]["received_ns"] > BASE * 1000000
             assert records["tick"]["id"] == 8
+    asyncio.run(scenario())
+
+def test_batch_market_events_forward_option_book_ticker_with_source_timestamp(monkeypatch):
+    async def scenario():
+        item = model(monkeypatch)
+        subscribed = []
+
+        async def handler(socket):
+            while True:
+                try:
+                    message = json.loads(await socket.recv())
+                except ConnectionClosed:
+                    return
+                names = message["params"]
+                subscribed.extend(names)
+                await socket.send(json.dumps({"result": None, "id": message["id"]}))
+                if any("@bookTicker" in name for name in names):
+                    await socket.send(json.dumps({
+                        "s": SYMBOL, "T": BASE, "b": "1000", "a": "1100",
+                        "B": "0.10", "A": "0.20",
+                    }))
+                await socket.wait_closed()
+                return
+
+        async with serve(handler, "127.0.0.1", 0) as server:
+            address = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+            monkeypatch.setattr(options_client, "PUBLIC_WS", address)
+            monkeypatch.setattr(options_client, "MARKET_WS", address)
+            stream = options_client.batch_market_events([item], quotes=True)
+            try:
+                async with asyncio.timeout(10):
+                    async for event in stream:
+                        if event.get("level") == "status" and event.get("last_error"):
+                            raise AssertionError(
+                                f"期权报价流未成功解析: {event['last_error']}; subscribed={subscribed}"
+                            )
+                        if event.get("level") == "quote":
+                            assert event["symbol"] == SYMBOL
+                            assert event["row"]["T"] == BASE
+                            assert event["row"]["A"] == "0.20"
+                            assert event["row"]["received_ns"] > 0
+                            break
+            finally:
+                await stream.aclose()
+            assert f"{SYMBOL.lower()}@bookTicker" in subscribed
+
     asyncio.run(scenario())
