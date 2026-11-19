@@ -27,12 +27,11 @@ from nautilus_trader.trading import Strategy
 
 from engine.runtime import EngineConflict
 from engine.strategies.backtest_engine import backtest_engine_config
+from engine.strategies.basket_research_session import BasketResearchSession
 from engine.strategies.basket_targets import (
     BasketPlanError,
     LegEvidence,
     LegId,
-    MemberLegTarget,
-    plan_basket,
 )
 from engine.strategies.carry_simulation import (
     _balance,
@@ -229,11 +228,12 @@ class _NativeProtectedCoordinator(Strategy):
             self.perp.id: now,
         }
         try:
-            plan = plan_basket(
-                [MemberLegTarget(self.member_id, leg, quantity)
-                 for leg, quantity in desired.items()],
-                dict(self.ledger),
-                {leg: LegEvidence(
+            session = BasketResearchSession(
+                tenant_id=next(iter(self.ledger)).tenant_id,
+                account_id=next(iter(self.ledger)).account_id,
+                policy="option_protected",
+                positions=dict(self.ledger),
+                evidence={leg: LegEvidence(
                     quote_price[instrument.id],
                     instrument.size_increment.as_decimal(),
                     instrument.multiplier.as_decimal()
@@ -243,8 +243,22 @@ class _NativeProtectedCoordinator(Strategy):
                 now_ns=now,
                 max_age_ns=int(self.params["max_age_seconds"]) * 1_000_000_000,
                 max_gross_notional=self.max_gross_notional,
-                policy="option_protected",
             )
+            publisher = session.member(self.member_id)
+            publisher.subscribe_market_bundle(
+                symbol=self.params["symbol"],
+                products=("futures_um", "options"),
+                option_symbols=(self.params["put_symbol"], self.params["call_symbol"]),
+                data=("closed_bars", "option_quotes", "option_instruments", "positions"),
+            )
+            publisher.publish_basket(
+                targets=targets,
+                constraints={"hedges_filled_before_risk": True,
+                             "atomic_reconciliation": True},
+            )
+            plan = session.plan().plan
+            if dict(plan.targets) != desired:
+                raise BasketPlanError("期权研究成员目标和模拟账本不一致")
         except BasketPlanError as exc:
             self.failed.append(str(exc))
             return
