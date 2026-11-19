@@ -129,8 +129,11 @@ class BasketResearchSession:
     ) -> None:
         if self._decision is not None or member_id in self._intents:
             raise BasketPlanError("组合已经形成目标，不能更改历史订阅")
-        if not isinstance(symbol, str) or not isinstance(products, tuple) or (
-            not isinstance(data, tuple) or not isinstance(option_symbols, tuple)
+        if (
+            (self.policy != "generic_research" and not isinstance(symbol, str))
+            or (self.policy == "generic_research" and symbol is not None)
+            or not isinstance(products, tuple) or not isinstance(data, tuple)
+            or not isinstance(option_symbols, tuple)
         ):
             raise BasketPlanError("历史订阅协议无效")
         if (
