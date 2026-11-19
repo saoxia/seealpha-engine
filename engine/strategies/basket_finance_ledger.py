@@ -324,10 +324,10 @@ class BasketFinanceLedger:
         before = self._state()
         try:
             positions = {item.leg: self.positions[item.leg] for item in contracts}
-            active_perp = sum((
-                self.positions[leg] for leg in self.positions
+            active_perp = max((
+                abs(self.positions[leg]) for leg in self.positions
                 if leg.product == "futures_um"
-            ), Decimal(0))
+            ), default=Decimal(0))
             report = reconcile_verified_option_expiry(
                 contracts, positions, records,
                 perpetual_position_at_expiry=active_perp,
