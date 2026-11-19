@@ -126,8 +126,12 @@ def observe_basket_phase(
         reason = "组合当前毛名义风险超过预算"
 
     if reason:
+        if checkpoint.status == "completed":
+            # A completed historical journal is immutable. Reject external
+            # discrepancies instead of returning an impossible frozen state.
+            raise BasketReconciliationError("已完成组合出现新的风险或仓位异常：" + reason)
         frozen = (
-            checkpoint if checkpoint.status in {"frozen", "completed"}
+            checkpoint if checkpoint.status == "frozen"
             else freeze_checkpoint(checkpoint, reason)
         )
         return BasketRiskObservation("frozen", gross, drift, reason, frozen)
