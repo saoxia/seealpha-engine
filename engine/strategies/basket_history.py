@@ -24,7 +24,8 @@ class CarryHistoryEvent:
     funding: FundingRateUpdate | None = None
 
 
-def align_carry_bars(spot_batches, perpetual_batches, *, symbol, interval):
+def align_carry_bars(spot_batches, perpetual_batches, *, symbol, interval,
+                     start_ns=None, end_ns=None):
     """Align two bounded, already ordered native Bar streams without forward fills.
 
     Both products must have the same *closed-bar event timestamps*. Missing bars,
@@ -109,6 +110,7 @@ def iter_carry_history(catalog_dir, symbol, interval, start, end, *, require_fun
     )
     bars = align_carry_bars(
         spot_batches, perp_batches, symbol=symbol, interval=interval,
+        start_ns=start_ns, end_ns=end_ns,
     )
     cursor = iter(funding)
     next_rate = next(cursor, None)

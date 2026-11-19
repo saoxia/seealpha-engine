@@ -92,6 +92,22 @@ def test_rejects_time_gaps_even_when_two_products_have_matching_gaps(tmp_path):
         ))
 
 
+
+def test_rejects_incomplete_history_window_edges(tmp_path):
+    start, spot, futures = _dataset(tmp_path)
+    first_ns = futures[0].ts_event - 60_000_000_000
+    end_ns = futures[-1].ts_event + 60_000_000_000
+    with pytest.raises(EngineConflict, match="开头"):
+        list(align_carry_bars(
+            [spot[1:]], [futures[1:]], symbol="ETHUSDT", interval="1m",
+            start_ns=first_ns, end_ns=end_ns,
+        ))
+    with pytest.raises(EngineConflict, match="末尾"):
+        list(align_carry_bars(
+            [spot[:-1]], [futures[:-1]], symbol="ETHUSDT", interval="1m",
+            start_ns=first_ns, end_ns=end_ns,
+        ))
+
 def test_rejects_one_product_missing_bar_and_does_not_forward_fill(tmp_path):
     start, _spot, _futures = _dataset(tmp_path, omit_spot=5)
     runtime = EngineRuntime(tmp_path / "state", tmp_path)
