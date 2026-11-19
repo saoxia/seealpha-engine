@@ -5,11 +5,12 @@ import pytest
 
 from engine.strategies.basket_reconciliation import (
     BasketReconciliationError,
+    begin_phase,
     confirm_phase,
     freeze_checkpoint,
     record_cumulative_fill,
-    restore_checkpoint,
     checkpoint_to_record,
+    restore_checkpoint,
 )
 from engine.strategies.basket_research_session import BasketResearchSession
 from engine.strategies.basket_targets import BasketPlanError, LegEvidence, LegId
@@ -84,7 +85,7 @@ def test_missing_member_and_incomplete_evidence_fail_closed():
     _publish_carry(a, Decimal("0.1"))
     with pytest.raises(BasketPlanError, match="成员未发布"):
         session.plan()
-    with pytest.raises(BasketPlanError, match="全部"):
+    with pytest.raises(BasketPlanError, match="所有腿"):
         a.publish_basket(targets=[], request_id="bad")
     _publish_carry(b, Decimal("0.1"))
     assert session.plan().member_count == 2
