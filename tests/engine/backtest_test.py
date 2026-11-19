@@ -225,3 +225,36 @@ def test_engine_http_backtest_is_tenant_scoped(tmp_path):
         assert latest.json() == started.json()
         other = client.get("/tenants/prod/accounts/desk/backtests/latest", headers=headers)
         assert other.status_code == 404
+
+
+def test_restricted_ai_candidate_runs_real_nautilus_history_without_issuance(tmp_path):
+    """The stored candidate recipe uses the trusted Engine strategy and Catalog."""
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    write_crossover_catalog(tmp_path / "data" / "catalog", start)
+    runtime = EngineRuntime(tmp_path / "state", tmp_path)
+    try:
+        runtime.ensure_tenant("dev", "development")
+        _intent(runtime, "dev")
+        candidate = {
+            "candidate_id": "a" * 32,
+            "package_hash": "b" * 64,
+            "recipe": {
+                "kind": "ema_cross", "symbol": "ETHUSDT",
+                "fast_period": 2, "slow_period": 4,
+                "allocation": "1", "risk_limit": "1",
+            },
+        }
+        result = runtime.run_backtest(
+            "dev", "candidate-desk", **_window(start),
+            publish_event=False, candidate=candidate,
+        )
+        assert result["bar_count"] == len(CLOSES)
+        assert result["account_id"] == "candidate-desk"
+        assert result["starting_balance"] == "1000.50"
+        assert isinstance(result["holdings"], list)
+        assert result["member_ids"]
+        assert runtime.store.strategy_loads("dev", "candidate-desk") == []
+        assert runtime.latest_backtest("dev", "candidate-desk") is None
+    finally:
+        runtime.close()
+
