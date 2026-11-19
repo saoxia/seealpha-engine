@@ -173,9 +173,11 @@ def test_reject_out_of_order_overfill_conflict_and_wrong_scope():
         _fill(state, "p1", "f1", perp, "-0.3")
     with pytest.raises(BasketReconciliationError, match="不匹配"):
         _fill(state, "wrong", "f2", spot, "0.3")
+    fully_filled = _fill(state, "p1", "f2", spot, "0.3")
+    fully_filled = _fill(fully_filled, "p1", "f3", perp, "-0.3")
     with pytest.raises(BasketReconciliationError, match="权威仓位"):
         confirm_phase(
-            _fill(state, "p1", "f2", spot, "0.3"), request_id="p1",
+            fully_filled, request_id="p1",
             terminal_statuses={spot: "FILLED", perp: "FILLED"},
             observed_positions={spot: Decimal("0.3")},
         )
