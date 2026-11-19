@@ -6,7 +6,9 @@ import pytest
 from nautilus_trader.model import QuoteTick
 
 from engine.pipeline.catalog import ParquetDataCatalog
+from engine.strategies.basket_generic_backtest import run_generic_catalog_research
 from engine.strategies.basket_generic_history import read_generic_quote_history
+from engine.strategies.basket_generic_runtime import BasketMemberRegistration
 from engine.strategies.basket_targets import BasketPlanError, LegId
 from nautilus_support import TestInstrumentProvider
 from tests.engine.basket_history_test import _dataset, _range
@@ -100,3 +102,45 @@ def test_native_um_and_option_bbo_share_actual_bar_clock(tmp_path):
     assert len(options) == 2
     assert options[0].expiry_ns == options[1].expiry_ns
     assert all(contract.multiplier > 0 for contract in options)
+
+
+def test_native_catalog_one_call_generic_two_leg_backtest_with_financial_audit(tmp_path):
+    start, spots, futures = _dataset(tmp_path)
+    root = tmp_path / "data" / "catalog"
+    from tests.engine.spot_backtest_test import spot_instrument
+
+    catalog = ParquetDataCatalog(root)
+    perp = TestInstrumentProvider.ethusdt_perp_binance()
+    catalog.write_data([perp])
+    catalog.write_data(_ticks(spot_instrument(), spots))
+    catalog.write_data(_ticks(perp, futures))
+    spot_leg = LegId("dev", "account", "spot", "ETHUSDT")
+    perp_leg = LegId("dev", "account", "futures_um", "ETHUSDT")
+
+    class Model:
+        def on_market_bundle(self, member, bundle):
+            member.publish_basket(targets=[
+                {"product": leg.product, "symbol": leg.symbol,
+                 "quantity": "0.1" if leg.product == "spot" else "-0.1"}
+                for leg in bundle.member_legs
+            ])
+
+    a, b = _range(start)
+    report = run_generic_catalog_research(
+        root, tenant_id="dev", account_id="account",
+        members=(BasketMemberRegistration("carry-1", (spot_leg, perp_leg), Model()),),
+        clock_leg=perp_leg, start=a, end=b, interval="1m",
+        starting_cash={"spot": Decimal(10000), "futures_um": Decimal(10000)},
+        max_quote_age_ns=1000,
+        max_gross_notional=Decimal(1000),
+        expected_funding={},
+    )
+    assert report["status"] == "completed"
+    assert report["native_matching"] is False
+    assert report["bar_count"] == len(spots)
+    assert report["funding_schedule_verified"] is True
+    assert report["source"] == "native_parquet_bars_contracts_and_bbo"
+    assert len(report["fills"]) == 2
+    assert all(item["kind"] == "simulation_fill" for item in report["fills"])
+    assert report["phase_audits"]
+    assert Decimal(report["ending_balance"]) < Decimal(20000)
