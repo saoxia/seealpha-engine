@@ -11,12 +11,12 @@ from engine.connectors.binance.queries import QueryError
 
 ACCOUNT = {"id": 1, "environment": "sandbox",
            "credentials": {"apiKey": "fictional-key", "secret": "fictional-secret"}}
-VALID = dict(
-    account_revision="f" * 64, request_id="f819b521-1293-4ccb-a0e2-9b196e960101",
-    symbol="ETHUSDT-PERP", environment="sandbox", side="sell",
-    order_type="STOP_MARKET", quantity="0.010", trigger_price="1800",
-    expected_position_mode="oneway",
-)
+VALID = {
+    "account_revision": "f" * 64, "request_id": "f819b521-1293-4ccb-a0e2-9b196e960101",
+    "symbol": "ETHUSDT-PERP", "environment": "sandbox", "side": "sell",
+    "order_type": "STOP_MARKET", "quantity": "0.010", "trigger_price": "1800",
+    "expected_position_mode": "oneway",
+}
 POSITION = {"position_mode": "oneway",
             "positions": [{"position_side": "BOTH", "side": "long", "quantity": "0.020"}],
             "instrument": {"size_increment": "0.001", "min_quantity": "0.001",
