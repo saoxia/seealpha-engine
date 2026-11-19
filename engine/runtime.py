@@ -490,6 +490,39 @@ class EngineRuntime:
             self.store.add_event(tenant_id, account_id, "backtest", result)
         return result
 
+    def iter_funding_carry_history(self, tenant_id, symbol, start, end, interval):
+        """Research-only paired Catalog input; no matching, orders or settlement.
+
+        Caller must fully consume/close this iterator before releasing dataset
+        leases. No HTTP endpoint or production strategy runtime calls it.
+        """
+        from contextlib import ExitStack
+
+        from core.market.instruments import normalize_symbol
+        from engine.data_queries import read_lease
+        from engine.strategies.backtest import catalog_directory, parse_window
+        from engine.strategies.basket_history import iter_carry_history
+
+        self.assert_runnable(tenant_id, "backtest")
+        if self.store.tenant(tenant_id)["purpose"] != "development":
+            raise EngineConflict("组合历史仅允许开发租户读取。")
+        symbol = normalize_symbol(symbol, "futures_um")
+        start_at, end_at, interval = parse_window(start, end, interval)
+        if not all(
+            self._has_subscription_intent(tenant_id, symbol, product)
+            for product in ("futures_um", "spot")
+        ):
+            raise EngineConflict("开发租户必须同时声明现货和永续历史订阅。")
+        if not (self.project / "data").is_dir():
+            raise EngineConflict("租户历史数据目录不可用。")
+        # Deterministic lock order avoids deadlocks with other multi-product readers.
+        with ExitStack() as leases:
+            for product in ("futures_um", "spot"):
+                leases.enter_context(read_lease(self.project, symbol, product))
+            yield from iter_carry_history(
+                catalog_directory(self.project), symbol, interval, start_at, end_at,
+            )
+
     def latest_backtest(self, tenant_id, account_id):
         if self.store.tenant(tenant_id) is None:
             raise EngineConflict("租户不存在。")
