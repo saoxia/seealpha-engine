@@ -92,6 +92,15 @@ Engine 增加特殊的已下发 `demo_funding_carry` 策略组合研究入口：
 
 生产状态下的实际紧急退出策略、独立的减仓 API、已挂单处置、权威仓位恢复和断网报警仍需单独实现、实测及明确授权。
 
+## 通用多策略研究意图发布协议（A/D 基础）
+
+`engine/strategies/basket_research_session.py` 新增 `BasketResearchSession`：
+同一个开发研究快照内，多个成员以其真实发行标识登记 `member()`，使用与两个 Demo 一致的 `subscribe_market_bundle` / `publish_basket` **参数语言**，分别提交当前租户、账户和产品合约绑定的完整目标。缺少任何成员目标、缺少报价/实际仓位、跨账户/产品、重复腿、不安全约束、过期行情或不相容的保护覆盖将直接拒绝。相同成员和历史时间戳下未提供请求号时产生稳定的**研究意图标识**，而不是交易所委托号。成员快照发布后不可覆写；严格对全部成员按 `tenant_id/account_id/product/symbol` 求和并交给原生 `plan_basket` 阶段规划；返回 `BasketResearchDecision.executable=False`。
+
+`research_checkpoint(request_id)` 为研究阶段生成待确认日志；后续所有成交/权威仓位核对仍必须经 `basket_reconciliation`，没有订单发送、没有资金或保证金划转。该适配器是**纯 Python 意图收集与审计**，不是实际 NautilusTrader Strategy 注入，也不从 Catalog 自行抓取数据，且 **不等同于两个 Demo 已经改用这一运行时或跨产品回测全部贯通**。
+
+上线前还需要把原生 Nautilus Strategy 生命周期、严格历史行情 Bundle、撮合回报与持久审计真实接通；真实交易权限及生产风控须另行验收。
+
 ## 尚未实现的关键条件
 
 - 通用策略包 `publish_basket` / `subscribe_market_bundle` 协议及跨任意策略的统一 Engine 运行时。现有 Funding Carry 与保护期权回测是**特化研究入口**，并非通用策略实盘接口。
