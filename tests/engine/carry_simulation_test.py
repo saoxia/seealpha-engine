@@ -77,6 +77,9 @@ def test_native_dual_venue_carry_orders_and_account_equity(tmp_path):
     assert len(result["funding_observations"]) == 2
     assert result["orders"]
     assert result["fills"]
+    assert result["target_events"]
+    assert result["target_events"][0]["member_count"] == 1
+    assert all(event["executable"] is False for event in result["target_events"])
     assert {row["venue"] for row in result["orders"]} == {"SIM_SPOT", "SIM_UM"}
     assert all(Decimal(row["commission"]) >= 0 for row in result["fills"])
     assert all(Decimal(row["leg_drift"]) <= Decimal("0.001")
@@ -93,6 +96,13 @@ def test_multi_member_targets_aggregate_one_pair_of_market_deltas(tmp_path):
     assert len(openings) == 2
     assert {order["quantity"] for order in openings} == {"0.2"}
     assert {order["venue"] for order in openings} == {"SIM_SPOT", "SIM_UM"}
+    assert result["target_events"]
+    assert all(row["member_count"] == 2 for row in result["target_events"])
+    assert any(
+        {leg["product"]: leg["quantity"] for leg in row["targets"]} ==
+        {"spot": "0.2", "futures_um": "-0.2"}
+        for row in result["target_events"]
+    )
 
 
 def test_budget_is_gross_and_rejects_open_before_fills(tmp_path):
