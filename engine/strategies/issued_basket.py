@@ -30,12 +30,15 @@ class IssuedBasketMember:
         self.publisher = None
         self.published = False
 
-        def subscribe(_strategy, *, symbol, products, data, option_symbols=()):
+        def subscribe(
+            _strategy, *, symbol=None, products=(), data=(),
+            option_symbols=(), legs=(),
+        ):
             if self.subscription is not None:
                 raise EngineConflict("同一策略不能重复订阅组合市场。")
             self.subscription = {
                 "symbol": symbol, "products": products, "data": data,
-                "option_symbols": option_symbols,
+                "option_symbols": option_symbols, "legs": legs,
             }
 
         def publish(_strategy, *, targets, constraints=None, request_id=None):
