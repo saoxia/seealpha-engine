@@ -1,4 +1,4 @@
-# 跨产品组合目标（Research-only Stage A）
+# 跨产品组合目标与历史数据同步（Research-only A / B1）
 
 关联 Platform [P0 总任务 #107](https://github.com/saoxia/SeeAlpha/issues/107)。
 
@@ -18,16 +18,27 @@
 
 `BasketPlan.executable` 永远是 `False`；没有下单或发布入口，不能将 `BasketPhase` 直接转换为实盘订单。这个阶段也不注册任何新增 HTTP 接口，不改变现有单品种 `PortfolioCoordinator`。
 
+## 已增加：双市场 Catalog 历史对齐（B1）
+
+Engine 内部 `EngineRuntime.iter_funding_carry_history(...)` 仅在开发租户和双产品历史订阅均具备时读取，使用两个产品各自的数据读取锁，无 HTTP、交易所订单或在线行情连接。
+
+- 从真实本地 NautilusTrader Catalog 并行流式读取同一标的的 `spot` 和 `futures_um` K 线，精确按闭合时间戳配对，拒绝时间不匹配、重复、倒序及中段缺口；不填充缺失数据
+- 从同一 Catalog 读取已有的 `FundingRateUpdate`，以其**真实事件时间戳**发出单独记录，不从 K 线推断费率；缺少费率观测默认拒绝
+- 序列为 `CarryHistoryEvent(kind="bars" | "funding")`，仅供**后续真正的回测执行器**使用：这不是订单成交、资金费划转、组合净值或收益率回测
+- 不修改旧单品种回测、策略包入口、HTTP v2 或生产授权
+
+**时区与覆盖限制：** 使用 UTC 时间窗口 `[start,end)`；当前校验两个产品数据的首尾窗口和中段连续性，但仍不证明资金费观测是无缺口的最终结算事实。回测执行前仍须补齐这些检查，不可用这批输入宣称真实收益。
+
 ## 尚未实现的关键条件
 
 - 真实的多腿 `publish_basket`、`subscribe_market_bundle`、独立现金/保证金与资金费/期权权利金/到期模拟。
-- 从多产品 Catalog 同步生成一致的历史快照、撮合与统一权益曲线；目前两个跨产品 Demo **仍不可实际回测**。
+- 多产品 Catalog 已具备双市场 1m/5m 严格时间对齐输入，但尚无撮合、独立账户、资金费结算与统一权益曲线；目前两个跨产品 Demo **仍不可实际回测**。
 - 多腿成交状态机、持久幂等、部分成交和超时结果未知的冻结恢复；真实交易所跨产品并不存在跨账户原子成交保证。
 - 真实行情合约的期权到期日、卖盘深度、报价和乘数核验、价格滑点/费用/保证金门禁，以及订单/资金对账。
 - Platform 的授权、开发与正式环境区分、AI 研究工具入口及任何真实资金权限。
 
 ## 验证
 
-单元测试：`uv run pytest -q tests/engine/basket_targets_test.py`。
+单元测试：`uv run pytest -q tests/engine/basket_targets_test.py tests/engine/basket_history_test.py`。
 
 测试覆盖同一腿跨成员净额、跨产品保留独立腿、先保护后开仓、退出先减险、预算、步长、当前仓位缺失、偏差以及期权覆盖与到期标识。尚不构成多市场回测或生产验收。

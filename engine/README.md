@@ -79,6 +79,8 @@ uv run python -m engine
 
 已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按租户/账户/产品/合约组合多成员目标，校验研究用现货+永续与永续+期权的风险顺序；**不会实际执行、回测或下发这些多腿组合**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
 
+双市场研究数据同步器 `EngineRuntime.iter_funding_carry_history` 可在开发租户已订阅现货和永续时，从真实 Catalog 严格对齐 K 线并按原始时间插入资金费观测；不产生订单、结算或收益报告，暂不对外开放 HTTP。
+
 ## Research API
 
 单独的 `/research/v1/*` 只接收任务级研究授权，不使用管理 `ENGINE_TOKEN`。支持 Catalog 库存、后台 Parquet 快照及开发租户的已下发策略回测；当前受限于现有 Engine 的 1m/5m、单账户回测能力。启用条件、安全限制及客户端合同见 [Research API](../docs/RESEARCH_API.md)。
