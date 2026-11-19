@@ -19,6 +19,7 @@ from nautilus_trader.model import (
     NautilusDataType,
     OptionGreeks,
     OrderBookDepth,
+    QuoteTick,
     TradeTick,
     register_custom_data_class,
 )
@@ -104,6 +105,8 @@ class ParquetDataCatalog:
             return self.native.write_bars(data)
         if isinstance(first, TradeTick):
             return self.native.write_trade_ticks(data)
+        if isinstance(first, QuoteTick):
+            return self.native.write_quote_ticks(data)
         for kind, write in (
             (FundingRateUpdate, self.native.write_funding_rate_updates),
             (OptionGreeks, self.native.write_option_greeks),
@@ -123,6 +126,11 @@ class ParquetDataCatalog:
 
     def trade_ticks(self, instrument_ids=None, start=None, end=None, **kwargs):
         return self.native.query_trade_ticks(
+            identifiers=instrument_ids, start=_nanos(start), end=_nanos(end), **kwargs
+        )
+
+    def quote_ticks(self, instrument_ids=None, start=None, end=None, **kwargs):
+        return self.native.query_quote_ticks(
             identifiers=instrument_ids, start=_nanos(start), end=_nanos(end), **kwargs
         )
 

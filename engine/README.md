@@ -84,6 +84,8 @@ uv run python -m engine
 
 开发租户还可通过内部 `/tenants/{tenant_id}/accounts/{account_id}/carry-backtests` 运行已下发 Funding Carry 的原生双 Venue CASH/MARGIN 回测，并通过 `carry-backtests/latest` 获取组合账户曲线；该研究入口不启动 Demo 自身回调、不开放真实下单，详见 [研究阶段边界](../docs/BASKET_RESEARCH.md)。
 
+期权保护研究还需真实双翼买卖盘口历史证据。现已提供本地 Catalog `QuoteTick` 读写与 `option_history.read_option_protection_evidence` 严格门禁，但不把期权 K 线收盘价当成可成交 ask，也不声称已经具备期权多腿回测。
+
 ## Research API
 
 单独的 `/research/v1/*` 只接收任务级研究授权，不使用管理 `ENGINE_TOKEN`。支持 Catalog 库存、后台 Parquet 快照及开发租户的已下发策略回测；当前受限于现有 Engine 的 1m/5m、单账户回测能力。启用条件、安全限制及客户端合同见 [Research API](../docs/RESEARCH_API.md)。
