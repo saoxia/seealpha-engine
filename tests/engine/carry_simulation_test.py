@@ -269,10 +269,10 @@ def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
 def test_issued_strategy_source_controls_both_legs(tmp_path):
     # If Engine secretly recomputes a demo signal, this test would still trade.
     always_flat = _BASKET_SOURCE.replace(
-        '        quantity = (\\n', '        quantity = (\\n',
-    ).replace(
-        '        self.publish_basket(\\n', '        quantity = Decimal(0)\\n        self.publish_basket(\\n',
+        "        self.publish_basket(",
+        "        quantity = Decimal(0)\\n        self.publish_basket(",
     )
+    assert always_flat != _BASKET_SOURCE
     result = _simulate(tmp_path, loads=[_load(source=always_flat)])
     assert result["orders"] == []
     assert result["fills"] == []
@@ -284,12 +284,12 @@ def test_issued_strategy_source_controls_both_legs(tmp_path):
 
 def test_incomplete_basket_publication_fails_closed(tmp_path):
     incomplete = _BASKET_SOURCE.replace(
-        '{"product": "futures_um", "symbol": params["symbol"],\\n'
-        '                 "quantity": str(-quantity)},',
-        '',
+        '"product": "futures_um"', '"product": "options"',
     )
+    assert incomplete != _BASKET_SOURCE
     with pytest.raises(EngineConflict, match="所有腿|组合目标|完整"):
         _simulate(tmp_path, loads=[_load(source=incomplete)])
+
 
 def test_issued_spot_perp_http_stays_development_only(tmp_path):
     archive, meta = _archive()
