@@ -144,14 +144,17 @@ class BasketResearchSession:
         if self.policy == "generic":
             if symbol is not None or products or option_symbols or not legs:
                 raise BasketPlanError("通用组合必须显式声明完整的产品合约腿")
-            try:
-                requested = tuple((row["product"], row["symbol"]) for row in legs)
-            except (TypeError, KeyError):
-                raise BasketPlanError("通用组合腿结构无效") from None
+            if any(
+                not isinstance(row, dict)
+                or set(row) != {"product", "symbol"}
+                or not isinstance(row["product"], str)
+                or not isinstance(row["symbol"], str)
+                for row in legs
+            ):
+                raise BasketPlanError("通用组合腿结构无效")
+            requested = tuple((row["product"], row["symbol"]) for row in legs)
             if (
-                any(not isinstance(row, dict) or set(row) != {"product", "symbol"}
-                    for row in legs)
-                or len(requested) != len(set(requested))
+                len(requested) != len(set(requested))
                 or set(requested) != {(leg.product, leg.symbol) for leg in required_legs}
             ):
                 raise BasketPlanError("通用组合订阅与授权产品合约腿不一致")
