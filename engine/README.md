@@ -90,6 +90,8 @@ uv run python -m engine
 
 单独的 `/research/v1/*` 只接收任务级研究授权，不使用管理 `ENGINE_TOKEN`。支持 Catalog 库存、后台 Parquet 快照及开发租户的已下发策略回测；当前受限于现有 Engine 的 1m/5m、单账户回测能力。启用条件、安全限制及客户端合同见 [Research API](../docs/RESEARCH_API.md)。
 
+可选的 `ENGINE_RESEARCH_MCP_ENABLED=true` 额外启用 `/research/mcp`（MCP Streamable HTTP，JSON-only）；默认关闭，仅限配置独立研究签名密钥的固定开发租户。MCP 复用原有研究权限/任务队列，不开放实盘和管理 API；参见 [Engine 原生 MCP](../docs/MCP_RESEARCH.md)。
+
 ## 尚未纳入
 
 把操作账本同步和资产校准 REST 改成纯事件消费。这两类只读连接器调用仍在 API 进程。

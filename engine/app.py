@@ -259,6 +259,11 @@ class ProtectedOptionBacktestBody(BaseModel):
 
 def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None = None) -> FastAPI:
     config = config or EngineConfig.from_environment()
+    if config.research_mcp_enabled and (
+        not config.research_signing_key or not config.tenant_id
+        or config.tenant_purpose != "development"
+    ):
+        raise ValueError("Research MCP requires an explicitly authorized development Engine")
     if config.auth_mode not in {"none", "token"}:
         raise ValueError("ENGINE_AUTH_MODE must be none or token")
     if config.auth_mode == "token":
