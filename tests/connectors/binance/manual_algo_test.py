@@ -1,6 +1,5 @@
 """Offline native algo/leverage guards: no live exchange requests."""
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
