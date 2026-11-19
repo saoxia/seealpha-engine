@@ -55,6 +55,8 @@ def align_carry_bars(spot_batches, perpetual_batches, *, symbol, interval,
         stamp = int(first.ts_event)
         if stamp != int(second.ts_event):
             raise EngineConflict("现货与永续历史时间戳不一致；禁止插值或前向填充。")
+        if last is None and start_ns is not None and stamp != start_ns + step:
+            raise EngineConflict("组合历史窗口开头缺少 K 线。")
         if last is not None and stamp - last != step:
             raise EngineConflict("组合历史存在重复、倒退或缺失 K 线。")
         last = stamp
@@ -62,6 +64,8 @@ def align_carry_bars(spot_batches, perpetual_batches, *, symbol, interval,
         yield CarryHistoryEvent(stamp, "bars", first, second)
     if count == 0:
         raise EngineConflict("该时间区间没有可用的现货与永续历史数据。")
+    if end_ns is not None and last != end_ns - step:
+        raise EngineConflict("组合历史窗口末尾缺少 K 线。")
 
 
 def iter_carry_history(catalog_dir, symbol, interval, start, end, *, require_funding=True):
