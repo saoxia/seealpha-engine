@@ -14,7 +14,6 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from engine.strategies.candidate_package import decode_candidate_archive
 from engine.research_auth import (
     ENGINE_HEADER,
     ENGINE_VERSION,
@@ -26,6 +25,7 @@ from engine.research_auth import (
 )
 from engine.research_snapshots import SnapshotService
 from engine.runtime import EngineConflict
+from engine.strategies.candidate_package import decode_candidate_archive
 from engine.task_routes import BacktestParameters
 
 _ACCOUNT = re.compile(r"^account:([A-Za-z0-9._-]{1,40})$")

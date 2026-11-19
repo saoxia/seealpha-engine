@@ -414,9 +414,9 @@ def test_candidate_ast_validation_rejects_network_and_wrong_shape():
         "CANDIDATE = dict(kind='ema_cross')",
         "CANDIDATE = {'kind':'ema_cross'}\nprint('hi')",
         "class Strategy: pass",
-        "CANDIDATE = {'kind':'ema_cross', 'symbol':'ETHUSDT', "
-        "'fast_period':8,'slow_period':21,'allocation':'1','risk_limit':'1'}\n"
-        "import socket",
+        ("CANDIDATE = {'kind':'ema_cross', 'symbol':'ETHUSDT', "
+         "'fast_period':8,'slow_period':21,'allocation':'1','risk_limit':'1'}\n"
+         "import socket"),
     ):
         raw, _ = _candidate_archive(source)
         with pytest.raises(ValueError):
