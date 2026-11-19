@@ -227,3 +227,83 @@ def test_bounded_protection_first_phases_remain_research_only():
         "increase_directional_risk_after_protection",
     ]
     assert plan.executable is False
+
+
+def test_emergency_flatten_underhedged_carry_is_reduce_only_and_auditable():
+    spot = _leg("spot", "ETHUSDT")
+    perp = _leg("futures_um", "ETHUSDT")
+    current = {spot: Decimal("0.8"), perp: Decimal("-0.3")}
+    flat = [
+        MemberLegTarget("alpha", spot, Decimal(0)),
+        MemberLegTarget("alpha", perp, Decimal(0)),
+    ]
+    with pytest.raises(BasketPlanError, match="偏差"):
+        _plan(flat, current, policy="funding_carry")
+    # Existing gross = 2200 > the research budget (2000).
+    # This does not block strictly risk-reducing exits.
+    plan = _plan(flat, current, policy="funding_carry", emergency_unwind=True)
+    assert plan.executable is False
+    assert plan.gross_target_notional == Decimal(0)
+    assert [phase.name for phase in plan.phases] == ["emergency_coordinated_unwind"]
+    assert {row.leg: row.quantity_delta for row in plan.phases[0].changes} == {
+        spot: Decimal("-0.8"), perp: Decimal("0.3"),
+    }
+    from engine.strategies.basket_reconciliation import (
+        begin_phase, checkpoint_to_record, new_checkpoint, restore_checkpoint,
+    )
+    state = begin_phase(new_checkpoint(plan, current), "emergency-carry-1")
+    assert restore_checkpoint(plan, checkpoint_to_record(state)) == state
+    assert state.status == "awaiting_confirmation"
+
+
+def test_emergency_flatten_undercovered_options_reduces_perp_before_releasing_wing():
+    put = _leg("options", "ETH-261225-1800-P")
+    call = _leg("options", "ETH-261225-2200-C")
+    perp = _leg("futures_um", "ETHUSDT")
+    current = {put: Decimal("0.1"), call: Decimal(0), perp: Decimal("0.2")}
+    flat = [
+        MemberLegTarget("alpha", leg, Decimal(0))
+        for leg in (put, call, perp)
+    ]
+    with pytest.raises(BasketPlanError, match="保护数量不足"):
+        _plan(flat, current, policy="option_protected")
+    plan = _plan(flat, current, policy="option_protected", emergency_unwind=True)
+    assert [phase.name for phase in plan.phases] == [
+        "emergency_reduce_directional_risk",
+        "emergency_release_protection_after_risk_reduction",
+    ]
+    assert plan.phases[0].changes[0].leg == perp
+    assert plan.phases[1].changes[0].leg == put
+    assert all(
+        change.quantity_delta == -current[change.leg]
+        for phase in plan.phases for change in phase.changes
+    )
+    assert not plan.executable
+
+
+def test_emergency_flag_cannot_be_used_for_rebalance_or_unverified_inputs():
+    spot = _leg("spot", "ETHUSDT")
+    perp = _leg("futures_um", "ETHUSDT")
+    current = {spot: Decimal("0.1"), perp: Decimal("-0.1")}
+    rebalance = [
+        MemberLegTarget("alpha", spot, Decimal("0.2")),
+        MemberLegTarget("alpha", perp, Decimal("-0.2")),
+    ]
+    with pytest.raises(BasketPlanError, match="全部归零"):
+        _plan(rebalance, current, policy="funding_carry", emergency_unwind=True)
+    flat = [MemberLegTarget("alpha", leg, Decimal(0)) for leg in current]
+    with pytest.raises(BasketPlanError, match="布尔值"):
+        _plan(flat, current, policy="funding_carry", emergency_unwind=1)
+    with pytest.raises(BasketPlanError, match="已有非零"):
+        _plan(flat, {leg: Decimal(0) for leg in current},
+              policy="funding_carry", emergency_unwind=True)
+    quotes = _evidence(current)
+    quotes[perp] = LegEvidence(
+        Decimal(2000), Decimal("0.1"), Decimal(1), 1_000_000_000_000 - 20_000_000_000,
+    )
+    with pytest.raises(BasketPlanError, match="过期"):
+        plan_basket(
+            flat, current, quotes, now_ns=1_000_000_000_000,
+            max_age_ns=5_000_000_000, max_gross_notional=Decimal(2000),
+            policy="funding_carry", emergency_unwind=True,
+        )
