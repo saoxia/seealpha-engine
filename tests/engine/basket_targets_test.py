@@ -19,8 +19,8 @@ def _leg(product, symbol):
 def _evidence(legs, *, now=1_000_000_000_000):
     return {
         leg: LegEvidence(
-            Decimal("2000") if leg.product != "options" else Decimal("2"),
-            Decimal("0.1"), Decimal("1"), now - 1_000_000_000,
+            Decimal(2000) if leg.product != "options" else Decimal(2),
+            Decimal("0.1"), Decimal(1), now - 1_000_000_000,
         )
         for leg in legs
     }
@@ -31,7 +31,7 @@ def _plan(targets, positions, *, policy, **kwargs):
         targets, positions, _evidence(positions),
         now_ns=1_000_000_000_000,
         max_age_ns=5_000_000_000,
-        max_gross_notional=Decimal("2000"),
+        max_gross_notional=Decimal(2000),
         policy=policy,
         **kwargs,
     )
@@ -94,7 +94,7 @@ def test_fail_closed_on_missing_position_budget_precision_and_naked_options():
     with pytest.raises(BasketPlanError, match="预算"):
         plan_basket(targets, positions, _evidence(positions),
                     now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
-                    max_gross_notional=Decimal("1"), policy="funding_carry")
+                    max_gross_notional=Decimal(1), policy="funding_carry")
     with pytest.raises(BasketPlanError, match="最小步长"):
         _plan(targets, {spot: Decimal("0.01"), perp: Decimal(0)}, policy="funding_carry")
     with pytest.raises(BasketPlanError, match="重复"):
@@ -134,16 +134,16 @@ def test_no_cross_tenant_netting_or_stale_market_evidence():
     positions = {spot: Decimal(0), perp: Decimal(0)}
     foreign = LegId("other", "desk", "spot", "ETHUSDT")
     with pytest.raises(BasketPlanError, match="同一租户"):
-        _plan(targets + [MemberLegTarget("b", foreign, Decimal("0"))],
+        _plan(targets + [MemberLegTarget("b", foreign, Decimal(0))],
               {**positions, foreign: Decimal(0)}, policy="funding_carry")
 
     quotes = _evidence(positions)
     quotes[spot] = LegEvidence(
-        Decimal("2000"), Decimal("0.1"), Decimal("1"), 1_000_000_000_000 - 10_000_000_000
+        Decimal(2000), Decimal("0.1"), Decimal(1), 1_000_000_000_000 - 10_000_000_000
     )
     with pytest.raises(BasketPlanError, match="过期"):
         plan_basket(
             targets, positions, quotes,
             now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
-            max_gross_notional=Decimal("1000"), policy="funding_carry",
+            max_gross_notional=Decimal(1000), policy="funding_carry",
         )

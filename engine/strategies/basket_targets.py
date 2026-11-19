@@ -122,7 +122,7 @@ def plan_basket(
     max_age_ns: int,
     max_gross_notional: Decimal,
     policy: Literal["funding_carry", "option_protected"],
-    max_leg_drift: Decimal = Decimal("0"),
+    max_leg_drift: Decimal = Decimal(0),
 ) -> BasketPlan:
     """Net identical instruments only; plan risk-reduction and hedge order.
 
@@ -168,7 +168,7 @@ def plan_basket(
         if leg.product in {"spot", "options"} and (desired < 0 or current < 0):
             raise BasketPlanError("此阶段不支持借币卖空或卖出裸期权")
 
-    futures = sorted((leg for leg in legs if leg.product == "futures_um"))
+    futures = sorted(leg for leg in legs if leg.product == "futures_um")
     if len(futures) != 1:
         raise BasketPlanError("组合必须恰好包含一条 USD-M 永续腿")
     perp = futures[0]
@@ -184,7 +184,7 @@ def plan_basket(
         ):
             raise BasketPlanError("现有资金费组合腿间偏差超过上限")
     else:
-        options = sorted((leg for leg in legs if leg.product == "options"))
+        options = sorted(leg for leg in legs if leg.product == "options")
         if len(legs) != 3 or len(options) != 2:
             raise BasketPlanError("期权保护组合必须为一条永续和两条保护腿")
         underlying = perp.symbol.removesuffix("USDT")
