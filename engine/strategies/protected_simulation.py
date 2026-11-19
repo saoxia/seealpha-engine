@@ -379,7 +379,7 @@ class _NativeProtectedCoordinator(Strategy):
             return
         try:
             self.reconciler.record_fill(
-                key, quantity, fill_id=str(event.id), now_ns=int(event.ts_event),
+                key, quantity, fill_id=str(event.event_id), now_ns=int(event.ts_event),
             )
         except BasketPlanError as exc:
             self.failed.append(str(exc))
