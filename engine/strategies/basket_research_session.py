@@ -25,6 +25,7 @@ from engine.strategies.basket_targets import (
 
 _MAX_MEMBERS = 16
 _REQUIRED_DATA = {
+    "generic": frozenset({"closed_bars", "account_positions"}),
     "funding_carry": frozenset({"closed_bars", "funding_rate", "account_positions"}),
     "option_protected": frozenset({
         "closed_bars", "option_quotes", "option_instruments", "positions",
@@ -120,15 +121,16 @@ class BasketResearchSession:
 
     def _subscribe(
         self, member_id: str, *,
-        symbol: str,
-        products: tuple[str, ...],
-        data: tuple[str, ...],
+        symbol: str | None = None,
+        products: tuple[str, ...] = (),
+        data: tuple[str, ...] = (),
         option_symbols: tuple[str, ...] = (),
+        legs: tuple[dict, ...] = (),
     ) -> None:
         if self._decision is not None or member_id in self._intents:
             raise BasketPlanError("组合已经形成目标，不能更改历史订阅")
-        if not isinstance(symbol, str) or not isinstance(products, tuple) or (
-            not isinstance(data, tuple) or not isinstance(option_symbols, tuple)
+        if not isinstance(products, tuple) or not isinstance(data, tuple) or (
+            not isinstance(option_symbols, tuple) or not isinstance(legs, tuple)
         ):
             raise BasketPlanError("历史订阅协议无效")
         if (
@@ -138,13 +140,30 @@ class BasketResearchSession:
             or set(data) != _REQUIRED_DATA[self.policy]
         ):
             raise BasketPlanError("订阅必须提供完整且无重复的策略证据")
-        expected_products = (
-            {"spot", "futures_um"}
-            if self.policy == "funding_carry" else {"futures_um", "options"}
-        )
-        if set(products) != expected_products:
-            raise BasketPlanError("跨产品订阅类型与策略不匹配")
         required_legs = set(self.positions)
+        if self.policy == "generic":
+            if symbol is not None or products or option_symbols or not legs:
+                raise BasketPlanError("通用组合必须显式声明完整的产品合约腿")
+            try:
+                requested = tuple((row["product"], row["symbol"]) for row in legs)
+            except (TypeError, KeyError):
+                raise BasketPlanError("通用组合腿结构无效") from None
+            if (
+                any(not isinstance(row, dict) or set(row) != {"product", "symbol"}
+                    for row in legs)
+                or len(requested) != len(set(requested))
+                or set(requested) != {(leg.product, leg.symbol) for leg in required_legs}
+            ):
+                raise BasketPlanError("通用组合订阅与授权产品合约腿不一致")
+        else:
+            if not isinstance(symbol, str) or legs:
+                raise BasketPlanError("对冲策略订阅协议无效")
+            expected_products = (
+                {"spot", "futures_um"}
+                if self.policy == "funding_carry" else {"futures_um", "options"}
+            )
+            if set(products) != expected_products:
+                raise BasketPlanError("跨产品订阅类型与策略不匹配")
         if self.policy == "funding_carry":
             if option_symbols or any(leg.symbol != symbol for leg in required_legs):
                 raise BasketPlanError("资金费订阅必须精确匹配 Spot/UM 标的")
@@ -193,6 +212,7 @@ class BasketResearchSession:
         allowed = (
             {"atomic_hedge", "max_leg_drift"} if self.policy == "funding_carry"
             else {"hedges_filled_before_risk", "atomic_reconciliation"}
+            if self.policy == "option_protected" else set()
         )
         if constraints and (set(constraints) - allowed):
             raise BasketPlanError("未知多腿执行约束")
@@ -276,12 +296,13 @@ class ResearchBasketMember:
         self.member_id = member_id
 
     def subscribe_market_bundle(
-        self, *, symbol: str, products: tuple[str, ...], data: tuple[str, ...],
-        option_symbols: tuple[str, ...] = (),
+        self, *, symbol: str | None = None, products: tuple[str, ...] = (),
+        data: tuple[str, ...] = (), option_symbols: tuple[str, ...] = (),
+        legs: tuple[dict, ...] = (),
     ) -> None:
         self._session._subscribe(
             self.member_id, symbol=symbol, products=products, data=data,
-            option_symbols=option_symbols,
+            option_symbols=option_symbols, legs=legs,
         )
 
     def publish_basket(
