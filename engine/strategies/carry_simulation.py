@@ -9,15 +9,28 @@ from decimal import Decimal, InvalidOperation
 
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.model import (
-    AccountType, Bar, BarType, CryptoPerpetual, CurrencyPair, FundingRateUpdate,
-    InstrumentId, Money, OmsType, OrderSide, TimeInForce, Venue,
+    AccountType,
+    Bar,
+    BarType,
+    CryptoPerpetual,
+    CurrencyPair,
+    FundingRateUpdate,
+    Money,
+    OmsType,
+    OrderSide,
+    TimeInForce,
+    Venue,
 )
 from nautilus_trader.trading import Strategy
 
 from engine.runtime import EngineConflict
 from engine.strategies.backtest_engine import backtest_engine_config
 from engine.strategies.basket_targets import (
-    BasketPlanError, LegEvidence, LegId, MemberLegTarget, plan_basket,
+    BasketPlanError,
+    LegEvidence,
+    LegId,
+    MemberLegTarget,
+    plan_basket,
 )
 from engine.strategies.strategy_config import StrategyConfig
 from nautilus_support import instrument_fee_model

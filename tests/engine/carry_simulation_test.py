@@ -1,5 +1,6 @@
 """Native dual-account carry simulation with real Catalog fixtures and no credentials."""
 
+import base64
 import json
 from datetime import timedelta
 from decimal import Decimal
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 from engine.pipeline.catalog import ParquetDataCatalog
+from engine.strategies.package import archive_directory, parse_metadata
 from engine.runtime import EngineConflict, EngineRuntime
 from engine.strategies.carry_simulation import run_native_carry
 from nautilus_support import TestInstrumentProvider
@@ -115,12 +117,13 @@ def test_runtime_requires_issued_carry_package_and_rejects_unauthorized_http(tmp
     app = create_app(EngineConfig(tmp_path / "other_state", token="private", project=tmp_path))
     body = {
         "start": start.isoformat(),
-        "end": (start + timedelta(minutes(19))).isoformat(),
+        "end": (start + timedelta(minutes=19)).isoformat(),
         "interval": "1m", "starting_spot_balance": "1000",
         "starting_perpetual_balance": "1000", "max_gross_notional": "1000",
     }
     with TestClient(app) as client:
-        assert client.post("/tenants/dev/accounts/desk/carry-backtests", json=body).status_code == 401
+        denied = client.post("/tenants/dev/accounts/desk/carry-backtests", json=body)
+        assert denied.status_code == 401
         assert client.get(
             "/tenants/dev/accounts/desk/carry-backtests/latest",
             headers={"Authorization": "Bearer private"},
@@ -139,5 +142,64 @@ def test_rejects_wrong_instrument_and_missing_initial_cash(tmp_path):
                 starting_spot="-1", starting_perpetual="1000",
                 max_gross_notional="1000",
             )
+    finally:
+        runtime.close()
+
+def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
+    root = tmp_path / "carry_fixture"
+    root.mkdir()
+    (root / "seealpha-package.json").write_text(json.dumps({
+        "format": 1, "name": "demo_funding_carry", "version": "1",
+        "entry_point": "strategy:DemoFundingCarry",
+    }), encoding="utf-8")
+    (root / "strategy.py").write_text(
+        "from nautilus_trader.trading import Strategy\n"
+        "def prepare(params):\n"
+        "    return dict(params)\n"
+        "class DemoFundingCarry(Strategy):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    archive = archive_directory(root)
+    meta = parse_metadata(archive)
+    start, runtime = _history(tmp_path)
+    payload = {
+        "account_id": "desk", "issuance_id": "carry-demo-1",
+        "code_key": meta.name, "version": meta.version,
+        "grant_purpose": "development", "parameters": _load()["parameters"],
+        "entry_point": meta.entry_point, "package_hash": meta.digest,
+        "archive": base64.b64encode(archive).decode(),
+    }
+    runtime.receive_strategy("dev", payload)
+    app = create_app(EngineConfig(tmp_path / "state", token="engine-test", project=tmp_path),
+                     runtime=runtime)
+    body = {
+        "start": start.isoformat(),
+        "end": (start + timedelta(minutes(19))).isoformat(),
+        "interval": "1m", "starting_spot_balance": "1000",
+        "starting_perpetual_balance": "1000", "max_gross_notional": "1000",
+    }
+    try:
+        headers = {"Authorization": "Bearer engine-test"}
+        with TestClient(app) as client:
+            run = client.post(
+                "/tenants/dev/accounts/desk/carry-backtests",
+                headers=headers, json=body,
+            )
+            assert run.status_code == 200, run.text
+            result = run.json()
+            assert result["bar_count"] == 19
+            assert result["fills"]
+            latest = client.get(
+                "/tenants/dev/accounts/desk/carry-backtests/latest",
+                headers=headers,
+            )
+            assert latest.status_code == 200
+            assert latest.json() == result
+            denied = client.post(
+                "/tenants/foreign/accounts/desk/carry-backtests",
+                headers=headers, json=body,
+            )
+            assert denied.status_code == 409
     finally:
         runtime.close()
