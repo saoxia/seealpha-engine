@@ -6,15 +6,14 @@ import pytest
 from engine.strategies.basket_reconciliation import (
     BasketReconciliationError,
     begin_phase,
+    checkpoint_to_record,
     confirm_phase,
     freeze_checkpoint,
     record_cumulative_fill,
-    checkpoint_to_record,
     restore_checkpoint,
 )
 from engine.strategies.basket_research_session import BasketResearchSession
 from engine.strategies.basket_targets import BasketPlanError, LegEvidence, LegId
-
 
 _NOW = 1_000_000_000_000
 
