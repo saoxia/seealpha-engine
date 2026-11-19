@@ -12,7 +12,7 @@ from engine.pipeline.catalog import ParquetDataCatalog
 from engine.runtime import EngineConflict
 from engine.strategies.option_history import read_option_protection_evidence
 from nautilus_support import TestInstrumentProvider
-from tests.engine.backtest_test import _ns, write_crossover_catalog
+from tests.engine.backtest_test import write_crossover_catalog
 
 PUT = "ETH-240202-1800-P"
 CALL = "ETH-240202-2200-C"
@@ -59,7 +59,7 @@ def _catalog(tmp_path, *, missing_call_quote=False, quote_size="1.000"):
             bars.append(Bar(
                 kind, instrument.make_price(2), instrument.make_price(3),
                 instrument.make_price(1), instrument.make_price(2),
-                instrument.make_qty(Decimal("1")), stamp, stamp,
+                instrument.make_qty(Decimal(1)), stamp, stamp,
             ))
             if not (missing_call_quote and instrument.id == call.id and index == 1):
                 event = perp.ts_event - 2
