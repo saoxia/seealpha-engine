@@ -75,6 +75,10 @@ uv run python -m engine
 再对当前净持仓提交差额。预览和历史回测都不连接交易所。归档租户不能运行。
 正式租户不能使用这条历史回测。
 
+## 跨产品目标规划（研究阶段）
+
+已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按租户/账户/产品/合约组合多成员目标，校验研究用现货+永续与永续+期权的风险顺序；**不会实际执行、回测或下发这些多腿组合**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
+
 ## Research API
 
 单独的 `/research/v1/*` 只接收任务级研究授权，不使用管理 `ENGINE_TOKEN`。支持 Catalog 库存、后台 Parquet 快照及开发租户的已下发策略回测；当前受限于现有 Engine 的 1m/5m、单账户回测能力。启用条件、安全限制及客户端合同见 [Research API](../docs/RESEARCH_API.md)。
