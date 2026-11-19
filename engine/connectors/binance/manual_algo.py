@@ -46,7 +46,7 @@ class SignedFutures:
 
     def request(self, method, path, values=None):
         if path not in {
-            "/fapi/v1/time", "/fapi/v1/algoOrder", "/fapi/v1/openAlgoOrders",
+            "/fapi/v1/time", "/fapi/v1/algoOrder", "/fapi/v1/openAlgoOrders", "/fapi/v1/allAlgoOrders",
             "/fapi/v1/leverage", "/fapi/v1/leverageBracket", "/fapi/v1/symbolConfig",
         } or method not in {"GET", "POST", "DELETE"}:
             raise ValueError("Unapproved Binance endpoint")
@@ -134,7 +134,21 @@ def open_orders(account, symbol, *, http_url=None):
     orders = [algo_view(row) for row in rows]
     if any(order["symbol"] != symbol for order in orders):
         raise QueryError("条件单账户或标的身份不匹配。")
-    return orders
+    # Binance returns recent (up to seven days per query) algo history separately.
+    # Historical coverage is best-effort and MUST NOT hide confirmed open orders.
+    try:
+        recent = client.request("GET", "/fapi/v1/allAlgoOrders",
+                                {"symbol": _symbol(symbol), "limit": 100})
+        if not isinstance(recent, list) or len(recent) > 100:
+            raise QueryError("条件单历史响应超限。")
+        history = [algo_view(row) for row in recent]
+        if any(row["symbol"] != symbol for row in history):
+            raise QueryError("条件单历史标的身份不匹配。")
+        known = {row["client_algo_id"] for row in orders}
+        orders.extend(row for row in history if row["client_algo_id"] not in known)
+    except QueryError:
+        pass  # Open orders are authoritative; never replace them with stale history.
+    return sorted(orders, key=lambda row: row["timestamp"], reverse=True)[:250]
 
 
 def query_algo(account, symbol, client_algo_id, *, http_url=None):
