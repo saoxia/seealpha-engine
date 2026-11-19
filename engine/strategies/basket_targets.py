@@ -240,6 +240,36 @@ def plan_basket(
             if rows:
                 phases.append(BasketPhase(name, tuple(rows)))
 
+    # A target-only cap is insufficient: a sequential multi-venue transition can
+    # temporarily carry both old and new legs. Assume any ordering *within* each
+    # phase; the conservative maximum is the sum of each leg's larger endpoint.
+    # This is a planning guard, NOT a substitute for current venue risk checks.
+    notionals = {
+        leg: evidence[leg].price * evidence[leg].multiplier for leg in legs
+    }
+    projected = dict(positions)
+    current_gross = sum(
+        (abs(projected[leg]) * notionals[leg] for leg in legs), Decimal(0)
+    )
+    if current_gross > max_gross_notional:
+        raise BasketPlanError("组合当前仓位超过总名义风险预算")
+    for phase in phases:
+        after = projected.copy()
+        for change in phase.changes:
+            after[change.leg] += change.quantity_delta
+        peak_gross = sum(
+            (
+                max(abs(projected[leg]), abs(after[leg])) * notionals[leg]
+                for leg in legs
+            ),
+            Decimal(0),
+        )
+        if peak_gross > max_gross_notional:
+            raise BasketPlanError("组合阶段临时敞口超过总名义风险预算")
+        projected = after
+    if projected != dict(targets):
+        raise BasketPlanError("组合执行阶段与目标仓位不一致")
+
     return BasketPlan(
         targets=tuple(sorted(targets.items())),
         phases=tuple(phases),
