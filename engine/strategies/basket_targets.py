@@ -240,6 +240,48 @@ def plan_basket(
             if rows:
                 phases.append(BasketPhase(name, tuple(rows)))
 
+    # A target-only cap is insufficient: a sequential multi-venue transition can
+    # temporarily carry both old and new legs. Assume any ordering *within* each
+    # phase; the conservative maximum is the sum of each leg's larger endpoint.
+    # This is a planning guard, NOT a substitute for current venue risk checks.
+    notionals = {
+        leg: evidence[leg].price * evidence[leg].multiplier for leg in legs
+    }
+    projected = dict(positions)
+    current_gross = sum(
+        (abs(projected[leg]) * notionals[leg] for leg in legs), Decimal(0)
+    )
+    for phase in phases:
+        after = projected.copy()
+        for change in phase.changes:
+            after[change.leg] += change.quantity_delta
+        # An exchange may fill the largest-risk leg before any offsetting
+        # reduction. Consider the maximum exposure for every within-phase
+        # order, not only the beginning/end of a phase.
+        peak_gross = sum(
+            (
+                max(abs(projected[leg]), abs(after[leg])) * notionals[leg]
+                for leg in legs
+            ),
+            Decimal(0),
+        )
+        after_gross = sum(
+            (abs(after[leg]) * notionals[leg] for leg in legs), Decimal(0)
+        )
+        if current_gross > max_gross_notional:
+            # Never block a strictly reduce-only unwind solely because the
+            # account is already over budget. But reject any temporary new
+            # risk while unwinding: reductions must be monotonic and strict.
+            if peak_gross > current_gross or after_gross >= current_gross:
+                raise BasketPlanError("超预算组合只能逐阶段单调减险")
+        elif peak_gross > max_gross_notional:
+            raise BasketPlanError("组合阶段临时敞口超过总名义风险预算")
+        projected, current_gross = after, after_gross
+    if current_gross > max_gross_notional:
+        raise BasketPlanError("组合最终仍超过总名义风险预算")
+    if projected != dict(targets):
+        raise BasketPlanError("组合执行阶段与目标仓位不一致")
+
     return BasketPlan(
         targets=tuple(sorted(targets.items())),
         phases=tuple(phases),
