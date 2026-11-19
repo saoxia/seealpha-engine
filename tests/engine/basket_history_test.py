@@ -83,7 +83,7 @@ def test_catalog_history_replays_both_products_and_actual_funding_timestamps(tmp
 
 
 def test_rejects_time_gaps_even_when_two_products_have_matching_gaps(tmp_path):
-    start, spot, futures = _dataset(tmp_path)
+    _start, spot, futures = _dataset(tmp_path)
     kept = [index for index in range(len(spot)) if index != 3]
     with pytest.raises(EngineConflict, match="缺失"):
         list(align_carry_bars(
@@ -94,7 +94,7 @@ def test_rejects_time_gaps_even_when_two_products_have_matching_gaps(tmp_path):
 
 
 def test_rejects_incomplete_history_window_edges(tmp_path):
-    start, spot, futures = _dataset(tmp_path)
+    _start, spot, futures = _dataset(tmp_path)
     first_ns = futures[0].ts_event - 60_000_000_000
     end_ns = futures[-1].ts_event + 60_000_000_000
     with pytest.raises(EngineConflict, match="开头"):
