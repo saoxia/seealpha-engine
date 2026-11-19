@@ -233,8 +233,8 @@ def test_options_premium_exercise_and_cash_record_exactly_reconcile():
     result = replay.run((first, last), start_ns=_START, end_ns=_END)
     assert result["status"] == "completed"
     assert result["verified_option_exercise_count"] == 2
-    assert result["ending_balance"] == "117.4"
-    assert result["equity_curve"][-1]["total_pnl"] == "17.4"
+    assert Decimal(result["ending_balance"]) == Decimal("117.4")
+    assert Decimal(result["equity_curve"][-1]["total_pnl"]) == Decimal("17.4")
     assert len(result["cashflow_events"]) == 2
 
 
@@ -271,7 +271,7 @@ def test_simulated_phase_journal_survives_restart_and_refuses_double_fill(tmp_pa
     result = replay.run(frames, start_ns=_START, end_ns=_END)
     assert result["status"] == "frozen"
     assert replay.checkpoint.status == "frozen"
-    assert result["phase_audits"][-1]["status"] == "frozen"
+    assert result["phase_audits"][-1]["events"][-1]["kind"] == "freeze"
     loaded = store.load(replay._journal_identity, replay.checkpoint.plan)
     assert loaded.checkpoint == replay.checkpoint
     restarted, frames_again, _, _ = _carry(spot_ask_size="0.15")

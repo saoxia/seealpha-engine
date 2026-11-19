@@ -340,7 +340,7 @@ class GenericBasketReplay:
                 (ts, leg) for ts, legs in self.expected_funding.items()
                 for leg in legs
             }
-            if expected != seen_funding:
+            if expected != seen_funding and self.status != "frozen":
                 self._freeze("全窗口资金费结算计划存在缺失、越界或未证实的事件")
         if self.status != "frozen":
             self.status = "completed"

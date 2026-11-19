@@ -71,7 +71,7 @@ def read_generic_quote_history(
     ):
         raise BasketPlanError("通用组合研究最多24小时，并必须按1m/5m真实Bar时钟对齐")
     bars = read_history(
-        catalog_dir, clock_leg.symbol, interval, start, end,
+        catalog_dir, clock_leg.symbol, interval, start_at, end_at,
         product=clock_leg.product,
     )
     expected_ts = list(range(start_ns + step, end_ns, step))

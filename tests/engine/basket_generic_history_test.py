@@ -86,6 +86,13 @@ def test_native_um_and_option_bbo_share_actual_bar_clock(tmp_path):
         start=start.isoformat(),
         end=(start + timedelta(minutes=4)).isoformat(),
     )
+    # Catalog's query endpoint is inclusive, whereas basket [start,end)
+    # excludes the last timestamp. Only BBO corresponding to the 3 bars
+    # inside the requested basket window may be used.
+    bars = [
+        bar for bar in bars
+        if int(bar.ts_event) < int((start + timedelta(minutes=4)).timestamp() * 1e9)
+    ]
     assert len(bars) == 3
     catalog.write_data(_ticks(perp, bars))
     um = LegId("dev", "desk", "futures_um", "ETHUSDT")

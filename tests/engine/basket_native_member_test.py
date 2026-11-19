@@ -36,8 +36,12 @@ _TS = 60_000_000_000 * 1001
 
 
 class NativeMember(BasketResearchStrategy):
-    def __init__(self):
-        super().__init__(StrategyConfig(order_id_tag="BASKET"))
+    def __init__(self, *, identity=None):
+        config = (
+            StrategyConfig(order_id_tag="BASKET", strategy_id=identity)
+            if identity is not None else StrategyConfig(order_id_tag="BASKET")
+        )
+        super().__init__(config)
         self.calls = []
 
     def on_basket(self, bundle):
@@ -124,7 +128,7 @@ def test_actual_nautilus_backtest_engine_dispatches_two_strategy_lifecycles():
     """Registered Nautilus strategies see the same native Bar exactly once."""
     perp = TestInstrumentProvider.ethusdt_perp_binance()
     leg = LegId("tenant", "account", "futures_um", "ETHUSDT")
-    a, b = NativeMember(), NativeMember()
+    a, b = NativeMember(identity="BasketAlpha-1"), NativeMember(identity="BasketBeta-1")
     runtime = GenericBasketRuntime(
         tenant_id="tenant", account_id="account",
         members=(
