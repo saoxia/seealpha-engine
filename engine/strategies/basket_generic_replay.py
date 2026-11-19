@@ -4,6 +4,7 @@ Real BBO depth, contract multipliers and funding/expiry records must be supplied
 by a trusted historical adapter. The deterministic depth/slippage matcher here
 is NOT NautilusTrader venue matching, order transport, or live trading.
 """
+import hashlib
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -15,6 +16,15 @@ from engine.strategies.basket_finance_ledger import (
     _number,
 )
 from engine.strategies.basket_generic_runtime import GenericBasketRuntime
+from engine.strategies.basket_journal_store import BasketJournalStore
+from engine.strategies.basket_reconciliation import (
+    begin_phase,
+    checkpoint_to_record,
+    confirm_phase,
+    freeze_checkpoint,
+    new_checkpoint,
+    record_cumulative_fill,
+)
 from engine.strategies.basket_targets import BasketPlanError, LegId
 
 
@@ -38,6 +48,7 @@ class GenericBasketReplay:
         self, runtime: GenericBasketRuntime, ledger: BasketFinanceLedger, *,
         step_ns: int, max_quote_age_ns: int, slippage_bps: Decimal,
         expected_funding: dict[int, tuple[LegId, ...]] | None = None,
+        journal_store: BasketJournalStore | None = None,
     ) -> None:
         if set(runtime.legs) != set(ledger.contracts):
             raise BasketPlanError("成员订阅与资金账本的完整合约集合不一致")
@@ -62,6 +73,13 @@ class GenericBasketReplay:
             )
         ):
             raise BasketPlanError("历史资金费结算计划和产品身份无效")
+        if journal_store is not None and not isinstance(journal_store, BasketJournalStore):
+            raise BasketPlanError("通用模拟阶段日志只接受私有 CAS 研究账本")
+        self.journal_store = journal_store
+        self._journal_identity = ""
+        self._journal_revision = None
+        self.checkpoint = None
+        self.phase_audits: list[dict] = []
         self.runtime = runtime
         self.ledger = ledger
         self.step_ns = step_ns
@@ -79,7 +97,18 @@ class GenericBasketReplay:
         self.status = "frozen"
         self.freeze_reason = reason
 
+    def _persist_checkpoint(self) -> None:
+        if self.journal_store is not None:
+            saved = self.journal_store.save(
+                self._journal_identity, self.checkpoint,
+                expected_revision=self._journal_revision,
+            )
+            self._journal_revision = saved.revision
+
     def _execute_phase(self, phase, quotes: dict[LegId, BasketQuote], ts_ns: int) -> bool:
+        request_id = f"sim-{ts_ns}-{self.checkpoint.phase_index}"
+        self.checkpoint = begin_phase(self.checkpoint, request_id)
+        self._persist_checkpoint()
         depth_used: dict[tuple[LegId, str], Decimal] = {}
         for index, change in enumerate(phase.changes):
             leg, delta = change.leg, change.quantity_delta
@@ -116,6 +145,11 @@ class GenericBasketReplay:
             except BasketPlanError as exc:
                 self._freeze("模拟成交及资金风控拒绝：" + str(exc))
                 return False
+            self.checkpoint = record_cumulative_fill(
+                self.checkpoint, request_id=request_id, event_id=identity,
+                leg=leg, cumulative=traded,
+            )
+            self._persist_checkpoint()
             depth_used[(leg, side)] = (
                 depth_used.get((leg, side), Decimal(0)) + fill_size
             )
@@ -130,6 +164,12 @@ class GenericBasketReplay:
             if gross > self.runtime.max_gross_notional:
                 self._freeze("模拟成交后实际毛名义风险超过预算")
                 return False
+        self.checkpoint = confirm_phase(
+            self.checkpoint, request_id=request_id,
+            terminal_statuses={row.leg: "FILLED" for row in phase.changes},
+            observed_positions=dict(self.ledger.positions),
+        )
+        self._persist_checkpoint()
         return True
 
     def _snapshot(self, quotes: dict[LegId, BasketQuote], stamp: int) -> dict:
@@ -237,6 +277,27 @@ class GenericBasketReplay:
                     now_ns=ts_ns, positions=dict(self.ledger.positions),
                     evidence=evidence,
                 )
+                self.checkpoint = new_checkpoint(
+                    decision.plan, dict(self.ledger.positions),
+                )
+                raw_id = (
+                    f"{self.runtime.tenant_id}:{self.runtime.account_id}:{ts_ns}"
+                ).encode("utf-8")
+                self._journal_identity = (
+                    "research-" + hashlib.sha256(raw_id).hexdigest()[:32]
+                )
+                self._journal_revision = None
+                if self.journal_store is not None:
+                    # Re-entering an old phase without replaying simulated cash
+                    # and venue identities would silently double-count fills.
+                    prior = self.journal_store.load(
+                        self._journal_identity, decision.plan,
+                    )
+                    if prior is not None:
+                        raise BasketPlanError(
+                            "组合研究阶段已有持久历史；重启前必须核对账户与成交"
+                        )
+                self._persist_checkpoint()
                 self.target_events.append({
                     "ts_ns": ts_ns, "member_count": decision.member_count,
                     "targets": [
@@ -250,6 +311,7 @@ class GenericBasketReplay:
                 for phase in decision.plan.phases:
                     if not self._execute_phase(phase, quotes, ts_ns):
                         break
+                self.phase_audits.append(checkpoint_to_record(self.checkpoint))
                 self.curve.append(self._snapshot(quotes, ts_ns))
                 self.last_ns = ts_ns
             except BasketPlanError as exc:
@@ -262,6 +324,13 @@ class GenericBasketReplay:
                     pass
                 self.last_ns = ts_ns
             if self.status == "frozen":
+                if self.checkpoint is not None and self.checkpoint.status != "completed":
+                    self.checkpoint = freeze_checkpoint(
+                        self.checkpoint,
+                        (self.freeze_reason or "组合研究拒绝继续")[:512],
+                    )
+                    self._persist_checkpoint()
+                    self.phase_audits.append(checkpoint_to_record(self.checkpoint))
                 break
         if self.expected_funding is not None:
             expected = {
@@ -297,6 +366,7 @@ class GenericBasketReplay:
                 if event["kind"] != "simulation_fill"
             ],
             "target_events": self.target_events,
+            "phase_audits": self.phase_audits,
             "equity_curve": self.curve,
             "execution": "offline_depth_limited_simulated_bbo",
             "financial_model": "per_product_usdt_cash_margin_fee_funding_and_expiry",
