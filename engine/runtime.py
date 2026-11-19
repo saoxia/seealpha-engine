@@ -699,6 +699,141 @@ class EngineRuntime:
             self.store.add_event(tenant_id, account_id, "carry_backtest", result)
         return result
 
+    def run_generic_portfolio_backtest(
+        self, tenant_id, account_id, issuance_ids, legs, start, end, interval,
+        starting_spot_balance, starting_perpetual_balance, max_gross_notional,
+    ):
+        """One development-only Nautilus replay for several symbols/products.
+
+        Every requested leg needs a real Catalog instrument, an explicit
+        subscription and complete synchronized historical bars. Independent
+        Engine-per-symbol replay is intentionally not used.
+        """
+        from contextlib import ExitStack
+        from itertools import zip_longest
+
+        from core.market.instruments import instrument_id_for, normalize_symbol
+        from engine.data_queries import read_lease
+        from engine.pipeline.catalog import ParquetDataCatalog
+        from engine.strategies.backtest import (
+            _nanos, catalog_directory, parse_window, read_history_batches,
+        )
+        from engine.strategies.basket_targets import LegId
+        from engine.strategies.generic_simulation import run_native_generic_portfolio
+
+        self.assert_runnable(tenant_id, "backtest")
+        tenant = self.store.tenant(tenant_id)
+        if tenant is None or tenant["purpose"] != "development":
+            raise EngineConflict("通用多标的回测仅允许开发租户。")
+        start_at, end_at, interval = parse_window(start, end, interval)
+        if (
+            not isinstance(issuance_ids, list) or not 1 <= len(issuance_ids) <= 16
+            or any(not isinstance(v, str) or not 1 <= len(v) <= 64 for v in issuance_ids)
+            or len(set(issuance_ids)) != len(issuance_ids)
+        ):
+            raise EngineConflict("策略下发列表无效或包含重复发行编号。")
+        if not isinstance(legs, list) or not 1 <= len(legs) <= 8:
+            raise EngineConflict("多标的回测需要1至8条市场腿。")
+        identities = []
+        for row in legs:
+            if not isinstance(row, dict) or set(row) != {"product", "symbol"}:
+                raise EngineConflict("组合市场腿结构无效。")
+            product, symbol = row["product"], row["symbol"]
+            if product not in {"spot", "futures_um"} or not isinstance(symbol, str):
+                raise EngineConflict("通用回测仅支持现货和 USD-M 永续历史。")
+            try:
+                normalized = normalize_symbol(symbol, product)
+            except (TypeError, ValueError) as exc:
+                raise EngineConflict("组合交易合约代码无效。") from exc
+            identities.append(LegId(str(tenant_id), str(account_id), product, normalized))
+        if len(set(identities)) != len(identities):
+            raise EngineConflict("同一产品和合约不能在一个组合中重复。")
+        all_loads = self.store.strategy_loads(
+            tenant_id, account_id, include_archive=True,
+        )
+        loads_by_id = {str(load["issuance_id"]): load for load in all_loads}
+        if not set(issuance_ids).issubset(loads_by_id):
+            raise EngineConflict("组合成员未在当前开发账户下发。")
+        loads = [loads_by_id[identifier] for identifier in issuance_ids]
+        if any(
+            str(item["tenant_id"]) != str(tenant_id)
+            or str(item["account_id"]) != str(account_id)
+            or item["grant_purpose"] != "development"
+            or item["parameters"].get("symbol") not in {leg.symbol for leg in identities}
+            for item in loads
+        ):
+            raise EngineConflict("组合成员权限或策略主要标的不一致。")
+        if any(
+            not self._has_subscription_intent(tenant_id, leg.symbol, leg.product)
+            for leg in identities
+        ):
+            raise EngineConflict("组合每条市场腿必须先声明历史行情订阅。")
+        if not (self.project / "data").is_dir():
+            raise EngineConflict("租户历史数据目录不可用。")
+
+        # All Catalog leases stay held for the entire native replay.
+        # Sorted acquisition prevents new deadlocks across overlapping baskets.
+        with ExitStack() as resources:
+            for leg in sorted(identities):
+                resources.enter_context(read_lease(self.project, leg.symbol, leg.product))
+            catalog_dir = catalog_directory(self.project)
+            catalog = ParquetDataCatalog(catalog_dir)
+            instruments = {}
+            streams = []
+            for leg in identities:
+                instrument_id = instrument_id_for(leg.symbol, leg.product)
+                rows = catalog.instruments(instrument_ids=[instrument_id])
+                instrument = next(
+                    (value for value in rows if str(value.id) == instrument_id), None,
+                )
+                if instrument is None:
+                    raise EngineConflict("组合历史缺少对应产品的原生合约定义。")
+                instruments[leg] = instrument
+                stream = (
+                    bar for batch in read_history_batches(
+                        catalog_dir, leg.symbol, interval, start_at, end_at,
+                        product=leg.product,
+                    ) for bar in batch
+                )
+                streams.append(stream)
+            step = 60_000_000_000 if interval == "1m" else 300_000_000_000
+            start_ns, end_ns = _nanos(start_at), _nanos(end_at)
+            sentinel = object()
+
+            def aligned_frames():
+                previous, count = None, 0
+                for row in zip_longest(*streams, fillvalue=sentinel):
+                    if any(item is sentinel for item in row):
+                        raise EngineConflict("跨标的历史数据长度不一致，不能虚构K线。")
+                    stamps = {int(item.ts_event) for item in row}
+                    if len(stamps) != 1:
+                        raise EngineConflict("跨标的历史数据未按同一时间戳闭合。")
+                    stamp = stamps.pop()
+                    if stamp != (start_ns + step if previous is None else previous + step):
+                        raise EngineConflict("跨标的历史窗口存在缺失或重复的K线。")
+                    previous = stamp
+                    count += 1
+                    yield dict(zip(identities, row))
+                if count == 0 or previous != end_ns - step:
+                    raise EngineConflict("组合历史窗口尾部缺失或没有可用行情。")
+
+            report = run_native_generic_portfolio(
+                loads, aligned_frames(), instruments, interval=interval,
+                starting_spot=starting_spot_balance,
+                starting_perpetual=starting_perpetual_balance,
+                max_gross_notional=max_gross_notional,
+            )
+        report.update(start=start_at.isoformat(), end=end_at.isoformat(), interval=interval,
+                      issuance_ids=issuance_ids)
+        self.store.add_event(tenant_id, account_id, "generic_portfolio_backtest", report)
+        return report
+
+    def latest_generic_portfolio_backtest(self, tenant_id, account_id):
+        if self.store.tenant(tenant_id) is None:
+            raise EngineConflict("租户不存在。")
+        event = self.store.latest_event(tenant_id, account_id, "generic_portfolio_backtest")
+        return None if event is None else event["body"]
+
     def run_spot_perp_strategy_backtest(
         self, tenant_id, account_id, issuance_id, start, end, interval,
         starting_spot_balance, starting_perpetual_balance, max_gross_notional,
