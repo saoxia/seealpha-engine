@@ -93,6 +93,7 @@ def reconcile_verified_option_expiry(
     checked: dict[LegId, ExpiringOptionContract] = {}
     expiry = None
     owner = None
+    underlying_expiry_code = None
     for contract in contracts:
         if not isinstance(contract, ExpiringOptionContract):
             raise BasketSettlementError("期权合约属性无效")
@@ -120,8 +121,13 @@ def reconcile_verified_option_expiry(
         if owner is None:
             owner = (leg.tenant_id, leg.account_id)
             expiry = contract.expiry_ns
-        if owner != (leg.tenant_id, leg.account_id) or expiry != contract.expiry_ns:
-            raise BasketSettlementError("多个账户或不同到期日不能合并核算")
+            underlying_expiry_code = (parts[0], parts[1])
+        if (
+            owner != (leg.tenant_id, leg.account_id)
+            or expiry != contract.expiry_ns
+            or underlying_expiry_code != (parts[0], parts[1])
+        ):
+            raise BasketSettlementError("多个账户、标的或不同到期日不能合并核算")
         checked[leg] = contract
     if set(positions_before) != set(checked):
         raise BasketSettlementError("缺少或多出期权到期前仓位")
