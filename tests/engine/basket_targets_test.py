@@ -3,6 +3,12 @@ from decimal import Decimal
 
 import pytest
 
+from engine.strategies.basket_reconciliation import (
+    begin_phase,
+    checkpoint_to_record,
+    new_checkpoint,
+    restore_checkpoint,
+)
 from engine.strategies.basket_targets import (
     BasketPlanError,
     LegEvidence,
@@ -248,9 +254,6 @@ def test_emergency_flatten_underhedged_carry_is_reduce_only_and_auditable():
     assert {row.leg: row.quantity_delta for row in plan.phases[0].changes} == {
         spot: Decimal("-0.8"), perp: Decimal("0.3"),
     }
-    from engine.strategies.basket_reconciliation import (
-        begin_phase, checkpoint_to_record, new_checkpoint, restore_checkpoint,
-    )
     state = begin_phase(new_checkpoint(plan, current), "emergency-carry-1")
     assert restore_checkpoint(plan, checkpoint_to_record(state)) == state
     assert state.status == "awaiting_confirmation"
