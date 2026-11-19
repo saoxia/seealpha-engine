@@ -5,6 +5,7 @@ Only an allowlisted, validated recipe drives this known-good strategy class.
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 
 from nautilus_trader.indicators import ExponentialMovingAverage, SimpleMovingAverage
@@ -32,7 +33,8 @@ def validate_candidate(recipe: object, *, symbol: str | None = None) -> dict:
     amounts = {}
     for field in ("allocation", "risk_limit"):
         value = recipe[field]
-        if not isinstance(value, str) or len(value) > 32:
+        if (not isinstance(value, str)
+                or not re.fullmatch(r"(?:0|[1-9][0-9]{0,20})(?:\.[0-9]{1,8})?", value)):
             raise ValueError("Invalid candidate position value")
         try:
             quantity = Decimal(value)

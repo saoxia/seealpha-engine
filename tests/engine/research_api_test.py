@@ -428,3 +428,5 @@ def test_candidate_ast_validation_rejects_network_and_wrong_shape():
         validate_candidate({**parsed["recipe"], "kind": "arbitrary_python"})
     with pytest.raises(ValueError):
         validate_candidate({**parsed["recipe"], "risk_limit": "inf"})
+    with pytest.raises(ValueError):
+        validate_candidate({**parsed["recipe"], "risk_limit": "1E+999999999"})
