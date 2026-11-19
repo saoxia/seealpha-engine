@@ -149,3 +149,29 @@ def test_generic_runner_does_not_execute_strategy_bypassing_target_api():
     )
     with pytest.raises(RuntimeError, match="should not send native orders"):
         _replay(loads=[_load(source)])
+
+
+def test_two_independent_issued_strategies_share_one_native_portfolio():
+    spot_source = _SOURCE.replace(
+        '                {"product": "futures_um", "symbol": "BTCUSDT"},' + chr(10), "",
+    ).replace(
+        '                {"product": "futures_um", "symbol": "BTCUSDT", "quantity": "-0.1"},'
+        + chr(10), "",
+    )
+    perp_source = _SOURCE.replace(
+        '                {"product": "spot", "symbol": "ETHUSDT"},' + chr(10), "",
+    ).replace(
+        '                {"product": "spot", "symbol": "ETHUSDT", "quantity": "0.1"},'
+        + chr(10), "",
+    )
+    assert spot_source != _SOURCE and perp_source != _SOURCE
+    a = {**_load(spot_source), "issuance_id": "eth-member"}
+    b = {**_load(perp_source), "issuance_id": "btc-member"}
+    report = _replay(loads=[a, b])
+    assert len(report["orders"]) == 2
+    assert {row["symbol"] for row in report["orders"]} == {"ETHUSDT", "BTCUSDT"}
+    assert len(report["fills"]) >= 2
+    assert report["target_events"]
+    assert {row["product"] for row in report["target_events"][-1]["targets"]} == {
+        "spot", "futures_um",
+    }
