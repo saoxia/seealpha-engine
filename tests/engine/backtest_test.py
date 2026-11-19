@@ -114,6 +114,10 @@ def test_development_backtest_clips_targets_and_persists_a_result(tmp_path):
     assert Decimal(result["ending_balance"]) < Decimal(result["starting_balance"])
     assert [row["quantity"] for row in result["holdings"]] == ["1", "0", "1", "0"]
     assert {row["code_key"] for row in result["holdings"]} == {"ema_crossover"}
+    assert len(result["target_events"]) == 4
+    assert {row["issuance_id"] for row in result["target_events"]} == {"1", "2"}
+    assert {row["strategy_id"] for row in result["target_events"]}.issubset(set(result["member_ids"]))
+    assert all(row["time"] > 1_700_000_000 and row["symbol"] == "ETHUSDT" for row in result["target_events"])
     assert [(row["side"], Decimal(row["quantity"])) for row in result["orders"]] == [
         ("BUY", Decimal("0.5")),
         ("SELL", Decimal("0.5")),
