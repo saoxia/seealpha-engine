@@ -38,7 +38,6 @@ from engine.strategies.issued_basket import issued_basket_members
 from engine.strategies.strategy_config import StrategyConfig
 from nautilus_support import instrument_fee_model
 
-
 _VENUES = {"spot": Venue("SIM_SPOT"), "futures_um": Venue("SIM_UM")}
 _STEP_NS = {"1m": 60_000_000_000, "5m": 300_000_000_000}
 
@@ -231,7 +230,7 @@ def run_native_generic_portfolio(
         for contract in instruments.values():
             engine.add_instrument(contract)
         base = next((instruments[leg] for leg in sorted(legs) if leg.product == "futures_um"),
-                    instruments[sorted(legs)[0]])
+                    instruments[min(legs)])
         base_bar = next(bar_types[leg] for leg in sorted(legs) if instruments[leg] == base)
         members = resources.enter_context(issued_basket_members(loads, base, base_bar))
         engine.add_strategy(coordinator)
