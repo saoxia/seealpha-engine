@@ -89,6 +89,7 @@ class NativePortfolioCoordinator(Strategy):
         if self.failure or self.pending or not self.remaining:
             return
         phase = self.remaining.pop(0)
+        orders_to_submit = []
         for change in phase.changes:
             instrument = self.contracts[change.leg]
             delta = change.quantity_delta
@@ -109,6 +110,10 @@ class NativePortfolioCoordinator(Strategy):
                 "side": "BUY" if delta > 0 else "SELL",
                 "quantity": format(abs(delta), "f"),
             })
+            orders_to_submit.append(order)
+        # Register ALL in-flight orders before any event callback may report
+        # an immediate fill. The next risk phase must wait for every leg.
+        for order in orders_to_submit:
             self.submit_order(order)
 
     def on_order_filled(self, event):
@@ -356,5 +361,5 @@ def run_native_generic_portfolio(
             "funding_accounting": "NOT_INCLUDED_requires_verified_settlement_for_strategy_returns",
         }
     finally:
-        resources.close()
         engine.dispose()
+        resources.close()
