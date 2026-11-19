@@ -8,7 +8,6 @@ from engine.connectors.binance import manual_algo
 from engine.connectors.binance.manual import ManualValidationError
 from engine.connectors.binance.queries import QueryError
 
-
 ACCOUNT = {"id": 1, "environment": "sandbox",
            "credentials": {"apiKey": "fictional-key", "secret": "fictional-secret"}}
 VALID = {
