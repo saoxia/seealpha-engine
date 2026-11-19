@@ -25,6 +25,8 @@ class BasketContract:
     multiplier: Decimal
     taker_fee_rate: Decimal
     initial_margin_ratio: Decimal = Decimal(0)
+    expiry_ns: int | None = None
+    strike: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.leg, LegId):
@@ -33,6 +35,12 @@ class BasketContract:
         _number(self.multiplier, "合约乘数", positive=True)
         _number(self.taker_fee_rate, "手续费率")
         _number(self.initial_margin_ratio, "初始保证金比例")
+        if self.leg.product == "options":
+            if type(self.expiry_ns) is not int or self.expiry_ns <= 0:
+                raise BasketPlanError("期权研究必须有真实合约到期时间")
+            _number(self.strike, "期权行权价", positive=True)
+        elif self.expiry_ns is not None or self.strike is not None:
+            raise BasketPlanError("非期权合约不能携带期权行权参数")
         if (
             self.taker_fee_rate < 0 or self.taker_fee_rate > Decimal("0.1")
             or self.initial_margin_ratio < 0
@@ -282,6 +290,76 @@ class BasketFinanceLedger:
                 "executable": False,
             })
             return self.mark(quotes, now_ns=fill.ts_ns, max_age_ns=max_age_ns)
+        except Exception:
+            self._restore(before)
+            raise
+
+    def settle_verified_options(
+        self, records, quotes: dict[LegId, BasketQuote], *,
+        account_cash_after: Decimal, now_ns: int, max_age_ns: int,
+    ) -> dict:
+        """Move expiring long option inventories to verified USDT settlement.
+
+        Reject mixed underlyings/expiry, a still-open futures hedge, missing
+        exercise data, or cash flow that cannot be reconciled. Does not query
+        or authenticate the exchange: caller must supply already authenticated
+        and complete source records.
+        """
+        from engine.strategies.basket_settlement import (
+            ExpiringOptionContract,
+            reconcile_verified_option_expiry,
+        )
+
+        contracts = tuple(
+            ExpiringOptionContract(
+                leg, contract.expiry_ns, contract.strike,
+                contract.multiplier, contract.quantity_increment,
+            ) for leg, contract in sorted(self.contracts.items())
+            if leg.product == "options" and contract.expiry_ns == now_ns
+        )
+        if not contracts:
+            raise BasketPlanError("当前时点没有可行权期权")
+        if not isinstance(records, tuple) or len(records) != len(contracts):
+            raise BasketPlanError("必须提供每条到期腿的真实行权记录")
+        before = self._state()
+        try:
+            positions = {item.leg: self.positions[item.leg] for item in contracts}
+            active_perp = sum((
+                self.positions[leg] for leg in self.positions
+                if leg.product == "futures_um"
+            ), Decimal(0))
+            report = reconcile_verified_option_expiry(
+                contracts, positions, records,
+                perpetual_position_at_expiry=active_perp,
+                account_cash_before=self.cash["options"],
+                account_cash_after=account_cash_after,
+                now_ns=now_ns,
+            )
+            for row in records:
+                if row.settlement_id in self.event_ids:
+                    raise BasketPlanError("历史行权记录重复")
+                old = self.positions[row.leg]
+                self.realized[row.leg] += (
+                    row.gross_credit - old * self.average_prices[row.leg]
+                    * self.contracts[row.leg].multiplier
+                )
+                self.fees[row.leg] += row.exercise_fee
+                self.positions[row.leg] = Decimal(0)
+                self.average_prices[row.leg] = Decimal(0)
+                self.event_ids.add(row.settlement_id)
+                self.events.append({
+                    "kind": "verified_option_exercise",
+                    "event_id": row.settlement_id, "ts_ns": row.settled_at_ns,
+                    "leg": self._leg_key(row.leg),
+                    "gross_credit": format(row.gross_credit, "f"),
+                    "exercise_fee": format(row.exercise_fee, "f"),
+                    "net_credit": format(row.net_credit, "f"),
+                    "executable": False,
+                })
+            self.cash["options"] = account_cash_after
+            snapshot = self.mark(quotes, max_age_ns=max_age_ns, now_ns=now_ns)
+            snapshot["expiry_net_cash"] = format(report.net_option_cash_credit, "f")
+            return snapshot
         except Exception:
             self._restore(before)
             raise
