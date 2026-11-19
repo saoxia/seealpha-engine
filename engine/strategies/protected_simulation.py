@@ -27,6 +27,7 @@ from nautilus_trader.trading import Strategy
 
 from engine.runtime import EngineConflict
 from engine.strategies.backtest_engine import backtest_engine_config
+from engine.strategies.basket_reconciliation import BasketReconciliation
 from engine.strategies.basket_targets import (
     BasketPlanError,
     LegEvidence,
@@ -138,6 +139,7 @@ class _NativeProtectedCoordinator(Strategy):
         self.fills = []
         self.target_events = []
         self.pending_premium = Decimal(0)
+        self.reconciler = None
 
     def bind(self, load, model, perp, put, call, interval, max_gross_notional):
         self.params = load["parameters"]
@@ -257,6 +259,9 @@ class _NativeProtectedCoordinator(Strategy):
                 for leg, quantity in sorted(desired.items())
             ],
         })
+        self.reconciler = BasketReconciliation(
+            plan, dict(self.ledger), run_id=f"{self.member_id}:{now}",
+        )
         self.phases = list(plan.phases)
         self.pending_premium = Decimal(0)
         self._advance()
@@ -266,6 +271,11 @@ class _NativeProtectedCoordinator(Strategy):
             return
         if self.current_phase is not None:
             self._verify_phase(self.current_phase)
+            if not self.failed:
+                try:
+                    self.reconciler.confirm_phase(dict(self.ledger))
+                except BasketPlanError as exc:
+                    self.failed.append(str(exc))
             self.current_phase = None
             if self.failed:
                 return
@@ -279,8 +289,12 @@ class _NativeProtectedCoordinator(Strategy):
                 self.proposal = None
             return
         phase = self.phases.pop(0)
+        if self.reconciler.next_phase != phase:
+            self.failed.append("组合协调阶段与已验证计划不一致")
+            return
         self.current_phase = phase.name
         orders = []
+        phase_order_ids = {}
         for change in phase.changes:
             instrument = self.instruments[change.leg]
             delta = change.quantity_delta
@@ -292,6 +306,7 @@ class _NativeProtectedCoordinator(Strategy):
                 tags=["protected-basket-research", phase.name],
             )
             key = str(order.client_order_id)
+            phase_order_ids[change.leg] = key
             self.outstanding[key] = {
                 "leg": change.leg,
                 "remaining": abs(delta),
@@ -305,6 +320,14 @@ class _NativeProtectedCoordinator(Strategy):
                 "quantity": format(abs(delta), "f"),
             })
             orders.append(order)
+        try:
+            self.reconciler.open_phase(
+                phase_order_ids, observed_positions=dict(self.ledger),
+                now_ns=int(self.evidence.ts_ns),
+            )
+        except BasketPlanError as exc:
+            self.failed.append(str(exc))
+            return
         # Register the entire concurrent phase before any native fill callback
         # can advance to the next phase.
         for order in orders:
@@ -347,6 +370,13 @@ class _NativeProtectedCoordinator(Strategy):
         quantity = event.last_qty.as_decimal()
         if quantity <= 0 or quantity > entry["remaining"]:
             self.failed.append("组合订单成交数量不一致")
+            return
+        try:
+            self.reconciler.record_fill(
+                key, quantity, fill_id=str(event.id), now_ns=int(event.ts_event),
+            )
+        except BasketPlanError as exc:
+            self.failed.append(str(exc))
             return
         entry["remaining"] -= quantity
         leg = entry["leg"]
@@ -518,6 +548,8 @@ def run_native_protected(load, evidence, contracts, *, interval,
         engine.end()
         if coordinator.failed or coordinator.outstanding:
             raise EngineConflict("期权保护组合在回测结束时有未解决订单。")
+        if coordinator.reconciler is not None and not coordinator.reconciler.complete:
+            raise EngineConflict("期权保护组合的阶段成交尚未经独立仓位核对。")
         return {
             "tenant_id": str(load["tenant_id"]),
             "account_id": str(load["account_id"]),
