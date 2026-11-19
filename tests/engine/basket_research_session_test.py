@@ -275,11 +275,6 @@ def test_generic_session_rejects_missing_or_forged_market_leg():
         max_gross_notional=Decimal(100),
     )
     member = session.member("one")
-    with pytest.raises(BasketPlanError, match="完整"):
-        member.subscribe_market_bundle(
-            legs=({"product": "spot", "symbol": "ETHUSDT"},),
-            data=("closed_bars", "account_positions"),
-        )
     with pytest.raises(BasketPlanError, match="结构"):
         member.subscribe_market_bundle(
             legs=({"product": ["spot"], "symbol": "ETHUSDT"},),
@@ -298,3 +293,39 @@ def test_generic_session_rejects_missing_or_forged_market_leg():
             ],
             constraints={"skip_risk": True},
         )
+
+
+def test_generic_independent_members_can_publish_disjoint_instrument_subsets():
+    eth = LegId("development", "virtual", "spot", "ETHUSDT")
+    btc = LegId("development", "virtual", "futures_um", "BTCUSDT")
+    positions = {eth: Decimal(0), btc: Decimal(0)}
+    evidence = {
+        leg: LegEvidence(Decimal(100), Decimal("0.1"), Decimal(1), _NOW)
+        for leg in positions
+    }
+    session = BasketResearchSession(
+        tenant_id="development", account_id="virtual", policy="generic",
+        positions=positions, evidence=evidence,
+        now_ns=_NOW, max_age_ns=1000, max_gross_notional=Decimal(1000),
+    )
+    first = session.member("eth-trend")
+    first.subscribe_market_bundle(
+        legs=({"product": "spot", "symbol": "ETHUSDT"},),
+        data=("closed_bars", "account_positions"),
+    )
+    first.publish_basket(
+        targets=[{"product": "spot", "symbol": "ETHUSDT", "quantity": "0.2"}],
+    )
+    with pytest.raises(BasketPlanError, match="未覆盖"):
+        session.plan()
+    second = session.member("btc-reversion")
+    second.subscribe_market_bundle(
+        legs=({"product": "futures_um", "symbol": "BTCUSDT"},),
+        data=("closed_bars", "account_positions"),
+    )
+    second.publish_basket(
+        targets=[{"product": "futures_um", "symbol": "BTCUSDT", "quantity": "-0.3"}],
+    )
+    assert dict(session.plan().plan.targets) == {
+        eth: Decimal("0.2"), btc: Decimal("-0.3"),
+    }
