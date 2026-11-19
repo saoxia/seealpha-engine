@@ -294,6 +294,9 @@ class GenericBasketReplay:
                         self._journal_identity, decision.plan,
                     )
                     if prior is not None:
+                        # Preserve the existing CAS journal unchanged. This
+                        # replay has not restored its simulated cash account.
+                        self.checkpoint = None
                         raise BasketPlanError(
                             "组合研究阶段已有持久历史；重启前必须核对账户与成交"
                         )
