@@ -23,7 +23,6 @@ from engine.strategies.basket_targets import (
     plan_basket,
 )
 
-
 NOW = 1_000_000_000_000
 
 
