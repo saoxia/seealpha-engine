@@ -181,15 +181,17 @@ class BasketResearchSession:
                 or len(option_symbols) != len(options)
             ):
                 raise BasketPlanError("期权订阅必须绑定当前账户的完整永续和双翼")
+        subscribed_legs = (
+            frozenset(
+                leg for leg in required_legs
+                if (leg.product, leg.symbol) in requested
+            )
+            if self.policy == "generic" else frozenset(required_legs)
+        )
         previous = self._subscriptions.get(member_id)
-        if previous is not None and previous != frozenset(required_legs):
+        if previous is not None and previous != subscribed_legs:
             raise BasketPlanError("相同成员不能重新绑定其他组合腿")
-        if self.policy == "generic":
-            declared = {leg for leg in required_legs
-                        if (leg.product, leg.symbol) in requested}
-            self._subscriptions[member_id] = frozenset(declared)
-        else:
-            self._subscriptions[member_id] = frozenset(required_legs)
+        self._subscriptions[member_id] = subscribed_legs
 
     def _publish(
         self, member_id: str, *,
