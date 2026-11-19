@@ -18,7 +18,6 @@ from engine.strategies.basket_generic_runtime import (
 from engine.strategies.basket_settlement import VerifiedOptionSettlement
 from engine.strategies.basket_targets import BasketPlanError, LegEvidence, LegId
 
-
 _STEP = 60_000_000_000
 _START = _STEP * 1000
 _T1 = _START + _STEP
@@ -154,7 +153,7 @@ def test_missing_or_spoofed_funding_and_history_gap_are_not_extrapolated():
         replay.run(duplicated, start_ns=_START, end_ns=_END)
     replay, frames, _legs, _models = _carry()
     bad_cash = VerifiedFundingCash(
-        um, "funding-event-2", _T2, Decimal("0.001"), Decimal("99"),
+        um, "funding-event-2", _T2, Decimal("0.001"), Decimal(99),
     )
     bad = (frames[0], replace(frames[1], funding=(bad_cash,)))
     result = replay.run(bad, start_ns=_START, end_ns=_END)

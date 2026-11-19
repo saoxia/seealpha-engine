@@ -133,7 +133,7 @@ class NativeBasketBarGate:
             or not isinstance(bar_types, tuple)
             or not bar_types or len(bar_types) > 64
             or not all(isinstance(bar_type, BarType) for bar_type in bar_types)
-            or len(set(str(item) for item in bar_types)) != len(bar_types)
+            or len({str(item) for item in bar_types}) != len(bar_types)
         ):
             raise BasketPlanError("原生成员研究实例、市场订阅或生命周期无效")
         self.registered[member_id] = (strategy, bar_types)
