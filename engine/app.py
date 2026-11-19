@@ -1,4 +1,4 @@
-"""Internal HTTP API. The business backend is the only intended client."""
+"""Engine HTTP API for standalone or Platform-managed deployments."""
 
 import hmac
 import json

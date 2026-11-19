@@ -7,10 +7,11 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 
-TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.data_manager.contracts import DataPolicy
 from engine.data_manager.repository import PolicyRepository, StorageUnavailable
 from engine.data_manager.service import DataService
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
 
 def test_engine_persists_market_policy_and_rejects_cross_tenant(tmp_path):

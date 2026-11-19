@@ -13,8 +13,9 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 
-TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.task_queue import TaskCoordinator, TaskJournal
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
 FAKE_WORKER = """
 import json

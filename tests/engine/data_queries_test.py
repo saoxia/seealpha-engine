@@ -4,8 +4,9 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 
-TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.pipeline.models import PipelineSettings
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
 
 def test_tenant_data_reads_reject_unauthorized_and_other_tenant(tmp_path, monkeypatch):

@@ -1,4 +1,4 @@
-"""Engine process settings. authentication is opt-in."""
+"""Engine process settings. Authentication is opt-in."""
 
 import os
 from dataclasses import dataclass
@@ -11,7 +11,6 @@ PROJECT = Path(__file__).resolve().parents[1]
 class EngineConfig:
     state_dir: Path
     token: str = ""
-    auth_mode: str = "none"
     host: str = "127.0.0.1"
     port: int = 8766
     project: Path = PROJECT
@@ -20,6 +19,7 @@ class EngineConfig:
     research_signing_key: str | None = None
     backtest_max_workers: int = 1
     backtest_timeout_seconds: int = 3600
+    auth_mode: str = "none"
 
     @classmethod
     def from_environment(cls):

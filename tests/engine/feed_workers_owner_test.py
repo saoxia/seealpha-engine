@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 
-TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 from engine.data_manager.contracts import DataPolicy
 from engine.data_manager.service import DataService
+
+TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
 
 class Worker:
