@@ -4,9 +4,9 @@
 
 ## 当前已实现的纯规划器
 
-`engine/strategies/basket_targets.py` 将多个成员目标按 **账户 + 产品 + 合约** 分组，只对同一腿进行代数净额，不会把现货和永续多空直接抵消。
+`engine/strategies/basket_targets.py` 将多个成员目标按 **租户 + 账户 + 产品 + 合约** 分组，只对同一腿进行代数净额，不会把现货和永续多空直接抵消。
 
-- `LegId(account_id, product, symbol)`：支持 `spot`、`futures_um`、`options`。
+- `LegId(tenant_id, account_id, product, symbol)`：支持 `spot`、`futures_um`、`options`。
 - `MemberLegTarget`：成员自己的带符号 Decimal 目标，可多成员净额。
 - `LegEvidence`：每腿严格提供价格、最小下单步长、合约乘数和观测时间。
 - `plan_basket(...)`：拒绝不完整账户仓位、未来/过期行情、非法精度、不足的期权保护或毛名义预算超限；返回纯研究用 `BasketPlan`。

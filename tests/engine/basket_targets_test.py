@@ -13,7 +13,7 @@ from engine.strategies.basket_targets import (
 
 
 def _leg(product, symbol):
-    return LegId("desk", product, symbol)
+    return LegId("dev", "desk", product, symbol)
 
 
 def _evidence(legs, *, now=1_000_000_000_000):
@@ -125,3 +125,25 @@ def test_option_hedge_coverage_and_identity_fail_closed():
                MemberLegTarget("x", perp, Decimal("0.2"))],
               {put: Decimal(0), call: Decimal(0), perp: Decimal("0.1")},
               policy="option_protected")
+
+def test_no_cross_tenant_netting_or_stale_market_evidence():
+    spot = _leg("spot", "ETHUSDT")
+    perp = _leg("futures_um", "ETHUSDT")
+    targets = [MemberLegTarget("a", spot, Decimal("0.1")),
+               MemberLegTarget("a", perp, Decimal("-0.1"))]
+    positions = {spot: Decimal(0), perp: Decimal(0)}
+    foreign = LegId("other", "desk", "spot", "ETHUSDT")
+    with pytest.raises(BasketPlanError, match="同一租户"):
+        _plan(targets + [MemberLegTarget("b", foreign, Decimal("0"))],
+              {**positions, foreign: Decimal(0)}, policy="funding_carry")
+
+    quotes = _evidence(positions)
+    quotes[spot] = LegEvidence(
+        Decimal("2000"), Decimal("0.1"), Decimal("1"), 1_000_000_000_000 - 10_000_000_000
+    )
+    with pytest.raises(BasketPlanError, match="过期"):
+        plan_basket(
+            targets, positions, quotes,
+            now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
+            max_gross_notional=Decimal("1000"), policy="funding_carry",
+        )

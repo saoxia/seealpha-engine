@@ -77,7 +77,7 @@ uv run python -m engine
 
 ## 跨产品目标规划（研究阶段）
 
-已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按账户/产品/合约组合多成员目标，校验研究用现货+永续与永续+期权的风险顺序；**不会实际执行、回测或下发这些多腿组合**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
+已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按租户/账户/产品/合约组合多成员目标，校验研究用现货+永续与永续+期权的风险顺序；**不会实际执行、回测或下发这些多腿组合**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
 
 ## Research API
 

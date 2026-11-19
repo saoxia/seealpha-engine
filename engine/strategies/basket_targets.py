@@ -26,13 +26,17 @@ def _finite(value: Decimal, label: str, *, positive: bool = False) -> Decimal:
 
 @dataclass(frozen=True, order=True)
 class LegId:
+    tenant_id: str
     account_id: str
     product: Product
     symbol: str
 
     def __post_init__(self) -> None:
         if (
-            not isinstance(self.account_id, str)
+            not isinstance(self.tenant_id, str)
+            or not 1 <= len(self.tenant_id) <= 64
+            or not self.tenant_id.strip()
+            or not isinstance(self.account_id, str)
             or not 1 <= len(self.account_id) <= 40
             or not self.account_id.strip()
             or self.product not in {"spot", "futures_um", "options"}
@@ -146,8 +150,8 @@ def plan_basket(
         seen.add(identity)
         targets[target.leg] += target.signed_quantity
     legs = set(targets)
-    if len({leg.account_id for leg in legs}) != 1:
-        raise BasketPlanError("当前组合只允许同一账户内的多产品腿")
+    if len({(leg.tenant_id, leg.account_id) for leg in legs}) != 1:
+        raise BasketPlanError("当前组合只允许同一租户、同一账户内的多产品腿")
     if not isinstance(positions, dict) or set(positions) != legs:
         raise BasketPlanError("必须提供全部组合腿的实际仓位，不允许省略或额外仓位")
     if not isinstance(evidence, dict) or not legs.issubset(evidence):
