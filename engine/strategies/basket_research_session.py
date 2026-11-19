@@ -157,7 +157,7 @@ class BasketResearchSession:
                 len(requested) != len(set(requested))
                 or set(requested) != {(leg.product, leg.symbol) for leg in required_legs}
             ):
-                raise BasketPlanError("通用组合订阅与授权产品合约腿不一致")
+                raise BasketPlanError("通用组合订阅必须完整且与授权产品合约腿一致")
         else:
             if not isinstance(symbol, str) or legs:
                 raise BasketPlanError("对冲策略订阅协议无效")
@@ -170,7 +170,7 @@ class BasketResearchSession:
         if self.policy == "funding_carry":
             if option_symbols or any(leg.symbol != symbol for leg in required_legs):
                 raise BasketPlanError("资金费订阅必须精确匹配 Spot/UM 标的")
-        else:
+        elif self.policy == "option_protected":
             futures = [leg for leg in required_legs if leg.product == "futures_um"]
             options = {leg.symbol for leg in required_legs if leg.product == "options"}
             if (
