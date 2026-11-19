@@ -192,6 +192,7 @@ def run_issued_history_stream(loads, batches, starting: Money, *, funding_update
 
 def _assemble(loads, pieces, *, include_account):
     holdings = []
+    target_events = []
     orders = []
     fills = []
     positions = []
@@ -199,6 +200,7 @@ def _assemble(loads, pieces, *, include_account):
     member_ids = []
     for piece in pieces:
         holdings.extend(piece["holdings"])
+        target_events.extend(piece["target_events"])
         orders.extend(piece["orders"])
         fills.extend(piece["fills"])
         positions.append(piece["position"])
@@ -208,6 +210,7 @@ def _assemble(loads, pieces, *, include_account):
         "tenant_id": str(loads[0]["tenant_id"]),
         "account_id": str(loads[0]["account_id"]),
         "holdings": holdings,
+        "target_events": target_events[-2000:],
         "orders": orders,
         "positions": positions,
         "coordinator_ids": coordinator_ids,
@@ -230,6 +233,7 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, s
     )
     coordinator.risk_limit = risk_limit
     bound = []
+    target_events = []
     namespaces = []
     directories = []
     engine = None
@@ -240,12 +244,19 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, s
             directories.append(directory)
             allocation = Decimal(load["parameters"]["allocation"])
 
-            def sink(strategy, holding, coordinator=coordinator, allocation=allocation, symbol=symbol):
+            def sink(strategy, holding, coordinator=coordinator, allocation=allocation,
+                     symbol=symbol, issuance_id=str(load["issuance_id"])):
                 if holding.symbol != symbol:
                     raise EngineConflict("目标持仓的品种与下发参数不一致。")
-                coordinator.report_target(
-                    str(strategy.strategy_id), signed_quantity(holding, allocation),
-                )
+                quantity = signed_quantity(holding, allocation)
+                timestamp = strategy.clock.timestamp_ns() // 1_000_000_000
+                # Actual published target intents from this issued strategy, not inferred
+                # from fills, chart crossovers or any untrusted browser-side calculation.
+                target_events.append({
+                    "issuance_id": issuance_id, "symbol": symbol, "time": timestamp,
+                    "quantity": format(quantity, "f"), "strategy_id": str(strategy.strategy_id),
+                })
+                coordinator.report_target(str(strategy.strategy_id), quantity)
 
             strategy.target_sink = sink
             bound.append((load, strategy))
@@ -306,6 +317,7 @@ def _run_symbol(symbol, group, instrument, bar_type, data, starting: Money, *, s
         orders = list(engine.cache.orders())
         return {
             "holdings": holdings,
+            "target_events": target_events[-2000:],
             "orders": [_order_view(order) for order in orders],
             "fills": [view for view in (_fill_view(order) for order in orders) if view],
             "position": {"symbol": symbol, "quantity": _decimal_text(position)},
