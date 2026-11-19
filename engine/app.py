@@ -18,7 +18,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from core.engine_contracts import ENGINE_CONTRACT_HEADER, ENGINE_CONTRACT_VERSION
-from core.trading_contracts import TRADING_SYMBOL, CancelOrderValues, SubmitOrderValues
+from core.trading_contracts import (
+    TRADING_SYMBOL,
+    AlgoCancelValues,
+    AlgoOrderValues,
+    CancelOrderValues,
+    LeverageChangeValues,
+    SubmitOrderValues,
+)
 from engine.config import EngineConfig
 from engine.connectors.binance.queries import QueryError
 from engine.data_manager.routes import router as control_router
@@ -65,6 +72,22 @@ class CommandBody(Credentials):
         schema = SubmitOrderValues if action == "submit" else CancelOrderValues
         return schema.model_validate(values).model_dump(mode="json")
 
+
+
+
+class ProfessionalCommandBody(Credentials):
+    """Strict Engine boundary: Platform authorizes user; Engine validates venue intent."""
+
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["algo_submit", "algo_cancel", "leverage"]
+    values: dict
+
+    @field_validator("values")
+    @classmethod
+    def validate_values(cls, values, info):
+        schema = {"algo_submit": AlgoOrderValues, "algo_cancel": AlgoCancelValues,
+                  "leverage": LeverageChangeValues}.get(info.data.get("action"))
+        return schema.model_validate(values).model_dump(mode="json") if schema else values
 
 
 class SpotSubmitValues(BaseModel):
@@ -392,6 +415,16 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
     async def order(tenant_id: str, account_id: str, body: CommandBody):
         if body.environment != body.values["environment"]:
             raise HTTPException(422, "账户环境与订单环境不匹配。")
+        try:
+            return await runtime.command(body.account(tenant_id, account_id), body.action, body.values)
+        except EngineConflict as error:
+            conflict(error)
+
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/trading/controls")
+    async def professional_command(tenant_id: str, account_id: str, body: ProfessionalCommandBody):
+        if body.environment != body.values["environment"]:
+            raise HTTPException(422, "账户环境与条件单/杠杆设置不一致。")
         try:
             return await runtime.command(body.account(tenant_id, account_id), body.action, body.values)
         except EngineConflict as error:

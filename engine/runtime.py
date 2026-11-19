@@ -1,5 +1,6 @@
 """Resident engine facts and the only place account, manual, and valuation nodes are built."""
 
+import asyncio
 import contextlib
 import fcntl
 import hashlib
@@ -8,6 +9,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -176,18 +178,31 @@ class EngineRuntime:
         return result
 
     async def trading_state(self, account, symbol):
-        return await self._manual_execute(account, symbol, {"action": "snapshot"})
+        result = await self._manual_execute(account, symbol, {"action": "snapshot"})
+        if symbol.endswith("-PERP"):
+            from engine.connectors.binance import manual_algo
+            try:
+                result["algo_orders"] = await asyncio.to_thread(manual_algo.open_orders, account, symbol)
+                result["algo_checked_at"] = int(time.time() * 1000)
+                result["algo_error"] = None
+            except QueryError:
+                # Missing permissions or transient errors cannot be interpreted as "no orders".
+                result["algo_orders"] = None
+                result["algo_checked_at"] = None
+                result["algo_error"] = "无法读取交易所条件单；请到交易所核对，不应假定没有挂单。"
+        return result
 
     async def command(self, account, action, values):
         tenant_id = self._tenant_of(account)
         self.assert_runnable(tenant_id, "live")
         account_id, environment = account["id"], account["environment"]
-        if action not in {"submit", "cancel"} or values["environment"] != environment:
+        if action not in {"submit", "cancel", "algo_submit", "algo_cancel", "leverage"} or values["environment"] != environment:
             raise EngineConflict("交易操作或账户环境不匹配。")
         request_id = str(uuid.UUID(values["request_id"]))
         fingerprint = hashlib.sha256(json.dumps([action, values], sort_keys=True).encode()).hexdigest()
         client_order_id = (
-            "SA" + uuid.UUID(request_id).hex if action == "submit" else values["client_order_id"]
+            "SA" + uuid.UUID(request_id).hex if action in {"submit", "algo_submit"} else
+            values.get("client_order_id") or values.get("client_algo_id")
         )
         path = self.lock_path(tenant_id, account_id, environment)
         with path.open("a") as lock:
@@ -205,17 +220,31 @@ class EngineRuntime:
                 "status": "unknown", "order": None, "message": UNKNOWN,
             }
             body = {
-                "fingerprint": fingerprint, "response": response, "symbol": values["symbol"],
+                "fingerprint": fingerprint, "response": response, "symbol": values["symbol"], "action": action,
+                "target_leverage": values.get("leverage"), "client_algo_id": values.get("client_algo_id"),
                 "account_revision": values["account_revision"], "environment": environment,
                 "records": [], "ledger_synced": False,
             }
             self.store.save_request(tenant_id, account_id, request_id, body)
             try:
-                result = await self._manual_execute(
-                    account, values["symbol"], {**values, "action": action, "client_order_id": client_order_id},
-                )
+                if action in {"algo_submit", "algo_cancel", "leverage"}:
+                    from engine.connectors.binance import manual_algo
+                    result = await manual_algo.execute(account, action, values, client_order_id)
+                else:
+                    result = await self._manual_execute(
+                        account, values["symbol"], {**values, "action": action, "client_order_id": client_order_id},
+                    )
                 if "validation_error" in result:
                     response.update(status="completed", message=result["validation_error"])
+                    self.store.save_request(tenant_id, account_id, request_id, body)
+                    return body
+                if action in {"algo_submit", "algo_cancel", "leverage"}:
+                    if result.get("algo_order"):
+                        response.update(status="completed", algo_order=result["algo_order"],
+                                        message=result["message"])
+                    elif result.get("leverage"):
+                        response.update(status="completed", leverage=result["leverage"],
+                                        message=result["message"])
                     self.store.save_request(tenant_id, account_id, request_id, body)
                     return body
                 order = result.get("result")
@@ -250,6 +279,29 @@ class EngineRuntime:
             ):
                 raise EngineConflict("账户配置已变化，不能使用新凭据核对原委托。")
             if stored["response"]["status"] == "unknown":
+                action = stored.get("action")
+                if action in {"algo_submit", "algo_cancel", "leverage"}:
+                    from engine.connectors.binance import manual_algo
+                    try:
+                        if action == "leverage":
+                            client = manual_algo.SignedFutures(account)
+                            current = await asyncio.to_thread(manual_algo.current_leverage, client,
+                                                              stored["symbol"].removesuffix("-PERP"))
+                            if current == stored.get("target_leverage"):
+                                stored["response"].update(status="completed", leverage=current,
+                                                          message="已从交易所核对到目标杠杆。")
+                        else:
+                            client_id = (stored["response"]["client_order_id"] if action == "algo_submit"
+                                         else stored.get("client_algo_id"))
+                            order = await asyncio.to_thread(
+                                manual_algo.query_algo, account, stored["symbol"], client_id)
+                            if action == "algo_submit" or not order["open"]:
+                                stored["response"].update(status="completed", algo_order=order,
+                                                          message="已从交易所核对到条件单：" + order["status"])
+                    except QueryError:
+                        pass  # Absence, transport failures and unconfirmed writes remain unknown.
+                    self.store.save_request(tenant_id, account_id, request_id, stored)
+                    return stored
                 result = await self.trading_state(account, stored["symbol"])
                 order = next(
                     (row for row in result["orders"]
