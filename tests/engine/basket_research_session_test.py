@@ -221,3 +221,80 @@ def test_noop_plan_is_completed_and_never_sends_orders():
     report = session.plan()
     assert report.plan.phases == ()
     assert session.research_checkpoint("unused").status == "completed"
+
+
+def test_generic_session_supports_multiple_symbols_without_hedge_policy():
+    eth_spot = LegId("development", "virtual", "spot", "ETHUSDT")
+    btc_um = LegId("development", "virtual", "futures_um", "BTCUSDT")
+    sol_um = LegId("development", "virtual", "futures_um", "SOLUSDT")
+    positions = {leg: Decimal(0) for leg in (eth_spot, btc_um, sol_um)}
+    evidence = {
+        leg: LegEvidence(Decimal(100), Decimal("0.1"), Decimal(1), _NOW)
+        for leg in positions
+    }
+    session = BasketResearchSession(
+        tenant_id="development", account_id="virtual", policy="generic",
+        positions=positions, evidence=evidence, now_ns=_NOW,
+        max_age_ns=1000, max_gross_notional=Decimal(1000),
+    )
+    legs = tuple(
+        {"product": leg.product, "symbol": leg.symbol}
+        for leg in sorted(positions)
+    )
+    for member_id, btc in (("alpha", "-0.2"), ("beta", "0.1")):
+        member = session.member(member_id)
+        member.subscribe_market_bundle(
+            legs=legs, data=("closed_bars", "account_positions"),
+        )
+        member.publish_basket(
+            targets=[
+                {"product": leg.product, "symbol": leg.symbol,
+                 "quantity": btc if leg == btc_um else "0.2" if leg == eth_spot else "0"}
+                for leg in sorted(positions)
+            ],
+        )
+    result = session.plan()
+    assert result.member_count == 2 and not result.executable
+    assert dict(result.plan.targets) == {
+        eth_spot: Decimal("0.4"), btc_um: Decimal("-0.1"), sol_um: Decimal(0),
+    }
+    assert result.plan.phases[0].name == "increase_new_exposure"
+    assert session.research_checkpoint("multi-snapshot-1").status == "awaiting_confirmation"
+
+
+def test_generic_session_rejects_missing_or_forged_market_leg():
+    eth = LegId("development", "virtual", "spot", "ETHUSDT")
+    btc = LegId("development", "virtual", "futures_um", "BTCUSDT")
+    positions = {eth: Decimal(0), btc: Decimal(0)}
+    session = BasketResearchSession(
+        tenant_id="development", account_id="virtual", policy="generic",
+        positions=positions,
+        evidence={leg: LegEvidence(Decimal(10), Decimal("0.1"), Decimal(1), _NOW)
+                  for leg in positions},
+        now_ns=_NOW, max_age_ns=1000,
+        max_gross_notional=Decimal(100),
+    )
+    member = session.member("one")
+    with pytest.raises(BasketPlanError, match="完整"):
+        member.subscribe_market_bundle(
+            legs=({"product": "spot", "symbol": "ETHUSDT"},),
+            data=("closed_bars", "account_positions"),
+        )
+    with pytest.raises(BasketPlanError, match="结构"):
+        member.subscribe_market_bundle(
+            legs=({"product": ["spot"], "symbol": "ETHUSDT"},),
+            data=("closed_bars", "account_positions"),
+        )
+    member.subscribe_market_bundle(
+        legs=({"product": "spot", "symbol": "ETHUSDT"},
+              {"product": "futures_um", "symbol": "BTCUSDT"}),
+        data=("closed_bars", "account_positions"),
+    )
+    with pytest.raises(BasketPlanError, match="未知多腿"):
+        member.publish_basket(
+            targets=[
+                {"product": "spot", "symbol": "ETHUSDT", "quantity": "0"},
+                {"product": "futures_um", "symbol": "BTCUSDT", "quantity": "0"},
+            ],
+            constraints={"skip_risk": True},
+        )
