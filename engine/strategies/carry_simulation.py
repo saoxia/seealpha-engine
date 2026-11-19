@@ -25,12 +25,12 @@ from nautilus_trader.trading import Strategy
 
 from engine.runtime import EngineConflict
 from engine.strategies.backtest_engine import backtest_engine_config
+from engine.strategies.basket_research_session import BasketResearchSession
 from engine.strategies.basket_targets import (
     BasketPlanError,
     LegEvidence,
     LegId,
     MemberLegTarget,
-    plan_basket,
 )
 from engine.strategies.strategy_config import StrategyConfig
 from nautilus_support import instrument_fee_model
@@ -305,6 +305,8 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
         previous_rate = None
         curve = []
         funding = []
+        target_events = []
+        previous_target = None
         active = 0
         for event in events:
             if event.kind == "funding":
@@ -336,9 +338,16 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
             perp_price = (previous_bar[1] if previous_bar else pbar.close.as_decimal())
             quote_stamp = previous_bar[2] if previous_bar else event.ts_ns
             try:
-                plan_basket(
-                    targets, {leg_spot: spot_pos, leg_perp: perp_pos},
-                    {
+                max_drift = min(
+                    _decimal(x["parameters"]["max_leg_drift"], "腿间偏差")
+                    for x in loads
+                )
+                research = BasketResearchSession(
+                    tenant_id=str(loads[0]["tenant_id"]),
+                    account_id=str(loads[0]["account_id"]),
+                    policy="funding_carry",
+                    positions={leg_spot: spot_pos, leg_perp: perp_pos},
+                    evidence={
                         leg_spot: LegEvidence(
                             spot_price, spot.size_increment.as_decimal(), Decimal(1), quote_stamp,
                         ),
@@ -349,12 +358,44 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
                     now_ns=event.ts_ns,
                     max_age_ns=max(300_000_000_000, event.ts_ns - quote_stamp),
                     max_gross_notional=cap,
-                    policy="funding_carry",
-                    max_leg_drift=min(
-                        _decimal(x["parameters"]["max_leg_drift"], "腿间偏差")
-                        for x in loads
-                    ),
+                    max_leg_drift=max_drift,
                 )
+                for load in loads:
+                    member_id = str(load["issuance_id"])
+                    publisher = research.member(member_id)
+                    publisher.subscribe_market_bundle(
+                        symbol=load["parameters"]["symbol"],
+                        products=("spot", "futures_um"),
+                        data=("closed_bars", "funding_rate", "account_positions"),
+                    )
+                    own = [target for target in targets if target.member_id == member_id]
+                    publisher.publish_basket(
+                        targets=[
+                            {"product": target.leg.product, "symbol": target.leg.symbol,
+                             "quantity": format(target.signed_quantity, "f")}
+                            for target in own
+                        ],
+                        constraints={"atomic_hedge": True, "max_leg_drift": str(max_drift)},
+                    )
+                decision = research.plan()
+                if (
+                    dict(decision.plan.targets)[leg_spot] != desired
+                    or dict(decision.plan.targets)[leg_perp] != -desired
+                ):
+                    raise BasketPlanError("成员发布目标与组合模拟数量不一致")
+                next_target = tuple(decision.plan.targets)
+                if next_target != previous_target:
+                    target_events.append({
+                        "ts_ns": event.ts_ns,
+                        "member_count": decision.member_count,
+                        "targets": [
+                            {"product": leg.product, "symbol": leg.symbol,
+                             "quantity": format(quantity, "f")}
+                            for leg, quantity in next_target
+                        ],
+                        "executable": False,
+                    })
+                    previous_target = next_target
             except BasketPlanError as exc:
                 raise EngineConflict(str(exc)) from exc
             coordinator.desired = desired
@@ -402,6 +443,7 @@ def run_native_carry(loads, events, spot_contract, perpetual_contract, *,
             "orders": coordinator.orders,
             "fills": coordinator.fills,
             "funding_observations": funding,
+            "target_events": target_events,
             "equity_curve": curve,
             "funding_accounting": "nautilus_native_settlement_from_recorded_observations",
             "venue_accounts": {"spot": "CASH", "futures_um": "MARGIN"},

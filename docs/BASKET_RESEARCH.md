@@ -92,6 +92,23 @@ Engine 增加特殊的已下发 `demo_funding_carry` 策略组合研究入口：
 
 生产状态下的实际紧急退出策略、独立的减仓 API、已挂单处置、权威仓位恢复和断网报警仍需单独实现、实测及明确授权。
 
+## 通用多策略研究意图发布协议（A/D 基础）
+
+`engine/strategies/basket_research_session.py` 新增 `BasketResearchSession`：
+同一个开发研究快照内，多个成员以其真实发行标识登记 `member()`，使用与两个 Demo 一致的 `subscribe_market_bundle` / `publish_basket` **参数语言**，分别提交当前租户、账户和产品合约绑定的完整目标。缺少任何成员目标、缺少报价/实际仓位、跨账户/产品、重复腿、不安全约束、过期行情或不相容的保护覆盖将直接拒绝。相同成员和历史时间戳下未提供请求号时产生稳定的**研究意图标识**，而不是交易所委托号。成员快照发布后不可覆写；严格对全部成员按 `tenant_id/account_id/product/symbol` 求和并交给原生 `plan_basket` 阶段规划；返回 `BasketResearchDecision.executable=False`。
+
+`research_checkpoint(request_id)` 为研究阶段生成待确认日志；后续所有成交/权威仓位核对仍必须经 `basket_reconciliation`，没有订单发送、没有资金或保证金划转。该适配器是**纯 Python 意图收集与审计**，不是实际 NautilusTrader Strategy 注入，也不从 Catalog 自行抓取数据，且 **不等同于两个 Demo 已经改用这一运行时或跨产品回测全部贯通**。
+
+上线前还需要把原生 Nautilus Strategy 生命周期、严格历史行情 Bundle、撮合回报与持久审计真实接通；真实交易权限及生产风控须另行验收。
+
+两种已有开发回测现改为经这个研究发布协议汇总目标：Carry 将 1–16 个授权成员的目标绑定到统一发布会话，原生组合撮合前核对净目标；受保护期权将模型目标以同一协议校验后，继续沿用原生先保护再开仓的模拟成交序列。Carry 报告额外输出目标变化历史 `target_events`（成员数、有符号净目标、不可执行标记），不等同于模拟订单成交，更不是交易所订单。
+
+## 离线组合阶段安全监督（C 的前置件，不是生产执行）
+
+`engine/strategies/basket_risk_monitor.py` 的 `observe_basket_phase` 读取完整仓位快照与行情证据、阶段检查点和调用者**可信提供**的 pending 时间，重新核对当前毛名义、Spot/UM 腿偏差、期权双翼覆盖、累计成交/仓位一致性与最长待确认时间。异常返回一个必须经持久化层记录的冻结检查点；不能依靠订单 accepted 或历史价格推断已成交。已完成日志如果出现新风险异常则直接拒绝，不尝试非法修改不可变事件。
+
+该函数未连接 Binance 订单入口、交易所权威查询、账户资金证明或服务进程计时器；没有实时报警和生产幂等事务保证。它不授权实盘，不满足 #107 C 的最终验收。真实账户沙盒、断网/未知订单状态故障注入、手续费/保证金实时核算和长期运行测试仍必需。
+
 ## 尚未实现的关键条件
 
 - 通用策略包 `publish_basket` / `subscribe_market_bundle` 协议及跨任意策略的统一 Engine 运行时。现有 Funding Carry 与保护期权回测是**特化研究入口**，并非通用策略实盘接口。
