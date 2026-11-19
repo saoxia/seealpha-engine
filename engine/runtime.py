@@ -716,7 +716,10 @@ class EngineRuntime:
         from engine.data_queries import read_lease
         from engine.pipeline.catalog import ParquetDataCatalog
         from engine.strategies.backtest import (
-            _nanos, catalog_directory, parse_window, read_history_batches,
+            _nanos,
+            catalog_directory,
+            parse_window,
+            read_history_batches,
         )
         from engine.strategies.basket_targets import LegId
         from engine.strategies.generic_simulation import run_native_generic_portfolio
