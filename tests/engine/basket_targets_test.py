@@ -186,11 +186,26 @@ def test_overbudget_account_can_strictly_reduce_to_flat_but_cannot_add_transient
         MemberLegTarget("one", spot, Decimal(0)),
         MemberLegTarget("one", perp, Decimal(0)),
     ]
-    with pytest.raises(BasketPlanError, match="当前仓位"):
+    unwind = plan_basket(
+        flat, positions, _evidence(positions),
+        now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
+        max_gross_notional=Decimal(1000), policy="funding_carry",
+    )
+    assert unwind.gross_target_notional == Decimal(0)
+    assert unwind.phases[0].name == "coordinated_spot_perpetual_required"
+    # When an existing over-budget account needs to increase a leg before
+    # another leg shrinks, the risk-reducing end-state does not excuse it.
+    dangerous = [
+        MemberLegTarget("one", spot, Decimal("0.2")),
+        MemberLegTarget("one", perp, Decimal("-0.2")),
+    ]
+    unbalanced = {spot: Decimal("0.1"), perp: Decimal("-0.5")}
+    with pytest.raises(BasketPlanError, match="单调减险"):
         plan_basket(
-            flat, positions, _evidence(positions),
+            dangerous, unbalanced, _evidence(unbalanced),
             now_ns=1_000_000_000_000, max_age_ns=5_000_000_000,
             max_gross_notional=Decimal(1000), policy="funding_carry",
+            max_leg_drift=Decimal("0.4"),
         )
 
 
