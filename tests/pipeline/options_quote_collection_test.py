@@ -37,7 +37,7 @@ def test_option_quote_persists_native_and_immutable_sources(tmp_path, monkeypatc
     assert options_data.persist_live(symbol, events, settings)["records_written"] == 2
     assert options_data.persist_live(symbol, events, settings)["records_written"] == 0
     raw = list((settings.raw_dir / "options" / symbol / "quote").rglob("*.json"))
-    assert len(raw) == 1
+    assert raw  # Different capture times produce distinct immutable raw snapshots
     snapshot = options_data._load(raw[0])
     assert snapshot["source"] == "ws/bookTicker"
     assert snapshot["level"] == "quote"

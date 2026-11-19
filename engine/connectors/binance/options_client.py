@@ -517,7 +517,7 @@ async def batch_market_events(instruments, *, tick_symbols=(), scope=None, depth
                     request_id, last_status, last_scope = 0, 0, None
                     while True:
                         items, wanted_ticks = selection(members)
-                        active = list(items) if market else [symbol for symbol in items if depth or symbol in wanted_ticks]
+                        active = list(items) if market else [symbol for symbol in items if depth or quotes or symbol in wanted_ticks]
                         desired = {}
                         for symbol in active:
                             levels = PERIODS if market else (("tick",) if symbol in wanted_ticks else ()) + (("depth",) if depth else ()) + (("quote",) if quotes else ())
