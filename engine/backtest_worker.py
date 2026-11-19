@@ -42,8 +42,12 @@ def run(state_root: Path, project: Path, tenant_id: str, task_id: str) -> None:
             result["research_candidate"] = {
                 "candidate_id": candidate["candidate_id"],
                 "package_hash": candidate["package_hash"],
-                "recipe": candidate["recipe"],
+                "mode": candidate.get("mode", "restricted"),
             }
+            if candidate.get("mode") == "python":
+                result["research_candidate"]["entry_point"] = candidate["entry_point"]
+            else:
+                result["research_candidate"]["recipe"] = candidate["recipe"]
         if result.get("tenant_id") != tenant_id or result.get("account_id") != parameters["account_id"]:
             raise RuntimeError("回测结果归属不一致。")
         output = state_root / "tasks" / tenant_id / f"{task_id}.result.json"

@@ -49,6 +49,20 @@ Engine 只提供 `engine.research_auth.sign_research_grant()` 作为可信 Platf
 这限制的是**受控回测执行路径**，不是 Harness 在沙箱里探索算法、编写代码或分析授权数据的能力。
 
 
+## AI 自由 Python 策略（开发 Docker 内现有 Worker）
+
+新增 `POST /research/v1/python-candidate-backtests`。该路径**默认关闭**，仅在**开发租户 Engine** 显式设置 `ENGINE_RESEARCH_PYTHON_ENABLED=true`、且启用独立 `ENGINE_RESEARCH_SIGNING_KEY` 时可用。生产租户即使设置该开关也无法通过开发用途检查。
+
+**调度职责属于 Platform 后端**：根据已登录用户拥有的开发租户、该租户的虚拟账户、历史数据订阅和研究任务选择对应 Engine Docker 地址；保存不可变策略 ZIP/SHA-256/候选 ID；在每次操作时签发短期研究 Grant。Engine 不选择用户租户、不根据 Agent 提供的路径寻找另一个 Docker，不接收 Engine 管理 Token 作为研究凭据。Engine 本身必须再次验证签名、租户 ID、用途、账号、dataset 和研究操作，以防错路由。
+
+研究请求传送已经打包的完整 Python 策略 ZIP（base64）及 SHA-256、候选 ID、`strategy_ref=account:<id>`、一个授权 `futures_um:<symbol>:1m|5m` 数据集和回测参数；需要 `python_candidates:submit` Grant。ZIP 使用已有 `seealpha-package.json` 规范，最多 256 KiB、32 个文件，必须有与 `entry_point` 对应的 `.py` 入口，manifest 中需 `parameters.symbol`、`allocation` 和 `risk_limit`。禁止 ZIP 路径穿越、符号链接、重复文件与明显凭据字段。接口在 Engine API 进程**只静态检查并提交任务，不 import/exec AI Python**。
+
+真正执行时，Engine **容器内部既有 `TaskCoordinator → Backtest Worker` 子进程**读取该任务不可变 ZIP，从数据 Catalog 加载历史行情，调用原有 `load_entry`/NautilusTrader `Strategy` 和组合目标净额机制，模拟运行后写回关联 `candidate_id`/`package_hash` 的结果。沿用既有超时、取消、队列、幂等键、模拟回测接口及已有 Engine Docker；不增加 Gateway、MCP、额外 Docker 或管理 API。普通生产策略不会被此研究候选包修改。
+
+**安全边界**：Engine 的 Token 负责身份验证，研究 HMAC Grant 验证绑定的开发租户与操作；两者不等于对同 Docker 内不可信 Python 提供了独立的进程安全隔离。同一 UID 的策略代码可能访问容器内同 UID 进程及文件（包括潜在的服务凭据）。此功能仅供受信任的开发用户显式启用；面向任意不可信用户开放前必须另行解决该限制。新开关不会改写已有开发容器的 env 文件，需在升级部署时明确重建受影响容器；绝不自动调整生产环境。
+
+示例调用在 Platform 的研究代理及 Harness CLI 文档中，`backtest-get` 可返回关联结果。当前仅单产品期货研究；不是多产品回测功能，也不自动生成生产策略授权。
+
 ## 受限 AI 候选策略回测（首期实施）
 
 `POST /research/v1/candidate-backtests` 已为显式授权的**开发研究任务**增加独立操作 `candidates:submit`。原 `/v1/backtests` 仍只回测已下发策略，互不改变。

@@ -258,3 +258,55 @@ def test_restricted_ai_candidate_runs_real_nautilus_history_without_issuance(tmp
     finally:
         runtime.close()
 
+
+
+def test_full_ai_python_strategy_loads_in_existing_development_backtest(tmp_path):
+    """No issued strategy is required; AI ZIP uses the ordinary Nautilus loader."""
+    import base64
+    import hashlib
+    import io
+    import json
+    import zipfile
+
+    from engine.strategies.python_candidate import inspect_python_candidate
+
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    write_crossover_catalog(tmp_path / "data" / "catalog", start)
+    original = ema_archive()
+    stream = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(stream, "w") as out:
+        for item in source.infolist():
+            contents = source.read(item)
+            if item.filename == "seealpha-package.json":
+                metadata = json.loads(contents)
+                metadata["parameters"]["fast_period"] = 3
+                metadata["parameters"]["slow_period"] = 5
+                contents = json.dumps(metadata).encode()
+            out.writestr(item.filename, contents)
+    data = stream.getvalue()
+    digest = hashlib.sha256(data).hexdigest()
+    inspected = inspect_python_candidate(
+        base64.b64encode(data).decode(), package_hash=digest, symbol="ETHUSDT",
+    )
+    candidate = {
+        "mode": "python", "candidate_id": "e" * 32,
+        "package_hash": digest, "archive": base64.b64encode(data).decode(),
+        "name": inspected["name"], "version": inspected["version"],
+        "entry_point": inspected["entry_point"], "parameters": inspected["parameters"],
+    }
+    runtime = EngineRuntime(tmp_path / "state", tmp_path)
+    try:
+        runtime.ensure_tenant("dev", "development")
+        _intent(runtime, "dev")
+        result = runtime.run_backtest(
+            "dev", "ai-desk", **_window(start),
+            publish_event=False, candidate=candidate,
+        )
+        assert result["account_id"] == "ai-desk"
+        assert result["bar_count"] == len(CLOSES)
+        assert result["member_ids"]
+        assert result["target_events"]
+        assert runtime.store.strategy_loads("dev", "ai-desk") == []
+        assert runtime.latest_backtest("dev", "ai-desk") is None
+    finally:
+        runtime.close()

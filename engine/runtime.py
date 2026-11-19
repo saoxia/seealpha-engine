@@ -483,9 +483,35 @@ class EngineRuntime:
             loads = self.store.strategy_loads(tenant_id, account_id, include_archive=True)
             if not loads:
                 raise EngineConflict("该租户账户没有已下发的策略。")
+        elif candidate.get("mode") == "python":
+            # This method runs inside the existing Backtest Worker, never the
+            # API controller. The trusted Platform picked the destination
+            # development Engine and immutable strategy package.
+            import base64
+
+            from engine.strategies.python_candidate import inspect_python_candidate
+
+            package = inspect_python_candidate(
+                candidate["archive"], package_hash=candidate["package_hash"],
+                symbol=candidate["parameters"]["symbol"],
+            )
+            if any(
+                package[name] != candidate[name]
+                for name in ("name", "version", "entry_point", "parameters")
+            ):
+                raise EngineConflict("Python research package no longer matches task")
+            loads = [{
+                "tenant_id": str(tenant_id), "account_id": str(account_id),
+                "issuance_id": "candidate_" + candidate["candidate_id"],
+                "code_key": package["name"], "version": package["version"],
+                "entry_point": package["entry_point"],
+                "package_hash": package["package_hash"],
+                "archive": base64.b64decode(candidate["archive"], validate=True),
+                "parameters": package["parameters"],
+                "grant_purpose": "development",
+            }]
         else:
-            # Never import generated Python; only a validated recipe reaches
-            # the Engine-owned CandidateSignal via the existing simulation path.
+            # Existing restricted EMA/SMA recipe remains supported.
             from engine.strategies.candidate_template import candidate_load
 
             if set(candidate) != {"candidate_id", "package_hash", "recipe"}:

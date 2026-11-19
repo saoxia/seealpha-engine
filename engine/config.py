@@ -17,6 +17,7 @@ class EngineConfig:
     tenant_id: str | None = None
     tenant_purpose: str | None = None
     research_signing_key: str | None = None
+    research_python_enabled: bool = False
     backtest_max_workers: int = 1
     backtest_timeout_seconds: int = 3600
     auth_mode: str = "none"
@@ -36,6 +37,7 @@ class EngineConfig:
             tenant_id=os.getenv("ENGINE_TENANT_ID"),
             tenant_purpose=os.getenv("ENGINE_TENANT_PURPOSE"),
             research_signing_key=os.getenv("ENGINE_RESEARCH_SIGNING_KEY"),
+            research_python_enabled=os.getenv("ENGINE_RESEARCH_PYTHON_ENABLED", "false").lower() in {"true", "1"},
             backtest_max_workers=int(os.getenv("ENGINE_BACKTEST_MAX_WORKERS", "1")),
             backtest_timeout_seconds=int(os.getenv("ENGINE_BACKTEST_TIMEOUT_SECONDS", "3600")),
         )
