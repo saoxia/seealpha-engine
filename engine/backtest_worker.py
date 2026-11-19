@@ -35,7 +35,15 @@ def run(state_root: Path, project: Path, tenant_id: str, task_id: str) -> None:
             parameters["starting_balance"], parameters["quote_currency"],
             publish_event=False,
             **({"product": "spot"} if parameters.get("product") == "spot" else {}),
+            **({"candidate": parameters["_candidate"]} if "_candidate" in parameters else {}),
         )
+        if "_candidate" in parameters:
+            candidate = parameters["_candidate"]
+            result["research_candidate"] = {
+                "candidate_id": candidate["candidate_id"],
+                "package_hash": candidate["package_hash"],
+                "recipe": candidate["recipe"],
+            }
         if result.get("tenant_id") != tenant_id or result.get("account_id") != parameters["account_id"]:
             raise RuntimeError("回测结果归属不一致。")
         output = state_root / "tasks" / tenant_id / f"{task_id}.result.json"

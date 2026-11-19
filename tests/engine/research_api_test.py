@@ -318,3 +318,115 @@ def test_research_mount_does_not_share_admin_credentials(tmp_path, monkeypatch):
             ).status_code == 401
     finally:
         runtime.close()
+
+
+def _candidate_archive(source=None, *, name="research_ema"):
+    import hashlib
+    import json
+    import zipfile
+
+    source = source if source is not None else (
+        "CANDIDATE = {'kind':'ema_cross','symbol':'ETHUSDT','fast_period':8,"
+        "'slow_period':21,'allocation':'1','risk_limit':'1'}\n"
+    )
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("seealpha-package.json", json.dumps({
+            "format": 1, "name": name, "title": "EMA AI Research",
+            "version": "1", "entry_point": "strategy:CANDIDATE",
+        }))
+        archive.writestr("strategy.py", source)
+    data = stream.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def _candidate_body(raw, digest, *, candidate_id="a" * 32, key="candidate-v1"):
+    import base64
+
+    return {
+        "purpose": "development", "execution": "simulation",
+        "candidate_id": candidate_id, "package_hash": digest,
+        "archive": base64.b64encode(raw).decode("ascii"),
+        "strategy_ref": STRATEGY, "dataset_refs": [DATASET],
+        "start": "2026-01-01", "end": "2026-01-02",
+        "starting_balance": "1000", "quote_currency": "USDT",
+        "idempotency_key": key,
+    }
+
+
+def test_candidate_backtest_uses_trusted_recipe_and_scoped_task(service):
+    client, _, _, tasks = service
+    raw, digest = _candidate_archive()
+    body = _candidate_body(raw, digest)
+    endpoint = "/v1/candidate-backtests"
+    denied = client.post(endpoint, json=body, headers=headers(ops=["backtests:submit"]))
+    assert denied.status_code == 403
+    result = client.post(endpoint, json=body, headers=headers(ops=["candidates:submit"]))
+    assert result.status_code == 202, result.text
+    backtest_id = result.json()["backtest_id"]
+    record = tasks.records[backtest_id]
+    candidate = record["parameters"]["_candidate"]
+    assert candidate["candidate_id"] == "a" * 32
+    assert candidate["package_hash"] == digest
+    assert candidate["recipe"]["kind"] == "ema_cross"
+    # Query and cancellation re-use the same task-key-bound research endpoints.
+    wrong_task = client.get(
+        f"/v1/backtests/{backtest_id}", headers=headers(task_id="another"),
+    )
+    assert wrong_task.status_code == 404
+    assert client.get(
+        f"/v1/backtests/{backtest_id}", headers=headers(task_id="task-1"),
+    ).status_code == 200
+
+
+def test_candidate_rejects_executable_source_and_invalid_hash(service):
+    from engine.strategies.candidate_package import parse_candidate_archive
+
+    client, _, _, _tasks = service
+    raw, digest = _candidate_archive("import os\nCANDIDATE = {}")
+    with pytest.raises(ValueError):
+        parse_candidate_archive(raw)
+    assert client.post(
+        "/v1/candidate-backtests",
+        json=_candidate_body(raw, digest),
+        headers=headers(ops=["candidates:submit"]),
+    ).status_code == 422
+    safe, actual = _candidate_archive()
+    assert client.post(
+        "/v1/candidate-backtests",
+        json=_candidate_body(safe, "0" * 64),
+        headers=headers(ops=["candidates:submit"]),
+    ).status_code == 422
+    changed = _candidate_body(safe, actual)
+    changed["dataset_refs"] = ["futures_um:BTCUSDT:1m"]
+    assert client.post(
+        "/v1/candidate-backtests", json=changed,
+        headers=headers(ops=["candidates:submit"]),
+    ).status_code == 403
+
+
+def test_candidate_ast_validation_rejects_network_and_wrong_shape():
+    from engine.strategies.candidate_package import parse_candidate_archive
+    from engine.strategies.candidate_template import validate_candidate
+
+    for source in (
+        "__import__('os').system('id')",
+        "CANDIDATE = dict(kind='ema_cross')",
+        "CANDIDATE = {'kind':'ema_cross'}\nprint('hi')",
+        "class Strategy: pass",
+        ("CANDIDATE = {'kind':'ema_cross', 'symbol':'ETHUSDT', "
+         "'fast_period':8,'slow_period':21,'allocation':'1','risk_limit':'1'}\n"
+         "import socket"),
+    ):
+        raw, _ = _candidate_archive(source)
+        with pytest.raises(ValueError):
+            parse_candidate_archive(raw)
+    raw, _ = _candidate_archive()
+    parsed = parse_candidate_archive(raw)
+    assert parsed["recipe"]["fast_period"] == 8
+    with pytest.raises(ValueError):
+        validate_candidate({**parsed["recipe"], "kind": "arbitrary_python"})
+    with pytest.raises(ValueError):
+        validate_candidate({**parsed["recipe"], "risk_limit": "inf"})
+    with pytest.raises(ValueError):
+        validate_candidate({**parsed["recipe"], "risk_limit": "1E+999999999"})
