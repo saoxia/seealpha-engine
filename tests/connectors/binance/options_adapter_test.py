@@ -14,6 +14,7 @@ from nautilus_trader.core import UUID4
 from nautilus_trader.live import LiveNode
 from nautilus_trader.model import BarType, BookType, InstrumentId, TraderId
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
 
 from engine.connectors.binance import options, options_client, options_parsing
 from engine.connectors.binance.options_client import (
@@ -552,7 +553,7 @@ def test_batch_market_events_forward_option_book_ticker_with_source_timestamp(mo
             while True:
                 try:
                     message = json.loads(await socket.recv())
-                except Exception:
+                except ConnectionClosed:
                     return
                 names = message["params"]
                 subscribed.extend(names)
