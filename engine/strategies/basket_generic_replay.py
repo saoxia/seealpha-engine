@@ -355,7 +355,11 @@ class GenericBasketReplay:
             "starting_balance": format(
                 sum(self.ledger.initial_cash.values(), Decimal(0)), "f",
             ),
-            "ending_balance": last["total_equity"] if last else None,
+            # A frozen replay is NOT an attestable final equity or PnL.
+            "ending_balance": (
+                last["total_equity"] if last and self.status == "completed" else None
+            ),
+            "ending_equity_verified": self.status == "completed",
             "funding_schedule_verified": self.expected_funding is not None
             and self.status == "completed",
             "verified_option_exercise_count": self.expiry_events,
