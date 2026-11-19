@@ -59,6 +59,7 @@ class DemoFundingCarry(Strategy):
 
 
 def _archive(source=_BASKET_SOURCE):
+    compile(source, "strategy.py", "exec")
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as package:
         package.writestr("seealpha-package.json", json.dumps({
@@ -270,7 +271,7 @@ def test_issued_strategy_source_controls_both_legs(tmp_path):
     # If Engine secretly recomputes a demo signal, this test would still trade.
     always_flat = _BASKET_SOURCE.replace(
         "        self.publish_basket(",
-        "        quantity = Decimal(0)\\n        self.publish_basket(",
+        "        quantity = Decimal(0)" + chr(10) + "        self.publish_basket(",
     )
     assert always_flat != _BASKET_SOURCE
     result = _simulate(tmp_path, loads=[_load(source=always_flat)])
@@ -287,7 +288,7 @@ def test_incomplete_basket_publication_fails_closed(tmp_path):
         '"product": "futures_um"', '"product": "options"',
     )
     assert incomplete != _BASKET_SOURCE
-    with pytest.raises(EngineConflict, match="所有腿|组合目标|完整"):
+    with pytest.raises(EngineConflict, match="所有腿|组合目标|完整|目标"):
         _simulate(tmp_path, loads=[_load(source=incomplete)])
 
 
