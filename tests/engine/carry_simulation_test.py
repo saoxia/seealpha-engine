@@ -20,7 +20,6 @@ from nautilus_support import TestInstrumentProvider
 from tests.engine.basket_history_test import _dataset, _range
 from tests.engine.spot_backtest_test import spot_instrument
 
-
 _BASKET_SOURCE = """
 from decimal import Decimal
 from nautilus_trader.trading import Strategy
