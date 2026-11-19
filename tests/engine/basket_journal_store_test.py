@@ -29,7 +29,7 @@ from engine.strategies.basket_targets import (
 def _plan():
     spot = LegId("development", "virtual", "spot", "ETHUSDT")
     perp = LegId("development", "virtual", "futures_um", "ETHUSDT")
-    positions = {spot: Decimal("0"), perp: Decimal("0")}
+    positions = {spot: Decimal(0), perp: Decimal(0)}
     now = 1_000_000_000_000
     plan = plan_basket(
         [
@@ -38,12 +38,12 @@ def _plan():
         ],
         positions,
         {
-            leg: LegEvidence(Decimal("2000"), Decimal("0.1"), Decimal(1), now - 100)
+            leg: LegEvidence(Decimal(2000), Decimal("0.1"), Decimal(1), now - 100)
             for leg in positions
         },
         now_ns=now,
         max_age_ns=1_000,
-        max_gross_notional=Decimal("4000"),
+        max_gross_notional=Decimal(4000),
         policy="funding_carry",
     )
     return plan, positions, spot, perp
@@ -168,7 +168,7 @@ def test_rejects_forged_checkpoint_and_mismatching_plan(tmp_path):
 
     initial = store.save("proper", new_checkpoint(plan, positions), expected_revision=None)
     assert initial.revision
-    wrong_plan = replace(plan, gross_target_notional=Decimal("100"))
+    wrong_plan = replace(plan, gross_target_notional=Decimal(100))
     with pytest.raises(BasketJournalError):
         store.load("proper", wrong_plan)
     with pytest.raises(BasketJournalError, match="版本"):
