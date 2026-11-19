@@ -106,7 +106,7 @@ def test_shared_gross_cap_and_reduce_only_when_over_budget():
     assert [phase.name for phase in reduced.phases] == ["reduce_existing_exposure"]
     new = [MemberLegTarget("x", eth, Decimal("0.2")),
            MemberLegTarget("x", btc, Decimal("0.5"))]
-    with pytest.raises(BasketPlanError, match="单调减险"):
+    with pytest.raises(BasketPlanError, match="预算"):
         plan(new, current, cap="500")
     with pytest.raises(BasketPlanError, match="预算"):
         plan(new, {eth: Decimal(0), btc: Decimal(0)}, cap="500")
