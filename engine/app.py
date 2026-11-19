@@ -244,6 +244,19 @@ class CarryBacktestBody(BaseModel):
     max_gross_notional: str = Field(min_length=1, max_length=40)
 
 
+class ProtectedOptionBacktestBody(BaseModel):
+    """Pre-expiry options + perpetual research, no live funds or order access."""
+
+    model_config = ConfigDict(extra="forbid")
+    start: str = Field(min_length=10, max_length=40)
+    end: str = Field(min_length=10, max_length=40)
+    interval: Literal["1m", "5m"] = "1m"
+    starting_options_balance: str = Field(min_length=1, max_length=40)
+    starting_perpetual_balance: str = Field(min_length=1, max_length=40)
+    max_gross_notional: str = Field(min_length=1, max_length=40)
+
+
+
 def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None = None) -> FastAPI:
     config = config or EngineConfig.from_environment()
     if config.auth_mode not in {"none", "token"}:
@@ -640,6 +653,29 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
             conflict(error)
         if result is None:
             raise HTTPException(404, "还没有资金费组合回测结果。")
+        return result
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests")
+    def run_protected_option_backtest(
+        tenant_id: str, account_id: str, body: ProtectedOptionBacktestBody,
+    ):
+        try:
+            return runtime.run_protected_option_backtest(
+                tenant_id, account_id, body.start, body.end, body.interval,
+                body.starting_options_balance, body.starting_perpetual_balance,
+                body.max_gross_notional,
+            )
+        except EngineConflict as error:
+            conflict(error)
+
+    @app.get("/tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests/latest")
+    def latest_protected_option_backtest(tenant_id: str, account_id: str):
+        try:
+            result = runtime.latest_protected_option_backtest(tenant_id, account_id)
+        except EngineConflict as error:
+            conflict(error)
+        if result is None:
+            raise HTTPException(404, "还没有期权保护组合回测结果。")
         return result
 
     @app.post("/tenants/{tenant_id}/accounts/{account_id}/valuation")

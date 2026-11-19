@@ -668,6 +668,111 @@ class EngineRuntime:
         event = self.store.latest_event(tenant_id, account_id, "carry_backtest")
         return None if event is None else event["body"]
 
+    def run_protected_option_backtest(
+        self, tenant_id, account_id, start, end, interval,
+        starting_options_balance, starting_perpetual_balance, max_gross_notional,
+        *, publish_event=True,
+    ):
+        """Run a grant-scoped pre-expiry protected option replay; never trade live."""
+        from contextlib import ExitStack
+        from datetime import timedelta
+        from decimal import Decimal, InvalidOperation
+
+        from core.market.instruments import instrument_id_for
+        from engine.data_queries import read_lease
+        from engine.pipeline.catalog import ParquetDataCatalog
+        from engine.strategies.backtest import catalog_directory, parse_window
+        from engine.strategies.option_history import (
+            _instrument,
+            read_option_protection_evidence,
+        )
+        from engine.strategies.protected_simulation import run_native_protected
+        from nautilus_trader.model import CryptoOption, CryptoPerpetual
+
+        self.assert_runnable(tenant_id, "backtest")
+        tenant = self.store.tenant(tenant_id)
+        if tenant is None or tenant["purpose"] != "development":
+            raise EngineConflict("期权保护回测仅支持开发租户。")
+        start_at, end_at, interval = parse_window(start, end, interval)
+        if end_at - start_at > timedelta(days=1):
+            raise EngineConflict("期权保护回测单次不能超过24小时。")
+        loads = self.store.strategy_loads(tenant_id, account_id, include_archive=True)
+        if len(loads) != 1:
+            raise EngineConflict("期权保护回测需要单一已下发的 Demo 包。")
+        load = loads[0]
+        if (
+            str(load["tenant_id"]) != str(tenant_id)
+            or str(load["account_id"]) != str(account_id)
+            or load["grant_purpose"] != "development"
+            or load["code_key"] != "demo_option_hedged_bollinger"
+        ):
+            raise EngineConflict("期权回测策略未获得本账户的开发授权。")
+        params = load["parameters"]
+        symbol = params.get("symbol")
+        put_name = params.get("put_symbol")
+        call_name = params.get("call_symbol")
+        if (
+            symbol not in {"ETHUSDT", "BTCUSDT"}
+            or not isinstance(put_name, str) or not isinstance(call_name, str)
+            or not put_name or not call_name
+        ):
+            raise EngineConflict("期权保护 Demo 需要明确的基础合约及双翼合约。")
+        if not all(
+            self._has_subscription_intent(tenant_id, name, product)
+            for product, name in (
+                ("futures_um", symbol), ("options", put_name), ("options", call_name),
+            )
+        ):
+            raise EngineConflict("开发账户尚未声明三条历史行情订阅。")
+        try:
+            contracts = Decimal(params["option_contracts"])
+            age = int(params["max_age_seconds"]) * 1_000_000_000
+            dte = int(params["min_dte_seconds"]) * 1_000_000_000
+        except (TypeError, ValueError, KeyError, InvalidOperation) as exc:
+            raise EngineConflict("期权保护参数无效。") from exc
+        if not (contracts.is_finite() and contracts > 0 and 0 < age <= 300_000_000_000
+                and 3_600_000_000_000 <= dte <= 2_592_000_000_000_000):
+            raise EngineConflict("期权数量、到期剩余时间或报价时效无效。")
+        if not (self.project / "data").is_dir():
+            raise EngineConflict("历史数据目录不可用。")
+        directory = catalog_directory(self.project)
+        with ExitStack() as leases:
+            for product, name in (
+                ("futures_um", symbol), ("options", call_name), ("options", put_name),
+            ):
+                leases.enter_context(read_lease(self.project, name, product))
+            catalog = ParquetDataCatalog(directory)
+            contracts_native = (
+                _instrument(catalog, symbol, "futures_um", CryptoPerpetual),
+                _instrument(catalog, put_name, "options", CryptoOption),
+                _instrument(catalog, call_name, "options", CryptoOption),
+            )
+            if any(option.expiration_ns - int(end_at.timestamp() * 1_000_000_000) < dte
+                   for option in contracts_native[1:]):
+                raise EngineConflict("保护期权临近到期，无法通过研究回测风控。")
+            evidence = read_option_protection_evidence(
+                directory, symbol, put_name, call_name, start_at, end_at,
+                interval, option_contracts=contracts, max_quote_age_ns=age,
+            )
+            result = run_native_protected(
+                load, evidence, contracts_native, interval=interval,
+                starting_options_balance=starting_options_balance,
+                starting_perpetual_balance=starting_perpetual_balance,
+                max_gross_notional=max_gross_notional,
+            )
+        result.update(
+            start=start_at.isoformat(), end=end_at.isoformat(), interval=interval,
+        )
+        if publish_event:
+            self.store.add_event(tenant_id, account_id, "protected_option_backtest", result)
+        return result
+
+    def latest_protected_option_backtest(self, tenant_id, account_id):
+        if self.store.tenant(tenant_id) is None:
+            raise EngineConflict("租户不存在。")
+        event = self.store.latest_event(tenant_id, account_id, "protected_option_backtest")
+        return None if event is None else event["body"]
+
     def latest_backtest(self, tenant_id, account_id):
         if self.store.tenant(tenant_id) is None:
             raise EngineConflict("租户不存在。")
