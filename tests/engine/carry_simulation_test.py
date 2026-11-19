@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 from engine.app import create_app
 from engine.config import EngineConfig
 from engine.pipeline.catalog import ParquetDataCatalog
-from engine.strategies.package import archive_directory, parse_metadata
 from engine.runtime import EngineConflict, EngineRuntime
 from engine.strategies.carry_simulation import run_native_carry
+from engine.strategies.package import archive_directory, parse_metadata
 from nautilus_support import TestInstrumentProvider
 from tests.engine.basket_history_test import _dataset, _range
 from tests.engine.spot_backtest_test import spot_instrument
@@ -175,7 +175,7 @@ def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
                      runtime=runtime)
     body = {
         "start": start.isoformat(),
-        "end": (start + timedelta(minutes(19))).isoformat(),
+        "end": (start + timedelta(minutes=19)).isoformat(),
         "interval": "1m", "starting_spot_balance": "1000",
         "starting_perpetual_balance": "1000", "max_gross_notional": "1000",
     }
