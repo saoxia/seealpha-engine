@@ -121,7 +121,7 @@ def plan_basket(
     now_ns: int,
     max_age_ns: int,
     max_gross_notional: Decimal,
-    policy: Literal["funding_carry", "option_protected"],
+    policy: Literal["funding_carry", "option_protected", "generic_research"],
     max_leg_drift: Decimal = Decimal(0),
     emergency_unwind: bool = False,
 ) -> BasketPlan:
@@ -141,7 +141,7 @@ def plan_basket(
     _finite(max_leg_drift, "最大腿间偏差")
     if max_leg_drift < 0:
         raise BasketPlanError("最大腿间偏差不能为负")
-    if policy not in {"funding_carry", "option_protected"}:
+    if policy not in {"funding_carry", "option_protected", "generic_research"}:
         raise BasketPlanError("未知跨产品组合策略")
     if type(emergency_unwind) is not bool:
         raise BasketPlanError("紧急减险标记必须为布尔值")
@@ -180,9 +180,9 @@ def plan_basket(
         raise BasketPlanError("紧急减险仅允许对已有非零仓位提出全部归零目标")
 
     futures = sorted(leg for leg in legs if leg.product == "futures_um")
-    if len(futures) != 1:
+    if policy != "generic_research" and len(futures) != 1:
         raise BasketPlanError("组合必须恰好包含一条 USD-M 永续腿")
-    perp = futures[0]
+    perp = futures[0] if futures else None
     if policy == "funding_carry":
         spots = [leg for leg in legs if leg.product == "spot"]
         if len(legs) != 2 or len(spots) != 1 or spots[0].symbol != perp.symbol:
@@ -195,7 +195,7 @@ def plan_basket(
             or positions[spot] + positions[perp] < -max_leg_drift
         ):
             raise BasketPlanError("现有资金费组合腿间偏差超过上限")
-    else:
+    elif policy == "option_protected":
         options = sorted(leg for leg in legs if leg.product == "options")
         if len(legs) != 3 or len(options) != 2:
             raise BasketPlanError("期权保护组合必须为一条永续和两条保护腿")
@@ -223,7 +223,31 @@ def plan_basket(
 
     changes = {leg: targets[leg] - positions[leg] for leg in legs}
     phases = []
-    if policy == "funding_carry":
+    if policy == "generic_research":
+        # Generic research does not presume that two products form a hedge.
+        # Flatten/reduce first, then open additional simulated exposure. Each
+        # phase is checked below against conservative peak gross notional.
+        reductions = []
+        additions = []
+        for leg in sorted(legs):
+            current, target = positions[leg], targets[leg]
+            if current and (target == 0 or current * target < 0):
+                reductions.append(LegChange(leg, -current))
+                if target:
+                    additions.append(LegChange(leg, target))
+            elif current and abs(target) < abs(current):
+                reductions.append(LegChange(leg, target - current))
+            elif target != current:
+                additions.append(LegChange(leg, target - current))
+        if reductions:
+            phases.append(BasketPhase(
+                "generic_research_reduce_first", tuple(reductions),
+            ))
+        if additions:
+            phases.append(BasketPhase(
+                "generic_research_increase_after_reduction", tuple(additions),
+            ))
+    elif policy == "funding_carry":
         if any(changes.values()):
             phases.append(BasketPhase(
                 (
