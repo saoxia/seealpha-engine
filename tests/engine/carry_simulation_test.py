@@ -71,7 +71,7 @@ def test_native_dual_venue_carry_orders_and_account_equity(tmp_path):
     assert result["mode"] == "native_dual_venue_development_only"
     assert result["venue_accounts"] == {"spot": "CASH", "futures_um": "MARGIN"}
     assert result["bar_count"] >= 10
-    assert result["starting_balance"] == "2000"
+    assert Decimal(result["starting_balance"]) == Decimal(2000)
     assert result["equity_curve"]
     assert result["ending_balance"] == result["equity_curve"][-1]["total_equity"]
     assert len(result["funding_observations"]) == 2
@@ -192,7 +192,7 @@ def test_authorized_demo_package_runs_and_persists_native_carry_http(tmp_path):
             )
             assert run.status_code == 200, run.text
             result = run.json()
-            assert result["bar_count"] == 19
+            assert result["bar_count"] == 18  # [start, end), final bar at start+18m
             assert result["fills"]
             latest = client.get(
                 "/tenants/dev/accounts/desk/carry-backtests/latest",
