@@ -82,7 +82,7 @@ class AlgoOrderValues(BaseModel):
         if trailing:
             if self.trigger_price is not None or self.price is not None or self.callback_rate is None:
                 raise ValueError("跟踪止损需要回调率且不能填写普通触发价或限价")
-            if not Decimal("0.1") <= Decimal(self.callback_rate) <= Decimal("20"):
+            if not Decimal("0.1") <= Decimal(self.callback_rate) <= Decimal(20):
                 raise ValueError("回调率范围为 0.1–20%")
             if self.activation_price is not None and Decimal(self.activation_price) <= 0:
                 raise ValueError("激活价格必须大于零")
