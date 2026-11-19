@@ -19,7 +19,6 @@ from engine.strategies.basket_targets import (
     plan_basket,
 )
 
-
 NOW = 1_000_000_000_000
 
 
@@ -83,7 +82,7 @@ def test_partial_one_leg_fill_freezes_and_replays_fail_closed():
 
 
 def test_unsupported_missing_leg_and_forged_snapshot_are_rejected():
-    checkpoint, positions, evidence, spot, perp = _state()
+    checkpoint, _positions, evidence, spot, perp = _state()
     pending = begin_phase(checkpoint, "phase-1")
     with pytest.raises(BasketReconciliationError, match="完整"):
         _observe(pending, {spot: Decimal(0)}, evidence, pending_since_ns=NOW)
