@@ -575,6 +575,86 @@ class EngineRuntime:
                 catalog_directory(self.project), symbol, interval, start_at, end_at,
             )
 
+    def run_funding_carry_backtest(
+        self, tenant_id, account_id, start, end, interval,
+        starting_spot_balance, starting_perpetual_balance, max_gross_notional,
+        *, publish_event=True,
+    ):
+        """Backtest an issued carry basket with separate native venue accounts.
+
+        Research-only: NEVER reaches credentials, live order routes or the
+        production trading runtime. The demo package's own code is not loaded
+        into the simulation; the Engine implements its verified target rules.
+        """
+        from core.market.instruments import instrument_id_for
+        from engine.data_queries import read_lease
+        from engine.pipeline.catalog import ParquetDataCatalog
+        from engine.strategies.backtest import catalog_directory, parse_window
+        from engine.strategies.carry_simulation import run_native_carry
+
+        self.assert_runnable(tenant_id, "backtest")
+        if self.store.tenant(tenant_id)["purpose"] != "development":
+            raise EngineConflict("组合回测仅允许开发租户。")
+        start_at, end_at, interval = parse_window(start, end, interval)
+        loads = self.store.strategy_loads(tenant_id, account_id)
+        if not loads or len(loads) > 16:
+            raise EngineConflict("账户必须已下发 1 到 16 个资金费演示策略。")
+        if any(
+            str(row["tenant_id"]) != str(tenant_id)
+            or str(row["account_id"]) != str(account_id)
+            or row["grant_purpose"] != "development"
+            or row["code_key"] != "demo_funding_carry"
+            for row in loads
+        ):
+            raise EngineConflict("仅允许本租户开发授权的 Funding Carry 策略。")
+        symbols = {row["parameters"]["symbol"] for row in loads}
+        if len(symbols) != 1 or next(iter(symbols)) not in {"ETHUSDT", "BTCUSDT"}:
+            raise EngineConflict("资金费策略品种不一致或不受支持。")
+        symbol = next(iter(symbols))
+        if not all(
+            self._has_subscription_intent(tenant_id, symbol, product)
+            for product in ("spot", "futures_um")
+        ):
+            raise EngineConflict("组合回测必须具有现货及永续独立历史订阅。")
+        if not (self.project / "data").is_dir():
+            raise EngineConflict("租户历史目录不可用。")
+        from contextlib import ExitStack
+
+        with ExitStack() as leases:
+            for product in ("futures_um", "spot"):
+                leases.enter_context(read_lease(self.project, symbol, product))
+            catalog = ParquetDataCatalog(catalog_directory(self.project))
+            spot_id = instrument_id_for(symbol, "spot")
+            perp_id = instrument_id_for(symbol, "futures_um")
+            spot_rows = catalog.instruments(instrument_ids=[spot_id])
+            perp_rows = catalog.instruments(instrument_ids=[perp_id])
+            spot = next((x for x in spot_rows if str(x.id) == spot_id), None)
+            perp = next((x for x in perp_rows if str(x.id) == perp_id), None)
+            if spot is None or perp is None:
+                raise EngineConflict("历史 Catalog 缺少现货或永续原生合约定义。")
+            result = run_native_carry(
+                loads,
+                self.iter_funding_carry_history(
+                    tenant_id, symbol, start_at.isoformat(), end_at.isoformat(), interval,
+                ),
+                spot, perp, interval=interval,
+                starting_spot=starting_spot_balance,
+                starting_perpetual=starting_perpetual_balance,
+                max_gross_notional=max_gross_notional,
+            )
+        result.update(
+            interval=interval, start=start_at.isoformat(), end=end_at.isoformat(),
+        )
+        if publish_event:
+            self.store.add_event(tenant_id, account_id, "carry_backtest", result)
+        return result
+
+    def latest_carry_backtest(self, tenant_id, account_id):
+        if self.store.tenant(tenant_id) is None:
+            raise EngineConflict("租户不存在。")
+        event = self.store.latest_event(tenant_id, account_id, "carry_backtest")
+        return None if event is None else event["body"]
+
     def latest_backtest(self, tenant_id, account_id):
         if self.store.tenant(tenant_id) is None:
             raise EngineConflict("租户不存在。")
