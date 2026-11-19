@@ -416,19 +416,41 @@ class TaskCoordinator:
                 ):
                     raise HTTPException(409, "该租户账户没有已下发的策略。")
             else:
-                from engine.strategies.candidate_template import validate_candidate
-
                 if (not isinstance(candidate, dict)
-                        or set(candidate) != {"candidate_id", "package_hash", "recipe"}
-                        or not isinstance(candidate["candidate_id"], str)
+                        or not isinstance(candidate.get("candidate_id"), str)
                         or not re.fullmatch(r"[0-9a-f]{32}", candidate["candidate_id"])
-                        or not isinstance(candidate["package_hash"], str)
+                        or not isinstance(candidate.get("package_hash"), str)
                         or not re.fullmatch(r"[0-9a-f]{64}", candidate["package_hash"])):
                     raise HTTPException(422, "Candidate identity invalid")
-                try:
-                    validate_candidate(candidate["recipe"])
-                except ValueError:
-                    raise HTTPException(422, "Candidate recipe invalid") from None
+                if candidate.get("mode") == "python":
+                    from engine.strategies.python_candidate import inspect_python_candidate
+
+                    if set(candidate) != {
+                        "mode", "candidate_id", "package_hash", "archive",
+                        "name", "version", "entry_point", "parameters",
+                    }:
+                        raise HTTPException(422, "Python candidate shape invalid")
+                    try:
+                        package = inspect_python_candidate(
+                            candidate["archive"], package_hash=candidate["package_hash"],
+                            symbol=candidate["parameters"]["symbol"],
+                        )
+                        if any(
+                            package[field] != candidate[field]
+                            for field in ("name", "version", "entry_point", "parameters")
+                        ):
+                            raise ValueError
+                    except (TypeError, KeyError, ValueError):
+                        raise HTTPException(422, "Python candidate package invalid") from None
+                else:
+                    from engine.strategies.candidate_template import validate_candidate
+
+                    if set(candidate) != {"candidate_id", "package_hash", "recipe"}:
+                        raise HTTPException(422, "Restricted candidate shape invalid")
+                    try:
+                        validate_candidate(candidate["recipe"])
+                    except ValueError:
+                        raise HTTPException(422, "Candidate recipe invalid") from None
             if self.pending.full():
                 raise HTTPException(429, "该 Engine 的回测等待队列已满。")
             identity = uuid4().hex

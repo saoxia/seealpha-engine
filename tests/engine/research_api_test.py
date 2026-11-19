@@ -430,3 +430,145 @@ def test_candidate_ast_validation_rejects_network_and_wrong_shape():
         validate_candidate({**parsed["recipe"], "risk_limit": "inf"})
     with pytest.raises(ValueError):
         validate_candidate({**parsed["recipe"], "risk_limit": "1E+999999999"})
+
+
+def _python_strategy_archive(*, source=None, symbol="ETHUSDT"):
+    """A genuine Strategy class, not a literal four-template recipe."""
+    import hashlib
+    import json
+    import zipfile
+
+    source = source if source is not None else (
+        "from decimal import Decimal\n"
+        "from nautilus_trader.trading import Strategy\n"
+        "class AiSignal(Strategy):\n"
+        "    def on_start(self):\n"
+        "        self.subscribe_bars(self.bar_type)\n"
+        "    def on_bar(self, bar):\n"
+        "        self.publish(symbol=self.parameters['symbol'], "
+        "quantity=Decimal(self.parameters['allocation']))\n"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("seealpha-package.json", json.dumps({
+            "format": 1, "name": "ai_research", "title": "AI Python Research",
+            "version": "1", "entry_point": "strategy:AiSignal",
+            "parameters": {
+                "symbol": symbol, "allocation": "1", "risk_limit": "1",
+            },
+        }))
+        archive.writestr("strategy.py", source)
+    raw = buffer.getvalue()
+    return raw, hashlib.sha256(raw).hexdigest()
+
+
+def test_python_candidate_opt_in_and_hmac_isolation(service):
+    import base64
+    from dataclasses import replace
+
+    client, _, runtime, tasks = service
+    raw, digest = _python_strategy_archive()
+    body = {
+        "purpose": "development", "execution": "simulation",
+        "candidate_id": "a" * 32, "package_hash": digest,
+        "archive": base64.b64encode(raw).decode("ascii"),
+        "strategy_ref": STRATEGY, "dataset_refs": [DATASET],
+        "start": "2026-01-01", "end": "2026-01-02",
+        "starting_balance": "1000", "quote_currency": "USDT",
+        "idempotency_key": "python-experiment-1",
+    }
+    assert client.post(
+        "/v1/python-candidate-backtests", headers=headers(
+            ops=["python_candidates:submit"],
+        ), json=body,
+    ).status_code == 404
+    enabled = create_research_app(
+        replace(EngineConfig(
+            state_dir=runtime.root, token=ADMIN, project=runtime.project,
+            tenant_id="dev", tenant_purpose="development",
+            research_signing_key=SECRET,
+        ), research_python_enabled=True),
+        runtime, tasks,
+    )
+    with TestClient(enabled) as api:
+        assert api.post(
+            "/v1/python-candidate-backtests",
+            headers=headers(ops=["candidates:submit"]), json=body,
+        ).status_code == 403
+        response = api.post(
+            "/v1/python-candidate-backtests",
+            headers=headers(ops=["python_candidates:submit"]), json=body,
+        )
+        assert response.status_code == 202, response.text
+        job_id = response.json()["backtest_id"]
+        candidate = tasks.records[job_id]["parameters"]["_candidate"]
+        assert candidate["mode"] == "python"
+        assert candidate["entry_point"] == "strategy:AiSignal"
+        assert candidate["package_hash"] == digest
+        assert candidate["parameters"]["symbol"] == "ETHUSDT"
+        assert api.post(
+            "/v1/python-candidate-backtests",
+            headers=headers(ops=["python_candidates:submit"]), json=body,
+        ).json()["backtest_id"] == job_id
+        assert api.get(
+            f"/v1/backtests/{job_id}", headers=headers(
+                task_id="some-other-task", ops=["backtests:read"],
+            ),
+        ).status_code == 404
+        assert api.post(
+            "/v1/python-candidate-backtests", headers=headers(
+                ops=["python_candidates:submit"],
+            ), json={**body, "package_hash": "0" * 64},
+        ).status_code == 422
+    enabled.state.snapshots.close()
+
+
+def test_python_candidate_package_is_never_imported_by_api():
+    import base64
+    from engine.strategies.python_candidate import inspect_python_candidate
+
+    # Static inspection may accept Python imports; it must not execute them.
+    raw, digest = _python_strategy_archive(
+        source="raise AssertionError('unexpected import')\n"
+    )
+    info = inspect_python_candidate(
+        base64.b64encode(raw).decode(), package_hash=digest, symbol="ETHUSDT",
+    )
+    assert info["name"] == "ai_research"
+    with pytest.raises(ValueError):
+        inspect_python_candidate(
+            base64.b64encode(raw).decode(), package_hash="0" * 64,
+            symbol="ETHUSDT",
+        )
+    with pytest.raises(ValueError):
+        inspect_python_candidate(
+            base64.b64encode(raw).decode(), package_hash=digest, symbol="BTCUSDT",
+        )
+
+
+def test_python_candidate_rejects_archive_path_escape_and_secret_parameters():
+    import base64
+    import hashlib
+    import json
+    import zipfile
+    from engine.strategies.python_candidate import inspect_python_candidate
+
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as z:
+        z.writestr("seealpha-package.json", json.dumps({
+            "format": 1, "name": "ai_research", "title": "AI",
+            "version": "1", "entry_point": "strategy:AiSignal",
+            "parameters": {
+                "symbol": "ETHUSDT", "allocation": "1", "risk_limit": "1",
+                "token": "forbidden",
+            },
+        }))
+        z.writestr("strategy.py", "class AiSignal: pass")
+        z.writestr("../escape.py", "malicious")
+    raw = stream.getvalue()
+    with pytest.raises(ValueError):
+        inspect_python_candidate(
+            base64.b64encode(raw).decode(),
+            package_hash=hashlib.sha256(raw).hexdigest(),
+            symbol="ETHUSDT",
+        )

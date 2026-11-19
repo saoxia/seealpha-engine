@@ -26,6 +26,7 @@ from engine.research_auth import (
 from engine.research_snapshots import SnapshotService
 from engine.runtime import EngineConflict
 from engine.strategies.candidate_package import decode_candidate_archive
+from engine.strategies.python_candidate import inspect_python_candidate
 from engine.task_routes import BacktestParameters
 
 _ACCOUNT = re.compile(r"^account:([A-Za-z0-9._-]{1,40})$")
@@ -69,6 +70,26 @@ class CandidateBacktestRequest(BaseModel):
     candidate_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     package_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     archive: str = Field(min_length=1, max_length=90_000, repr=False)
+    strategy_ref: str = Field(min_length=1, max_length=128)
+    dataset_refs: list[str] = Field(min_length=1, max_length=1)
+    start: str = Field(min_length=10, max_length=40)
+    end: str = Field(min_length=10, max_length=40)
+    starting_balance: str = Field(min_length=1, max_length=40)
+    quote_currency: str = Field(pattern=r"^[A-Z]{3,8}$")
+    idempotency_key: str = Field(
+        min_length=1, max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+    )
+
+
+class PythonCandidateBacktestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: Literal["development"]
+    execution: Literal["simulation"]
+    candidate_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    package_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    archive: str = Field(min_length=1, max_length=400_000, repr=False)
     strategy_ref: str = Field(min_length=1, max_length=128)
     dataset_refs: list[str] = Field(min_length=1, max_length=1)
     start: str = Field(min_length=10, max_length=40)
@@ -281,6 +302,59 @@ def create_research_app(config, runtime, tasks):
         idem = (
             "research." + sha256(claims["task_id"].encode()).hexdigest()[:32] + "."
             + sha256(("candidate." + body.idempotency_key).encode()).hexdigest()[:32]
+        )
+        job = tasks.submit(config.tenant_id, "backtest", params, idempotency_key=idem)
+        return _public_backtest(job)
+
+    @app.post("/v1/python-candidate-backtests", status_code=202)
+    def submit_python_candidate(body: PythonCandidateBacktestRequest, claims: dict = grant_dependency):
+        # Platform chooses the target Docker, candidate revision and account;
+        # Engine rechecks its own pinned development tenant and scoped grant.
+        if not config.research_python_enabled:
+            raise HTTPException(404, "Python candidate research not enabled")
+        try:
+            strategy_ref = identifier(body.strategy_ref)
+            dataset = identifier(body.dataset_refs[0])
+        except ValueError:
+            raise HTTPException(422, "Invalid research reference") from None
+        require_op(claims, "python_candidates:submit", strategy=strategy_ref, dataset=dataset)
+        account = _ACCOUNT.fullmatch(strategy_ref)
+        if account is None:
+            raise HTTPException(422, "Python candidate requires development account")
+        try:
+            product, symbol, interval = dataset.split(":")
+        except ValueError:
+            raise HTTPException(422, "Invalid research dataset") from None
+        if product != "futures_um" or interval not in {"1m", "5m"}:
+            raise HTTPException(422, "Only single-product futures research supported")
+        if dataset not in {row["id"] for row in snapshots._discover()}:
+            raise HTTPException(404, "Research dataset unavailable")
+        try:
+            package = inspect_python_candidate(
+                body.archive, package_hash=body.package_hash, symbol=symbol,
+            )
+            params = BacktestParameters(
+                account_id=account.group(1),
+                start=body.start, end=body.end, interval=interval,
+                starting_balance=body.starting_balance,
+                quote_currency=body.quote_currency,
+            ).model_dump(mode="json")
+            from engine.strategies.backtest import parse_window
+
+            parse_window(body.start, body.end, interval)
+        except (ValueError, EngineConflict):
+            raise HTTPException(422, "Python candidate or window invalid") from None
+        # No dynamic import in the API server. Only the existing Worker will
+        # extract and import candidate Python into the simulation process.
+        params["_candidate"] = {
+            "mode": "python", "candidate_id": body.candidate_id,
+            "package_hash": body.package_hash, "archive": body.archive,
+            "name": package["name"], "version": package["version"],
+            "entry_point": package["entry_point"], "parameters": package["parameters"],
+        }
+        idem = (
+            "research." + sha256(claims["task_id"].encode()).hexdigest()[:32] + "."
+            + sha256(("python." + body.idempotency_key).encode()).hexdigest()[:32]
         )
         job = tasks.submit(config.tenant_id, "backtest", params, idempotency_key=idem)
         return _public_backtest(job)
