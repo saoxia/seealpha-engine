@@ -108,6 +108,186 @@ impl Runtime {
         }))
     }
 
+    /// Run one leased reconciliation through signed exchange READS only.
+    /// Never sends an order, marks settlement, or infers a fill from an ACK.
+    /// Missing credentials, missing orders and incomplete trades remain
+    /// unresolved with persistent retry/backoff or manual review.
+    pub fn run_one_registered_order_reconciliation(
+        &self, tenant:&str, worker:&str, venue_base:&str,
+    ) -> Result<Option<Value>,RuntimeError> {
+        use std::time::{SystemTime,UNIX_EPOCH};
+        let now=|| -> Result<i64,RuntimeError> {
+            let ms=SystemTime::now().duration_since(UNIX_EPOCH)
+                .map_err(|_|RuntimeError::Conflict("系统时钟无效。".into()))?
+                .as_millis();
+            i64::try_from(ms).map_err(|_|RuntimeError::Conflict("系统时钟溢出。".into()))
+        };
+        self.require_active(tenant)?;
+        let begun=now()?;
+        // Network queries can exceed the lease; a late worker cannot
+        // overwrite a later generation's result.
+        let Some(task)=self.claim_order_reconciliation(tenant,worker,begun,300_000)?
+            else {return Ok(None)};
+        let (result,outcome,code)=match self.read_reconciliation_evidence(
+            &task,venue_base,
+        ) {
+            Ok(report)=>(Ok(report),"evidence_recorded",None),
+            Err(err)=>{
+                // Never persist remote error strings (they might include
+                // credentials or unreliable exchange payload details).
+                let reason=if matches!(err,RuntimeError::BadRequest(_)|
+                    RuntimeError::Unprocessable(_)){"INVALID_EVIDENCE"}
+                    else{"READ_UNCONFIRMED"};
+                (Err(err),"retry",Some(reason))
+            }
+        };
+        self.finish_order_reconciliation(
+            tenant,&task.account_id,&task.request_id,worker,
+            task.attempts,now()?,outcome,code,
+        )?;
+        result.map(Some)
+    }
+
+    /// Only signed GET routes are reachable here. This method deliberately
+    /// does not call legacy order-request updates or post account balances.
+    fn read_reconciliation_evidence(
+        &self,
+        task:&seealpha_ledger::ReconciliationTask,
+        venue_base:&str,
+    ) -> Result<Value,RuntimeError> {
+        use rust_decimal::Decimal;
+        if !matches!(task.environment.as_str(),"production"|"sandbox") {
+            return Err(RuntimeError::Unprocessable("无效的对账账户环境。".into()));
+        }
+        let tenant=self.require_active(&task.tenant_id)?;
+        if tenant.purpose!="production" {
+            return Err(RuntimeError::Unprocessable("非正式租户不能查询真实订单。".into()));
+        }
+        let intent=self.ledger.registered_order_intent(
+            &task.tenant_id,&task.account_id,&task.request_id,
+        ).map_err(map_ledger)?
+            .ok_or_else(||RuntimeError::BadRequest("订单意图不存在。".into()))?;
+        if intent["environment"].as_str()!=Some(task.environment.as_str())
+            || intent["client_order_id"].as_str()!=Some(task.client_order_id.as_str()) {
+            return Err(RuntimeError::BadRequest("订单身份或环境不一致。".into()));
+        }
+        let symbol=intent["symbol"].as_str()
+            .ok_or_else(||RuntimeError::BadRequest("订单交易对无效。".into()))?;
+        let product=match intent["product"].as_str() {
+            Some("spot")=>Product::Spot,
+            Some("futures_um")=>Product::FuturesUm,
+            Some("options")=>Product::Option,
+            _=>return Err(RuntimeError::BadRequest("订单产品不可核验。".into())),
+        };
+        let creds=secrets().lock().map_err(|_|
+            RuntimeError::Conflict("账户凭据状态不可用。".into()))?
+            .get(&key(&task.tenant_id,&task.account_id,&task.environment))
+            .cloned()
+            .ok_or_else(||RuntimeError::Conflict("没有已登记的账户凭据。".into()))?;
+        validate_secret(&creds.api_key,&creds.secret)?;
+        let venue=VenueClient::new(venue_base)
+            .map_err(|_|RuntimeError::BadRequest("对账网关配置无效。".into()))?;
+        let order=venue.query_order(&creds,product,symbol,&task.client_order_id)
+            .map_err(|_|RuntimeError::Conflict("签名订单查询未确认。".into()))?
+            .ok_or_else(||RuntimeError::Conflict("交易所未找到订单，保持待核实。".into()))?;
+        if order["client_order_id"].as_str()!=Some(task.client_order_id.as_str())
+            || order["symbol"].as_str()!=Some(symbol)
+            || order["side"].as_str()!=intent["side"].as_str() {
+            return Err(RuntimeError::BadRequest("交易所订单身份或方向冲突。".into()));
+        }
+        let quantity=order["quantity"].as_str()
+            .and_then(|v|v.parse::<Decimal>().ok())
+            .ok_or_else(||RuntimeError::BadRequest("订单数量缺失。".into()))?;
+        let expected=intent["quantity"].as_str()
+            .and_then(|v|v.parse::<Decimal>().ok())
+            .ok_or_else(||RuntimeError::BadRequest("预登记订单数量无效。".into()))?;
+        if quantity!=expected {
+            return Err(RuntimeError::BadRequest("订单数量与授权意图冲突。".into()));
+        }
+        let id=order["order_id"].as_str().filter(|v|
+            !v.is_empty() && v.bytes().all(|b|b.is_ascii_digit())
+        ).ok_or_else(||RuntimeError::BadRequest("交易所订单编号无效。".into()))?;
+        let filled=order["filled"].as_str()
+            .and_then(|v|v.parse::<Decimal>().ok())
+            .ok_or_else(||RuntimeError::BadRequest("订单累计成交量无效。".into()))?;
+        if filled<Decimal::ZERO || filled>expected {
+            return Err(RuntimeError::BadRequest("累计成交量超出订单数量。".into()));
+        }
+        let status=order["status"].as_str()
+            .ok_or_else(||RuntimeError::BadRequest("缺少订单状态。".into()))?;
+        if !matches!(status,"NEW"|"PARTIALLY_FILLED"|"FILLED"|
+            "CANCELED"|"REJECTED"|"EXPIRED") {
+            return Err(RuntimeError::BadRequest("交易所订单状态暂不能核实。".into()));
+        }
+        let trades=venue.query_order_trades(&creds,product,symbol,id)
+            .map_err(|_|RuntimeError::Conflict("签名成交明细查询失败。".into()))?;
+        let mut ids=Vec::with_capacity(trades.len());
+        let mut seen=std::collections::HashSet::new();
+        let mut total=Decimal::ZERO;
+        for fill in &trades {
+            if fill["source"]!="signed_exchange_user_trades"
+                || fill["venue_order_id"].as_str()!=Some(id) {
+                return Err(RuntimeError::BadRequest("成交明细证据来源或订单不一致。".into()));
+            }
+            let trade_id=fill["trade_id"].as_str().filter(|v|seen.insert(*v))
+                .ok_or_else(||RuntimeError::BadRequest("交易所成交编号重复。".into()))?;
+            let qty=fill["quantity"].as_str().and_then(|v|v.parse::<Decimal>().ok())
+                .filter(|v|*v>Decimal::ZERO)
+                .ok_or_else(||RuntimeError::BadRequest("成交数量无效。".into()))?;
+            total=total.checked_add(qty)
+                .ok_or_else(||RuntimeError::BadRequest("成交数量溢出。".into()))?;
+            ids.push(trade_id.to_owned());
+        }
+        // A completed GET with missing historical trades is not a fill.
+        if total!=filled
+            || (status=="FILLED" && total!=expected)
+            || (status=="PARTIALLY_FILLED" && (total<=Decimal::ZERO || total>=expected))
+            || (status=="NEW" && total!=Decimal::ZERO)
+            || (status=="REJECTED" && total!=Decimal::ZERO) {
+            return Err(RuntimeError::Conflict("交易所订单状态与成交记录尚未一致。".into()));
+        }
+        // Independently query the account; a response is only read evidence,
+        // not authorization or an account snapshot in Ledger.
+        if product==Product::FuturesUm {
+            venue.account_snapshot(&creds)
+                .map_err(|_|RuntimeError::Conflict("账户签名快照查询未确认。".into()))?;
+        }
+        // Durable verified trade IDs precede the order observation.
+        self.ledger.import_verified_fills(
+            &task.tenant_id,&task.account_id,&task.environment,id,&trades,
+        ).map_err(map_ledger)?;
+        let at=std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_|RuntimeError::Conflict("系统时钟无效。".into()))?
+            .as_nanos();
+        let at_ns=i64::try_from(at).map_err(|_|
+            RuntimeError::Conflict("系统时钟溢出。".into()))?;
+        let observation=json!({
+            "environment":task.environment,
+            "client_order_id":task.client_order_id,
+            "venue_order_id":id,
+            "status":status,
+            "source":"signed_exchange_order_query",
+            "observed_at_ns":at_ns,
+            "trade_ids":ids,
+        });
+        let observation_id=format!("read_{}_{}",task.attempts,at_ns);
+        self.ledger.append_order_observation(
+            &task.tenant_id,&task.account_id,&task.environment,
+            &task.client_order_id,&observation_id,&observation,
+        ).map_err(map_ledger)?;
+        Ok(json!({
+            "request_id":task.request_id,
+            "client_order_id":task.client_order_id,
+            "status":status,
+            "verified_trade_count":trades.len(),
+            "verified_quantity":total.to_string(),
+            "account_settled":false,
+            "resend_order":false,
+            "reconciliation_only":true
+        }))
+    }
+
     /// Reconcile an order using the account credentials already registered
     /// in memory. The HTTP reconciliation request never needs API secrets.
     pub fn sync_registered_fills(
