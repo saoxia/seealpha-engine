@@ -4,6 +4,7 @@ mod legacy;
 mod order_intents;
 mod account_snapshots;
 mod account_events;
+mod tenant_transfer;
 pub use order_intents::IntentStart;
 pub use account_snapshots::AccountSnapshot;
 mod basket_journal;
@@ -364,7 +365,7 @@ pub struct Ledger {
 
 impl Ledger {
     pub fn open(path: &Path) -> Result<Self, LedgerError> {
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
                 .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         }
