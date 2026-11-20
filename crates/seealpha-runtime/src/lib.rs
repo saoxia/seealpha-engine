@@ -3,6 +3,7 @@ mod accounts;
 mod config;
 mod data;
 mod evidence;
+mod fills;
 mod history;
 mod inspection;
 mod jobs;
@@ -87,6 +88,10 @@ impl Runtime {
         let ledger = Ledger::open(book).map_err(map_ledger)?;
         // Interrupted writer tasks are never blindly retried after a process crash.
         ledger.restore_interrupted_data_jobs().map_err(map_ledger)?;
+        // A previous Rust version invented empty fills for NEW order
+        // acknowledgements. Preserve those rows in an audit quarantine,
+        // never treat them as real exchange-executed trades.
+        ledger.quarantine_synthetic_fills().map_err(map_ledger)?;
         Ok(Self {
             ledger,
             project: config.project.clone(),
