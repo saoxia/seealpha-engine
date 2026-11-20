@@ -100,8 +100,11 @@ pub fn audit_trade_ids(trades: &[PublicTrade]) -> Result<TradeIdAudit, MarketErr
     let mut input_out_of_order = false;
     let mut last_time_id = None;
     for trade in trades {
-        if trade.id < 0 || trade.timestamp_ms < 0
-            || trade.price <= Decimal::ZERO || trade.quantity <= Decimal::ZERO {
+        if trade.id < 0
+            || trade.timestamp_ms < 0
+            || trade.price <= Decimal::ZERO
+            || trade.quantity <= Decimal::ZERO
+        {
             return Err(MarketError::Trade);
         }
         let key = (trade.timestamp_ms, trade.id);
@@ -109,14 +112,21 @@ pub fn audit_trade_ids(trades: &[PublicTrade]) -> Result<TradeIdAudit, MarketErr
             input_out_of_order = true;
         }
         last_time_id = Some(key);
-        if let Some(previous) = seen.insert(trade.id, *trade) {
-            if previous != *trade { return Err(MarketError::Trade); }
+        if let Some(previous) = seen.insert(trade.id, *trade)
+            && previous != *trade
+        {
+            return Err(MarketError::Trade);
         }
     }
     let ids: Vec<_> = seen.keys().copied().collect();
-    let suspected_gap = ids.windows(2)
+    let suspected_gap = ids
+        .windows(2)
         .any(|pair| pair[0].checked_add(1) != Some(pair[1]));
-    Ok(TradeIdAudit { unique_count: seen.len(), suspected_gap, input_out_of_order })
+    Ok(TradeIdAudit {
+        unique_count: seen.len(),
+        suspected_gap,
+        input_out_of_order,
+    })
 }
 
 pub fn aggregate_trades(trades: &[PublicTrade], interval_ms: i64) -> Result<Vec<Bar>, MarketError> {
@@ -128,7 +138,9 @@ pub fn aggregate_trades(trades: &[PublicTrade], interval_ms: i64) -> Result<Vec<
     }
     audit_trade_ids(trades)?;
     let mut unique = BTreeMap::new();
-    for trade in trades { unique.insert(trade.id, *trade); }
+    for trade in trades {
+        unique.insert(trade.id, *trade);
+    }
     let mut ordered: Vec<_> = unique.into_values().collect();
     ordered.sort_by_key(|trade| (trade.timestamp_ms, trade.id));
     let mut bars: Vec<Bar> = Vec::new();
@@ -293,5 +305,4 @@ mod tests {
         let negative = json!([[-60_000, "1", "1", "1", "1", "0", -1]]);
         assert!(parse_binance_klines(&negative, 60_000).is_err());
     }
-
 }

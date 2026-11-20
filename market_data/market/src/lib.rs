@@ -4,12 +4,11 @@
 //! closed klines, aggregates trades into OHLCV bars, and computes decimal
 //! features. Neither path starts a collector as a side effect of a read.
 mod binance;
-mod pipeline;
-pub mod options;
-pub mod funding;
-pub mod exercise;
 pub mod clock;
-
+pub mod exercise;
+pub mod funding;
+pub mod options;
+mod pipeline;
 
 pub use binance::{BinanceSource, MemorySource};
 pub use pipeline::{

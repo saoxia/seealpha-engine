@@ -1,8 +1,8 @@
 //! Signed order commands. Credentials stay in the request and never enter SQLite.
 use crate::{Runtime, RuntimeError, map_ledger};
-use seealpha_venue::{Credentials, OrderIntent, Product, VenueClient, VenueError};
-use seealpha_venue::conditional::{UmConditionalIntent,validated_algo_view};
+use seealpha_venue::conditional::{UmConditionalIntent, validated_algo_view};
 use seealpha_venue::spot_oco::SpotOcoIntent;
+use seealpha_venue::{Credentials, OrderIntent, Product, VenueClient, VenueError};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -134,6 +134,49 @@ impl Runtime {
             "records": [],
             "ledger_synced": false,
         });
+        // Validate the instrument and record routing before the only pre-send
+        // immutable UNKNOWN insert. Invalid inputs must not leave a send record.
+        let product = match command.values.get("product").and_then(Value::as_str) {
+            Some("futures_um") => Product::FuturesUm,
+            Some("spot") => Product::Spot,
+            Some("options") => Product::Option,
+            Some(_) => return Err(RuntimeError::Unprocessable("交易产品无效。".into())),
+            None if symbol.ends_with("-PERP") => Product::FuturesUm,
+            None if seealpha_market::options::parse_option_symbol(&symbol).is_ok() => {
+                Product::Option
+            }
+            None => Product::Spot,
+        };
+        if (product == Product::Option
+            && seealpha_market::options::parse_option_symbol(&symbol).is_err())
+            || (product == Product::Spot && symbol.contains('-'))
+            || (product == Product::FuturesUm && symbol.contains('-') && !symbol.ends_with("-PERP"))
+        {
+            return Err(RuntimeError::Unprocessable(
+                "交易合约与产品类型不匹配。".into(),
+            ));
+        }
+        let order_type = command
+            .values
+            .get("order_type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        let conditional = product == Product::FuturesUm
+            && (command.values.get("algo_order").and_then(Value::as_bool) == Some(true)
+                || matches!(
+                    order_type.as_str(),
+                    "STOP"
+                        | "STOP_MARKET"
+                        | "TAKE_PROFIT"
+                        | "TAKE_PROFIT_MARKET"
+                        | "TRAILING_STOP_MARKET"
+                ));
+        let spot_oco = product == Product::Spot
+            && command.values.get("order_list").and_then(Value::as_str) == Some("oco");
+        body["order_list"] = if spot_oco { json!("oco") } else { Value::Null };
+        body["algo_order"] = json!(conditional);
+        // Persist the recovery routing BEFORE the first network write.
         self.ledger
             .save_order_request(
                 &command.tenant_id,
@@ -142,78 +185,83 @@ impl Runtime {
                 &body.to_string(),
             )
             .map_err(map_ledger)?;
-        let product=match command.values.get("product").and_then(Value::as_str) {
-            Some("futures_um")=>Product::FuturesUm,
-            Some("spot")=>Product::Spot,
-            Some("options")=>Product::Option,
-            Some(_)=>return Err(RuntimeError::Unprocessable("交易产品无效。".into())),
-            None if symbol.ends_with("-PERP")=>Product::FuturesUm,
-            None if seealpha_market::options::parse_option_symbol(&symbol).is_ok()=>Product::Option,
-            None=>Product::Spot,
-        };
-        if (product==Product::Option &&
-                seealpha_market::options::parse_option_symbol(&symbol).is_err())
-            || (product==Product::Spot && symbol.contains('-'))
-            || (product==Product::FuturesUm && symbol.contains('-') &&
-                !symbol.ends_with("-PERP")) {
-            return Err(RuntimeError::Unprocessable("交易合约与产品类型不匹配。".into()));
-        }
-        let order_type=command.values.get("order_type").and_then(Value::as_str)
-            .unwrap_or("").to_ascii_uppercase();
-        let conditional=product==Product::FuturesUm &&
-            (command.values.get("algo_order").and_then(Value::as_bool)==Some(true)
-                || matches!(order_type.as_str(),"STOP"|"STOP_MARKET"|"TAKE_PROFIT"
-                    |"TAKE_PROFIT_MARKET"|"TRAILING_STOP_MARKET"));
-        let spot_oco=product==Product::Spot &&
-            command.values.get("order_list").and_then(Value::as_str)==Some("oco");
-        body["order_list"]=if spot_oco {json!("oco")}else{Value::Null};
-        body["algo_order"]=json!(conditional);
-        // Persist the recovery routing BEFORE the first network write.
-        self.ledger.save_order_request(
-            &command.tenant_id,&command.account_id,&request_id,&body.to_string()
-        ).map_err(map_ledger)?;
         let venue = VenueClient::new(&command.venue_base)
             .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
         let credentials = Credentials {
             api_key: command.api_key,
             secret: command.secret,
         };
-        let outcome = if spot_oco && command.action=="cancel" {
-            venue.cancel_spot_oco(&credentials,&symbol,&client_order_id)
+        let outcome = if spot_oco && command.action == "cancel" {
+            venue.cancel_spot_oco(&credentials, &symbol, &client_order_id)
         } else if spot_oco {
-            venue.place_spot_oco(&credentials,&SpotOcoIntent {
-                symbol:symbol.clone(),
-                side:command.values["side"].as_str().unwrap_or("").to_ascii_uppercase(),
-                quantity:command.values["quantity"].as_str().unwrap_or("").into(),
-                list_client_order_id:client_order_id.clone(),
-                above_type:command.values["above_type"].as_str().unwrap_or("").to_ascii_uppercase(),
-                below_type:command.values["below_type"].as_str().unwrap_or("").to_ascii_uppercase(),
-                above_price:command.values["above_price"].as_str().map(str::to_owned),
-                above_stop_price:command.values["above_stop_price"].as_str().map(str::to_owned),
-                below_price:command.values["below_price"].as_str().map(str::to_owned),
-                below_stop_price:command.values["below_stop_price"].as_str().map(str::to_owned),
-                above_time_in_force:command.values["above_time_in_force"].as_str().map(str::to_owned),
-                below_time_in_force:command.values["below_time_in_force"].as_str().map(str::to_owned),
-            })
-        } else if conditional && command.action=="cancel" {
-            venue.cancel_um_conditional(&credentials,&symbol,&client_order_id)
+            venue.place_spot_oco(
+                &credentials,
+                &SpotOcoIntent {
+                    symbol: symbol.clone(),
+                    side: command.values["side"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_ascii_uppercase(),
+                    quantity: command.values["quantity"].as_str().unwrap_or("").into(),
+                    list_client_order_id: client_order_id.clone(),
+                    above_type: command.values["above_type"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_ascii_uppercase(),
+                    below_type: command.values["below_type"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_ascii_uppercase(),
+                    above_price: command.values["above_price"].as_str().map(str::to_owned),
+                    above_stop_price: command.values["above_stop_price"]
+                        .as_str()
+                        .map(str::to_owned),
+                    below_price: command.values["below_price"].as_str().map(str::to_owned),
+                    below_stop_price: command.values["below_stop_price"]
+                        .as_str()
+                        .map(str::to_owned),
+                    above_time_in_force: command.values["above_time_in_force"]
+                        .as_str()
+                        .map(str::to_owned),
+                    below_time_in_force: command.values["below_time_in_force"]
+                        .as_str()
+                        .map(str::to_owned),
+                },
+            )
+        } else if conditional && command.action == "cancel" {
+            venue.cancel_um_conditional(&credentials, &symbol, &client_order_id)
         } else if conditional {
-            venue.place_um_conditional(&credentials,&UmConditionalIntent {
-                symbol:symbol.clone(),
-                client_algo_id:client_order_id.clone(),
-                side:command.values["side"].as_str().unwrap_or("").to_ascii_uppercase(),
-                order_type:order_type.clone(),
-                quantity:command.values["quantity"].as_str().map(str::to_owned),
-                trigger_price:command.values["trigger_price"].as_str().map(str::to_owned),
-                limit_price:command.values["price"].as_str().map(str::to_owned),
-                activate_price:command.values["activate_price"].as_str().map(str::to_owned),
-                callback_rate:command.values["callback_rate"].as_str().map(str::to_owned),
-                position_side:command.values["position_side"].as_str().unwrap_or("BOTH").to_ascii_uppercase(),
-                working_type:command.values["working_type"].as_str().unwrap_or("CONTRACT_PRICE").to_ascii_uppercase(),
-                time_in_force:command.values["time_in_force"].as_str().unwrap_or("GTC").to_ascii_uppercase(),
-                reduce_only:command.values["reduce_only"].as_bool().unwrap_or(false),
-                close_position:command.values["close_position"].as_bool().unwrap_or(false),
-            })
+            venue.place_um_conditional(
+                &credentials,
+                &UmConditionalIntent {
+                    symbol: symbol.clone(),
+                    client_algo_id: client_order_id.clone(),
+                    side: command.values["side"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_ascii_uppercase(),
+                    order_type: order_type.clone(),
+                    quantity: command.values["quantity"].as_str().map(str::to_owned),
+                    trigger_price: command.values["trigger_price"].as_str().map(str::to_owned),
+                    limit_price: command.values["price"].as_str().map(str::to_owned),
+                    activate_price: command.values["activate_price"].as_str().map(str::to_owned),
+                    callback_rate: command.values["callback_rate"].as_str().map(str::to_owned),
+                    position_side: command.values["position_side"]
+                        .as_str()
+                        .unwrap_or("BOTH")
+                        .to_ascii_uppercase(),
+                    working_type: command.values["working_type"]
+                        .as_str()
+                        .unwrap_or("CONTRACT_PRICE")
+                        .to_ascii_uppercase(),
+                    time_in_force: command.values["time_in_force"]
+                        .as_str()
+                        .unwrap_or("GTC")
+                        .to_ascii_uppercase(),
+                    reduce_only: command.values["reduce_only"].as_bool().unwrap_or(false),
+                    close_position: command.values["close_position"].as_bool().unwrap_or(false),
+                },
+            )
         } else if command.action == "cancel" {
             venue.cancel_order(&credentials, product, &symbol, &client_order_id)
         } else {
@@ -291,7 +339,8 @@ impl Runtime {
                         &json!({"client_order_id": client_order_id,
                             "status": order["status"],
                             "executed_qty_reported": order["filled"],
-                            "fills_verified": false}).to_string(),
+                            "fills_verified": false})
+                        .to_string(),
                     )
                     .map_err(map_ledger)?;
             }
@@ -310,8 +359,10 @@ impl Runtime {
             }
         }
         drop(credentials);
+        // The pre-send request is immutable. Store the confirmed send result as
+        // a separate append-only projection for idempotent GET/replay.
         self.ledger
-            .save_order_request(
+            .append_order_request_view(
                 &command.tenant_id,
                 &command.account_id,
                 &request_id,
@@ -343,45 +394,64 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
-        if stored["environment"]!=environment {
+        if stored["environment"] != environment {
             return Err(RuntimeError::Conflict("账户环境与原始委托不一致。".into()));
         }
+        let prior_view = stored.clone();
         if stored["response"]["status"] == "unknown" {
             let symbol = stored["symbol"].as_str().unwrap_or("").to_string();
             let client_order_id = stored["response"]["client_order_id"]
                 .as_str()
                 .unwrap_or("")
                 .to_string();
-            let product=match stored.get("product").and_then(Value::as_str) {
-                Some("futures_um")=>Product::FuturesUm,
-                Some("options")=>Product::Option,
-                Some("spot")=>Product::Spot,
-                _ if symbol.ends_with("-PERP")=>Product::FuturesUm,
-                _ if seealpha_market::options::parse_option_symbol(&symbol).is_ok()=>Product::Option,
-                _=>Product::Spot,
+            let product = match stored.get("product").and_then(Value::as_str) {
+                Some("futures_um") => Product::FuturesUm,
+                Some("options") => Product::Option,
+                Some("spot") => Product::Spot,
+                _ if symbol.ends_with("-PERP") => Product::FuturesUm,
+                _ if seealpha_market::options::parse_option_symbol(&symbol).is_ok() => {
+                    Product::Option
+                }
+                _ => Product::Spot,
             };
             if let Ok(client) = VenueClient::new(venue_base)
-                && let Ok(Some(order)) = (if stored["order_list"]=="oco" {
-                    client.query_spot_oco(&Credentials {
-                        api_key:api_key.into(),secret:secret.into(),
-                    },&symbol,&client_order_id).map(Some)
-                } else if stored["algo_order"]==true {
-                    client.query_um_conditional(&Credentials {
-                        api_key:api_key.into(),secret:secret.into(),
-                    },&symbol,&client_order_id)
-                        .and_then(|v|seealpha_venue::venue_symbol(&symbol)
-                            .and_then(|canonical|validated_algo_view(
-                                &v,&client_order_id,&canonical))).map(Some)
+                && let Ok(Some(order)) = (if stored["order_list"] == "oco" {
+                    client
+                        .query_spot_oco(
+                            &Credentials {
+                                api_key: api_key.into(),
+                                secret: secret.into(),
+                            },
+                            &symbol,
+                            &client_order_id,
+                        )
+                        .map(Some)
+                } else if stored["algo_order"] == true {
+                    client
+                        .query_um_conditional(
+                            &Credentials {
+                                api_key: api_key.into(),
+                                secret: secret.into(),
+                            },
+                            &symbol,
+                            &client_order_id,
+                        )
+                        .and_then(|v| {
+                            seealpha_venue::venue_symbol(&symbol).and_then(|canonical| {
+                                validated_algo_view(&v, &client_order_id, &canonical)
+                            })
+                        })
+                        .map(Some)
                 } else {
                     client.query_order(
-                    &Credentials {
-                        api_key: api_key.into(),
-                        secret: secret.into(),
-                    },
-                    product,
-                    &symbol,
-                    &client_order_id,
-                )
+                        &Credentials {
+                            api_key: api_key.into(),
+                            secret: secret.into(),
+                        },
+                        product,
+                        &symbol,
+                        &client_order_id,
+                    )
                 })
             {
                 stored["response"]["status"] = json!("completed");
@@ -390,17 +460,30 @@ impl Runtime {
                     "已在交易所核对到委托：{}",
                     order["status"].as_str().unwrap_or("")
                 ));
-                self.ledger.upsert_order_row(
-                    tenant_id,
-                    account_id,
-                    environment,
-                    &client_order_id,
-                    &order.to_string(),
-                ).map_err(map_ledger)?;
+                // A signed GET may show a later status than the original
+                // immutable ACK. Append evidence; never overwrite that ACK.
+                self.ledger
+                    .add_event(
+                        tenant_id,
+                        account_id,
+                        "signed_order_query_observed",
+                        &json!({"request_id":request_id,"client_order_id":client_order_id,
+                            "environment":environment,"source":"signed_exchange_order_query",
+                            "order":order,"fills_verified":false})
+                        .to_string(),
+                    )
+                    .map_err(map_ledger)?;
             }
-            self.ledger
-                .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
-                .map_err(map_ledger)?;
+            if stored != prior_view {
+                self.ledger
+                    .append_order_request_view(
+                        tenant_id,
+                        account_id,
+                        request_id,
+                        &stored.to_string(),
+                    )
+                    .map_err(map_ledger)?;
+            }
         }
         let _ = account_revision;
         Ok(stored)
@@ -421,42 +504,54 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
-        if stored["order_list"]=="oco" {
-            if stored["fills_complete"]!=true || stored["ledger_synced"]!=true
-                || stored["order_children"].as_array().is_none_or(|c|c.len()!=2)
-                || stored["response"]["order"]["list_status"]!="ALL_DONE" {
+        if stored["order_list"] == "oco" {
+            if stored["fills_complete"] != true
+                || stored["ledger_synced"] != true
+                || stored["order_children"]
+                    .as_array()
+                    .is_none_or(|c| c.len() != 2)
+                || stored["response"]["order"]["list_status"] != "ALL_DONE"
+            {
                 return Err(RuntimeError::Conflict(
-                    "OCO 列表及两条子订单成交尚未全部核实，不能标记完成。".into()));
+                    "OCO 列表及两条子订单成交尚未全部核实，不能标记完成。".into(),
+                ));
             }
             return Ok(stored);
         }
-        let order=if stored["algo_order"]==true {
+        let order = if stored["algo_order"] == true {
             &stored["triggered_order"]
-        }else {
+        } else {
             &stored["response"]["order"]
         };
-        if stored["response"]["status"]!="completed" || order.is_null() {
+        if stored["response"]["status"] != "completed" || order.is_null() {
             return Err(RuntimeError::Conflict(
-                "订单尚未在交易所核实，不能标记已对账。".into()));
+                "订单尚未在交易所核实，不能标记已对账。".into(),
+            ));
         }
-        let terminal=matches!(order["status"].as_str(),
-            Some("FILLED"|"CANCELED"|"EXPIRED"|"EXPIRED_IN_MATCH"|"REJECTED"));
+        let terminal = matches!(
+            order["status"].as_str(),
+            Some("FILLED" | "CANCELED" | "EXPIRED" | "EXPIRED_IN_MATCH" | "REJECTED")
+        );
         if !terminal {
             return Err(RuntimeError::Conflict(
-                "订单仍可能继续成交，不能将开放委托标记为全部对账。".into()));
+                "订单仍可能继续成交，不能将开放委托标记为全部对账。".into(),
+            ));
         }
-        let filled=order["filled"].as_str()
-            .ok_or_else(||RuntimeError::Conflict("订单累计成交量未核实。".into()))?
+        let filled = order["filled"]
+            .as_str()
+            .ok_or_else(|| RuntimeError::Conflict("订单累计成交量未核实。".into()))?
             .parse::<rust_decimal::Decimal>()
-            .map_err(|_|RuntimeError::Conflict("订单累计成交量无效。".into()))?;
-        if filled<rust_decimal::Decimal::ZERO ||
-            (filled>rust_decimal::Decimal::ZERO && stored["fills_complete"]!=true) {
+            .map_err(|_| RuntimeError::Conflict("订单累计成交量无效。".into()))?;
+        if filled < rust_decimal::Decimal::ZERO
+            || (filled > rust_decimal::Decimal::ZERO && stored["fills_complete"] != true)
+        {
             return Err(RuntimeError::Conflict(
-                "订单已有成交但交易所 Trade ID 尚未完整核对。".into()));
+                "订单已有成交但交易所 Trade ID 尚未完整核对。".into(),
+            ));
         }
         stored["ledger_synced"] = json!(true);
         self.ledger
-            .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
+            .append_order_request_view(tenant_id, account_id, request_id, &stored.to_string())
             .map_err(map_ledger)?;
         Ok(stored)
     }
@@ -704,7 +799,8 @@ impl Runtime {
 
 // Numeric loopback URLs only; reject remote hosts and deceptive authorities.
 fn loopback_fixture_url(value: &str) -> bool {
-    value.strip_prefix("http://")
+    value
+        .strip_prefix("http://")
         .and_then(|rest| rest.split(['/', '?', '#']).next())
         .and_then(|authority| authority.parse::<std::net::SocketAddr>().ok())
         .is_some_and(|address| address.ip().is_loopback())
@@ -755,12 +851,15 @@ mod tests {
             "http://8.8.8.8:18080",
             "https://fapi.binance.com",
         ] {
-            assert!(!loopback_fixture_url(invalid), "unexpected fixture URL: {invalid}");
+            assert!(
+                !loopback_fixture_url(invalid),
+                "unexpected fixture URL: {invalid}"
+            );
         }
     }
 
     #[test]
-    fn replay_does_not_resend_and_secrets_stay_out_of_sqlite() {
+    fn legacy_write_gate_never_sends_and_replay_keeps_secrets_out_of_sqlite() {
         let (sender, receiver) = std::sync::mpsc::channel();
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = hits.clone();
@@ -834,8 +933,23 @@ mod tests {
         };
         let first = runtime.execute_order(command()).unwrap();
         assert_eq!(first["response"]["status"], "completed");
+        assert!(first["response"]["order"].is_null());
+        assert!(
+            first["response"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("持久化订单意图登记门禁")
+        );
+        // The legacy transport intentionally forbids all POST/DELETE writes.
+        // An immutable order request is recorded, but no network send occurs.
         // NEW/ACK is not a fill. Only signed userTrades may enter fills.
-        assert!(runtime.ledger.fills("7","11","production").unwrap().is_empty());
+        assert!(
+            runtime
+                .ledger
+                .fills("7", "11", "production")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             first["response"]["client_order_id"],
             "SA00000000000000000000000000000001"
@@ -846,7 +960,7 @@ mod tests {
             second["response"]["client_order_id"],
             first["response"]["client_order_id"]
         );
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         let mut changed = values.clone();
         changed["quantity"] = json!("0.02");
         let rejected = runtime.execute_order(OrderCommand {
@@ -854,7 +968,7 @@ mod tests {
             ..command()
         });
         assert!(rejected.is_err());
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         let mut blob = Vec::new();
         for entry in std::fs::read_dir(&config.state_dir).unwrap() {
             let entry = entry.unwrap();

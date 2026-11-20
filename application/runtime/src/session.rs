@@ -3,7 +3,10 @@ use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
 use seealpha_portfolio::{PaperFill, TargetPublication, replay_targets};
-use seealpha_strategy::{HostCommand, Publication, StrategyBar, IssuedStrategy, AccountScope, digest_dir, run_host, run_issued_host, sha256_hex};
+use seealpha_strategy::{
+    AccountScope, HostCommand, IssuedStrategy, Publication, StrategyBar, digest_dir, run_host,
+    run_issued_host, sha256_hex,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -141,18 +144,20 @@ impl Runtime {
             // Archive strategies are account-issued and must match the trusted
             // Ledger bytes and parameters, not merely a request-supplied ZIP.
             let issued = if let PackageBody::Archive(bytes) = &strategy.package {
-                let load = self.ledger.strategies(&request.tenant_id, &request.account_id)
+                let load = self
+                    .ledger
+                    .strategies(&request.tenant_id, &request.account_id)
                     .map_err(map_ledger)?
                     .into_iter()
                     .find(|load| load.issuance_id == strategy.member_id)
-                    .ok_or_else(|| RuntimeError::Conflict(
-                        "模拟策略没有对应账户的可信下发记录。".into(),
-                    ))?;
+                    .ok_or_else(|| {
+                        RuntimeError::Conflict("模拟策略没有对应账户的可信下发记录。".into())
+                    })?;
                 let stored_parameters: Value = serde_json::from_str(&load.parameters_json)
-                    .map_err(|_| RuntimeError::Conflict(
-                        "已下发策略参数记录损坏。".into(),
-                    ))?;
-                if load.archive.as_slice() != bytes.as_slice() || stored_parameters != strategy.parameters {
+                    .map_err(|_| RuntimeError::Conflict("已下发策略参数记录损坏。".into()))?;
+                if load.archive.as_slice() != bytes.as_slice()
+                    || stored_parameters != strategy.parameters
+                {
                     return Err(RuntimeError::Conflict(
                         "模拟策略包或参数与可信下发记录不一致。".into(),
                     ));

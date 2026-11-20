@@ -1,14 +1,19 @@
 //! Narrow, typed protocol boundary between Rust and the retained Python host.
 //! All target amounts are parsed with exact Decimal; never pass through f64.
 
-use crate::{HostCommand, HostResponse, StrategyBar, StrategyError, StrategyRun};
 use crate::decimal::Decimal;
+use crate::{HostCommand, HostResponse, StrategyBar, StrategyError, StrategyRun};
 use serde_json::Value;
 use std::str::FromStr;
 
 const SECRET_FIELDS: &[&str] = &[
-    "api_key", "secret", "passphrase", "password",
-    "token", "credential", "credentials",
+    "api_key",
+    "secret",
+    "passphrase",
+    "password",
+    "token",
+    "credential",
+    "credentials",
 ];
 const MAX_PUBLICATIONS: usize = 20_000;
 
@@ -56,17 +61,23 @@ pub(super) fn check_response(
     }
     let prepared = response.prepared;
     check_parameter_values(&prepared)?;
-    let object = prepared.as_object().ok_or_else(|| invalid("策略参数无效。"))?;
-    let symbol = object.get("symbol").and_then(Value::as_str)
+    let object = prepared
+        .as_object()
+        .ok_or_else(|| invalid("策略参数无效。"))?;
+    let symbol = object
+        .get("symbol")
+        .and_then(Value::as_str)
         .ok_or_else(|| invalid("策略参数需要 symbol。"))?;
     if !valid_symbol(symbol) {
         return Err(invalid("策略参数需要 symbol。"));
     }
     for field in ["allocation", "risk_limit"] {
-        let value = object.get(field).and_then(Value::as_str)
+        let value = object
+            .get(field)
+            .and_then(Value::as_str)
             .ok_or_else(|| invalid("策略参数缺少十进制额度。"))?;
-        let amount = Decimal::from_str(value)
-            .map_err(|_| invalid("策略金额必须是精确 Decimal。"))?;
+        let amount =
+            Decimal::from_str(value).map_err(|_| invalid("策略金额必须是精确 Decimal。"))?;
         if amount <= Decimal::ZERO || amount.scale() > 8 {
             return Err(invalid("策略金额必须是大于零的精确 Decimal。"));
         }
@@ -93,7 +104,10 @@ pub(super) fn check_response(
                 .map_err(|_| invalid("策略目标数量必须是有限 Decimal。"))?;
         }
     }
-    Ok(StrategyRun { prepared, publications: response.publications })
+    Ok(StrategyRun {
+        prepared,
+        publications: response.publications,
+    })
 }
 
 fn check_parameter_values(parameters: &Value) -> Result<(), StrategyError> {
@@ -101,7 +115,9 @@ fn check_parameter_values(parameters: &Value) -> Result<(), StrategyError> {
         // Legacy Python host interprets missing parameters as an empty map.
         return Ok(());
     }
-    let map = parameters.as_object().ok_or_else(|| invalid("策略参数无效。"))?;
+    let map = parameters
+        .as_object()
+        .ok_or_else(|| invalid("策略参数无效。"))?;
     if map.len() > 128 {
         return Err(invalid("策略参数超过数量限制。"));
     }
@@ -132,8 +148,10 @@ fn check_bar(bar: &StrategyBar) -> Result<(), StrategyError> {
     if low <= Decimal::ZERO
         || open <= Decimal::ZERO
         || close <= Decimal::ZERO
-        || low > open || low > close
-        || high < open || high < close
+        || low > open
+        || low > close
+        || high < open
+        || high < close
         || volume < Decimal::ZERO
     {
         return Err(invalid("K 线价格或成交量无效。"));
@@ -143,7 +161,9 @@ fn check_bar(bar: &StrategyBar) -> Result<(), StrategyError> {
 
 fn valid_symbol(value: &str) -> bool {
     (1..=20).contains(&value.len())
-        && value.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 fn invalid(message: &str) -> StrategyError {
@@ -174,8 +194,11 @@ mod tests {
     fn bar() -> StrategyBar {
         StrategyBar {
             open_time_ms: 1,
-            open: "2000".into(), high: "2010".into(),
-            low: "1990".into(), close: "2001".into(), volume: "10".into(),
+            open: "2000".into(),
+            high: "2010".into(),
+            low: "1990".into(),
+            close: "2001".into(),
+            volume: "10".into(),
         }
     }
 
@@ -186,10 +209,13 @@ mod tests {
         let c = command(&params, &bars);
         check_command(&c).unwrap();
         let good = HostResponse {
-            ok: true, error: String::new(), prepared: params.clone(),
+            ok: true,
+            error: String::new(),
+            prepared: params.clone(),
             publications: vec![Publication {
                 symbol: "ETHUSDT".into(),
-                quantity: "0.00000001".into(), bar_index: 0,
+                quantity: "0.00000001".into(),
+                bar_index: 0,
             }],
         };
         check_response(&c, good.clone()).unwrap();
@@ -222,7 +248,6 @@ mod tests {
         assert!(check_command(&c).is_err());
         c.op = "prepare";
         assert!(check_command(&c).is_err());
-        c.op = "run";
         let mut invalid = bar();
         invalid.low = "2011".into();
         assert!(check_command(&command(&params, &[invalid])).is_err());
@@ -230,11 +255,14 @@ mod tests {
 
     #[test]
     fn rejects_unknown_host_response_fields() {
-        assert!(serde_json::from_value::<HostResponse>(json!({
-            "ok": true,
-            "prepared": {"symbol":"ETHUSDT","allocation":"1","risk_limit":"1"},
-            "publications": [],
-            "orders": [{"symbol":"ETHUSDT"}],
-        })).is_err());
+        assert!(
+            serde_json::from_value::<HostResponse>(json!({
+                "ok": true,
+                "prepared": {"symbol":"ETHUSDT","allocation":"1","risk_limit":"1"},
+                "publications": [],
+                "orders": [{"symbol":"ETHUSDT"}],
+            }))
+            .is_err()
+        );
     }
 }

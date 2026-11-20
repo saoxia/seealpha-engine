@@ -8,7 +8,9 @@ const MANIFEST: &str = r#"{"format":1,"name":"alpha_strategy","title":"Alpha","v
 fn archive(files: &[(&str, &[u8])]) -> Vec<u8> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     for &(name, content) in files {
-        writer.start_file(name, SimpleFileOptions::default()).unwrap();
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
         writer.write_all(content).unwrap();
     }
     writer.finish().unwrap().into_inner()
@@ -31,17 +33,33 @@ fn legitimate_package_has_stable_digest_and_versioned_entry() {
 fn refuses_missing_entry_and_duplicate_names() {
     let bytes = archive(&[("seealpha-package.json", MANIFEST.as_bytes())]);
     assert!(inspect_archive(&bytes).is_err());
-    let bytes = archive(&[
+    // Newer ZIP writers refuse duplicate names. Craft a valid-format adversarial
+    // archive by renaming the equal-length local and central directory entries.
+    let mut bytes = archive(&[
         ("seealpha-package.json", MANIFEST.as_bytes()),
         ("strategy.py", b"x=1"),
-        ("strategy.py", b"x=2"),
+        ("strategy.px", b"x=2"),
     ]);
+    let from = b"strategy.px";
+    let to = b"strategy.py";
+    let mut replaced = 0;
+    for i in 0..=bytes.len() - from.len() {
+        if &bytes[i..i + from.len()] == from {
+            bytes[i..i + to.len()].copy_from_slice(to);
+            replaced += 1;
+        }
+    }
+    assert_eq!(replaced, 2);
     assert!(inspect_archive(&bytes).is_err());
 }
 
 #[test]
 fn refuses_path_traversal_and_removed_python_import() {
-    for name in ["../strategy.py", "/tmp/strategy.py", "nested/../../strategy.py"] {
+    for name in [
+        "../strategy.py",
+        "/tmp/strategy.py",
+        "nested/../../strategy.py",
+    ] {
         let bytes = archive(&[
             ("seealpha-package.json", MANIFEST.as_bytes()),
             (name, b"x=1"),
@@ -75,13 +93,18 @@ fn rejects_wrong_manifest_type_and_missing_entry_module() {
 fn rejects_too_large_archive_and_excessive_member_count() {
     assert!(inspect_archive(&vec![0u8; 256 * 1024 + 1]).is_err());
     let mut files = vec![
-        ("seealpha-package.json".to_string(), MANIFEST.as_bytes().to_vec()),
+        (
+            "seealpha-package.json".to_string(),
+            MANIFEST.as_bytes().to_vec(),
+        ),
         ("strategy.py".to_string(), b"x=1".to_vec()),
     ];
     for i in 0..32 {
         files.push((format!("extra{i}.txt"), b"x".to_vec()));
     }
     let borrowed: Vec<(&str, &[u8])> = files
-        .iter().map(|(name, data)| (name.as_str(), data.as_slice())).collect();
+        .iter()
+        .map(|(name, data)| (name.as_str(), data.as_slice()))
+        .collect();
     assert!(inspect_archive(&archive(&borrowed)).is_err());
 }

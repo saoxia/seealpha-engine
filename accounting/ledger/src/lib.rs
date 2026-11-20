@@ -1,23 +1,23 @@
 //! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
-mod records;
 mod legacy;
 mod order_intents;
 mod order_reconciliation_tasks;
+mod records;
 pub use order_reconciliation_tasks::ReconciliationTask;
-mod account_snapshots;
 mod account_events;
+mod account_snapshots;
 mod tenant_transfer;
-pub use order_intents::{BasketAdmission, IntentStart, OrderRecoveryItem};
 pub use account_snapshots::AccountSnapshot;
+pub use order_intents::{BasketAdmission, IntentStart, OrderRecoveryItem};
 mod basket_journal;
 mod coordinator_state;
-pub use coordinator_state::StoredCoordinatorState;
 pub use basket_journal::StoredBasketJournal;
-mod parity;
-mod funding;
-mod verified_fills;
+pub use coordinator_state::StoredCoordinatorState;
 mod exercises;
+mod funding;
+mod parity;
 mod settlements;
+mod verified_fills;
 pub use records::CatalogBar;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
@@ -131,6 +131,20 @@ CREATE TABLE IF NOT EXISTS order_requests (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, request_id)
 );
+-- Immutable request intent stays in order_requests. Confirmed results,
+-- retries and reconciliation are appended as separate scoped projections.
+CREATE TABLE IF NOT EXISTS order_request_views (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    body_json TEXT NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    FOREIGN KEY(tenant_id,account_id,request_id)
+        REFERENCES order_requests(tenant_id,account_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS order_request_views_by_request
+    ON order_request_views(tenant_id,account_id,request_id,id);
 CREATE TABLE IF NOT EXISTS orders (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -407,12 +421,14 @@ impl Ledger {
     /// This does not grant a new execution or exchange order permission.
     pub fn active_tenant_ids(&self) -> Result<Vec<String>, LedgerError> {
         let connection = self.lock()?;
-        let mut statement = connection.prepare(
-            "SELECT tenant_id FROM tenants WHERE status='active' ORDER BY tenant_id"
-        ).map_err(|e| LedgerError::Sqlite(e.to_string()))?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))
+        let mut statement = connection
+            .prepare("SELECT tenant_id FROM tenants WHERE status='active' ORDER BY tenant_id")
             .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
-        let tenants = rows.collect::<Result<Vec<_>, _>>()
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+        let tenants = rows
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
         Ok(tenants)
     }

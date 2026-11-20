@@ -123,8 +123,7 @@ fn execute() -> Result<()> {
         });
         // Dirty source buckets may be resumed after a crash, but may not
         // be acknowledged while exchange trade IDs show a durable hole.
-        let unresolved_gaps: i64 =
-            db.query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
+        let unresolved_gaps: i64 = db.query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
         let previous_error = if unresolved_gaps > 0 {
             Some("unresolved_raw_trade_id_gap".into())
         } else if let Some(confirmed_ms) = confirmed {

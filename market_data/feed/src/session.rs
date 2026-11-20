@@ -47,11 +47,14 @@ impl Delivery {
             .collect();
         // A replay overlap or mixed catch-up batch is never a fresh trading
         // candidate, even if its producer is now healthy.
-        self.allow_new_risk = live && fresh.len() == 1
+        self.allow_new_risk = live
+            && fresh.len() == 1
             && self.verified_close_ms == fresh.first().copied()
             && self.source_verified
             && self.clock_ms <= self.ready_until_ms
-            && !self.degraded && !self.repair_required && self.clock_healthy;
+            && !self.degraded
+            && !self.repair_required
+            && self.clock_healthy;
         fresh
     }
 
@@ -109,8 +112,12 @@ impl Delivery {
     }
 
     pub fn status(&self, now_ms: i64) -> Result<(), SessionError> {
-        if !self.source_verified || self.degraded || self.repair_required
-            || !self.clock_healthy || now_ms > self.ready_until_ms {
+        if !self.source_verified
+            || self.degraded
+            || self.repair_required
+            || !self.clock_healthy
+            || now_ms > self.ready_until_ms
+        {
             Err(SessionError::Expired)
         } else {
             Ok(())
@@ -123,11 +130,17 @@ impl Delivery {
         self.source_verified = false;
         self.verified_close_ms = None;
         self.allow_new_risk = false;
-        if !book.verified_ready(now_ms) || self.degraded || self.repair_required
-            || !self.clock_healthy || now_ms < self.clock_ms {
+        if !book.verified_ready(now_ms)
+            || self.degraded
+            || self.repair_required
+            || !self.clock_healthy
+            || now_ms < self.clock_ms
+        {
             return false;
         }
-        let Some(until_ms) = book.verified_until_ms() else { return false; };
+        let Some(until_ms) = book.verified_until_ms() else {
+            return false;
+        };
         self.clock_ms = now_ms;
         self.ready_until_ms = until_ms;
         self.source_verified = true;
@@ -233,8 +246,12 @@ mod tests {
         use rust_decimal::Decimal;
         let mut book = crate::Book::default();
         let candle = crate::Bar {
-            open_time_ms: 0, open: Decimal::ONE, high: Decimal::ONE,
-            low: Decimal::ONE, close: Decimal::ONE, volume: Decimal::ONE,
+            open_time_ms: 0,
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+            volume: Decimal::ONE,
             source: "official".into(),
         };
         book.accept_page(&[candle], crate::MINUTE_MS).unwrap();
@@ -242,12 +259,19 @@ mod tests {
         assert!(!delivery.certify_from_book(&book, crate::MINUTE_MS));
         assert!(!delivery.allow_new_risk);
         book.confirm_source(crate::SourceProof {
-            latest_closed_open_ms: 0, journal_committed_open_ms: 0,
+            latest_closed_open_ms: 0,
+            journal_committed_open_ms: 0,
             exchange_confirmed_ms: 61_000,
-            checked_at_ms: 60_000, valid_until_ms: 62_000,
-            connected: true, clock_healthy: true, overlap_verified: true,
-            history_contiguous: true, unresolved_gaps: 0, backlog: 0,
-        }).unwrap();
+            checked_at_ms: 60_000,
+            valid_until_ms: 62_000,
+            connected: true,
+            clock_healthy: true,
+            overlap_verified: true,
+            history_contiguous: true,
+            unresolved_gaps: 0,
+            backlog: 0,
+        })
+        .unwrap();
         assert!(delivery.certify_from_book(&book, 60_000));
         assert!(!delivery.deliver(&[0], true).is_empty());
         assert!(delivery.allow_new_risk);
@@ -257,7 +281,6 @@ mod tests {
         assert!(!delivery.certify_from_book(&book, 61_000));
     }
 
-
     #[test]
     fn test_timestamp_order_and_old_replay_batch_are_not_live_signal() {
         let mut delivery = Delivery::new(100);
@@ -265,5 +288,4 @@ mod tests {
         assert!(delivery.duplicate_page(&[8, 9]).is_empty());
         assert!(!delivery.allow_new_risk);
     }
-
 }

@@ -108,13 +108,10 @@ async fn run_once_at(
     let streams = subscription_names(symbols, product, channel)
         .map_err(|e| TransportError::Decode(e.to_string()))?;
     let enabled: BTreeSet<String> = symbols.iter().cloned().collect();
-    let (mut socket, _) = timeout(
-        Duration::from_secs(12),
-        connect_async(socket_url),
-    )
-    .await
-    .map_err(|_| TransportError::Socket("connect timeout".into()))?
-    .map_err(|e| TransportError::Socket(e.to_string()))?;
+    let (mut socket, _) = timeout(Duration::from_secs(12), connect_async(socket_url))
+        .await
+        .map_err(|_| TransportError::Socket("connect timeout".into()))?
+        .map_err(|e| TransportError::Socket(e.to_string()))?;
     socket
         .send(Message::Text(
             json!({"method":"SUBSCRIBE","params":streams,"id":1})
@@ -243,11 +240,18 @@ mod tests {
             let mut socket = accept_async(stream).await.unwrap();
             let subscribe = socket.next().await.unwrap().unwrap();
             assert!(subscribe.to_text().unwrap().contains("SUBSCRIBE"));
-            socket.send(Message::Text(json!({
-                "stream":"ethusdt@trade",
-                "data":{"s":"ETHUSDT","e":"trade","t":7,"T":7,
-                        "p":"100.1","q":"0.2","m":false}
-            }).to_string().into())).await.unwrap();
+            socket
+                .send(Message::Text(
+                    json!({
+                        "stream":"ethusdt@trade",
+                        "data":{"s":"ETHUSDT","e":"trade","t":7,"T":7,
+                                "p":"100.1","q":"0.2","m":false}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
         });
         let (sender, receiver) = mpsc::channel(4);
         let error = run_once_at(
@@ -257,7 +261,9 @@ mod tests {
             &sender,
             &format!("ws://{address}/stream"),
             Duration::from_secs(1),
-        ).await.unwrap_err();
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(error, TransportError::Ack(_)));
         assert!(receiver.is_empty());
         server.await.unwrap();
@@ -287,7 +293,10 @@ mod tests {
                 &format!("ws://{address}/stream"),
                 Duration::from_millis(30),
             ),
-        ).await.expect("ack deadline exceeded").unwrap_err();
+        )
+        .await
+        .expect("ack deadline exceeded")
+        .unwrap_err();
         assert!(matches!(error, TransportError::Ack(_)));
         server.abort();
     }
@@ -303,7 +312,10 @@ mod tests {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = accept_async(stream).await.unwrap();
             let _ = socket.next().await.unwrap().unwrap();
-            socket.send(Message::Text(r#"{"result":null,"id":1}"#.into())).await.unwrap();
+            socket
+                .send(Message::Text(r#"{"result":null,"id":1}"#.into()))
+                .await
+                .unwrap();
             socket.send(Message::Text(r#"{"stream":"ethusdt@trade","data":{"s":"ETHUSDT","e":"trade","t":7,"T":7,"p":"100.1","q":"0.2","m":false}}"#.into())).await.unwrap();
             socket.close(None).await.unwrap();
         });
@@ -315,7 +327,9 @@ mod tests {
             &sender,
             &format!("ws://{address}/stream"),
             Duration::from_secs(1),
-        ).await.unwrap_err();
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(error, TransportError::Socket(_)));
         assert_eq!(receiver.recv().await.unwrap().event["kind"], "connected");
         let trade = receiver.recv().await.unwrap();
@@ -328,14 +342,15 @@ mod tests {
     async fn full_bounded_channel_applies_backpressure_without_dropping_events() {
         let (sender, mut receiver) = mpsc::channel(1);
         publish(&sender, "ETHUSDT", json!({"kind":"trade","row":{"id":1}}))
-            .await.unwrap();
-        let blocked = publish(
-            &sender,
-            "ETHUSDT",
-            json!({"kind":"trade","row":{"id":2}}),
-        );
+            .await
+            .unwrap();
+        let blocked = publish(&sender, "ETHUSDT", json!({"kind":"trade","row":{"id":2}}));
         tokio::pin!(blocked);
-        assert!(tokio::time::timeout(Duration::from_millis(20), &mut blocked).await.is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut blocked)
+                .await
+                .is_err()
+        );
         assert_eq!(receiver.recv().await.unwrap().event["row"]["id"], 1);
         blocked.await.unwrap();
         assert_eq!(receiver.recv().await.unwrap().event["row"]["id"], 2);

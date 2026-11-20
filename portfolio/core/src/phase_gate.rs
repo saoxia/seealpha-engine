@@ -77,9 +77,10 @@ pub fn gate_next_phase(
         return Err(BasketError::Evidence);
     }
     let first_leg = positions.keys().next().ok_or(BasketError::Evidence)?;
-    if positions.keys().any(|leg|
-        leg.tenant != first_leg.tenant || leg.account != first_leg.account
-    ) {
+    if positions
+        .keys()
+        .any(|leg| leg.tenant != first_leg.tenant || leg.account != first_leg.account)
+    {
         return Err(BasketError::Evidence);
     }
     if checkpoint.state != State::Ready {
@@ -95,7 +96,11 @@ pub fn gate_next_phase(
         return Err(BasketError::State);
     }
     if &checkpoint.positions != positions {
-        return Ok(blocked("authoritative positions differ from checkpoint", Decimal::ZERO, None));
+        return Ok(blocked(
+            "authoritative positions differ from checkpoint",
+            Decimal::ZERO,
+            None,
+        ));
     }
     let phase = checkpoint
         .plan
@@ -201,16 +206,32 @@ pub fn gate_next_phase(
     }
 
     if invalid {
-        return Ok(blocked("stale or invalid market/position evidence", gross, drift));
+        return Ok(blocked(
+            "stale or invalid market/position evidence",
+            gross,
+            drift,
+        ));
     }
     if gross > limits.max_gross_notional {
-        return Ok(blocked("independent partial fills could breach gross budget", gross, drift));
+        return Ok(blocked(
+            "independent partial fills could breach gross budget",
+            gross,
+            drift,
+        ));
     }
     if drift.is_some_and(|v| v > limits.max_leg_drift) {
-        return Ok(blocked("independent leg fills could exceed hedge drift", gross, drift));
+        return Ok(blocked(
+            "independent leg fills could exceed hedge drift",
+            gross,
+            drift,
+        ));
     }
     if uncovered {
-        return Ok(blocked("independent leg fills could remove option protection", gross, drift));
+        return Ok(blocked(
+            "independent leg fills could remove option protection",
+            gross,
+            drift,
+        ));
     }
     Ok(PhaseGateResult {
         admitted: true,
@@ -238,7 +259,12 @@ mod tests {
         }
     }
     fn quote() -> Evidence {
-        Evidence { price: d(100), increment: d(1), multiplier: d(1), timestamp_ns: 10 }
+        Evidence {
+            price: d(100),
+            increment: d(1),
+            multiplier: d(1),
+            timestamp_ns: 10,
+        }
     }
     fn limits(drift: i64) -> PhaseGateLimits {
         PhaseGateLimits {
@@ -259,20 +285,32 @@ mod tests {
             changes: [(spot.clone(), d(1)), (future.clone(), d(-1))].into(),
         };
         let cp = Checkpoint::new(
-            Plan { targets, phases: vec![phase], gross_notional: d(200), executable: false },
+            Plan {
+                targets,
+                phases: vec![phase],
+                gross_notional: d(200),
+                executable: false,
+            },
             start,
-        ).unwrap();
+        )
+        .unwrap();
         let quotes = [(spot.clone(), quote()), (future.clone(), quote())].into();
         let denied = gate_next_phase(&cp, &cp.positions, &quotes, limits(0), &[]).unwrap();
         assert!(!denied.admitted);
         assert_eq!(denied.worst_case_leg_drift, Some(d(1)));
         assert!(!denied.executable);
-        assert!(gate_next_phase(&cp, &cp.positions, &quotes, limits(1), &[])
-            .unwrap().admitted);
+        assert!(
+            gate_next_phase(&cp, &cp.positions, &quotes, limits(1), &[])
+                .unwrap()
+                .admitted
+        );
         let mut pending = cp;
         pending.begin("req1").unwrap();
-        assert!(!gate_next_phase(&pending, &pending.positions, &quotes, limits(1), &[])
-            .unwrap().admitted);
+        assert!(
+            !gate_next_phase(&pending, &pending.positions, &quotes, limits(1), &[])
+                .unwrap()
+                .admitted
+        );
     }
 
     #[test]
@@ -281,24 +319,42 @@ mod tests {
         let call = leg(Product::Option, "ETH-261225-3000-C");
         let put = leg(Product::Option, "ETH-261225-3000-P");
         let start = [
-            (future.clone(), d(0)), (call.clone(), d(0)), (put.clone(), d(0)),
-        ].into();
+            (future.clone(), d(0)),
+            (call.clone(), d(0)),
+            (put.clone(), d(0)),
+        ]
+        .into();
         let targets = [
-            (future.clone(), d(-1)), (call.clone(), d(1)), (put.clone(), d(1)),
-        ].into();
+            (future.clone(), d(-1)),
+            (call.clone(), d(1)),
+            (put.clone(), d(1)),
+        ]
+        .into();
         let all_at_once = Phase {
             name: "unsafe_parallel".into(),
             changes: [
-                (future.clone(), d(-1)), (call.clone(), d(1)), (put.clone(), d(1)),
-            ].into(),
+                (future.clone(), d(-1)),
+                (call.clone(), d(1)),
+                (put.clone(), d(1)),
+            ]
+            .into(),
         };
         let cp = Checkpoint::new(
-            Plan { targets, phases: vec![all_at_once], gross_notional: d(300), executable: false },
+            Plan {
+                targets,
+                phases: vec![all_at_once],
+                gross_notional: d(300),
+                executable: false,
+            },
             start,
-        ).unwrap();
+        )
+        .unwrap();
         let quotes = [
-            (future.clone(), quote()), (call.clone(), quote()), (put.clone(), quote()),
-        ].into();
+            (future.clone(), quote()),
+            (call.clone(), quote()),
+            (put.clone(), quote()),
+        ]
+        .into();
         let denied = gate_next_phase(&cp, &cp.positions, &quotes, limits(1), &[]).unwrap();
         assert!(!denied.admitted);
         assert!(denied.block_reason.unwrap().contains("option protection"));
@@ -316,13 +372,19 @@ mod tests {
         ];
         let safe = Checkpoint::new(
             Plan {
-                targets: cp.plan.targets.clone(), phases: stages,
-                gross_notional: d(300), executable: false,
+                targets: cp.plan.targets.clone(),
+                phases: stages,
+                gross_notional: d(300),
+                executable: false,
             },
             cp.positions.clone(),
-        ).unwrap();
-        assert!(gate_next_phase(&safe, &safe.positions, &quotes, limits(1), &[])
-            .unwrap().admitted);
+        )
+        .unwrap();
+        assert!(
+            gate_next_phase(&safe, &safe.positions, &quotes, limits(1), &[])
+                .unwrap()
+                .admitted
+        );
     }
 
     #[test]
@@ -333,16 +395,38 @@ mod tests {
             Plan {
                 targets: [(spot.clone(), d(1))].into(),
                 phases: vec![Phase {
-                    name: "buy".into(), changes: [(spot.clone(), d(1))].into(),
+                    name: "buy".into(),
+                    changes: [(spot.clone(), d(1))].into(),
                 }],
-                gross_notional: d(100), executable: false,
+                gross_notional: d(100),
+                executable: false,
             },
             starting,
-        ).unwrap();
-        let old = [(spot.clone(), Evidence { timestamp_ns: 1, ..quote() })].into();
-        assert!(!gate_next_phase(&cp, &cp.positions, &old, limits(0), &[])
-            .unwrap().admitted);
-        assert!(!gate_next_phase(&cp, &[(spot.clone(), d(1))].into(),
-            &[(spot, quote())].into(), limits(0), &[]).unwrap().admitted);
+        )
+        .unwrap();
+        let old = [(
+            spot.clone(),
+            Evidence {
+                timestamp_ns: 1,
+                ..quote()
+            },
+        )]
+        .into();
+        assert!(
+            !gate_next_phase(&cp, &cp.positions, &old, limits(0), &[])
+                .unwrap()
+                .admitted
+        );
+        assert!(
+            !gate_next_phase(
+                &cp,
+                &[(spot.clone(), d(1))].into(),
+                &[(spot, quote())].into(),
+                limits(0),
+                &[]
+            )
+            .unwrap()
+            .admitted
+        );
     }
 }

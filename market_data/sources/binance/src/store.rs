@@ -93,20 +93,19 @@ pub struct JournalInspection {
 /// Existing journal only. Every missing table, corrupt field or open error
 /// fails closed rather than producing a READY-compatible empty result.
 pub fn inspect_pair_journal(
-    root: &Path, symbol: &str, base_level: &str,
+    root: &Path,
+    symbol: &str,
+    base_level: &str,
 ) -> Result<JournalInspection> {
     let path = root.join("collection.sqlite");
     if !root.is_dir() || !path.is_file() {
         return Err("source journal is absent".into());
     }
-    let db = Connection::open_with_flags(
-        &path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )?;
-    let config: (String, String) = db.query_row(
-        "SELECT symbol,base_level FROM config LIMIT 1", [], |r| {
+    let db = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let config: (String, String) =
+        db.query_row("SELECT symbol,base_level FROM config LIMIT 1", [], |r| {
             Ok((r.get(0)?, r.get(1)?))
-        },
-    )?;
+        })?;
     if config.0 != symbol || config.1 != base_level {
         return Err("source journal identity mismatch".into());
     }
@@ -120,12 +119,14 @@ pub fn inspect_pair_journal(
             _ => return Err("unsupported inspection table".into()),
         };
         let n: i64 = db.query_row(statement, [], |r| r.get(0))?;
-        if n < 0 { return Err("negative journal count".into()); }
+        if n < 0 {
+            return Err("negative journal count".into());
+        }
         Ok(n)
     };
-    let last_trade_id = db.query_row(
-        "SELECT max(id) FROM trades", [], |r| r.get::<_, Option<i64>>(0),
-    )?;
+    let last_trade_id = db.query_row("SELECT max(id) FROM trades", [], |r| {
+        r.get::<_, Option<i64>>(0)
+    })?;
     Ok(JournalInspection {
         last_trade_id,
         trade_count: count("trades")?,
@@ -277,12 +278,16 @@ impl PairJournal {
     /// The highest durable raw trade ID; used by future public REST handover.
     /// A missing journal tail is not evidence of complete historical coverage.
     pub fn last_trade_id(&self) -> Result<Option<i64>> {
-        Ok(self.db.query_row("SELECT max(id) FROM trades", [], |r| r.get(0))?)
+        Ok(self
+            .db
+            .query_row("SELECT max(id) FROM trades", [], |r| r.get(0))?)
     }
 
     /// Survives writer restarts. An unresolved ID hole must never be READY.
     pub fn unresolved_gap_count(&self) -> Result<u64> {
-        let count: i64 = self.db.query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
+        let count: i64 = self
+            .db
+            .query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
         Ok(u64::try_from(count)?)
     }
     /// Validate a page before any insert. A conflicting id inside the page
@@ -752,10 +757,12 @@ mod tests {
     #[test]
     fn id_holes_survive_restart_and_close_only_after_real_trades() {
         let path = root("durable-gaps");
-        let mk = |id| json!({
-            "id":id,"time":1700000000000_i64+id,
-            "price":"10.0","qty":"0.5","isBuyerMaker":false
-        });
+        let mk = |id| {
+            json!({
+                "id":id,"time":1700000000000_i64+id,
+                "price":"10.0","qty":"0.5","isBuyerMaker":false
+            })
+        };
         {
             let mut journal = PairJournal::open(&path, "ETHUSDT", "tick").unwrap();
             journal.write_trade(&mk(100), 1700000001000).unwrap();
@@ -786,10 +793,12 @@ mod tests {
     #[test]
     fn a_conflicting_backfill_does_not_clear_durable_gap_evidence() {
         let path = root("invalid-gap-heal");
-        let mk = |id| json!({
-            "id":id,"time":1700000000000_i64+id,
-            "price":"10","qty":"1","isBuyerMaker":false
-        });
+        let mk = |id| {
+            json!({
+                "id":id,"time":1700000000000_i64+id,
+                "price":"10","qty":"1","isBuyerMaker":false
+            })
+        };
         let mut journal = PairJournal::open(&path, "ETHUSDT", "tick").unwrap();
         journal.write_trade(&mk(8), 1700000001000).unwrap();
         journal.write_trade(&mk(10), 1700000001000).unwrap();

@@ -90,14 +90,88 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex_encode(Sha256::digest(bytes))
 }
 
+/// Verify the raw ZIP central directory before handing any filenames to a
+/// ZIP reader. Some readers normalize or deduplicate duplicate entries, so
+/// checking only the reader's exposed names is insufficient.
+fn verify_central_directory_names(bytes: &[u8]) -> Result<(), StrategyError> {
+    fn uint16(bytes: &[u8], offset: usize) -> Option<usize> {
+        let low = *bytes.get(offset)?;
+        let high = *bytes.get(offset + 1)?;
+        Some(u16::from_le_bytes([low, high]) as usize)
+    }
+    fn uint32(bytes: &[u8], offset: usize) -> Option<usize> {
+        let data: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
+        Some(u32::from_le_bytes(data) as usize)
+    }
+
+    let final_eocd = bytes.len().checked_sub(22).ok_or_else(invalid_archive)?;
+    let eocd = (final_eocd.saturating_sub(u16::MAX as usize)..=final_eocd)
+        .rev()
+        .find(|&at| {
+            bytes.get(at..at + 4) == Some(&b"PK\x05\x06"[..])
+                && uint16(bytes, at + 20) == Some(bytes.len() - at - 22)
+        })
+        .ok_or_else(invalid_archive)?;
+    let entries = uint16(bytes, eocd + 10).ok_or_else(invalid_archive)?;
+    if entries == 0
+        || entries > MAX_MEMBERS
+        || uint16(bytes, eocd + 4) != Some(0)
+        || uint16(bytes, eocd + 6) != Some(0)
+        || uint16(bytes, eocd + 8) != Some(entries)
+    {
+        return Err(invalid_archive());
+    }
+    let directory_size = uint32(bytes, eocd + 12).ok_or_else(invalid_archive)?;
+    let declared_offset = uint32(bytes, eocd + 16).ok_or_else(invalid_archive)?;
+    let mut cursor = eocd
+        .checked_sub(directory_size)
+        .ok_or_else(invalid_archive)?;
+    // A valid self-extracting prefix is permitted; the central directory
+    // must still occupy exactly the declared length and contain each name.
+    if cursor < declared_offset {
+        return Err(invalid_archive());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..entries {
+        if bytes.get(cursor..cursor + 4) != Some(&b"PK\x01\x02"[..]) {
+            return Err(invalid_archive());
+        }
+        let name_size = uint16(bytes, cursor + 28).ok_or_else(invalid_archive)?;
+        let extra_size = uint16(bytes, cursor + 30).ok_or_else(invalid_archive)?;
+        let comment_size = uint16(bytes, cursor + 32).ok_or_else(invalid_archive)?;
+        let name_start = cursor.checked_add(46).ok_or_else(invalid_archive)?;
+        let name_end = name_start
+            .checked_add(name_size)
+            .ok_or_else(invalid_archive)?;
+        let name = bytes
+            .get(name_start..name_end)
+            .ok_or_else(invalid_archive)?;
+        if !seen.insert(name.to_vec()) {
+            return Err(StrategyError::Package("策略包包含重复的路径。".into()));
+        }
+        cursor = name_end
+            .checked_add(extra_size)
+            .and_then(|next| next.checked_add(comment_size))
+            .ok_or_else(invalid_archive)?;
+        if cursor > eocd {
+            return Err(invalid_archive());
+        }
+    }
+    if cursor != eocd {
+        return Err(invalid_archive());
+    }
+    Ok(())
+}
+
 pub fn inspect_archive(bytes: &[u8]) -> Result<PackageMetadata, StrategyError> {
     if bytes.is_empty() || bytes.len() as u64 > MAX_ARCHIVE_BYTES {
         return Err(invalid_archive());
     }
+    verify_central_directory_names(bytes)?;
     let digest = sha256_hex(bytes);
-    let mut archive = ZipArchive::new(std::io::Cursor::new(bytes))
-        .map_err(|_| invalid_archive())?;
-    if archive.len() == 0 || archive.len() > MAX_MEMBERS {
+    let mut archive =
+        ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| invalid_archive())?;
+    if archive.is_empty() || archive.len() > MAX_MEMBERS {
         return Err(invalid_archive());
     }
     let mut seen = std::collections::HashSet::new();
@@ -106,7 +180,9 @@ pub fn inspect_archive(bytes: &[u8]) -> Result<PackageMetadata, StrategyError> {
     for index in 0..archive.len() {
         let mut file = archive.by_index(index).map_err(|_| invalid_archive())?;
         if file.encrypted()
-            || file.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000)
+            || file
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000)
         {
             return Err(invalid_archive());
         }
@@ -133,7 +209,9 @@ pub fn inspect_archive(bytes: &[u8]) -> Result<PackageMetadata, StrategyError> {
         if name.ends_with(".py") {
             let python = std::str::from_utf8(&content).map_err(|_| invalid_archive())?;
             if python.contains("strategy_python") {
-                return Err(StrategyError::Package("不能从 strategy_python 加载策略。".into()));
+                return Err(StrategyError::Package(
+                    "不能从 strategy_python 加载策略。".into(),
+                ));
             }
         }
         if name == "seealpha-package.json" {
@@ -143,11 +221,15 @@ pub fn inspect_archive(bytes: &[u8]) -> Result<PackageMetadata, StrategyError> {
     let payload = metadata
         .ok_or_else(|| StrategyError::Package("策略包缺少 seealpha-package.json。".into()))?;
     let meta = metadata_from_json(&payload, digest)?;
-    let entry_file = meta.entry_point.split_once(':')
+    let entry_file = meta
+        .entry_point
+        .split_once(':')
         .map(|(module, _)| format!("{}.py", module.replace('.', "/")))
         .ok_or_else(invalid_archive)?;
     if !seen.contains(&entry_file) {
-        return Err(StrategyError::Package("策略包缺少声明的 Python 入口。".into()));
+        return Err(StrategyError::Package(
+            "策略包缺少声明的 Python 入口。".into(),
+        ));
     }
     Ok(meta)
 }
@@ -161,12 +243,17 @@ pub fn inspect_directory(root: &Path) -> Result<PackageMetadata, StrategyError> 
     let metadata = std::fs::read(root.join("seealpha-package.json"))
         .map_err(|_| StrategyError::Package("策略包缺少 seealpha-package.json。".into()))?;
     let meta = metadata_from_json(&metadata, digest)?;
-    let module = meta.entry_point.split_once(':')
-        .ok_or_else(invalid_archive)?.0;
+    let module = meta
+        .entry_point
+        .split_once(':')
+        .ok_or_else(invalid_archive)?
+        .0;
     let entry = root.join(format!("{}.py", module.replace('.', "/")));
     let info = std::fs::symlink_metadata(&entry).map_err(|_| invalid_archive())?;
     if !info.file_type().is_file() {
-        return Err(StrategyError::Package("策略包缺少声明的 Python 入口。".into()));
+        return Err(StrategyError::Package(
+            "策略包缺少声明的 Python 入口。".into(),
+        ));
     }
     Ok(meta)
 }
@@ -191,14 +278,18 @@ pub fn digest_dir(root: &Path) -> Result<String, StrategyError> {
             reject_member(&relative)?;
         }
         let bytes = std::fs::read(path).map_err(|_| invalid_archive())?;
-        total = total.checked_add(bytes.len() as u64).ok_or_else(invalid_archive)?;
+        total = total
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(invalid_archive)?;
         if total > MAX_ARCHIVE_BYTES {
             return Err(invalid_archive());
         }
         if relative.ends_with(".py") {
             let python = std::str::from_utf8(&bytes).map_err(|_| invalid_archive())?;
             if python.contains("strategy_python") {
-                return Err(StrategyError::Package("不能从 strategy_python 加载策略。".into()));
+                return Err(StrategyError::Package(
+                    "不能从 strategy_python 加载策略。".into(),
+                ));
             }
         }
         hasher.update(relative.as_bytes());
@@ -259,8 +350,6 @@ pub fn run_host(command: &HostCommand<'_>) -> Result<StrategyRun, StrategyError>
     host_policy::check_response(command, response)
 }
 
-
-
 fn metadata_from_json(payload: &[u8], digest: String) -> Result<PackageMetadata, StrategyError> {
     let document: Value = serde_json::from_slice(payload)
         .map_err(|_| StrategyError::Package("策略包说明无效。".into()))?;
@@ -289,18 +378,30 @@ fn metadata_from_json(payload: &[u8], digest: String) -> Result<PackageMetadata,
         return Err(StrategyError::Package("策略包入口无效。".into()));
     }
     let title = document.get("title").unwrap_or(&document["name"]);
-    if !title.as_str().is_some_and(|s| !s.trim().is_empty() && s.trim().len() <= 100)
+    if !title
+        .as_str()
+        .is_some_and(|s| !s.trim().is_empty() && s.trim().len() <= 100)
         || document.get("description").is_some_and(|value| {
             !value.is_null() && !value.as_str().is_some_and(|s| s.len() <= 500)
         })
         || !document.get("parameters").is_none_or(Value::is_object)
-        || document.get("parameters").and_then(Value::as_object).is_some_and(|parameters| {
-            parameters.keys().any(|key| {
-                matches!(key.to_ascii_lowercase().as_str(),
-                    "api_key" | "secret" | "passphrase" | "password"
-                    | "token" | "credential" | "credentials")
+        || document
+            .get("parameters")
+            .and_then(Value::as_object)
+            .is_some_and(|parameters| {
+                parameters.keys().any(|key| {
+                    matches!(
+                        key.to_ascii_lowercase().as_str(),
+                        "api_key"
+                            | "secret"
+                            | "passphrase"
+                            | "password"
+                            | "token"
+                            | "credential"
+                            | "credentials"
+                    )
+                })
             })
-        })
     {
         return Err(StrategyError::Package("策略包说明无效。".into()));
     }
@@ -319,15 +420,17 @@ fn reject_member(name: &str) -> Result<(), StrategyError> {
         || name.contains(':')
         || name.contains('\0')
         || name.chars().any(char::is_control)
-        || name.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
     {
         // A directory ends in '/': its last empty component is allowed only
         // after every earlier component has passed the same checks.
         if !(name.ends_with('/')
             && !name[..name.len() - 1].is_empty()
-            && name[..name.len() - 1].split('/').all(|p| {
-                !p.is_empty() && p != "." && p != ".."
-            })
+            && name[..name.len() - 1]
+                .split('/')
+                .all(|p| !p.is_empty() && p != "." && p != "..")
             && !name.starts_with('/')
             && !name.contains('\\')
             && !name.contains(':')
@@ -338,23 +441,35 @@ fn reject_member(name: &str) -> Result<(), StrategyError> {
         }
     }
     if name.ends_with('/') {
-        if name.split('/').any(|part| part == "__pycache__" || part.starts_with("strategy_python")) {
+        if name
+            .split('/')
+            .any(|part| part == "__pycache__" || part.starts_with("strategy_python"))
+        {
             return Err(StrategyError::Package("策略包包含不支持的目录。".into()));
         }
         return Ok(());
     }
     let path = Path::new(name);
-    let suffix = path.extension().and_then(|value| value.to_str())
-        .unwrap_or("").to_ascii_lowercase();
+    let suffix = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if !matches!(suffix.as_str(), "py" | "json" | "md" | "txt")
-        || path.components().any(|p| p.as_os_str().to_string_lossy() == "__pycache__")
+        || path
+            .components()
+            .any(|p| p.as_os_str().to_string_lossy() == "__pycache__")
     {
         return Err(StrategyError::Package("策略包包含不支持的文件。".into()));
     }
     if path.components().any(|part| {
-        part.as_os_str().to_string_lossy().starts_with("strategy_python")
+        part.as_os_str()
+            .to_string_lossy()
+            .starts_with("strategy_python")
     }) {
-        return Err(StrategyError::Package("不能从 strategy_python 加载策略。".into()));
+        return Err(StrategyError::Package(
+            "不能从 strategy_python 加载策略。".into(),
+        ));
     }
     Ok(())
 }
@@ -378,8 +493,11 @@ fn collect_files(
             }
             collect_files(root, &path, files)?;
         } else if info.file_type().is_file() {
-            let relative = path.strip_prefix(root).map_err(|_| invalid_archive())?
-                .to_string_lossy().replace('\\', "/");
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| invalid_archive())?
+                .to_string_lossy()
+                .replace('\\', "/");
             files.push((relative, path));
             if files.len() > MAX_MEMBERS {
                 return Err(invalid_archive());
@@ -452,7 +570,15 @@ mod tests {
 
     #[test]
     fn rejects_a_path_that_escapes_the_archive() {
-        for name in ["../strategy.py", "some/../strategy.py", "C:/strategy.py", "a\\\\b.py", "a//b.py", "strategy_python/", "link/../../"] {
+        for name in [
+            "../strategy.py",
+            "some/../strategy.py",
+            "C:/strategy.py",
+            "a\\\\b.py",
+            "a//b.py",
+            "strategy_python/",
+            "link/../../",
+        ] {
             assert!(reject_member(name).is_err(), "accepted {name}");
         }
         assert!(reject_member("strategy.py").is_ok());

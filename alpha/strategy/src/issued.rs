@@ -76,7 +76,9 @@ pub fn run_issued_host(
     caller: AccountScope<'_>,
 ) -> Result<StrategyRun, StrategyError> {
     if command.package_dir.is_some() {
-        return Err(StrategyError::Package("已授权策略必须使用不可变归档。".into()));
+        return Err(StrategyError::Package(
+            "已授权策略必须使用不可变归档。".into(),
+        ));
     }
     let origin = command
         .archive_path
@@ -112,7 +114,9 @@ fn valid_identifier(value: &str, max: usize) -> bool {
         && bytes.len() <= max
         && !value.contains("..")
         && bytes[0].is_ascii_alphanumeric()
-        && bytes[1..].iter().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_' | b':'))
+        && bytes[1..]
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_' | b':'))
 }
 
 pub(super) struct StagedArchive {
@@ -128,10 +132,8 @@ impl StagedArchive {
     pub(super) fn create(bytes: &[u8]) -> Result<Self, StrategyError> {
         for _ in 0..16 {
             let n = STAGING_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "seealpha-issued-{}-{n}.zip",
-                std::process::id(),
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("seealpha-issued-{}-{n}.zip", std::process::id(),));
             let mut options = OpenOptions::new();
             options.write(true).read(true).create_new(true);
             #[cfg(unix)]
@@ -198,9 +200,39 @@ mod tests {
             purpose: "development",
         };
         authorize_issued(record, scope, &meta()).unwrap();
-        assert!(authorize_issued(record, AccountScope { account_id: "other", ..scope }, &meta()).is_err());
-        assert!(authorize_issued(record, AccountScope { tenant_id: "tenant-2", ..scope }, &meta()).is_err());
-        assert!(authorize_issued(record, AccountScope { purpose: "production", ..scope }, &meta()).is_err());
+        assert!(
+            authorize_issued(
+                record,
+                AccountScope {
+                    account_id: "other",
+                    ..scope
+                },
+                &meta()
+            )
+            .is_err()
+        );
+        assert!(
+            authorize_issued(
+                record,
+                AccountScope {
+                    tenant_id: "tenant-2",
+                    ..scope
+                },
+                &meta()
+            )
+            .is_err()
+        );
+        assert!(
+            authorize_issued(
+                record,
+                AccountScope {
+                    purpose: "production",
+                    ..scope
+                },
+                &meta()
+            )
+            .is_err()
+        );
         let mut wrong = meta();
         wrong.version = "1.3".into();
         assert!(authorize_issued(record, scope, &wrong).is_err());
@@ -217,7 +249,9 @@ mod tests {
         let hash = "a".repeat(64);
         let record = issued(&hash);
         let scope = AccountScope {
-            tenant_id: "tenant-1", account_id: "account-1", purpose: "development",
+            tenant_id: "tenant-1",
+            account_id: "account-1",
+            purpose: "development",
         };
         let params = serde_json::json!({});
         let command = HostCommand {

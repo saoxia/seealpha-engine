@@ -2,18 +2,18 @@
 //!
 //! Callers pass the base URL. Nothing in this crate selects a production host.
 //! Credentials are used only to build the request and are not returned or logged.
+pub mod conditional;
+pub mod lifecycle;
+pub mod option_trades;
 pub mod options;
 pub mod options_rules;
-pub mod trades;
-pub mod reconciliation;
-pub mod lifecycle;
-pub mod settlement;
-pub mod option_trades;
-pub mod conditional;
-pub mod spot_oco;
 pub mod order_guard;
-pub mod user_stream;
+pub mod reconciliation;
+pub mod settlement;
+pub mod spot_oco;
 pub mod spot_oto;
+pub mod trades;
+pub mod user_stream;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -63,45 +63,64 @@ pub struct Credentials {
 
 /// Signed Binance requests must never leak API keys to a configurable
 /// arbitrary HTTPS origin. Loopback is reserved for local test/proxy adapters.
-fn checked_gateway(base:&str)->Result<String,VenueError>{
-    let url=reqwest::Url::parse(base)
-        .map_err(|_|VenueError::Rejected("交易网关 URL 无效。".into()))?;
-    if !url.username().is_empty() || url.password().is_some() ||
-        url.query().is_some() || url.fragment().is_some() ||
-        !matches!(url.path(),""|"/") {
-        return Err(VenueError::Rejected("交易网关包含不允许的路径或用户信息。".into()));
+fn checked_gateway(base: &str) -> Result<String, VenueError> {
+    let url = reqwest::Url::parse(base)
+        .map_err(|_| VenueError::Rejected("交易网关 URL 无效。".into()))?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+    {
+        return Err(VenueError::Rejected(
+            "交易网关包含不允许的路径或用户信息。".into(),
+        ));
     }
-    let host=url.host_str().ok_or_else(||
-        VenueError::Rejected("交易网关域名无效。".into()))?;
-    let official=matches!(host,"api.binance.com"|"fapi.binance.com"|"eapi.binance.com");
-    let sandbox=matches!(host,"testnet.binancefuture.com"|"testnet.binance.vision");
-    let local=matches!(host,"127.0.0.1"|"localhost"|"::1");
-    if (url.scheme()=="https" && (official||sandbox) && url.port().is_none())
-        || (url.scheme()=="http" && local && url.port().is_some()) {
+    let host = url
+        .host_str()
+        .ok_or_else(|| VenueError::Rejected("交易网关域名无效。".into()))?;
+    let official = matches!(
+        host,
+        "api.binance.com" | "fapi.binance.com" | "eapi.binance.com"
+    );
+    let sandbox = matches!(host, "testnet.binancefuture.com" | "testnet.binance.vision");
+    let local = matches!(host, "127.0.0.1" | "localhost" | "::1");
+    if (url.scheme() == "https" && (official || sandbox) && url.port().is_none())
+        || (url.scheme() == "http" && local && url.port().is_some())
+    {
         return Ok(base.trim_end_matches('/').to_owned());
     }
-    Err(VenueError::Rejected("交易所签名请求仅允许 Binance 官方域名或带端口的本地网关。".into()))
+    Err(VenueError::Rejected(
+        "交易所签名请求仅允许 Binance 官方域名或带端口的本地网关。".into(),
+    ))
 }
-fn route_gateway<'a>(base:&'a str,path:&str)->Result<&'a str,VenueError>{
-    let host=reqwest::Url::parse(base).ok()
-        .and_then(|url|url.host_str().map(str::to_owned))
-        .ok_or_else(||VenueError::Rejected("交易网关 URL 无效。".into()))?;
-    if matches!(host.as_str(),"api.binance.com"|"fapi.binance.com"|"eapi.binance.com"){
+fn route_gateway<'a>(base: &'a str, path: &str) -> Result<&'a str, VenueError> {
+    let host = reqwest::Url::parse(base)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .ok_or_else(|| VenueError::Rejected("交易网关 URL 无效。".into()))?;
+    if matches!(
+        host.as_str(),
+        "api.binance.com" | "fapi.binance.com" | "eapi.binance.com"
+    ) {
         // Static official hosts have equal lifetime to 'base', but avoid
         // returning a temporary URL string by selecting a static literal.
         return Ok(match path.split('/').nth(1).unwrap_or("") {
-            "api"=>"https://api.binance.com",
-            "fapi"=>"https://fapi.binance.com",
-            "eapi"=>"https://eapi.binance.com",
-            _=>return Err(VenueError::Symbol),
+            "api" => "https://api.binance.com",
+            "fapi" => "https://fapi.binance.com",
+            "eapi" => "https://eapi.binance.com",
+            _ => return Err(VenueError::Symbol),
         });
     }
-    if (host=="testnet.binancefuture.com" && path.starts_with("/fapi/"))
-        || (host=="testnet.binance.vision" && path.starts_with("/api/"))
-        || matches!(host.as_str(),"127.0.0.1"|"localhost"|"::1") {
+    if (host == "testnet.binancefuture.com" && path.starts_with("/fapi/"))
+        || (host == "testnet.binance.vision" && path.starts_with("/api/"))
+        || matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
+    {
         return Ok(base);
     }
-    Err(VenueError::Rejected("沙盒交易网关与订单产品不匹配，拒绝跨市场发送密钥。".into()))
+    Err(VenueError::Rejected(
+        "沙盒交易网关与订单产品不匹配，拒绝跨市场发送密钥。".into(),
+    ))
 }
 
 pub struct VenueClient {
@@ -111,7 +130,7 @@ pub struct VenueClient {
 
 impl VenueClient {
     pub fn new(base: impl Into<String>) -> Result<Self, VenueError> {
-        let base=checked_gateway(&base.into())?;
+        let base = checked_gateway(&base.into())?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(8))
             .redirect(reqwest::redirect::Policy::none())
@@ -130,11 +149,19 @@ impl VenueClient {
         if intent.product == Product::Spot && intent.reduce_only {
             return Err(VenueError::SpotReduceOnly);
         }
-        if intent.product == Product::FuturesUm &&
-            matches!(intent.order_type.to_ascii_uppercase().as_str(),
-                "STOP"|"STOP_MARKET"|"TAKE_PROFIT"|"TAKE_PROFIT_MARKET"|"TRAILING_STOP_MARKET") {
+        if intent.product == Product::FuturesUm
+            && matches!(
+                intent.order_type.to_ascii_uppercase().as_str(),
+                "STOP"
+                    | "STOP_MARKET"
+                    | "TAKE_PROFIT"
+                    | "TAKE_PROFIT_MARKET"
+                    | "TRAILING_STOP_MARKET"
+            )
+        {
             return Err(VenueError::Rejected(
-                "USD-M 条件单必须通过 Algo Service 及预登记的条件单链路提交。".into()));
+                "USD-M 条件单必须通过 Algo Service 及预登记的条件单链路提交。".into(),
+            ));
         }
         let path = match intent.product {
             Product::FuturesUm => "/fapi/v1/order",
@@ -147,7 +174,7 @@ impl VenueClient {
             ("type".to_string(), intent.order_type.to_ascii_uppercase()),
             ("quantity".to_string(), intent.quantity.clone()),
             (
-                if intent.product==Product::Option {
+                if intent.product == Product::Option {
                     "clientOrderId".to_string()
                 } else {
                     "newClientOrderId".to_string()
@@ -169,17 +196,21 @@ impl VenueClient {
                 if intent.reduce_only { "true" } else { "false" }.into(),
             ));
         }
-        if intent.product==Product::Option {
+        if intent.product == Product::Option {
             // Binance European Options currently defines LIMIT as the
             // supported order type. Reject rather than guessing MARKET.
             if !intent.order_type.eq_ignore_ascii_case("limit") {
-                return Err(VenueError::Rejected("期权订单仅支持已核实的 LIMIT 类型。".into()));
+                return Err(VenueError::Rejected(
+                    "期权订单仅支持已核实的 LIMIT 类型。".into(),
+                ));
             }
-            if !matches!(intent.time_in_force.to_ascii_uppercase().as_str(),
-                "GTC"|"IOC"|"FOK"|"GTX") {
+            if !matches!(
+                intent.time_in_force.to_ascii_uppercase().as_str(),
+                "GTC" | "IOC" | "FOK" | "GTX"
+            ) {
                 return Err(VenueError::Rejected("期权订单有效期无效。".into()));
             }
-            pairs.push(("postOnly".to_string(),"false".to_string()));
+            pairs.push(("postOnly".to_string(), "false".to_string()));
         }
         let value = self.signed(credentials, "POST", path, &pairs)?;
         // A successful HTTP status without an exchange order identity is an
@@ -188,7 +219,8 @@ impl VenueClient {
             != Some(intent.client_order_id.as_str())
             || value.get("status").and_then(Value::as_str).is_none()
             || value.get("symbol").and_then(Value::as_str)
-                != Some(venue_symbol(&intent.symbol)?.as_str()) {
+                != Some(venue_symbol(&intent.symbol)?.as_str())
+        {
             return Err(VenueError::Unconfirmed);
         }
         Ok(order_view(&value, &intent.client_order_id))
@@ -209,8 +241,15 @@ impl VenueClient {
         };
         let pairs = vec![
             ("symbol".to_string(), venue_symbol(symbol)?),
-            (if product==Product::Option {"clientOrderId"}else{"origClientOrderId"}.to_string(),
-                client_order_id.to_string()),
+            (
+                if product == Product::Option {
+                    "clientOrderId"
+                } else {
+                    "origClientOrderId"
+                }
+                .to_string(),
+                client_order_id.to_string(),
+            ),
         ];
         let value = self.signed(credentials, "DELETE", path, &pairs)?;
         Ok(order_view(&value, client_order_id))
@@ -231,21 +270,29 @@ impl VenueClient {
         };
         let pairs = vec![
             ("symbol".to_string(), venue_symbol(symbol)?),
-            (if product==Product::Option {"clientOrderId"}else{"origClientOrderId"}.to_string(),
-                client_order_id.to_string()),
+            (
+                if product == Product::Option {
+                    "clientOrderId"
+                } else {
+                    "origClientOrderId"
+                }
+                .to_string(),
+                client_order_id.to_string(),
+            ),
         ];
         match self.signed(credentials, "GET", path, &pairs) {
             Ok(value) => {
                 // Do not rely on order_view's presentation fallback for
                 // authority: the signed response must itself bind identity.
-                let expected_symbol=venue_symbol(symbol)?;
-                if value["clientOrderId"].as_str()!=Some(client_order_id)
-                    || value["symbol"].as_str()!=Some(expected_symbol.as_str())
-                    || value["orderId"].is_null() {
+                let expected_symbol = venue_symbol(symbol)?;
+                if value["clientOrderId"].as_str() != Some(client_order_id)
+                    || value["symbol"].as_str() != Some(expected_symbol.as_str())
+                    || value["orderId"].is_null()
+                {
                     return Err(VenueError::Unconfirmed);
                 }
                 Ok(Some(order_view(&value, client_order_id)))
-            },
+            }
             Err(VenueError::Rejected(message))
                 if message.contains("-2013") || message.contains("not found") =>
             {
@@ -258,28 +305,45 @@ impl VenueClient {
     /// Resolve a triggered USD-M child order by the exchange order ID,
     /// never by the parent conditional clientAlgoId.
     pub fn query_um_order_by_id(
-        &self,credentials:&Credentials,symbol:&str,order_id:&str,
-    )->Result<Value,VenueError>{
+        &self,
+        credentials: &Credentials,
+        symbol: &str,
+        order_id: &str,
+    ) -> Result<Value, VenueError> {
         check_credentials(credentials)?;
-        if order_id.is_empty() ||
-            !order_id.bytes().all(|b|b.is_ascii_digit()){
+        if order_id.is_empty() || !order_id.bytes().all(|b| b.is_ascii_digit()) {
             return Err(VenueError::Unconfirmed);
         }
-        let symbol=venue_symbol(symbol)?;
-        let value=self.signed(credentials,"GET","/fapi/v1/order",&[
-            ("symbol".into(),symbol.clone()),
-            ("orderId".into(),order_id.into()),
-        ])?;
-        let matched=value.get("orderId").and_then(|v|v.as_u64().map(|n|n.to_string())
-            .or_else(||v.as_str().map(str::to_owned)));
-        if matched.as_deref()!=Some(order_id)
-            || value.get("symbol").and_then(Value::as_str)!=Some(symbol.as_str())
-            || value.get("clientOrderId").and_then(Value::as_str)
-                .is_none_or(str::is_empty) {
+        let symbol = venue_symbol(symbol)?;
+        let value = self.signed(
+            credentials,
+            "GET",
+            "/fapi/v1/order",
+            &[
+                ("symbol".into(), symbol.clone()),
+                ("orderId".into(), order_id.into()),
+            ],
+        )?;
+        let matched = value.get("orderId").and_then(|v| {
+            v.as_u64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_owned))
+        });
+        if matched.as_deref() != Some(order_id)
+            || value.get("symbol").and_then(Value::as_str) != Some(symbol.as_str())
+            || value
+                .get("clientOrderId")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+        {
             return Err(VenueError::Unconfirmed);
         }
-        Ok(order_view(&value,value["clientOrderId"].as_str()
-            .ok_or(VenueError::Unconfirmed)?))
+        Ok(order_view(
+            &value,
+            value["clientOrderId"]
+                .as_str()
+                .ok_or(VenueError::Unconfirmed)?,
+        ))
     }
 
     /// Verified exchange trade IDs with bounded fromId pagination. The caller
@@ -287,52 +351,63 @@ impl VenueClient {
     /// A saturated final page, repeated ID, malformed cursor or expired
     /// exchange history fails closed; only signed GET requests are sent.
     pub fn query_order_trades(
-        &self, credentials:&Credentials,product:Product,
-        symbol:&str,order_id:&str,
-    )->Result<Vec<Value>,VenueError>{
+        &self,
+        credentials: &Credentials,
+        product: Product,
+        symbol: &str,
+        order_id: &str,
+    ) -> Result<Vec<Value>, VenueError> {
         check_credentials(credentials)?;
-        if product==Product::Option {
-            return self.option_order_trades(credentials,symbol,order_id);
+        if product == Product::Option {
+            return self.option_order_trades(credentials, symbol, order_id);
         }
-        if order_id.is_empty() || !order_id.bytes().all(|b|b.is_ascii_digit()){
+        if order_id.is_empty() || !order_id.bytes().all(|b| b.is_ascii_digit()) {
             return Err(VenueError::Unconfirmed);
         }
-        let path=match product{
-            Product::Spot=>"/api/v3/myTrades",
-            Product::FuturesUm=>"/fapi/v1/userTrades",
-            Product::Option=>return Err(VenueError::Unconfirmed),
+        let path = match product {
+            Product::Spot => "/api/v3/myTrades",
+            Product::FuturesUm => "/fapi/v1/userTrades",
+            Product::Option => return Err(VenueError::Unconfirmed),
         };
-        let symbol=venue_symbol(symbol)?;
-        let mut next_id=None::<u64>;
-        let mut latest=None::<u64>;
-        let mut out=Vec::new();
+        let symbol = venue_symbol(symbol)?;
+        let mut next_id = None::<u64>;
+        let mut latest = None::<u64>;
+        let mut out = Vec::new();
         for _ in 0..32 {
-            let mut params=vec![
-                ("symbol".into(),symbol.clone()),
-                ("orderId".into(),order_id.to_owned()),
-                ("limit".into(),"1000".into()),
+            let mut params = vec![
+                ("symbol".into(), symbol.clone()),
+                ("orderId".into(), order_id.to_owned()),
+                ("limit".into(), "1000".into()),
             ];
-            if let Some(cursor)=next_id {
-                params.push(("fromId".into(),cursor.to_string()));
+            if let Some(cursor) = next_id {
+                params.push(("fromId".into(), cursor.to_string()));
             }
-            let raw=self.signed(credentials,"GET",path,&params)?;
-            let size=raw.as_array().ok_or(VenueError::Unconfirmed)?.len();
-            let page=trades::normalize_order_trades_page(
-                product,&symbol,order_id,&raw,true)?;
+            let raw = self.signed(credentials, "GET", path, &params)?;
+            let size = raw.as_array().ok_or(VenueError::Unconfirmed)?.len();
+            let page = trades::normalize_order_trades_page(product, &symbol, order_id, &raw, true)?;
             for row in page {
-                let id=row["venue_trade_id"].as_str()
+                let id = row["venue_trade_id"]
+                    .as_str()
                     .ok_or(VenueError::Unconfirmed)?
-                    .parse::<u64>().map_err(|_|VenueError::Unconfirmed)?;
-                if latest.is_some_and(|previous|id<=previous) ||
-                   next_id.is_some_and(|cursor|id<cursor){
+                    .parse::<u64>()
+                    .map_err(|_| VenueError::Unconfirmed)?;
+                if latest.is_some_and(|previous| id <= previous)
+                    || next_id.is_some_and(|cursor| id < cursor)
+                {
                     return Err(VenueError::Unconfirmed);
                 }
-                latest=Some(id);
+                latest = Some(id);
                 out.push(row);
             }
-            if size<1000{return Ok(out);}
-            next_id=Some(latest.ok_or(VenueError::Unconfirmed)?
-                .checked_add(1).ok_or(VenueError::Unconfirmed)?);
+            if size < 1000 {
+                return Ok(out);
+            }
+            next_id = Some(
+                latest
+                    .ok_or(VenueError::Unconfirmed)?
+                    .checked_add(1)
+                    .ok_or(VenueError::Unconfirmed)?,
+            );
         }
         Err(VenueError::Unconfirmed)
     }
@@ -356,7 +431,8 @@ impl VenueClient {
         // successfully committed IntentJournal::admit.
         if method != "GET" {
             return Err(VenueError::Rejected(
-                "交易命令未通过持久化订单意图登记门禁。".into()));
+                "交易命令未通过持久化订单意图登记门禁。".into(),
+            ));
         }
         self.signed_wire(credentials, method, path, pairs)
     }
@@ -380,7 +456,7 @@ impl VenueClient {
         let signature = sign_payload(&credentials.secret, &query);
         query.push_str("&signature=");
         query.push_str(&signature);
-        let target=route_gateway(&self.base,path)?;
+        let target = route_gateway(&self.base, path)?;
         let url = format!("{target}{path}?{query}");
         let response = self
             .http
@@ -391,16 +467,25 @@ impl VenueClient {
         let status = response.status();
         // 1000-trade pages exceed 128 KiB; other endpoints stay on a
         // smaller limit. Bound the actual socket read, not just the string.
-        let maximum=if method=="GET" && matches!(path,
-            "/api/v3/myTrades"|"/fapi/v1/userTrades"|"/eapi/v1/userTrades") {
-            2*1024*1024
-        }else{128*1024};
+        let maximum = if method == "GET"
+            && matches!(
+                path,
+                "/api/v3/myTrades" | "/fapi/v1/userTrades" | "/eapi/v1/userTrades"
+            ) {
+            2 * 1024 * 1024
+        } else {
+            128 * 1024
+        };
         use std::io::Read;
-        let mut bytes=Vec::new();
-        response.take((maximum+1) as u64)
-            .read_to_end(&mut bytes).map_err(|_|VenueError::Unconfirmed)?;
-        if bytes.len()>maximum {return Err(VenueError::Unconfirmed);}
-        let body=std::str::from_utf8(&bytes).map_err(|_|VenueError::Unconfirmed)?;
+        let mut bytes = Vec::new();
+        response
+            .take((maximum + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| VenueError::Unconfirmed)?;
+        if bytes.len() > maximum {
+            return Err(VenueError::Unconfirmed);
+        }
+        let body = std::str::from_utf8(&bytes).map_err(|_| VenueError::Unconfirmed)?;
         let value: Value = serde_json::from_str(body).unwrap_or(json!({ "raw": "unparsed" }));
         if !status.is_success() {
             let code = value
@@ -519,7 +604,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn signed_gateway_never_sends_exchange_credentials_to_arbitrary_https(){
+    fn signed_gateway_never_sends_exchange_credentials_to_arbitrary_https() {
         for invalid in [
             "https://api.binance.com.evil.example",
             "https://evil.example",
@@ -527,19 +612,25 @@ mod tests {
             "https://api.binance.com/path",
             "https://user:password@api.binance.com",
             "http://localhost",
-        ]{
-            assert!(VenueClient::new(invalid).is_err(),"{invalid}");
+        ] {
+            assert!(VenueClient::new(invalid).is_err(), "{invalid}");
         }
-        let official=VenueClient::new("https://fapi.binance.com").unwrap();
-        assert_eq!(route_gateway(&official.base,"/eapi/v1/order").unwrap(),
-            "https://eapi.binance.com");
-        assert_eq!(route_gateway(&official.base,"/api/v3/order").unwrap(),
-            "https://api.binance.com");
-        assert_eq!(route_gateway(&official.base,"/fapi/v1/order").unwrap(),
-            "https://fapi.binance.com");
-        let testnet=VenueClient::new("https://testnet.binancefuture.com").unwrap();
-        assert!(route_gateway(&testnet.base,"/eapi/v1/order").is_err());
-        assert!(route_gateway("http://127.0.0.1:18767","/eapi/v1/order").is_ok());
+        let official = VenueClient::new("https://fapi.binance.com").unwrap();
+        assert_eq!(
+            route_gateway(&official.base, "/eapi/v1/order").unwrap(),
+            "https://eapi.binance.com"
+        );
+        assert_eq!(
+            route_gateway(&official.base, "/api/v3/order").unwrap(),
+            "https://api.binance.com"
+        );
+        assert_eq!(
+            route_gateway(&official.base, "/fapi/v1/order").unwrap(),
+            "https://fapi.binance.com"
+        );
+        let testnet = VenueClient::new("https://testnet.binancefuture.com").unwrap();
+        assert!(route_gateway(&testnet.base, "/eapi/v1/order").is_err());
+        assert!(route_gateway("http://127.0.0.1:18767", "/eapi/v1/order").is_ok());
     }
 
     #[test]
@@ -574,12 +665,12 @@ mod tests {
 
     #[test]
     fn normalized_exchange_order_id_never_contains_json_string_quotes() {
-        let raw=json!({"orderId":"12345678901234567890",
+        let raw = json!({"orderId":"12345678901234567890",
             "clientOrderId":"sa-123","symbol":"BTC-271231-90000-C",
             "status":"NEW"});
-        let view=order_view(&raw,"sa-123");
-        assert_eq!(view["order_id"],"12345678901234567890");
-        assert_eq!(view["open"],true);
+        let view = order_view(&raw, "sa-123");
+        assert_eq!(view["order_id"], "12345678901234567890");
+        assert_eq!(view["open"], true);
     }
 
     #[test]
@@ -633,40 +724,67 @@ mod tests {
             .unwrap_err();
         assert!(matches!(denied, VenueError::Rejected(_)));
         // A separately committed journal ticket is the only way to POST.
-        use crate::order_guard::{Admission, IntentJournal, IntentRecord,
-            PreparedWrite, RecordedOutcome, WriteAction};
-        struct MockDurable { registered: bool, outcome: Option<RecordedOutcome> }
+        use crate::order_guard::{
+            Admission, IntentJournal, IntentRecord, PreparedWrite, RecordedOutcome, WriteAction,
+        };
+        struct MockDurable {
+            registered: bool,
+            outcome: Option<RecordedOutcome>,
+        }
         impl IntentJournal for MockDurable {
             fn admit(&mut self, _: &IntentRecord) -> Result<Admission, VenueError> {
-                if self.registered { return Ok(Admission::Seen); }
+                if self.registered {
+                    return Ok(Admission::Seen);
+                }
                 self.registered = true;
                 Ok(Admission::Fresh)
             }
-            fn observe(&mut self, _: &IntentRecord, outcome: RecordedOutcome)
-                -> Result<(), VenueError> {
-                self.outcome=Some(outcome);
+            fn observe(
+                &mut self,
+                _: &IntentRecord,
+                outcome: RecordedOutcome,
+            ) -> Result<(), VenueError> {
+                self.outcome = Some(outcome);
                 Ok(())
             }
         }
-        let order_id="SA00000000000000000000000000000001";
-        let mut operation=PreparedWrite::new(
-            "tenant:account","mock_req_1",Product::FuturesUm,WriteAction::NewOrder,
-            "ETHUSDT-PERP",order_id,vec![
-                ("symbol".into(),"ETHUSDT".into()),
-                ("newClientOrderId".into(),order_id.into()),
-                ("type".into(),"LIMIT".into()),
-                ("side".into(),"BUY".into()),
-                ("quantity".into(),"0.01".into()),
-                ("price".into(),"2000".into()),
-                ("timeInForce".into(),"GTC".into()),
+        let order_id = "SA00000000000000000000000000000001";
+        let mut operation = PreparedWrite::new(
+            "tenant:account",
+            "mock_req_1",
+            Product::FuturesUm,
+            WriteAction::NewOrder,
+            "ETHUSDT-PERP",
+            order_id,
+            vec![
+                ("symbol".into(), "ETHUSDT".into()),
+                ("newClientOrderId".into(), order_id.into()),
+                ("type".into(), "LIMIT".into()),
+                ("side".into(), "BUY".into()),
+                ("quantity".into(), "0.01".into()),
+                ("price".into(), "2000".into()),
+                ("timeInForce".into(), "GTC".into()),
             ],
-        ).unwrap();
-        let creds=Credentials{api_key:"key-one".into(),secret:"secret-one".into()};
-        let mut journal=MockDurable{registered:false,outcome:None};
-        let accepted=operation.dispatch_live(&mut journal,&client,&creds).unwrap();
-        assert_eq!(accepted["status"],"NEW");
-        assert_eq!(journal.outcome,Some(RecordedOutcome::Accepted));
-        assert!(operation.dispatch_live(&mut journal,&client,&creds).is_err());
+        )
+        .unwrap();
+        let creds = Credentials {
+            api_key: "key-one".into(),
+            secret: "secret-one".into(),
+        };
+        let mut journal = MockDurable {
+            registered: false,
+            outcome: None,
+        };
+        let accepted = operation
+            .dispatch_live(&mut journal, &client, &creds)
+            .unwrap();
+        assert_eq!(accepted["status"], "NEW");
+        assert_eq!(journal.outcome, Some(RecordedOutcome::Accepted));
+        assert!(
+            operation
+                .dispatch_live(&mut journal, &client, &creds)
+                .is_err()
+        );
         let again = client
             .query_order(
                 &Credentials {
@@ -683,42 +801,59 @@ mod tests {
 
     #[test]
     fn paginated_spot_trades_require_monotonic_exchange_ids() {
-        let (sender, receiver)=std::sync::mpsc::channel();
+        let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let rt=tokio::runtime::Builder::new_current_thread()
-                .enable_all().build().unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             rt.block_on(async move {
-                let app=axum::Router::new()
-                    .route("/api/v3/myTrades",axum::routing::get(mock_my_trades));
-                let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let app = axum::Router::new()
+                    .route("/api/v3/myTrades", axum::routing::get(mock_my_trades));
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 sender.send(listener.local_addr().unwrap().port()).unwrap();
-                axum::serve(listener,app).await.unwrap();
+                axum::serve(listener, app).await.unwrap();
             });
         });
-        let client=VenueClient::new(format!("http://127.0.0.1:{}",receiver.recv().unwrap())).unwrap();
-        let creds=Credentials{api_key:"key-one".into(),secret:"secret-one".into()};
-        let filled=client.query_order_trades(&creds,Product::Spot,"ETHUSDT","9").unwrap();
-        assert_eq!(filled.len(),1001);
-        assert_eq!(filled[0]["venue_trade_id"],"1");
-        assert_eq!(filled[1000]["venue_trade_id"],"1001");
+        let client =
+            VenueClient::new(format!("http://127.0.0.1:{}", receiver.recv().unwrap())).unwrap();
+        let creds = Credentials {
+            api_key: "key-one".into(),
+            secret: "secret-one".into(),
+        };
+        let filled = client
+            .query_order_trades(&creds, Product::Spot, "ETHUSDT", "9")
+            .unwrap();
+        assert_eq!(filled.len(), 1001);
+        assert_eq!(filled[0]["venue_trade_id"], "1");
+        assert_eq!(filled[1000]["venue_trade_id"], "1001");
         // A server that ignores fromId must never claim a complete history.
-        assert_eq!(client.query_order_trades(&creds,Product::Spot,"ETHUSDT","10"),
-            Err(VenueError::Unconfirmed));
+        assert_eq!(
+            client.query_order_trades(&creds, Product::Spot, "ETHUSDT", "10"),
+            Err(VenueError::Unconfirmed)
+        );
     }
-    async fn mock_my_trades(request:axum::extract::Request)
-        -> axum::Json<serde_json::Value> {
-        let query=request.uri().query().unwrap_or("");
+    async fn mock_my_trades(request: axum::extract::Request) -> axum::Json<serde_json::Value> {
+        let query = request.uri().query().unwrap_or("");
         assert!(query.contains("signature="));
         assert!(query.contains("symbol=ETHUSDT"));
-        let replay=query.contains("orderId=10");
-        let start=if replay || !query.contains("fromId=") {1}else{1001};
-        let end=if start==1 {1000}else{1001};
-        let order=if replay {10}else{9};
-        let rows=(start..=end).map(|tid|json!({
-            "id":tid,"orderId":order,"symbol":"ETHUSDT","buyer":true,
-            "qty":"0.001","price":"2000","time":100,
-            "commission":"0","commissionAsset":"USDT"
-        })).collect::<Vec<_>>();
+        let replay = query.contains("orderId=10");
+        let start = if replay || !query.contains("fromId=") {
+            1
+        } else {
+            1001
+        };
+        let end = if start == 1 { 1000 } else { 1001 };
+        let order = if replay { 10 } else { 9 };
+        let rows = (start..=end)
+            .map(|tid| {
+                json!({
+                    "id":tid,"orderId":order,"symbol":"ETHUSDT","buyer":true,
+                    "qty":"0.001","price":"2000","time":100,
+                    "commission":"0","commissionAsset":"USDT"
+                })
+            })
+            .collect::<Vec<_>>();
         axum::Json(json!(rows))
     }
 
