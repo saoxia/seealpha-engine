@@ -9,6 +9,7 @@ import hashlib
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from engine.feed.subscription_hub import MAX_HISTORY_BARS
 from engine.strategies.basket_reconciliation import (
     BasketCheckpoint,
     begin_phase,
@@ -24,7 +25,6 @@ from engine.strategies.basket_targets import (
 )
 
 _MAX_MEMBERS = 16
-MAX_HISTORY_BARS = 256
 _REQUIRED_DATA = {
     "generic": frozenset({"closed_bars", "account_positions"}),
     "funding_carry": frozenset({"closed_bars", "funding_rate", "account_positions"}),

@@ -287,3 +287,27 @@ def test_strategy_market_snapshot_is_scoped_to_its_own_subscribed_legs():
     a = {**_load(spot_source), "issuance_id": "spot-signal"}
     b = {**_load(perp_source), "issuance_id": "perp-signal"}
     assert len(_replay(loads=[a, b])["orders"]) == 2
+
+
+
+def test_generic_replay_one_market_two_subscribers_with_different_windows():
+    # Two members request the same two physical streams but different windows.
+    # Each receives its own scoped historical view, not a new source request.
+    def custom_source(window):
+        return _SOURCE.replace(
+            '            data=("closed_bars", "account_positions"),',
+            '            data=("closed_bars", "account_positions"),\n'
+            f'            lookback_bars={window},',
+        ).replace(
+            '        self.publish_basket(\n',
+            f'        assert all(len(rows) <= {window} for rows in '
+            'snapshot["history"].values())\n'
+            '        self.publish_basket(\n',
+        )
+
+    report = _replay(loads=[
+        {**_load(custom_source(4)), "issuance_id": "four-bars"},
+        {**_load(custom_source(2)), "issuance_id": "two-bars"},
+    ])
+    assert len(report["orders"]) == 2
+    assert len(report["fills"]) >= 2

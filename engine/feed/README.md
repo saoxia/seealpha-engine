@@ -248,3 +248,17 @@ Engine 内部只读接口：`POST /tenants/{tenant_id}/data/funding`，请求体
 显式 `tick` / `1m` 永续数据配置由租户级 `engine.feed.managed --futures-config` 共享采集进程接管，配置保留每交易对独立的 `collection.sqlite`、`funding.sqlite`、写锁、策略就绪门禁、历史和计算进程。每组最多 128 个标的，分别由一条 `/public/stream` WebSocket 订阅原始 `@trade`，一条 `/market/stream` WebSocket 订阅 `@markPrice@1s`，共两条连接、各最多 128 条 stream；Binance 每连接理论上限 1024 条，保留高成交量与重连安全余量。超过 128 标的自动在共享进程内增加下一组两条 WebSocket，不设置 128 个的全局上限。配置变更可动态订阅/退订，不会为新增标的重启其他标的的采集进程或清空历史。
 
 写入仍由每个交易对单独处理并持有访问锁；删除时先从运行清单退订并等待对应写锁释放。队列背压不静默丢成交。旧 `base_level=auto` 分钟接口与期权共享采集保持现状。全部离线模拟测试不代替真实网络流量、连接 24 小时滚动或限流验收。
+
+
+## 可复用的统一订阅抽象（共享市场数据，不启动新服务）
+
+`engine.feed.subscription_hub` 定义独立于连接器、策略和交易账户的四个基础对象：
+
+- `MarketStream(source, product, symbol, interval, kind="closed_bars")`：市场数据的物理身份，区别交易所、产品、标的、周期以及 K 线/Tick/盘口等数据类别，不按策略或租户复制相同的公开行情。Tick 可用 `kind="trade_ticks", interval="event"` 表达需求，但目前**仅验证 K 线闭合数据交付**；
+- `SharedMarketData.register(tenant_id, consumer_id, streams, lookback_bars)`：可信 Engine 运行时在验证策略发行授权及市场数据权限之后，登记每个消费者的订阅需求，重复登记幂等，不允许静默改写；
+- `requirements`：输出**去重后的上游市场集合及每个市场所需的最大历史窗口**，为后续共享采集器分配连接/缓存提供纯数据协议，不会自行新建 Binance socket、文件、数据库或后台进程；
+- `accept_closed_bar(stream, bar)` / `view(tenant_id, consumer_id, now_ns, positions, max_age_ns)`：同一市场只存一个有界历史环形缓冲，按策略订阅范围返回独立拷贝，拒绝不完整、乱序、冲突、过期、未闭合/未来和多腿时间不齐的数据。持仓由可信 Engine 注入，不能从公开行情缓存推断账户数据。移除最后一个消费者时回收本地流缓存。
+
+**已接通**开发环境 `generic-portfolio-backtests`：单回测 Engine 运行时为全部发行成员登记市场需求；已核验的同步市场帧只写一次共享历史，各成员按自己的 `lookback_bars` 获取历史及持仓视图，再各自产生目标。回测行为、风险引擎和数据连续性门禁保留。其他旧 Feed、Pipeline、HTTP、数据库和实盘运行流程未切换。
+
+**尚未接通**：把 `requirements` 与 `engine.feed.managed` / Binance WS/REST 的实际连接生命周期绑定起来，跨不同回测任务与不同 Engine 进程共享连接或缓存，以及统一的异步事件总线、消费者慢速背压和长期断线恢复。实时风险资格仍只能来自既有 `Feed.check()` / `Delivery.allow_new_risk`。本抽象只是读侧基础契约，不是将研究回放接到真实下单的许可。

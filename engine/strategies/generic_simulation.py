@@ -5,7 +5,6 @@ and order events. SeeAlpha only aggregates authorized member targets and checks
 whole-portfolio risk. It neither connects to a live execution client nor treats
 orders across venues as atomic.
 """
-from collections import deque
 from contextlib import ExitStack
 from decimal import Decimal
 
@@ -22,12 +21,15 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
+from engine.feed.subscription_hub import (
+    ClosedBar,
+    MarketDataHubError,
+    MarketStream,
+    SharedMarketData,
+)
 from engine.runtime import EngineConflict
 from engine.strategies.backtest_engine import backtest_engine_config
-from engine.strategies.basket_research_session import (
-    MAX_HISTORY_BARS,
-    BasketResearchSession,
-)
+from engine.strategies.basket_research_session import BasketResearchSession
 from engine.strategies.basket_targets import BasketPlanError, LegEvidence
 from engine.strategies.carry_simulation import (
     _balance,
@@ -221,8 +223,15 @@ def run_native_generic_portfolio(
     previous = None
     previous_stamp = None
     curve, targets, count = [], [], 0
-    # Only previously replayed and verified closed bars enter each leg's history.
-    history = {leg: deque(maxlen=MAX_HISTORY_BARS) for leg in legs}
+    # The shared catalog is keyed by market identity, not strategy identity.
+    streams = {
+        leg: MarketStream(str(original_contracts[leg].id.venue), leg.product, leg.symbol, interval)
+        for leg in legs
+    }
+    stream_by_name = {
+        (leg.product, leg.symbol): stream for leg, stream in streams.items()
+    }
+    shared_data = SharedMarketData(tuple(streams.values()))
     declared_hedges = None
     hedge_transition_since = None
     try:
@@ -246,6 +255,27 @@ def run_native_generic_portfolio(
                     instruments[min(legs)])
         base_bar = next(bar_types[leg] for leg in sorted(legs) if instruments[leg] == base)
         members = resources.enter_context(issued_basket_members(loads, base, base_bar))
+        for load in loads:
+            member_id = str(load["issuance_id"])
+            subscription = members[member_id].subscription
+            declared = subscription["legs"]
+            if (
+                not isinstance(declared, tuple) or not declared
+                or any(not isinstance(row, dict) or set(row) != {"product", "symbol"}
+                       for row in declared)
+            ):
+                raise EngineConflict("策略未声明完整的市场订阅腿。")
+            try:
+                required = tuple(
+                    stream_by_name.get((row["product"], row["symbol"]))
+                    for row in declared
+                )
+                shared_data.register(
+                    str(load["tenant_id"]), member_id, required,
+                    lookback_bars=subscription["lookback_bars"],
+                )
+            except (MarketDataHubError, KeyError, TypeError) as exc:
+                raise EngineConflict("策略行情订阅无效：" + str(exc)) from exc
         engine.add_strategy(coordinator)
         for frame in frames:
             if set(frame) != legs:
@@ -284,26 +314,19 @@ def run_native_generic_portfolio(
                         now_ns=stamp, max_age_ns=_STEP_NS[interval] * 2,
                         max_gross_notional=cap,
                     )
-                    snapshot = {
-                        "now_ns": stamp,
-                        "markets": {
-                            f"{leg.product}:{leg.symbol}": {
-                                "price": format(previous[leg].close.as_decimal(), "f"),
-                                "ts_ns": previous_stamp,
-                            }
-                            for leg in sorted(legs)
-                        },
-                        "positions": {
-                            f"{leg.product}:{leg.symbol}": format(positions[leg], "f")
-                            for leg in sorted(legs)
-                        },
-                        "history": {
-                            f"{leg.product}:{leg.symbol}": tuple(history[leg])
-                            for leg in sorted(legs)
-                        },
+                    shared_positions = {
+                        streams[leg]: positions[leg] for leg in legs
                     }
                     for load in loads:
                         member_id = str(load["issuance_id"])
+                        try:
+                            snapshot = shared_data.view(
+                                str(load["tenant_id"]), member_id,
+                                now_ns=stamp, positions=shared_positions,
+                                max_age_ns=_STEP_NS[interval] * 2,
+                            )
+                        except MarketDataHubError as exc:
+                            raise EngineConflict(str(exc)) from exc
                         members[member_id].propose(session.member(member_id), snapshot)
                     planned = session.plan().plan
                     if declared_hedges is None:
@@ -359,14 +382,20 @@ def run_native_generic_portfolio(
             })
             for leg in legs:
                 bar = frame[leg]
-                history[leg].append({
-                    "ts_ns": stamp,
-                    "open": format(bar.open.as_decimal(), "f"),
-                    "high": format(bar.high.as_decimal(), "f"),
-                    "low": format(bar.low.as_decimal(), "f"),
-                    "close": format(bar.close.as_decimal(), "f"),
-                    "volume": format(bar.volume.as_decimal(), "f"),
-                })
+                try:
+                    shared_data.accept_closed_bar(
+                        streams[leg],
+                        ClosedBar(
+                            ts_ns=stamp,
+                            open=bar.open.as_decimal(),
+                            high=bar.high.as_decimal(),
+                            low=bar.low.as_decimal(),
+                            close=bar.close.as_decimal(),
+                            volume=bar.volume.as_decimal(),
+                        ),
+                    )
+                except MarketDataHubError as exc:
+                    raise EngineConflict(str(exc)) from exc
             previous, previous_stamp = frame, stamp
             count += 1
             if count > 20_000:
