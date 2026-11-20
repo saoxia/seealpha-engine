@@ -26,11 +26,11 @@ def _bar(ts_ns):
     instrument = TestInstrumentProvider.ethusdt_perp_binance()
     return Bar(
         BarType.from_str(bar_type_for("ETHUSDT", "1m")),
-        instrument.make_price(100),
-        instrument.make_price(101),
-        instrument.make_price(99),
-        instrument.make_price(100),
-        instrument.make_qty(1),
+        instrument.make_price(Decimal(100)),
+        instrument.make_price(Decimal(101)),
+        instrument.make_price(Decimal(99)),
+        instrument.make_price(Decimal(100)),
+        instrument.make_qty(Decimal(1)),
         ts_ns, ts_ns,
     )
 
