@@ -7,7 +7,8 @@
 | `engine/api/` | HTTP 路由、独立研究 API、接口输入校验 |
 | `engine/market_data/control/` | 持久化 DataPolicy、运行任务协调、访问租约 |
 | `engine/market_data/sources/{binance_perpetual,binance_spot,binance_options}/` | Binance 各市场的采集、计算、历史维护入口及产品专有实现 |
-| `engine/market_data/sources/binance_shared/` | Binance 产品间复用的共享批量采集、逐笔、计算、历史核心 |\n| `engine/market_data/collection/` | 通用分钟行情及 legacy 兼容导入和 CLI |
+| `engine/market_data/sources/binance_shared/` | Binance 产品间复用的共享批量采集、逐笔、计算、历史核心 |
+| `engine/market_data/collection/` | 通用分钟行情及 legacy 兼容导入和 CLI |
 | `engine/market_data/calculation/` | K 线及衍生特征计算；消费持久化来源 |
 | `engine/market_data/repair/` | 历史自动扫描、归档下载、核验与补齐、Rust 转换 |
 | `engine/market_data/storage/` | 原始证据日志、分钟库、Nautilus Catalog 存储适配 |
