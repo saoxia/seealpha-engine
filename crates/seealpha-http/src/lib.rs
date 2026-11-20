@@ -2,15 +2,15 @@
 //! Live exchange routes refuse before any credential is stored.
 mod parity;
 mod derivatives;
+mod research_v1;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use base64::Engine;
 use seealpha_market::{LoadQuery, MarketSnapshot, Product, PublicSource, check_symbol};
-use seealpha_research::{require_op, verify_research_grant};
 use seealpha_runtime::{
     AuthMode, Config, OrderCommand, PackageBody, PaperRequest, Runtime, RuntimeError,
     StrategyInput, StrategySubmission,
@@ -23,8 +23,6 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 pub const CONTRACT_HEADER: &str = "X-SeeAlpha-Engine-Contract-Version";
 pub const CONTRACT_VERSION: &str = "2";
-const RESEARCH_HEADER: &str = "X-SeeAlpha-Research-Contract-Version";
-const RESEARCH_VERSION: &str = "1";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -136,12 +134,7 @@ pub fn router(state: AppState) -> Router {
         .merge(derivatives::routes())
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
-        router = router.route("/research/v1/datasets", get(research_datasets));
-        router = router.route("/research/v1/snapshots", post(create_snapshot));
-        router = router.route("/research/v1/snapshots/{snapshot_id}", get(get_snapshot));
-        if state.config.research_mcp_enabled {
-            router = router.route("/research/mcp", post(research_mcp));
-        }
+        router = router.merge(research_v1::routes(state.config.research_mcp_enabled));
     }
     router
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
@@ -158,13 +151,27 @@ pub async fn serve(state: AppState) -> Result<(), std::io::Error> {
 
 async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();
-    if let Some(version) = request
-        .headers()
-        .get(CONTRACT_HEADER)
-        .and_then(|value| value.to_str().ok())
+    let research_http = path.starts_with("/research/v1/");
+    let research_mcp = path == "/research/mcp";
+    let research = research_http || research_mcp;
+    let research_header = || {
+        let mut response = error(StatusCode::UPGRADE_REQUIRED, "Engine HTTP 契约版本不兼容。");
+        if research_http {
+            response.headers_mut().insert(
+                "X-SeeAlpha-Research-Contract-Version",
+                HeaderValue::from_static("1"),
+            );
+        }
+        response
+    };
+    if !research_mcp
+        && let Some(version) = request
+            .headers()
+            .get(CONTRACT_HEADER)
+            .and_then(|value| value.to_str().ok())
         && version != CONTRACT_VERSION
     {
-        return error(StatusCode::UPGRADE_REQUIRED, "Engine HTTP 契约版本不兼容。");
+        return research_header();
     }
     if let Some(pinned) = &state.config.tenant_id
         && let Some(target) = tenant_from(&path)
@@ -172,7 +179,6 @@ async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Re
     {
         return error(StatusCode::FORBIDDEN, "Engine 租户不匹配。");
     }
-    let research = path == "/research" || path.starts_with("/research/");
     if !research && state.config.auth_mode == AuthMode::Token {
         let presented = request
             .headers()
@@ -187,6 +193,12 @@ async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Re
     response
         .headers_mut()
         .insert(CONTRACT_HEADER, HeaderValue::from_static(CONTRACT_VERSION));
+    if research_http && state.config.research_signing_key.is_some() {
+        response.headers_mut().insert(
+            "X-SeeAlpha-Research-Contract-Version",
+            HeaderValue::from_static("1"),
+        );
+    }
     response
 }
 
@@ -1062,256 +1074,6 @@ async fn not_found() -> Result<Json<Value>, AppError> {
     Err(AppError::not_found("路径不存在。"))
 }
 
-async fn research_datasets(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, AppError> {
-    let key = state
-        .config
-        .research_signing_key
-        .clone()
-        .ok_or_else(|| AppError::not_found("路径不存在。"))?;
-    if headers
-        .get(CONTRACT_HEADER)
-        .and_then(|value| value.to_str().ok())
-        != Some(CONTRACT_VERSION)
-        || headers
-            .get(RESEARCH_HEADER)
-            .and_then(|value| value.to_str().ok())
-            != Some(RESEARCH_VERSION)
-    {
-        return Err(AppError::upgrade("Research contract version mismatch"));
-    }
-    let authorization = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("");
-    let Some(token) = authorization.strip_prefix("Bearer ") else {
-        return Err(AppError::unauthorized("Research authorization required"));
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(0);
-    let grant = verify_research_grant(&key, token.trim(), now)
-        .map_err(|_| AppError::unauthorized("Research authorization rejected"))?;
-    if state.config.tenant_purpose.as_deref() != Some("development")
-        || state.config.tenant_id.as_deref() != Some(grant.tenant_id.as_str())
-    {
-        return Err(AppError::forbidden("Research tenant scope denied"));
-    }
-    let tenant = state
-        .runtime
-        .require_active(&grant.tenant_id)
-        .map_err(|_| AppError::forbidden("Research requires an active development tenant"))?;
-    if tenant.purpose != "development" {
-        return Err(AppError::forbidden(
-            "Research requires an active development tenant",
-        ));
-    }
-    require_op(&grant, "datasets:read", None, None)
-        .map_err(|_| AppError::forbidden("Research operation outside granted scope"))?;
-    let mut response = Json(json!({ "items": grant.datasets })).into_response();
-    response
-        .headers_mut()
-        .insert(RESEARCH_HEADER, HeaderValue::from_static(RESEARCH_VERSION));
-    response
-        .headers_mut()
-        .insert(CONTRACT_HEADER, HeaderValue::from_static(CONTRACT_VERSION));
-    Ok(response)
-}
-
-fn bearer_grant(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<seealpha_research::Grant, AppError> {
-    let key = state
-        .config
-        .research_signing_key
-        .clone()
-        .ok_or_else(|| AppError::not_found("路径不存在。"))?;
-    if headers
-        .get(CONTRACT_HEADER)
-        .and_then(|value| value.to_str().ok())
-        != Some(CONTRACT_VERSION)
-        || headers
-            .get(RESEARCH_HEADER)
-            .and_then(|value| value.to_str().ok())
-            != Some(RESEARCH_VERSION)
-    {
-        return Err(AppError::upgrade("Research contract version mismatch"));
-    }
-    let authorization = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("");
-    let Some(token) = authorization.strip_prefix("Bearer ") else {
-        return Err(AppError::unauthorized("Research authorization required"));
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(0);
-    let grant = verify_research_grant(&key, token.trim(), now)
-        .map_err(|_| AppError::unauthorized("Research authorization rejected"))?;
-    if state.config.tenant_purpose.as_deref() != Some("development")
-        || state.config.tenant_id.as_deref() != Some(grant.tenant_id.as_str())
-    {
-        return Err(AppError::forbidden("Research tenant scope denied"));
-    }
-    Ok(grant)
-}
-
-async fn create_snapshot(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    let grant = bearer_grant(&state, &headers)?;
-    require_op(&grant, "snapshots:create", None, None)
-        .map_err(|_| AppError::forbidden("Research operation outside granted scope"))?;
-    Ok(Json(
-        state
-            .runtime
-            .create_research_snapshot(&grant.tenant_id, &body.to_string())
-            .map_err(AppError::from)?,
-    ))
-}
-
-async fn get_snapshot(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(snapshot_id): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    let grant = bearer_grant(&state, &headers)?;
-    require_op(&grant, "snapshots:read", None, None)
-        .map_err(|_| AppError::forbidden("Research operation outside granted scope"))?;
-    Ok(Json(
-        state
-            .runtime
-            .research_snapshot(&grant.tenant_id, &snapshot_id)
-            .map_err(AppError::from)?,
-    ))
-}
-
-async fn research_mcp(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    if headers.get("origin").is_some() {
-        return Err(AppError::forbidden(
-            "Browser origins not allowed on Research MCP",
-        ));
-    }
-    let grant = bearer_grant(&state, &headers)?;
-    let id = body.get("id").cloned().unwrap_or(Value::Null);
-    let method = body.get("method").and_then(Value::as_str).unwrap_or("");
-    let result = match method {
-        "initialize" => json!({
-            "protocolVersion": "2025-11-25",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "seealpha-engine", "version": "0.1.0" }
-        }),
-        "tools/list" => json!({
-            "tools": [
-                {"name": "list_datasets", "description": "List granted datasets"},
-                {"name": "create_snapshot", "description": "Store a research snapshot"},
-                {"name": "get_snapshot", "description": "Read a research snapshot"},
-                {"name": "submit_backtest", "description": "Run a development backtest"},
-                {"name": "cancel_backtest", "description": "Cancel a candidate backtest"},
-                {"name": "get_backtest", "description": "Read the latest development backtest"}
-            ]
-        }),
-        "tools/call" => {
-            let name = body
-                .pointer("/params/name")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let payload = match name {
-                "list_datasets" => {
-                    require_op(&grant, "datasets:read", None, None).map_err(|_| {
-                        AppError::forbidden("Research operation outside granted scope")
-                    })?;
-                    json!({ "items": grant.datasets })
-                }
-                "create_snapshot" => {
-                    require_op(&grant, "snapshots:create", None, None).map_err(|_| {
-                        AppError::forbidden("Research operation outside granted scope")
-                    })?;
-                    let text = body
-                        .pointer("/params/arguments/body")
-                        .and_then(Value::as_str)
-                        .unwrap_or("{}");
-                    state
-                        .runtime
-                        .create_research_snapshot(&grant.tenant_id, text)
-                        .map_err(AppError::from)?
-                }
-                "submit_backtest" => {
-                    require_op(&grant, "backtests:submit", None, None).map_err(|_| {
-                        AppError::forbidden("Research operation outside granted scope")
-                    })?;
-                    let name = body
-                        .pointer("/params/arguments/name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("research");
-                    let carry = state
-                        .runtime
-                        .run_carry_window(
-                            &grant.tenant_id,
-                            "research",
-                            "ETHUSDT",
-                            18,
-                            rust_decimal::Decimal::from(1000),
-                            rust_decimal::Decimal::from(1000),
-                            rust_decimal::Decimal::from(1000),
-                        )
-                        .map_err(AppError::from)?;
-                    let ending = carry["ending_balance"]
-                        .as_str()
-                        .unwrap_or("0")
-                        .parse()
-                        .unwrap_or(rust_decimal::Decimal::ZERO);
-                    let candidate = state
-                        .runtime
-                        .run_candidate_backtest(&grant.tenant_id, "research", name, ending)
-                        .map_err(AppError::from)?;
-                    json!({"carry": carry, "candidate": candidate})
-                }
-                "cancel_backtest" => {
-                    require_op(&grant, "backtests:cancel", None, None).map_err(|_| {
-                        AppError::forbidden("Research operation outside granted scope")
-                    })?;
-                    let name = body
-                        .pointer("/params/arguments/name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("research");
-                    state
-                        .runtime
-                        .cancel_candidate(&grant.tenant_id, "research", name)
-                        .map_err(AppError::from)?
-                }
-                "get_backtest" => {
-                    require_op(&grant, "backtests:read", None, None).map_err(|_| {
-                        AppError::forbidden("Research operation outside granted scope")
-                    })?;
-                    state
-                        .runtime
-                        .latest_history_backtest(&grant.tenant_id, "research")
-                        .unwrap_or(json!({ "detail": "还没有回测" }))
-                }
-                _ => json!({ "detail": "该研究工具请改用 HTTP 研究路由。" }),
-            };
-            json!({ "content": [{ "type": "text", "text": payload.to_string() }] })
-        }
-        _ => json!({ "ok": false }),
-    };
-    Ok(Json(
-        json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-    ))
-}
-
 fn bars_snapshot(body: &PreviewBody) -> Result<MarketSnapshot, AppError> {
     let interval_ms = seealpha_market::interval_ms(&body.interval)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
@@ -1375,6 +1137,7 @@ pub enum AppError {
     Unauthorized(String),
     Upgrade(String),
     Unprocessable(String),
+    NotImplemented(String),
 }
 
 impl AppError {
@@ -1395,6 +1158,12 @@ impl AppError {
     }
     fn upgrade(message: impl Into<String>) -> Self {
         Self::Upgrade(message.into())
+    }
+    fn unprocessable(message: impl Into<String>) -> Self {
+        Self::Unprocessable(message.into())
+    }
+    fn not_implemented(message: impl Into<String>) -> Self {
+        Self::NotImplemented(message.into())
     }
 }
 
@@ -1419,6 +1188,7 @@ impl IntoResponse for AppError {
             Self::Unauthorized(detail) => (StatusCode::UNAUTHORIZED, detail),
             Self::Upgrade(detail) => (StatusCode::UPGRADE_REQUIRED, detail),
             Self::Unprocessable(detail) => (StatusCode::UNPROCESSABLE_ENTITY, detail),
+            Self::NotImplemented(detail) => (StatusCode::NOT_IMPLEMENTED, detail),
         };
         error(status, &detail)
     }
@@ -1750,144 +1520,6 @@ mod tests {
         assert_eq!(latest_option, option);
     }
 
-    #[tokio::test]
-    async fn research_mcp_creates_submits_and_cancels() {
-        let root = std::env::temp_dir().join(format!(
-            "seealpha-mcp-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(root.join("state")).unwrap();
-        let config = Config {
-            host: "127.0.0.1".into(),
-            port: 0,
-            auth_mode: AuthMode::Token,
-            token: "ci-engine-token-0123456789abcdef0123456789abcdef".into(),
-            state_dir: root.join("state"),
-            project: root,
-            tenant_id: Some("42".into()),
-            tenant_purpose: Some("development".into()),
-            research_signing_key: Some("research-signing-key-0123456789abcdef".into()),
-            research_mcp_enabled: true,
-            venue_base: None,
-            python: std::path::PathBuf::from("python3"),
-        };
-        let runtime = Arc::new(Runtime::open(&config).unwrap());
-        runtime
-            .ensure_tenant("42", "development", "active")
-            .unwrap();
-        let app = router(AppState {
-            config: Arc::new(config),
-            runtime,
-            market: Arc::new(BinanceSource::new().unwrap()),
-        });
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        let claims = json!({
-            "audience": "seealpha-engine-research",
-            "datasets": ["ethusdt"],
-            "expires_at": now + 600,
-            "not_before": now - 10,
-            "ops": ["snapshots:create", "backtests:submit", "backtests:cancel", "backtests:read", "candidates:submit"],
-            "strategies": [],
-            "task_id": "task-1",
-            "tenant_id": "42",
-            "version": 1
-        });
-        let token = seealpha_research::sign_research_grant(
-            "research-signing-key-0123456789abcdef",
-            &claims,
-        )
-        .unwrap();
-        let call_tool = |name: &str, arguments: Value| {
-            json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": name, "arguments": arguments}
-            })
-        };
-        let (status, _, snapshot) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/research/mcp")
-                .header("authorization", format!("Bearer {token}"))
-                .header(CONTRACT_HEADER, "2")
-                .header(RESEARCH_HEADER, "1")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    call_tool(
-                        "create_snapshot",
-                        json!({"body": "{\"symbol\":\"ETHUSDT\"}"}),
-                    )
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let text = snapshot["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("snapshot_id"));
-        let (status, _, submitted) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/research/mcp")
-                .header("authorization", format!("Bearer {token}"))
-                .header(CONTRACT_HEADER, "2")
-                .header(RESEARCH_HEADER, "1")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    call_tool("submit_backtest", json!({"name": "carry-1"})).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let text = submitted["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("native_dual_venue_development_only"));
-        assert!(text.contains("carry-1"));
-        let (status, _, cancelled) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/research/mcp")
-                .header("authorization", format!("Bearer {token}"))
-                .header(CONTRACT_HEADER, "2")
-                .header(RESEARCH_HEADER, "1")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    call_tool("cancel_backtest", json!({"name": "carry-1"})).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let text = cancelled["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("cancelled"));
-        let (status, _, again) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/research/mcp")
-                .header("authorization", format!("Bearer {token}"))
-                .header(CONTRACT_HEADER, "2")
-                .header(RESEARCH_HEADER, "1")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    call_tool("submit_backtest", json!({"name": "carry-1"})).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{again}");
-    }
     #[tokio::test]
     async fn native_control_and_reader_routes_do_not_start_collectors() {
         let app=router(state());
