@@ -220,3 +220,32 @@ fn one_leg_fills_and_other_leg_unknown_freezes_journal_and_replay() {
         &[],
     ).unwrap().block_reason.is_some());
 }
+
+#[test]
+fn partial_fill_with_unchanged_account_snapshot_is_not_accepted() {
+    let (mut cp, spot, future, _) = basket();
+    cp.begin("request").unwrap();
+    let manifest = bind_phase_orders(&cp).unwrap();
+    let client = |leg: &LegId| manifest.orders.iter()
+        .find(|order| order.leg == *leg).unwrap().client_order_id.clone();
+    let rows = vec![
+        OrderEvidence {
+            leg: spot.clone(), client_order_id: client(&spot),
+            venue_order_id: "spot1001".into(), execution_id: "exec2001".into(),
+            filled_quantity: d(1), status: VenueOrderStatus::Filled, as_of_ns: 11,
+        },
+        OrderEvidence {
+            leg: future.clone(), client_order_id: client(&future),
+            venue_order_id: "perp1002".into(), execution_id: "".into(),
+            filled_quantity: d(0), status: VenueOrderStatus::Unknown, as_of_ns: 11,
+        },
+    ];
+    // A FILLED exchange row without the matching account position is a
+    // conflicting snapshot, not evidence of successfully hedged exposure.
+    let unchanged = [(spot, d(0)), (future, d(0))].into();
+    let frozen = reconcile_order_evidence(
+        cp, &manifest, &rows, &unchanged, 11, 11, 5,
+    ).unwrap();
+    assert_eq!(frozen.state, State::Frozen);
+    assert!(frozen.reason.as_deref().unwrap().contains("positions disagree"));
+}
