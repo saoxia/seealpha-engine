@@ -61,6 +61,12 @@ class EngineMarketDataService:
                 raise MarketDataHubError("实时市场数据尚未由 Engine 授权配置")
             return self._live.accept_closed_bar(stream, bar)
 
+    def invalidate_live_stream(self, stream):
+        """A failed or recovering collector must invalidate every reader's cache."""
+        with self._lock:
+            if self._live is not None:
+                self._live.invalidate_stream(stream)
+
     def live_view(self, tenant_id, consumer_id, *, now_ns, positions, max_age_ns):
         with self._lock:
             if self._live is None:
