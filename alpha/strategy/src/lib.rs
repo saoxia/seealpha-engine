@@ -90,10 +90,78 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex_encode(Sha256::digest(bytes))
 }
 
+/// Verify the raw ZIP central directory before handing any filenames to a
+/// ZIP reader. Some readers normalize or deduplicate duplicate entries, so
+/// checking only the reader's exposed names is insufficient.
+fn verify_central_directory_names(bytes: &[u8]) -> Result<(), StrategyError> {
+    fn uint16(bytes: &[u8], offset: usize) -> Option<usize> {
+        let low = *bytes.get(offset)?;
+        let high = *bytes.get(offset + 1)?;
+        Some(u16::from_le_bytes([low, high]) as usize)
+    }
+    fn uint32(bytes: &[u8], offset: usize) -> Option<usize> {
+        let data: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
+        Some(u32::from_le_bytes(data) as usize)
+    }
+
+    let final_eocd = bytes.len().checked_sub(22).ok_or_else(invalid_archive)?;
+    let eocd = (final_eocd.saturating_sub(u16::MAX as usize)..=final_eocd)
+        .rev()
+        .find(|&at| {
+            bytes.get(at..at + 4) == Some(&b"PK\x05\x06"[..])
+                && uint16(bytes, at + 20) == Some(bytes.len() - at - 22)
+        })
+        .ok_or_else(invalid_archive)?;
+    let entries = uint16(bytes, eocd + 10).ok_or_else(invalid_archive)?;
+    if entries == 0
+        || entries > MAX_MEMBERS
+        || uint16(bytes, eocd + 4) != Some(0)
+        || uint16(bytes, eocd + 6) != Some(0)
+        || uint16(bytes, eocd + 8) != Some(entries)
+    {
+        return Err(invalid_archive());
+    }
+    let directory_size = uint32(bytes, eocd + 12).ok_or_else(invalid_archive)?;
+    let declared_offset = uint32(bytes, eocd + 16).ok_or_else(invalid_archive)?;
+    let mut cursor = eocd.checked_sub(directory_size).ok_or_else(invalid_archive)?;
+    // A valid self-extracting prefix is permitted; the central directory
+    // must still occupy exactly the declared length and contain each name.
+    if cursor < declared_offset {
+        return Err(invalid_archive());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..entries {
+        if bytes.get(cursor..cursor + 4) != Some(&b"PK\x01\x02"[..]) {
+            return Err(invalid_archive());
+        }
+        let name_size = uint16(bytes, cursor + 28).ok_or_else(invalid_archive)?;
+        let extra_size = uint16(bytes, cursor + 30).ok_or_else(invalid_archive)?;
+        let comment_size = uint16(bytes, cursor + 32).ok_or_else(invalid_archive)?;
+        let name_start = cursor.checked_add(46).ok_or_else(invalid_archive)?;
+        let name_end = name_start.checked_add(name_size).ok_or_else(invalid_archive)?;
+        let name = bytes.get(name_start..name_end).ok_or_else(invalid_archive)?;
+        if !seen.insert(name.to_vec()) {
+            return Err(StrategyError::Package("策略包包含重复的路径。".into()));
+        }
+        cursor = name_end
+            .checked_add(extra_size)
+            .and_then(|next| next.checked_add(comment_size))
+            .ok_or_else(invalid_archive)?;
+        if cursor > eocd {
+            return Err(invalid_archive());
+        }
+    }
+    if cursor != eocd {
+        return Err(invalid_archive());
+    }
+    Ok(())
+}
+
 pub fn inspect_archive(bytes: &[u8]) -> Result<PackageMetadata, StrategyError> {
     if bytes.is_empty() || bytes.len() as u64 > MAX_ARCHIVE_BYTES {
         return Err(invalid_archive());
     }
+    verify_central_directory_names(bytes)?;
     let digest = sha256_hex(bytes);
     let mut archive =
         ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| invalid_archive())?;

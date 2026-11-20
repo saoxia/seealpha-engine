@@ -859,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_does_not_resend_and_secrets_stay_out_of_sqlite() {
+    fn legacy_write_gate_never_sends_and_replay_keeps_secrets_out_of_sqlite() {
         let (sender, receiver) = std::sync::mpsc::channel();
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = hits.clone();
@@ -933,6 +933,15 @@ mod tests {
         };
         let first = runtime.execute_order(command()).unwrap();
         assert_eq!(first["response"]["status"], "completed");
+        assert!(first["response"]["order"].is_null());
+        assert!(
+            first["response"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("持久化订单意图登记门禁")
+        );
+        // The legacy transport intentionally forbids all POST/DELETE writes.
+        // An immutable order request is recorded, but no network send occurs.
         // NEW/ACK is not a fill. Only signed userTrades may enter fills.
         assert!(
             runtime
@@ -951,7 +960,7 @@ mod tests {
             second["response"]["client_order_id"],
             first["response"]["client_order_id"]
         );
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         let mut changed = values.clone();
         changed["quantity"] = json!("0.02");
         let rejected = runtime.execute_order(OrderCommand {
@@ -959,7 +968,7 @@ mod tests {
             ..command()
         });
         assert!(rejected.is_err());
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         let mut blob = Vec::new();
         for entry in std::fs::read_dir(&config.state_dir).unwrap() {
             let entry = entry.unwrap();
