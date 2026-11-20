@@ -341,7 +341,7 @@ fn spawn_data_job(runtime:Arc<seealpha_runtime::Runtime>,tenant:String,id:String
         let _=runtime.execute_data_job(&tenant,&id).await;
     });
 }
-fn spawn_backtest(runtime:Arc<seealpha_runtime::Runtime>,tenant:String,id:String){
+pub(crate) fn spawn_backtest(runtime:Arc<seealpha_runtime::Runtime>,tenant:String,id:String){
     tokio::spawn(async move {
         let Ok(_permit)=task_gate().acquire_owned().await else {return;};
         let _=tokio::task::spawn_blocking(move||{
