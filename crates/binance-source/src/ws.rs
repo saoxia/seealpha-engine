@@ -325,6 +325,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_bounded_channel_applies_backpressure_without_dropping_events() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        publish(&sender, "ETHUSDT", json!({"kind":"trade","row":{"id":1}}))
+            .await.unwrap();
+        let blocked = publish(
+            &sender,
+            "ETHUSDT",
+            json!({"kind":"trade","row":{"id":2}}),
+        );
+        tokio::pin!(blocked);
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut blocked).await.is_err());
+        assert_eq!(receiver.recv().await.unwrap().event["row"]["id"], 1);
+        blocked.await.unwrap();
+        assert_eq!(receiver.recv().await.unwrap().event["row"]["id"], 2);
+    }
+
+    #[tokio::test]
     async fn bounded_receiver_fails_closed_when_dropped() {
         let (sender, receiver) = mpsc::channel(1);
         drop(receiver);
