@@ -76,6 +76,12 @@ pub fn gate_next_phase(
     {
         return Err(BasketError::Evidence);
     }
+    let first_leg = positions.keys().next().ok_or(BasketError::Evidence)?;
+    if positions.keys().any(|leg|
+        leg.tenant != first_leg.tenant || leg.account != first_leg.account
+    ) {
+        return Err(BasketError::Evidence);
+    }
     if checkpoint.state != State::Ready {
         let message = match checkpoint.state {
             State::Frozen => "frozen basket requires independent reconciliation",
@@ -135,13 +141,16 @@ pub fn gate_next_phase(
     // A caller may declare several disjoint pairs. For a single Spot/UM
     // basket the same-symbol pair is mandatory even if none is passed.
     let mut pairs = hedge_pairs.to_vec();
-    if pairs.is_empty() && positions.len() == 2 {
+    if pairs.is_empty() {
         let spot = positions.keys().find(|l| l.product == Product::Spot);
         let future = positions.keys().find(|l| l.product == Product::FuturesUm);
         if let (Some(s), Some(f)) = (spot, future) {
-            if s.symbol == f.symbol {
-                pairs.push((s.clone(), f.clone()));
+            if positions.len() != 2 || s.symbol != f.symbol {
+                // Do not silently disable pair-drift checks on a larger
+                // portfolio: the caller must declare the intended hedges.
+                return Err(BasketError::Risk);
             }
+            pairs.push((s.clone(), f.clone()));
         }
     }
     let mut seen = BTreeSet::new();
@@ -150,6 +159,8 @@ pub fn gate_next_phase(
         if spot.product != Product::Spot
             || future.product != Product::FuturesUm
             || spot.symbol != future.symbol
+            || spot.tenant != future.tenant
+            || spot.account != future.account
             || !positions.contains_key(spot)
             || !positions.contains_key(future)
             || !seen.insert(spot.clone())
