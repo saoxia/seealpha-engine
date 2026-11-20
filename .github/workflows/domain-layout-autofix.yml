@@ -1,0 +1,30 @@
+name: Domain layout import autofix (temporary)
+on:
+  push:
+    branches:
+      - refactor/domain-layout-20261120
+permissions:
+  contents: write
+jobs:
+  autofix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/domain-layout-20261120
+          persist-credentials: true
+      - uses: astral-sh/setup-uv@v7
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Apply Ruff safe fixes only
+        run: uv run ruff check . --fix --exit-zero
+      - name: Commit import formatting
+        run: |
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -u
+            git commit -m "style: format imports after domain moves"
+            git push origin HEAD:refactor/domain-layout-20261120
+          fi
