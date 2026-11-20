@@ -815,3 +815,91 @@ def test_mcp_configuration_fails_closed_without_development_research_key(tmp_pat
     ):
         with pytest.raises(ValueError, match="Research MCP requires"):
             create_app(config)
+
+
+def test_spot_research_submissions_preserve_product_and_grant_scope(service):
+    """Spot strategies must use the Engine's native CASH-account backtester."""
+    client, app, _, tasks = service
+    spot = "spot:ETHUSDT:1m"
+    app.state.snapshots._discover = lambda: [
+        {"id": spot, "product": "spot", "symbol": "ETHUSDT", "level": "1m"}
+    ]
+    body = {
+        "purpose": "development", "execution": "simulation",
+        "strategy_ref": STRATEGY, "dataset_refs": [spot],
+        "start": "2026-01-01", "end": "2026-01-02",
+        "starting_balance": "1000", "quote_currency": "USDT",
+        "parameters": {}, "idempotency_key": "spot-issued",
+    }
+    authorized = headers(datasets=[spot])
+    issued = client.post("/v1/backtests", headers=authorized, json=body)
+    assert issued.status_code == 202, issued.text
+    assert tasks.records[issued.json()["backtest_id"]]["parameters"]["product"] == "spot"
+
+    # Dataset permissions are not inferred from the matching symbol.
+    assert client.post("/v1/backtests", headers=headers(), json=body).status_code == 403
+
+    raw, digest = _candidate_archive()
+    candidate = _candidate_body(raw, digest)
+    candidate["dataset_refs"] = [spot]
+    restricted = client.post(
+        "/v1/candidate-backtests",
+        headers=headers(ops=["candidates:submit"], datasets=[spot]),
+        json=candidate,
+    )
+    assert restricted.status_code == 202, restricted.text
+    assert tasks.records[restricted.json()["backtest_id"]]["parameters"]["product"] == "spot"
+
+    # Option quote/tick replay needs a different native execution contract; do
+    # not silently route options into spot or perpetual order models.
+    unsupported = {**body, "dataset_refs": ["options:ETH-261225-2200-C:1m"]}
+    app.state.snapshots._discover = lambda: [
+        {"id": unsupported["dataset_refs"][0]}
+    ]
+    assert client.post(
+        "/v1/backtests",
+        headers=headers(datasets=unsupported["dataset_refs"]), json=unsupported,
+    ).status_code == 422
+
+
+def test_spot_python_candidate_is_dispatched_to_spot_worker(service):
+    import base64
+    from dataclasses import replace
+
+    _, _, runtime, tasks = service
+    spot = "spot:ETHUSDT:1m"
+    raw, digest = _python_strategy_archive()
+
+    body = {
+        "purpose": "development", "execution": "simulation",
+        "candidate_id": "b" * 32, "package_hash": digest,
+        "archive": base64.b64encode(raw).decode("ascii"),
+        "strategy_ref": STRATEGY, "dataset_refs": [spot],
+        "start": "2026-01-01", "end": "2026-01-02",
+        "starting_balance": "1000", "quote_currency": "USDT",
+        "idempotency_key": "spot-python",
+    }
+    enabled = create_research_app(
+        replace(EngineConfig(
+            state_dir=runtime.root, token=ADMIN, project=runtime.project,
+            tenant_id="dev", tenant_purpose="development",
+            research_signing_key=SECRET,
+        ), research_python_enabled=True),
+        runtime, tasks,
+    )
+    enabled.state.snapshots._discover = lambda: [
+        {"id": spot, "product": "spot", "symbol": "ETHUSDT", "level": "1m"}
+    ]
+    try:
+        with TestClient(enabled) as api:
+            result = api.post(
+                "/v1/python-candidate-backtests",
+                headers=headers(ops=["python_candidates:submit"], datasets=[spot]),
+                json=body,
+            )
+            assert result.status_code == 202, result.text
+            params = tasks.records[result.json()["backtest_id"]]["parameters"]
+            assert params["product"] == "spot"
+            assert params["_candidate"]["mode"] == "python"
+    finally:
+        enabled.state.snapshots.close()
