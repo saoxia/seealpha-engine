@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 import pytest
 
 from engine.connectors.binance import options
+from engine.market_data.repair import options_data
 from engine.market_data.repair.models import PipelineSettings
 from engine.market_data.storage.catalog import ParquetDataCatalog
-from engine.market_data.repair import options_data
 from tests.connectors.binance.options_queries_test import definition
 
 

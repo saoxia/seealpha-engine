@@ -103,9 +103,9 @@ def test_missing_catalog_read_does_not_create_directory(tmp_path):
 @pytest.mark.parametrize("intervals", [[], ["1s"], ["1m"]])
 @pytest.mark.parametrize("python_only", [False, True])
 def test_prepare_respects_tick_only_and_selected_bar_level(dataset, tmp_path, monkeypatch, intervals, python_only):
+    from engine.market_data.repair import prepare_data as preparation
     from engine.market_data.repair.data_management import dataset_inventory
     from engine.market_data.repair.sync_binance_batch import plan_daily_archives
-    from engine.market_data.repair import prepare_data as preparation
 
     settings, start, archive = dataset
     if python_only:

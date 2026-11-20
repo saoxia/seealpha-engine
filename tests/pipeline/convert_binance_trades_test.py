@@ -474,9 +474,9 @@ def test_missing_ticks_do_not_rebuild_existing_bars(incremental_dataset):
 def test_prepare_only_materializes_requested_period(incremental_dataset, monkeypatch):
     from dataclasses import replace
 
+    from engine.market_data.repair import prepare_data as preparation
     from engine.market_data.repair.config import load_settings
     from engine.market_data.repair.models import DataRequest
-    from engine.market_data.repair import prepare_data as preparation
 
     synced, instrument, catalog, kwargs, _ = incremental_dataset
     settings = replace(
