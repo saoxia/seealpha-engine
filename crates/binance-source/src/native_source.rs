@@ -58,20 +58,28 @@ struct Status {
 }
 fn write_status(journal: &PairJournal, state: &Status, product: Product) -> Result<()> {
     let now = stamp_ms()?;
+    // Trade-ID holes are persisted in collection.sqlite, independently of
+    // this process's in-memory reconnect counter. Restart never erases them.
+    let id_gaps = journal.unresolved_gap_count()?;
+    let unresolved = state.gap_count.saturating_add(id_gaps);
     // The exchange clock may close calculation buckets but cannot certify
     // live feed READY before REST overlap and Catalog replay reconciliation.
-    let confirmed=if state.trade_connected && now<=state.clock_valid_until_ms
-        && state.gap_count==0 {state.confirmed_ms} else {None};
+    let confirmed = if state.trade_connected && now <= state.clock_valid_until_ms
+        && unresolved == 0 { state.confirmed_ms } else { None };
     atomic_status(
         &journal.status_file(),
         &json!({
             "state":"DEGRADED", "data_ready":false,
-            "reason":state.last_error.as_deref().unwrap_or("rust_native_handover_unverified"),
+            "reason":state.last_error.as_deref().unwrap_or(if unresolved>0 {
+                "raw_trade_gap_unverified"
+            } else {
+                "rust_native_handover_unverified"
+            }),
             "checked_ms":now, "valid_until_ms":if confirmed.is_some(){now+10_000}else{now},
             "symbols":{journal.symbol():{
                 "last_websocket_ms":state.last_trade_ms,"last_update_ms":state.last_trade_ms
             }},
-            "backlog":0,"gap_count":state.gap_count,
+            "backlog":0,"gap_count":unresolved,
             "last_error":state.last_error,"allow_new_risk":false,
             "scope":"native_public_evidence_no_strategy_readiness",
             "confirmed_ms":confirmed,
@@ -174,7 +182,9 @@ fn writer_loop(
                     }
                     let row = &item.event["row"];
                     journal.write_trade(row, stamp_ms()?)?;
-                    state.last_trade_ms = row["time"].as_i64();
+                    if let Some(stamp) = row["time"].as_i64() {
+                        state.last_trade_ms = Some(state.last_trade_ms.map_or(stamp, |old| old.max(stamp)));
+                    }
                 }
                 Some("mark") => {
                     if product != Product::FuturesUm || !state.mark_connected {
@@ -334,6 +344,92 @@ async fn execute() -> Result<()> {
         .map_err(|e| format!("writer join failure: {e}"))?;
     result.map_err(|_| "writer panicked")??;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root() -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "seealpha-native-source-offline-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&path).unwrap();
+        path
+    }
+
+    fn policy() -> Vec<LivePolicy> {
+        vec![LivePolicy {
+            symbol: "ETHUSDT".into(),
+            base_level: "tick".into(),
+            realtime_enabled: true,
+        }]
+    }
+
+    #[test]
+    fn simulated_disconnect_and_restart_preserve_id_gap_and_fail_closed() {
+        let root = temp_root();
+        let (sender, receiver) = mpsc::channel(16);
+        let dir = root.clone();
+        let worker = std::thread::spawn(move || writer_loop(Product::Spot, dir, policy(), receiver));
+        sender.blocking_send(WireEvent {
+            symbol: "ETHUSDT".into(),
+            event: json!({"kind":"connected","channel":"Trades"})
+        }).unwrap();
+        for id in [100, 103] {
+            sender.blocking_send(WireEvent {
+                symbol: "ETHUSDT".into(),
+                event: json!({"kind":"trade","row":{
+                    "id":id,"time":1700000000000_i64+id,
+                    "price":"10.0","qty":"0.2","isBuyerMaker":false
+                }})
+            }).unwrap();
+        }
+        sender.blocking_send(WireEvent {
+            symbol: "ETHUSDT".into(),
+            event: json!({"kind":"disconnected","channel":"Trades","error":"offline_network_cut"})
+        }).unwrap();
+        drop(sender);
+        worker.join().unwrap().unwrap();
+
+        let pair = root.join("ETHUSDT").join("tick");
+        let prior: Value = serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
+        assert_eq!(prior["data_ready"], false);
+        assert!(prior["gap_count"].as_u64().unwrap() >= 2);
+        let (sender, receiver) = mpsc::channel(1);
+        drop(sender);
+        writer_loop(Product::Spot, root.clone(), policy(), receiver).unwrap();
+        let restarted: Value = serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
+        assert_eq!(restarted["data_ready"], false);
+        assert!(restarted["gap_count"].as_u64().unwrap() >= 1);
+        let journal = PairJournal::open(&pair, "ETHUSDT", "tick").unwrap();
+        assert_eq!(journal.unresolved_gap_count().unwrap(), 1);
+        drop(journal);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_unsubscribed_trade_fails_without_journal_insert() {
+        let root = temp_root();
+        let (sender, receiver) = mpsc::channel(2);
+        sender.blocking_send(WireEvent {
+            symbol: "ETHUSDT".into(),
+            event: json!({"kind":"trade","row":{
+                "id":1,"time":1,"price":"10","qty":"1","isBuyerMaker":false
+            }})
+        }).unwrap();
+        drop(sender);
+        assert!(writer_loop(Product::Spot, root.clone(), policy(), receiver).is_err());
+        let pair = root.join("ETHUSDT").join("tick");
+        let state: Value = serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
+        assert_eq!(state["data_ready"], false);
+        let journal = PairJournal::open(&pair, "ETHUSDT", "tick").unwrap();
+        assert_eq!(journal.trade_count().unwrap(), 0);
+        drop(journal);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[tokio::main]

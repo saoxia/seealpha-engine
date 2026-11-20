@@ -1,6 +1,9 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
 mod accounts;
+#[allow(dead_code)] // Staged: order sender remains disabled until risk/evidence gate is wired.
+mod order_journal;
 mod basket;
+mod basket_phase;
 mod portfolio;
 pub use portfolio::{NativePortfolioState,NativePortfolioResult,NativePortfolioEvent};
 mod config;
@@ -9,6 +12,8 @@ mod data;
 mod evidence;
 mod fills;
 mod history;
+mod verified_replay;
+pub use verified_replay::VerifiedHistoryWindow;
 mod inspection;
 mod jobs;
 mod sources;
@@ -132,12 +137,12 @@ impl Runtime {
     pub fn runnable(&self, tenant_id: &str, action: &str) -> Result<Value, RuntimeError> {
         let tenant = self.require_active(tenant_id)?;
         match action {
-            "live" if tenant.purpose == "production" => Ok(json!({
-                "tenant_id": tenant.tenant_id,
-                "action": action,
-                "status": "runnable",
-            })),
-            "live" => Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into())),
+            // A production tenant does not imply permission to trade.
+            // Enable only after separately reviewed end-to-end order admission,
+            // signed evidence reconciliation, and explicit cutover authorization.
+            "live" => Err(RuntimeError::Conflict(
+                "Rust 实盘交易尚未通过集成验收，当前禁止交易。".into(),
+            )),
             "backtest" | "paper" => Ok(json!({
                 "tenant_id": tenant.tenant_id,
                 "action": action,
@@ -204,6 +209,18 @@ impl Runtime {
                 "策略包入口与下发记录不一致。".into(),
             ));
         }
+        // Integration admission: authenticate the immutable package envelope before
+        // invoking the only retained Python execution boundary.
+        seealpha_strategy::authorize_issued(
+            seealpha_strategy::IssuedStrategy {
+                tenant_id, account_id, issuance_id, grant_purpose,
+                code_key, version, entry_point, package_hash,
+            },
+            seealpha_strategy::AccountScope {
+                tenant_id, account_id, purpose: &tenant.purpose,
+            },
+            &metadata,
+        ).map_err(map_strategy)?;
         let path = write_archive(archive)?;
         let prepared = seealpha_strategy::run_host(&HostCommand {
             python: &self.python,
@@ -284,14 +301,20 @@ impl Runtime {
                 "该租户账户没有已下发的策略。".into(),
             ));
         }
-        Ok(loads
+        loads
             .into_iter()
-            .map(|load| StrategyInput {
-                member_id: load.issuance_id,
-                package: PackageBody::Archive(load.archive),
-                parameters: serde_json::from_str(&load.parameters_json).unwrap_or(json!({})),
+            .map(|load| {
+                let parameters = serde_json::from_str(&load.parameters_json)
+                    .map_err(|_| RuntimeError::Conflict(
+                        "已下发策略参数记录损坏，禁止用默认参数执行。".into(),
+                    ))?;
+                Ok(StrategyInput {
+                    member_id: load.issuance_id,
+                    package: PackageBody::Archive(load.archive),
+                    parameters,
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub fn require_active(&self, tenant_id: &str) -> Result<Tenant, RuntimeError> {

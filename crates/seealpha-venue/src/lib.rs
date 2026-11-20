@@ -11,6 +11,9 @@ pub mod settlement;
 pub mod option_trades;
 pub mod conditional;
 pub mod spot_oco;
+pub mod order_guard;
+pub mod user_stream;
+pub mod spot_oto;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -269,9 +272,10 @@ impl VenueClient {
             .ok_or(VenueError::Unconfirmed)?))
     }
 
-    /// Exchange-authored fills for one verified order. No signed POST occurs.
-    /// A full page is not considered complete until cursor-based pagination
-    /// exists; unresolved venue history fails closed.
+    /// Verified exchange trade IDs with bounded fromId pagination. The caller
+    /// must ALSO compare cumulative trade quantity with a signed GET order.
+    /// A saturated final page, repeated ID, malformed cursor or expired
+    /// exchange history fails closed; only signed GET requests are sent.
     pub fn query_order_trades(
         &self, credentials:&Credentials,product:Product,
         symbol:&str,order_id:&str,
@@ -280,8 +284,7 @@ impl VenueClient {
         if product==Product::Option {
             return self.option_order_trades(credentials,symbol,order_id);
         }
-        if order_id.is_empty() ||
-            !order_id.bytes().all(|b|b.is_ascii_digit()) {
+        if order_id.is_empty() || !order_id.bytes().all(|b|b.is_ascii_digit()){
             return Err(VenueError::Unconfirmed);
         }
         let path=match product{
@@ -289,13 +292,39 @@ impl VenueClient {
             Product::FuturesUm=>"/fapi/v1/userTrades",
             Product::Option=>return Err(VenueError::Unconfirmed),
         };
-        let canonical=venue_symbol(symbol)?;
-        let value=self.signed(credentials,"GET",path,&[
-            ("symbol".into(),canonical.clone()),
-            ("orderId".into(),order_id.to_owned()),
-            ("limit".into(),"1000".into())
-        ])?;
-        trades::normalize_order_trades(product,&canonical,order_id,&value)
+        let symbol=venue_symbol(symbol)?;
+        let mut next_id=None::<u64>;
+        let mut latest=None::<u64>;
+        let mut out=Vec::new();
+        for _ in 0..32 {
+            let mut params=vec![
+                ("symbol".into(),symbol.clone()),
+                ("orderId".into(),order_id.to_owned()),
+                ("limit".into(),"1000".into()),
+            ];
+            if let Some(cursor)=next_id {
+                params.push(("fromId".into(),cursor.to_string()));
+            }
+            let raw=self.signed(credentials,"GET",path,&params)?;
+            let size=raw.as_array().ok_or(VenueError::Unconfirmed)?.len();
+            let page=trades::normalize_order_trades_page(
+                product,&symbol,order_id,&raw,true)?;
+            for row in page {
+                let id=row["venue_trade_id"].as_str()
+                    .ok_or(VenueError::Unconfirmed)?
+                    .parse::<u64>().map_err(|_|VenueError::Unconfirmed)?;
+                if latest.is_some_and(|previous|id<=previous) ||
+                   next_id.is_some_and(|cursor|id<cursor){
+                    return Err(VenueError::Unconfirmed);
+                }
+                latest=Some(id);
+                out.push(row);
+            }
+            if size<1000{return Ok(out);}
+            next_id=Some(latest.ok_or(VenueError::Unconfirmed)?
+                .checked_add(1).ok_or(VenueError::Unconfirmed)?);
+        }
+        Err(VenueError::Unconfirmed)
     }
 
     /// Signed account read. The returned JSON keeps balances and positions only.
@@ -306,6 +335,23 @@ impl VenueClient {
     }
 
     fn signed(
+        &self,
+        credentials: &Credentials,
+        method: &str,
+        path: &str,
+        pairs: &[(String, String)],
+    ) -> Result<Value, VenueError> {
+        // Legacy entrypoints have no auditable admission proof: fail closed.
+        // Only PreparedWrite::dispatch_live may reach signed_wire after a
+        // successfully committed IntentJournal::admit.
+        if method != "GET" {
+            return Err(VenueError::Rejected(
+                "交易命令未通过持久化订单意图登记门禁。".into()));
+        }
+        self.signed_wire(credentials, method, path, pairs)
+    }
+
+    fn signed_wire(
         &self,
         credentials: &Credentials,
         method: &str,
@@ -333,11 +379,19 @@ impl VenueClient {
             .send()
             .map_err(|_| VenueError::Unconfirmed)?;
         let status = response.status();
-        let body = response.text().map_err(|_| VenueError::Unconfirmed)?;
-        if body.len() > 128 * 1024 {
-            return Err(VenueError::Unconfirmed);
-        }
-        let value: Value = serde_json::from_str(&body).unwrap_or(json!({ "raw": "unparsed" }));
+        // 1000-trade pages exceed 128 KiB; other endpoints stay on a
+        // smaller limit. Bound the actual socket read, not just the string.
+        let maximum=if method=="GET" && matches!(path,
+            "/api/v3/myTrades"|"/fapi/v1/userTrades"|"/eapi/v1/userTrades") {
+            2*1024*1024
+        }else{128*1024};
+        use std::io::Read;
+        let mut bytes=Vec::new();
+        response.take((maximum+1) as u64)
+            .read_to_end(&mut bytes).map_err(|_|VenueError::Unconfirmed)?;
+        if bytes.len()>maximum {return Err(VenueError::Unconfirmed);}
+        let body=std::str::from_utf8(&bytes).map_err(|_|VenueError::Unconfirmed)?;
+        let value: Value = serde_json::from_str(body).unwrap_or(json!({ "raw": "unparsed" }));
         if !status.is_success() {
             let code = value
                 .get("code")
@@ -548,7 +602,7 @@ mod tests {
         });
         let port = receiver.recv().unwrap();
         let client = VenueClient::new(format!("http://127.0.0.1:{port}")).unwrap();
-        let order = client
+        let denied = client
             .place_order(
                 &Credentials {
                     api_key: "key-one".into(),
@@ -566,12 +620,43 @@ mod tests {
                     time_in_force: "GTC".into(),
                 },
             )
-            .unwrap();
-        assert_eq!(
-            order["client_order_id"],
-            "SA00000000000000000000000000000001"
-        );
-        assert_eq!(order["status"], "NEW");
+            .unwrap_err();
+        assert!(matches!(denied, VenueError::Rejected(_)));
+        // A separately committed journal ticket is the only way to POST.
+        use crate::order_guard::{Admission, IntentJournal, IntentRecord,
+            PreparedWrite, RecordedOutcome, WriteAction};
+        struct MockDurable { registered: bool, outcome: Option<RecordedOutcome> }
+        impl IntentJournal for MockDurable {
+            fn admit(&mut self, _: &IntentRecord) -> Result<Admission, VenueError> {
+                if self.registered { return Ok(Admission::Seen); }
+                self.registered = true;
+                Ok(Admission::Fresh)
+            }
+            fn observe(&mut self, _: &IntentRecord, outcome: RecordedOutcome)
+                -> Result<(), VenueError> {
+                self.outcome=Some(outcome);
+                Ok(())
+            }
+        }
+        let order_id="SA00000000000000000000000000000001";
+        let mut operation=PreparedWrite::new(
+            "tenant:account","mock_req_1",Product::FuturesUm,WriteAction::NewOrder,
+            "ETHUSDT-PERP",order_id,vec![
+                ("symbol".into(),"ETHUSDT".into()),
+                ("newClientOrderId".into(),order_id.into()),
+                ("type".into(),"LIMIT".into()),
+                ("side".into(),"BUY".into()),
+                ("quantity".into(),"0.01".into()),
+                ("price".into(),"2000".into()),
+                ("timeInForce".into(),"GTC".into()),
+            ],
+        ).unwrap();
+        let creds=Credentials{api_key:"key-one".into(),secret:"secret-one".into()};
+        let mut journal=MockDurable{registered:false,outcome:None};
+        let accepted=operation.dispatch_live(&mut journal,&client,&creds).unwrap();
+        assert_eq!(accepted["status"],"NEW");
+        assert_eq!(journal.outcome,Some(RecordedOutcome::Accepted));
+        assert!(operation.dispatch_live(&mut journal,&client,&creds).is_err());
         let again = client
             .query_order(
                 &Credentials {
@@ -584,6 +669,47 @@ mod tests {
             )
             .unwrap();
         assert!(again.is_some());
+    }
+
+    #[test]
+    fn paginated_spot_trades_require_monotonic_exchange_ids() {
+        let (sender, receiver)=std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt=tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap();
+            rt.block_on(async move {
+                let app=axum::Router::new()
+                    .route("/api/v3/myTrades",axum::routing::get(mock_my_trades));
+                let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                sender.send(listener.local_addr().unwrap().port()).unwrap();
+                axum::serve(listener,app).await.unwrap();
+            });
+        });
+        let client=VenueClient::new(format!("http://127.0.0.1:{}",receiver.recv().unwrap())).unwrap();
+        let creds=Credentials{api_key:"key-one".into(),secret:"secret-one".into()};
+        let filled=client.query_order_trades(&creds,Product::Spot,"ETHUSDT","9").unwrap();
+        assert_eq!(filled.len(),1001);
+        assert_eq!(filled[0]["venue_trade_id"],"1");
+        assert_eq!(filled[1000]["venue_trade_id"],"1001");
+        // A server that ignores fromId must never claim a complete history.
+        assert_eq!(client.query_order_trades(&creds,Product::Spot,"ETHUSDT","10"),
+            Err(VenueError::Unconfirmed));
+    }
+    async fn mock_my_trades(request:axum::extract::Request)
+        -> axum::Json<serde_json::Value> {
+        let query=request.uri().query().unwrap_or("");
+        assert!(query.contains("signature="));
+        assert!(query.contains("symbol=ETHUSDT"));
+        let replay=query.contains("orderId=10");
+        let start=if replay || !query.contains("fromId=") {1}else{1001};
+        let end=if start==1 {1000}else{1001};
+        let order=if replay {10}else{9};
+        let rows=(start..=end).map(|tid|json!({
+            "id":tid,"orderId":order,"symbol":"ETHUSDT","buyer":true,
+            "qty":"0.001","price":"2000","time":100,
+            "commission":"0","commissionAsset":"USDT"
+        })).collect::<Vec<_>>();
+        axum::Json(json!(rows))
     }
 
     async fn mock_order(request: axum::extract::Request) -> axum::Json<serde_json::Value> {

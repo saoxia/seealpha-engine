@@ -38,6 +38,15 @@ pub struct OrderCommand {
 
 impl Runtime {
     pub fn execute_order(&self, command: OrderCommand) -> Result<Value, RuntimeError> {
+        // Migration gate: allow synthetic loopback fixtures only. In particular,
+        // production tenant status must never authorize an external REST write.
+        // This check intentionally precedes all intent/order state mutations.
+        let loopback_only = loopback_fixture_url(&command.venue_base);
+        if !loopback_only {
+            return Err(RuntimeError::Conflict(
+                "Rust 实盘订单发送尚未通过验收，禁止访问外部交易所。".into(),
+            ));
+        }
         let tenant = self.require_active(&command.tenant_id)?;
         if tenant.purpose != "production" {
             return Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into()));
@@ -693,6 +702,14 @@ impl Runtime {
     }
 }
 
+// Numeric loopback URLs only; reject remote hosts and deceptive authorities.
+fn loopback_fixture_url(value: &str) -> bool {
+    value.strip_prefix("http://")
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .and_then(|authority| authority.parse::<std::net::SocketAddr>().ok())
+        .is_some_and(|address| address.ip().is_loopback())
+}
+
 fn fingerprint(action: &str, values: &Value) -> String {
     let payload = json!([action, values]);
     let text = serde_json::to_string(&payload).unwrap_or_default();
@@ -725,6 +742,22 @@ mod tests {
     use crate::{Config, Runtime};
     use axum::extract::Request;
     use serde_json::json;
+
+    #[test]
+    fn trading_fixture_url_must_be_numeric_loopback() {
+        assert!(loopback_fixture_url("http://127.0.0.1:18080"));
+        assert!(loopback_fixture_url("http://[::1]:18080"));
+        for invalid in [
+            "https://127.0.0.1:18080",
+            "http://localhost:18080",
+            "http://127.0.0.1:18080@binance.com",
+            "http://127.0.0.1.evil.test:18080",
+            "http://8.8.8.8:18080",
+            "https://fapi.binance.com",
+        ] {
+            assert!(!loopback_fixture_url(invalid), "unexpected fixture URL: {invalid}");
+        }
+    }
 
     #[test]
     fn replay_does_not_resend_and_secrets_stay_out_of_sqlite() {

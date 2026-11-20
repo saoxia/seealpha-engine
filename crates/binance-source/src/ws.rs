@@ -79,6 +79,27 @@ pub async fn run_once(
     symbols: &[String],
     sender: &mpsc::Sender<WireEvent>,
 ) -> Result<(), TransportError> {
+    run_once_at(
+        product,
+        channel,
+        symbols,
+        sender,
+        endpoint(product, channel)?,
+        Duration::from_secs(SOCKET_MAX_SECONDS_UNACKED),
+    )
+    .await
+}
+
+// The endpoint is injected only inside this module's offline network tests.
+// Production callers can use only the official, product-scoped endpoint().
+async fn run_once_at(
+    product: Product,
+    channel: Channel,
+    symbols: &[String],
+    sender: &mpsc::Sender<WireEvent>,
+    socket_url: &str,
+    ack_wait: Duration,
+) -> Result<(), TransportError> {
     if symbols.is_empty() || symbols.len() > product.socket_capacity() {
         return Err(TransportError::Socket(
             "empty/oversized socket scope".into(),
@@ -89,7 +110,7 @@ pub async fn run_once(
     let enabled: BTreeSet<String> = symbols.iter().cloned().collect();
     let (mut socket, _) = timeout(
         Duration::from_secs(12),
-        connect_async(endpoint(product, channel)?),
+        connect_async(socket_url),
     )
     .await
     .map_err(|_| TransportError::Socket("connect timeout".into()))?
@@ -102,16 +123,16 @@ pub async fn run_once(
         ))
         .await
         .map_err(|e| TransportError::Socket(e.to_string()))?;
-    let ack_deadline = Instant::now() + Duration::from_secs(SOCKET_MAX_SECONDS_UNACKED);
+    let ack_deadline = Instant::now() + ack_wait;
     let mut confirmed = false;
     let mut tick = interval(Duration::from_secs(15));
     tick.tick().await;
     loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(ack_deadline), if !confirmed => {
+                return Err(TransportError::Ack("subscription confirmation timeout".into()));
+            }
             _ = tick.tick() => {
-                if !confirmed && Instant::now()>ack_deadline {
-                    return Err(TransportError::Ack("subscription confirmation timeout".into()));
-                }
                 socket.send(Message::Ping(Vec::new().into()))
                     .await.map_err(|e|TransportError::Socket(e.to_string()))?;
             }
@@ -121,7 +142,14 @@ pub async fn run_once(
                 let bytes=match message {
                     Message::Text(value) => value.as_bytes().to_vec(),
                     Message::Binary(_) => return Err(TransportError::Decode("binary frame".into())),
-                    Message::Ping(_) | Message::Pong(_) => continue,
+                    Message::Ping(_) => {
+                        // tungstenite queues the matching automatic Pong; flush it
+                        // promptly even when no outbound market subscription follows.
+                        socket.flush().await
+                            .map_err(|e| TransportError::Socket(e.to_string()))?;
+                        continue;
+                    }
+                    Message::Pong(_) => continue,
                     Message::Close(_) => return Err(TransportError::Socket("socket closed".into())),
                     _=>continue,
                 };
@@ -203,6 +231,116 @@ mod tests {
             "wss://fstream.binance.com/market/stream"
         );
     }
+    #[tokio::test]
+    async fn mock_socket_requires_subscription_ack_before_market_data() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_async;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            let subscribe = socket.next().await.unwrap().unwrap();
+            assert!(subscribe.to_text().unwrap().contains("SUBSCRIBE"));
+            socket.send(Message::Text(json!({
+                "stream":"ethusdt@trade",
+                "data":{"s":"ETHUSDT","e":"trade","t":7,"T":7,
+                        "p":"100.1","q":"0.2","m":false}
+            }).to_string().into())).await.unwrap();
+        });
+        let (sender, receiver) = mpsc::channel(4);
+        let error = run_once_at(
+            Product::Spot,
+            Channel::Trades,
+            &["ETHUSDT".into()],
+            &sender,
+            &format!("ws://{address}/stream"),
+            Duration::from_secs(1),
+        ).await.unwrap_err();
+        assert!(matches!(error, TransportError::Ack(_)));
+        assert!(receiver.is_empty());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mock_socket_ack_timeout_is_independent_of_ping_interval() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_async;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            let _ = socket.next().await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+        let (sender, _receiver) = mpsc::channel(4);
+        let error = tokio::time::timeout(
+            Duration::from_millis(150),
+            run_once_at(
+                Product::Spot,
+                Channel::Trades,
+                &["ETHUSDT".into()],
+                &sender,
+                &format!("ws://{address}/stream"),
+                Duration::from_millis(30),
+            ),
+        ).await.expect("ack deadline exceeded").unwrap_err();
+        assert!(matches!(error, TransportError::Ack(_)));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn mock_socket_ack_and_trade_are_ordered_and_disconnect_is_visible() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_async;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            let _ = socket.next().await.unwrap().unwrap();
+            socket.send(Message::Text(r#"{"result":null,"id":1}"#.into())).await.unwrap();
+            socket.send(Message::Text(r#"{"stream":"ethusdt@trade","data":{"s":"ETHUSDT","e":"trade","t":7,"T":7,"p":"100.1","q":"0.2","m":false}}"#.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+        });
+        let (sender, mut receiver) = mpsc::channel(4);
+        let error = run_once_at(
+            Product::Spot,
+            Channel::Trades,
+            &["ETHUSDT".into()],
+            &sender,
+            &format!("ws://{address}/stream"),
+            Duration::from_secs(1),
+        ).await.unwrap_err();
+        assert!(matches!(error, TransportError::Socket(_)));
+        assert_eq!(receiver.recv().await.unwrap().event["kind"], "connected");
+        let trade = receiver.recv().await.unwrap();
+        assert_eq!(trade.symbol, "ETHUSDT");
+        assert_eq!(trade.event["row"]["id"], 7);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn full_bounded_channel_applies_backpressure_without_dropping_events() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        publish(&sender, "ETHUSDT", json!({"kind":"trade","row":{"id":1}}))
+            .await.unwrap();
+        let blocked = publish(
+            &sender,
+            "ETHUSDT",
+            json!({"kind":"trade","row":{"id":2}}),
+        );
+        tokio::pin!(blocked);
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut blocked).await.is_err());
+        assert_eq!(receiver.recv().await.unwrap().event["row"]["id"], 1);
+        blocked.await.unwrap();
+        assert_eq!(receiver.recv().await.unwrap().event["row"]["id"], 2);
+    }
+
     #[tokio::test]
     async fn bounded_receiver_fails_closed_when_dropped() {
         let (sender, receiver) = mpsc::channel(1);

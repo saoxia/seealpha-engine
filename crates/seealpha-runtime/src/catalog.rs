@@ -46,6 +46,85 @@ impl Runtime{
             Err(e)=>Err(RuntimeError::Conflict(format!("Catalog 数据目录不可用：{e}"))),
         }
     }
+    /// Catalog coverage is authoritative for recorded closed bars only.
+    /// It must NEVER be promoted into a live Feed READY permission without
+    /// independently verified Source journal gaps and committed checkpoints.
+    pub fn inspect_catalog_coverage(
+        &self, tenant: &str, product_name: &str, symbol: &str,
+        interval: &str, start_ms: i64, end_ms: i64, limit: usize,
+    ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant)?;
+        if limit == 0 || limit > 50_000 || end_ms <= start_ms || start_ms < 0 {
+            return Err(RuntimeError::Unprocessable("历史覆盖率查询范围无效。".into()));
+        }
+        let catalog = self.native_catalog()?.ok_or_else(|| {
+            RuntimeError::Conflict("原生 Catalog 尚不存在，不能声明数据就绪。".into())
+        })?;
+        let gaps = catalog.bar_gaps(
+            symbol, product(product_name)?, interval, start_ms, end_ms, limit,
+        ).map_err(error)?;
+        let ranges = gaps.iter().map(|gap| json!({
+            "start_ms": gap.start_ms, "end_ms": gap.end_ms
+        })).collect::<Vec<_>>();
+        Ok(json!({
+            "product": product_name, "symbol": symbol, "interval": interval,
+            "start_ms": start_ms, "end_ms": end_ms,
+            "catalog_contiguous": ranges.is_empty(),
+            "missing_ranges": ranges,
+            "source_checkpoint_verified": false,
+            "feed_ready": false,
+            "allow_new_risk": false,
+            "source": "nautilus_v2_parquet",
+        }))
+    }
+
+    /// Joint public-data evidence view from the sole native Source journal
+    /// and the authoritative Parquet Catalog. This is an inspection gate,
+    /// not an issuer of Feed READY or venue permission.
+    pub fn inspect_source_catalog_window(
+        &self, tenant: &str, product_name: &str, symbol: &str,
+        interval: &str, start_ms: i64, end_ms: i64, limit: usize,
+    ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant)?;
+        if !matches!(product_name, "spot" | "futures_um") {
+            return Err(RuntimeError::Conflict("数据源产品尚未完成原生恢复。".into()));
+        }
+        let policy = self.ledger.policies(tenant).map_err(map_ledger)?
+            .into_iter()
+            .find(|v| v["product"] == product_name && v["symbol"] == symbol)
+            .ok_or_else(|| RuntimeError::Conflict("缺少持久化数据源授权。".into()))?;
+        let base = policy["base_level"].as_str()
+            .ok_or_else(|| RuntimeError::Conflict("数据源最小周期缺失。".into()))?;
+        let base = if base == "auto" { "1m" } else { base };
+        let source_root = crate::sources::source_root(&self.project, product_name)?;
+        let dataset = source_root.join(symbol).join(base).canonicalize()
+            .map_err(|_| RuntimeError::Conflict("原始数据 Journal 不存在。".into()))?;
+        if !dataset.starts_with(&source_root) {
+            return Err(RuntimeError::Conflict("数据源目录越界。".into()));
+        }
+        let inspection = seealpha_binance_market_data_source::store::inspect_pair_journal(
+            &dataset, symbol, base,
+        ).map_err(|e| RuntimeError::Conflict(format!("源数据 Journal 不可信：{e}")))?;
+        let catalog = self.inspect_catalog_coverage(
+            tenant, product_name, symbol, interval, start_ms, end_ms, limit,
+        )?;
+        Ok(json!({
+            "catalog": catalog,
+            "source": {
+                "last_trade_id": inspection.last_trade_id,
+                "trade_count": inspection.trade_count,
+                "unresolved_gaps": inspection.unresolved_gaps,
+                "pending_updates": inspection.pending_updates,
+                "conflicts": inspection.conflicts,
+            },
+            "journal_gap_free": inspection.unresolved_gaps == 0
+                && inspection.conflicts == 0,
+            "data_ready": false,
+            "allow_new_risk": false,
+            "reason": "仍需核验 REST/WS 衔接、已提交发布 checkpoint 和完整 Feed MarketProof。",
+        }))
+    }
+
     pub fn market_data_backend(&self)->Result<&'static str,RuntimeError>{
         Ok(if self.native_catalog()?.is_some(){"nautilus_v2_parquet"}
             else {"engine_sqlite_compat"})

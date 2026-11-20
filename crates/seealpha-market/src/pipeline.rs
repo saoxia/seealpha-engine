@@ -3,6 +3,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use seealpha_quality::{self, Kline};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub fn interval_ms(interval: &str) -> Result<i64, MarketError> {
     Ok(match interval {
@@ -51,6 +52,9 @@ pub fn validate_bars(bars: &[Bar], interval_ms: i64) -> Result<(), MarketError> 
     }
     let mut projected = Vec::with_capacity(bars.len());
     for bar in bars {
+        if bar.open_time_ms < 0 || bar.open_time_ms % interval_ms != 0 {
+            return Err(MarketError::Time);
+        }
         if bar.volume < Decimal::ZERO
             || bar.low > bar.high
             || bar.low > bar.open
@@ -82,6 +86,39 @@ pub fn validate_bars(bars: &[Bar], interval_ms: i64) -> Result<(), MarketError> 
         .map_err(|error| MarketError::Quality(error.to_string()))
 }
 
+/// Audit public trade identities without assuming that missing IDs can be
+/// reconstructed from one recent REST window. Identical overlaps are safe;
+/// conflicting reuse of an ID is an integrity failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TradeIdAudit {
+    pub unique_count: usize,
+    pub suspected_gap: bool,
+    pub input_out_of_order: bool,
+}
+pub fn audit_trade_ids(trades: &[PublicTrade]) -> Result<TradeIdAudit, MarketError> {
+    let mut seen = BTreeMap::new();
+    let mut input_out_of_order = false;
+    let mut last_time_id = None;
+    for trade in trades {
+        if trade.id < 0 || trade.timestamp_ms < 0
+            || trade.price <= Decimal::ZERO || trade.quantity <= Decimal::ZERO {
+            return Err(MarketError::Trade);
+        }
+        let key = (trade.timestamp_ms, trade.id);
+        if last_time_id.is_some_and(|previous| key < previous) {
+            input_out_of_order = true;
+        }
+        last_time_id = Some(key);
+        if let Some(previous) = seen.insert(trade.id, *trade) {
+            if previous != *trade { return Err(MarketError::Trade); }
+        }
+    }
+    let ids: Vec<_> = seen.keys().copied().collect();
+    let suspected_gap = ids.windows(2)
+        .any(|pair| pair[0].checked_add(1) != Some(pair[1]));
+    Ok(TradeIdAudit { unique_count: seen.len(), suspected_gap, input_out_of_order })
+}
+
 pub fn aggregate_trades(trades: &[PublicTrade], interval_ms: i64) -> Result<Vec<Bar>, MarketError> {
     if interval_ms <= 0 {
         return Err(MarketError::Interval);
@@ -89,7 +126,10 @@ pub fn aggregate_trades(trades: &[PublicTrade], interval_ms: i64) -> Result<Vec<
     if trades.is_empty() {
         return Ok(Vec::new());
     }
-    let mut ordered = trades.to_vec();
+    audit_trade_ids(trades)?;
+    let mut unique = BTreeMap::new();
+    for trade in trades { unique.insert(trade.id, *trade); }
+    let mut ordered: Vec<_> = unique.into_values().collect();
     ordered.sort_by_key(|trade| (trade.timestamp_ms, trade.id));
     let mut bars: Vec<Bar> = Vec::new();
     for trade in ordered {
@@ -99,7 +139,8 @@ pub fn aggregate_trades(trades: &[PublicTrade], interval_ms: i64) -> Result<Vec<
         let bucket = trade
             .timestamp_ms
             .div_euclid(interval_ms)
-            .saturating_mul(interval_ms);
+            .checked_mul(interval_ms)
+            .ok_or(MarketError::Overflow)?;
         if let Some(bar) = bars.last_mut()
             && bar.open_time_ms == bucket
         {
@@ -228,4 +269,29 @@ mod tests {
             buyer_maker: false,
         }
     }
+
+    #[test]
+    fn trade_overlap_is_idempotent_but_id_conflicts_are_rejected() {
+        let a = trade(1, 100, "10", "2");
+        let b = trade(3, 200, "12", "3");
+        let audit = audit_trade_ids(&[b, a, a]).unwrap();
+        assert_eq!(audit.unique_count, 2);
+        assert!(audit.suspected_gap);
+        assert!(audit.input_out_of_order);
+        let bars = aggregate_trades(&[b, a, a], 60_000).unwrap();
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].volume, Decimal::from(5));
+        let wrong = trade(1, 100, "99", "2");
+        assert!(aggregate_trades(&[a, wrong], 60_000).is_err());
+        assert!(aggregate_trades(&[trade(-1, 100, "1", "1")], 60_000).is_err());
+    }
+
+    #[test]
+    fn closed_bars_require_aligned_nonnegative_open_times() {
+        let payload = json!([[1, "1", "1", "1", "1", "0", 60_000]]);
+        assert!(parse_binance_klines(&payload, 60_000).is_err());
+        let negative = json!([[-60_000, "1", "1", "1", "1", "0", -1]]);
+        assert!(parse_binance_klines(&negative, 60_000).is_err());
+    }
+
 }

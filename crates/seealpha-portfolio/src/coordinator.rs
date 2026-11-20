@@ -64,6 +64,10 @@ pub struct Coordinator {
     pub freeze_reason: Option<String>,
     denied_at: Option<u64>,
     seen_fills: BTreeMap<String, (String, Decimal)>,
+    // Keep the pre-registered identity after terminal completion. The field
+    // is optional on old snapshots and omitted when empty for compatibility.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    used_commands: BTreeSet<String>,
     increment: Decimal,
     risk_limit: Decimal,
 }
@@ -83,7 +87,7 @@ impl Coordinator {
         if increment <= Decimal::ZERO || risk_limit <= Decimal::ZERO { return Err(CoordinatorError::Invalid); }
         Ok(Self { members: BTreeMap::new(), orders: BTreeMap::new(), flight: None,
             frozen: false, freeze_reason: None, denied_at: None, seen_fills: BTreeMap::new(),
-            increment, risk_limit })
+            used_commands: BTreeSet::new(), increment, risk_limit })
     }
     pub fn register(&mut self, id: &str) -> Result<(), CoordinatorError> {
         if id.trim().is_empty() { return Err(CoordinatorError::Invalid); }
@@ -93,13 +97,18 @@ impl Coordinator {
         self.ensure_active()?;
         let member = self.members.get_mut(id).ok_or(CoordinatorError::NotFound)?;
         let old = member.explicit.unwrap_or(member.position);
-        if risk_exit && target.abs() > old.abs() { return Err(CoordinatorError::RiskExit); }
+        if risk_exit && (target.abs() > old.abs() ||
+            (!target.is_zero() && target.signum() != old.signum())) {
+            return Err(CoordinatorError::RiskExit);
+        }
         member.explicit = Some(target); member.risk_exit = risk_exit; Ok(())
     }
     pub fn accept_order(&mut self, mut order: VirtualOrder, now: Option<u64>) -> Result<(), CoordinatorError> {
         self.ensure_active()?;
         if order.id.is_empty() || order.member_id.is_empty() || !valid_qty(order.quantity) ||
-            order.quantity.is_zero() || !valid_qty(order.filled) || order.filled > order.quantity ||
+            order.quantity.is_zero() || !valid_qty(order.filled) || order.filled >= order.quantity ||
+            !(order.quantity % self.increment).is_zero() ||
+            !(order.filled % self.increment).is_zero() ||
             self.orders.contains_key(&order.id) || !self.members.contains_key(&order.member_id) {
             return Err(CoordinatorError::Invalid);
         }
@@ -111,26 +120,41 @@ impl Coordinator {
             VirtualKind::StopLimit { trigger, price, .. } if *trigger > Decimal::ZERO && *price > Decimal::ZERO => (),
             _ => return Err(CoordinatorError::Invalid),
         }
+        if let VirtualKind::StopLimit { triggered, .. } = &mut order.kind {
+            // Never trust a caller-provided pre-triggered order state.
+            *triggered = false;
+        }
         if !matches!(&order.kind, VirtualKind::Market) { order.armed_at = now; }
         self.orders.insert(order.id.clone(), order); Ok(())
     }
+    /// Validate amendments atomically. Re-arm conditional orders on a later
+    /// bar; amending cannot retroactively use the current bar's high/low.
     pub fn modify(&mut self, id: &str, quantity: Option<Decimal>, kind: Option<VirtualKind>) -> Result<(), CoordinatorError> {
         self.ensure_active()?;
-        let order = self.orders.get_mut(id).ok_or(CoordinatorError::NotFound)?;
+        let mut amended = self.orders.get(id).ok_or(CoordinatorError::NotFound)?.clone();
         if let Some(q) = quantity {
-            if q < order.filled || q <= Decimal::ZERO { return Err(CoordinatorError::Invalid); }
-            order.quantity = q;
+            if q <= amended.filled || q <= Decimal::ZERO ||
+                !(q % self.increment).is_zero() {
+                return Err(CoordinatorError::Invalid);
+            }
+            amended.quantity = q;
         }
-        if let Some(k) = kind {
+        if let Some(mut k) = kind {
             let valid = match &k {
                 VirtualKind::Market => true,
                 VirtualKind::Limit { price } => *price > Decimal::ZERO,
                 VirtualKind::StopMarket { trigger } => *trigger > Decimal::ZERO,
-                VirtualKind::StopLimit { trigger, price, .. } => *trigger > Decimal::ZERO && *price > Decimal::ZERO,
+                VirtualKind::StopLimit { trigger, price, .. } =>
+                    *trigger > Decimal::ZERO && *price > Decimal::ZERO,
             };
             if !valid { return Err(CoordinatorError::Invalid); }
-            order.kind = k;
+            if let VirtualKind::StopLimit { triggered, .. } = &mut k {
+                *triggered = false;
+            }
+            amended.kind = k;
+            amended.armed_at = None;
         }
+        self.orders.insert(id.to_owned(), amended);
         Ok(())
     }
     pub fn cancel(&mut self, id: &str) -> Result<(), CoordinatorError> {
@@ -201,9 +225,21 @@ impl Coordinator {
     /// The returned Submit is an intent, not a transmitted order.
     pub fn reconcile(&mut self, bar: Option<Bar>, account_position: Decimal, command_id: &str)
         -> Result<(Vec<VirtualFill>, Option<Command>), CoordinatorError> {
+        // Risk rejection or a missing command identity must not leave a partial
+        // internal cross or prematurely arm resting orders.
+        let mut proposed = self.clone();
+        let result = proposed.reconcile_inner(bar, account_position, command_id)?;
+        *self = proposed;
+        Ok(result)
+    }
+    fn reconcile_inner(&mut self, bar: Option<Bar>, account_position: Decimal, command_id: &str)
+        -> Result<(Vec<VirtualFill>, Option<Command>), CoordinatorError> {
         self.ensure_active()?;
         if let Some(b) = bar {
-            if b.low <= Decimal::ZERO || b.high < b.low || b.close <= Decimal::ZERO { return Err(CoordinatorError::Invalid); }
+            if b.time == 0 || b.low <= Decimal::ZERO || b.high < b.low ||
+                b.close < b.low || b.close > b.high {
+                return Err(CoordinatorError::Invalid);
+            }
         }
         let mut active = BTreeSet::new();
         for (id, o) in &mut self.orders { if Self::actionable(o, bar) { active.insert(id.clone()); } }
@@ -233,11 +269,26 @@ impl Coordinator {
         }
         if need == Decimal::ZERO || bar.is_some_and(|b|self.denied_at==Some(b.time)) { return Ok((fills,None)); }
         if command_id.trim().is_empty() { return Err(CoordinatorError::Invalid); }
+        if !self.used_commands.insert(command_id.into()) {
+            return Err(CoordinatorError::Duplicate);
+        }
         self.flight = Some(Flight { id: command_id.into(), signed_requested: need, filled: Decimal::ZERO, cancel_requested: false });
         Ok((fills,Some(Command::Submit { id: command_id.into(), signed_quantity: need })))
     }
     /// A venue fill is uniquely identified by event id. Never infer fill from acceptance.
     pub fn apply_venue_fill(&mut self, order_id: &str, event_id: &str, cumulative: Decimal,
+        price: Decimal, bar: Option<Bar>) -> Result<Vec<VirtualFill>, CoordinatorError> {
+        // Do not publish any member allocation if a later validation fails.
+        // A detected evidence conflict is the only error that commits a state
+        // mutation: the freeze itself.
+        let mut proposed = self.clone();
+        let result = proposed.apply_venue_fill_inner(order_id, event_id, cumulative, price, bar);
+        if result.is_ok() || proposed.frozen {
+            *self = proposed;
+        }
+        result
+    }
+    fn apply_venue_fill_inner(&mut self, order_id: &str, event_id: &str, cumulative: Decimal,
         price: Decimal, bar: Option<Bar>) -> Result<Vec<VirtualFill>, CoordinatorError> {
         self.ensure_active()?;
         if event_id.is_empty() || price <= Decimal::ZERO || cumulative < Decimal::ZERO { return Err(CoordinatorError::Invalid); }
@@ -246,7 +297,10 @@ impl Coordinator {
             self.freeze("conflicting duplicate venue fill");
             return Err(CoordinatorError::Evidence);
         }
-        let flight = self.flight.as_ref().ok_or(CoordinatorError::Evidence)?;
+        let Some(flight) = self.flight.as_ref() else {
+            self.freeze("fill for an unknown or already terminal venue order");
+            return Err(CoordinatorError::Evidence);
+        };
         if flight.id != order_id || cumulative < flight.filled || cumulative > flight.signed_requested.abs() {
             self.freeze("venue fill evidence mismatch");
             return Err(CoordinatorError::Evidence);
@@ -257,26 +311,39 @@ impl Coordinator {
         for (id,o) in &mut self.orders {
             if Self::actionable(o,bar) { active.insert(id.clone()); }
         }
+        let actionable_on_side = self.orders.iter().any(|(id, order)|
+            active.contains(id) && order.side == side
+        );
         let fills = self.allocate(side, delta, price, &active)?;
+        let allocated = fills.iter().try_fold(Decimal::ZERO, |sum, fill|
+            sum.checked_add(fill.quantity).ok_or(PortfolioError::Overflow)
+        )?;
+        // An account-level explicit target has no virtual orders to allocate.
+        // Otherwise any unallocated venue quantity is a ledger discrepancy,
+        // never a reason to mark the external fill as fully attributed.
+        let pure_explicit = !actionable_on_side &&
+            self.members.values().any(|member| member.explicit.is_some());
+        if allocated != delta && !pure_explicit {
+            self.freeze("venue fill exceeds attributable virtual quantity");
+            return Err(CoordinatorError::Evidence);
+        }
         self.seen_fills.insert(event_id.into(), (order_id.into(), cumulative));
         if let Some(f) = &mut self.flight { f.filled = cumulative; }
         if cumulative == self.flight.as_ref().expect("flight").signed_requested.abs() { self.flight = None; }
         Ok(fills)
     }
-    /// A rejected cancel leaves the original order in flight. Never replace it
-    /// on the same bar or infer that it reached a terminal state.
+    /// Cancel denial proves only that the old venue order may still be live.
+    /// Preserve its in-flight identity and freeze until an independent account
+    /// and order reconciliation; never auto-retry cancel or submit a replacement.
     pub fn cancel_denied(&mut self, id:&str, at:Option<u64>)->Result<(),CoordinatorError>{
         self.ensure_active()?;
-        match self.flight.as_mut() {
-            Some(f) if f.id==id=>{
-                f.cancel_requested=false;
-                self.denied_at=at;
-                Ok(())
-            }
-            _=>{
-                self.freeze("cancel denial for unrecognized venue order");
-                Err(CoordinatorError::Evidence)
-            }
+        if self.flight.as_ref().is_some_and(|f| f.id == id) {
+            self.denied_at=at;
+            self.freeze("cancel rejected; original venue order remains unresolved");
+            Ok(())
+        } else {
+            self.freeze("cancel denial for unrecognized venue order");
+            Err(CoordinatorError::Evidence)
         }
     }
     pub fn confirm_terminal(&mut self, id: &str, canceled: bool, denied_at: Option<u64>) -> Result<(), CoordinatorError> {
@@ -296,7 +363,9 @@ impl Coordinator {
         for (key, order) in &self.orders {
             if key != &order.id || !self.members.contains_key(&order.member_id) ||
                 order.quantity <= Decimal::ZERO || order.filled < Decimal::ZERO ||
-                order.filled >= order.quantity {
+                order.filled >= order.quantity ||
+                !(order.quantity % self.increment).is_zero() ||
+                !(order.filled % self.increment).is_zero() {
                 return Err(CoordinatorError::Invalid);
             }
         }
@@ -306,7 +375,14 @@ impl Coordinator {
                 return Err(CoordinatorError::Invalid);
             }
         }
-        if self.frozen != self.freeze_reason.is_some() {
+        if self.frozen != self.freeze_reason.is_some() ||
+            self.used_commands.iter().any(|id| id.trim().is_empty()) {
+            return Err(CoordinatorError::Invalid);
+        }
+        // Old snapshots may contain an outstanding flight without the newer
+        // used_commands field; do not interpret its absence as a terminal ACK.
+        if !self.used_commands.is_empty() && self.flight.as_ref().is_some_and(|f|
+            !self.used_commands.contains(&f.id)) {
             return Err(CoordinatorError::Invalid);
         }
         Ok(())

@@ -9,7 +9,7 @@ use arrow_array::{
     Float64Array,BooleanArray,DictionaryArray,StructArray,ListArray,
     LargeListArray,FixedSizeListArray,BinaryArray,LargeBinaryArray,
 };
-use arrow_array::types::Int8Type;
+use arrow_array::types::{Int8Type, Int16Type, Int32Type, UInt8Type, UInt16Type, UInt32Type};
 use base64::Engine;
 use arrow_schema::DataType;
 use chrono::NaiveDateTime;
@@ -20,6 +20,14 @@ use crate::{CatalogError,Catalog,model::{CatalogBar,MarketProduct,NANO_PER_MS,ba
 
 const MAX_FILES:usize=10_000;
 const MAX_BATCH:usize=50_000;
+
+/// A missing interval of *bar opens* on the requested UTC grid.
+/// This is a gap report, not evidence that a trade/Tick archive is complete.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct BarGap {
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
 
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum RecordKind{
@@ -107,7 +115,12 @@ pub(crate) fn candidate_files(
         if !inspect_existing_directory(&dir)? {return Ok(Vec::new());}
     }
     let mut files=Vec::new();
+    let mut visited=0usize;
     for entry in fs::read_dir(dir)?{
+        visited+=1;
+        if visited>MAX_FILES {
+            return Err(CatalogError::Limit("Catalog 目录包含过多文件，拒绝无界扫描。".into()));
+        }
         let entry=entry?;
         let ty=entry.file_type()?;
         if ty.is_symlink()||!ty.is_file(){
@@ -130,7 +143,7 @@ pub(crate) fn candidate_files(
     files.sort();
     Ok(files)
 }
-fn get_ts_for_column(batch:&RecordBatch,name:&str,row:usize)
+pub(crate) fn get_ts_for_column(batch:&RecordBatch,name:&str,row:usize)
     ->Result<i64,CatalogError>{
     let col=batch.column_by_name(name)
         .ok_or_else(||CatalogError::Invalid("Parquet 记录缺少时间字段。".into()))?;
@@ -161,7 +174,7 @@ fn get_decimal(batch:&RecordBatch,name:&str,row:usize)->Result<Decimal,CatalogEr
     Decimal::try_from_i128_with_scale(arr.value(row),scale)
         .map_err(|_|CatalogError::Invalid("Decimal128 精度超出 Rust Decimal 范围。".into()))
 }
-fn row_value(array:&dyn Array,i:usize)->Result<Value,CatalogError>{
+pub(crate) fn row_value(array:&dyn Array,i:usize)->Result<Value,CatalogError>{
     nested_row_value(array,i,0)
 }
 fn nested_row_value(array:&dyn Array,i:usize,depth:usize)->Result<Value,CatalogError>{
@@ -178,6 +191,14 @@ fn nested_row_value(array:&dyn Array,i:usize,depth:usize)->Result<Value,CatalogE
     primitive!(StringArray);primitive!(LargeStringArray);
     primitive!(Int8Array);primitive!(UInt8Array);
     primitive!(Int16Array);primitive!(UInt16Array);
+    for value in [
+        array.as_any().downcast_ref::<Float32Array>().map(|a|a.value(i) as f64),
+        array.as_any().downcast_ref::<Float64Array>().map(|a|a.value(i)),
+    ].into_iter().flatten() {
+        if !value.is_finite() {
+            return Err(CatalogError::Invalid("Arrow 浮点值为 NaN 或 Inf。".into()));
+        }
+    }
     primitive!(Float32Array);
     primitive!(Int64Array);primitive!(UInt64Array);
     primitive!(Int32Array);primitive!(UInt32Array);
@@ -222,14 +243,24 @@ fn nested_row_value(array:&dyn Array,i:usize,depth:usize)->Result<Value,CatalogE
             .map_err(|_|CatalogError::Invalid("数值超出精度。".into()))?
             .to_string()));
     }
-    if let Some(dict)=array.as_any().downcast_ref::<DictionaryArray<Int8Type>>(){
-        let key=usize::try_from(dict.keys().value(i))
-            .map_err(|_|CatalogError::Invalid("枚举字典索引无效。".into()))?;
-        let values=dict.values().as_any().downcast_ref::<StringArray>()
-            .ok_or_else(||CatalogError::Invalid("Nautilus 枚举字典无效。".into()))?;
-        if key>=values.len(){return Err(CatalogError::Invalid("枚举索引越界。".into()));}
-        return Ok(json!(values.value(key)));
+    macro_rules! dictionary_string {
+        ($key:ty) => {
+            if let Some(dict)=array.as_any().downcast_ref::<DictionaryArray<$key>>() {
+                let key=usize::try_from(dict.keys().value(i))
+                    .map_err(|_|CatalogError::Invalid("枚举字典索引无效。".into()))?;
+                let values=dict.values().as_any().downcast_ref::<StringArray>()
+                    .ok_or_else(||CatalogError::Invalid("Nautilus 枚举字典无效。".into()))?;
+                if key>=values.len(){return Err(CatalogError::Invalid("枚举索引越界。".into()));}
+                return Ok(json!(values.value(key)));
+            }
+        }
     }
+    dictionary_string!(Int8Type);
+    dictionary_string!(Int16Type);
+    dictionary_string!(Int32Type);
+    dictionary_string!(UInt8Type);
+    dictionary_string!(UInt16Type);
+    dictionary_string!(UInt32Type);
     Err(CatalogError::Invalid(format!("Parquet 字段类型未支持：{:?}",array.data_type())))
 }
 /// Decode Python's Nautilus BarType from the *right* so USD-M "-PERP"
@@ -333,10 +364,25 @@ impl Catalog{
             let metadata=reader.schema().metadata();
             if metadata.get("type_name").map(String::as_str)!=Some("Bar") ||
                 metadata.get("bar_type").map(String::as_str)!=Some(id.as_str()) ||
-                metadata.get("price_precision").is_none() ||
-                metadata.get("size_precision").is_none() {
-                return Err(CatalogError::Invalid("Parquet BarType 或精度元数据不一致。".into()));
+                metadata.get("instrument_id").map(String::as_str)!=
+                    Some(instrument_id(symbol,product)?.as_str()) {
+                return Err(CatalogError::Invalid("Parquet BarType 或合约标识不一致。".into()));
             }
+            let parse_precision=|name:&str|->Result<u32,CatalogError>{
+                let value=metadata.get(name)
+                    .ok_or_else(||CatalogError::Invalid(format!("Bar 缺少 {name}。")))?
+                    .parse::<u32>().map_err(|_|CatalogError::Invalid(
+                        format!("Bar {name} 不是整数。")
+                    ))?;
+                if value>16 {
+                    return Err(CatalogError::Invalid(
+                        format!("Bar {name} 超出可用精度。")
+                    ));
+                }
+                Ok(value)
+            };
+            let price_precision=parse_precision("price_precision")?;
+            let size_precision=parse_precision("size_precision")?;
             let stream=reader.with_batch_size(4096).build()
                 .map_err(|err|CatalogError::Parquet(err.to_string()))?;
             for batch in stream {
@@ -367,6 +413,13 @@ impl Catalog{
                         volume:get_decimal(&batch,"volume",row)?,
                     };
                     bar.validate(interval,product)?;
+                    if [bar.open,bar.high,bar.low,bar.close].iter().any(
+                        |value|value.round_dp(price_precision)!=*value
+                    ) || bar.volume.round_dp(size_precision)!=bar.volume {
+                        return Err(CatalogError::Invalid(
+                            "Parquet Bar 数值超过声明的合约精度。".into()
+                        ));
+                    }
                     result.push(bar);
                     if result.len()>limit {
                         return Err(CatalogError::Limit("历史 K 线超过调用上限，请改为分批读取。".into()));
@@ -405,6 +458,41 @@ impl Catalog{
         }
         Ok(result)
     }
+    /// Report exactly which aligned Bar windows are absent in [start_ms,end_ms).
+    /// Consumers can decide whether to repair; a read never starts collection.
+    pub fn bar_gaps(
+        &self, symbol: &str, product: MarketProduct, interval: &str,
+        start_ms: i64, end_ms: i64, limit: usize,
+    ) -> Result<Vec<BarGap>, CatalogError> {
+        if start_ms < 0 || end_ms <= start_ms
+            || bar_window(interval, start_ms)?.0 != start_ms
+            || bar_window(interval, end_ms)?.0 != end_ms
+        {
+            return Err(CatalogError::Invalid(
+                "历史缺口检查必须使用完整且对齐的 UTC K 线范围。".into(),
+            ));
+        }
+        let start_ns = start_ms.checked_mul(NANO_PER_MS)
+            .ok_or_else(|| CatalogError::Invalid("开始时间溢出。".into()))?;
+        let end_ns = end_ms.checked_mul(NANO_PER_MS)
+            .ok_or_else(|| CatalogError::Invalid("结束时间溢出。".into()))?;
+        let bars = self.read_bars(symbol, product, interval, start_ns, end_ns, limit)?;
+        let mut expected = start_ms;
+        let mut missing = Vec::new();
+        for bar in bars {
+            if bar.open_time_ms > expected {
+                missing.push(BarGap { start_ms: expected, end_ms: bar.open_time_ms });
+            } else if bar.open_time_ms < expected {
+                return Err(CatalogError::Invalid("历史 K 线重复或倒退。".into()));
+            }
+            expected = bar_window(interval, bar.open_time_ms)?.1;
+        }
+        if expected < end_ms {
+            missing.push(BarGap { start_ms: expected, end_ms });
+        }
+        Ok(missing)
+    }
+
     /// Generic bounded scanner for the other native Nautilus types. All
     /// fields retain original schema names; decimals are encoded as strings,
     /// timestamps remain exact nanoseconds (no lossy JSON floats).
@@ -419,10 +507,36 @@ impl Catalog{
         let paths=candidate_files(&self.root,&rel,start_ns,end_ns)?;
         let mut previous=None;
         let mut out=Vec::new();
+        let mut trade_ids=std::collections::HashSet::new();
+        let mut record_fingerprints=std::collections::HashSet::new();
         for path in paths {
             let file=File::open(path)?;
             let builder=ParquetRecordBatchReaderBuilder::try_new(file)
                 .map_err(|e|CatalogError::Parquet(e.to_string()))?;
+            let metadata=builder.schema().metadata();
+            let declared=match kind {
+                RecordKind::Trades=>Some("TradeTick"),
+                RecordKind::Quotes=>Some("QuoteTick"),
+                RecordKind::OrderBookDepth=>Some("OrderBookDepth"),
+                RecordKind::OptionGreeks=>Some("OptionGreeks"),
+                RecordKind::FundingRate=>Some("FundingRateUpdate"),
+                RecordKind::InstrumentStatus=>Some("InstrumentStatus"),
+                RecordKind::InstrumentClose=>Some("InstrumentClose"),
+                _=>None,
+            };
+            if declared.is_some_and(|expected|
+                metadata.get("type_name").map(String::as_str)!=Some(expected)
+            ) || metadata.get("instrument_id").is_some_and(
+                |value|value!=identifier
+            ) {
+                return Err(CatalogError::Invalid(
+                    "Parquet 事件 type_name 或 instrument_id 不一致。".into()
+                ));
+            }
+            let (file_first,file_last)=filename_bounds(
+                path.file_name().and_then(|n|n.to_str())
+                    .ok_or_else(||CatalogError::Invalid("文件名不是 UTF-8。".into()))?
+            )?;
             let reader=builder.with_batch_size(4096).build()
                 .map_err(|e|CatalogError::Parquet(e.to_string()))?;
             for batch in reader {
@@ -430,6 +544,25 @@ impl Catalog{
                 let schema=batch.schema();
                 for row in 0..batch.num_rows(){
                     let timestamp=get_ts(&batch,row)?;
+                    if timestamp<file_first || timestamp>file_last {
+                        return Err(CatalogError::Invalid(
+                            "Parquet 事件时间与文件名边界不一致。".into()
+                        ));
+                    }
+                    get_ts_for_column(&batch,"ts_init",row)?;
+                    if matches!(kind,RecordKind::Trades) {
+                        let trade_id=batch.column_by_name("trade_id")
+                            .and_then(|a|a.as_any().downcast_ref::<StringArray>())
+                            .ok_or_else(||CatalogError::Invalid(
+                                "TradeTick trade_id 不是字符串。".into()
+                            ))?;
+                        if trade_id.is_null(row) || trade_id.value(row).is_empty() ||
+                            !trade_ids.insert(trade_id.value(row).to_owned()) {
+                            return Err(CatalogError::Conflict(
+                                "历史 TradeTick trade_id 重复或无效。".into()
+                            ));
+                        }
+                    }
                     if previous.is_some_and(|last|timestamp<last){
                         return Err(CatalogError::Invalid("历史事件时间倒退。".into()));
                     }
@@ -441,6 +574,15 @@ impl Catalog{
                             json!(get_ts_for_column(&batch,field.name(),row)?.to_string())
                         }else {row_value(array.as_ref(),row)?};
                         object.insert(field.name().clone(),value);
+                    }
+                    let fingerprint=serde_json::to_vec(&object)
+                        .map_err(|e|CatalogError::Invalid(
+                            format!("历史行序列化失败：{e}")
+                        ))?;
+                    if !record_fingerprints.insert(fingerprint) {
+                        return Err(CatalogError::Conflict(
+                            "历史 Parquet 含有完全相同的重复记录。".into()
+                        ));
                     }
                     out.push(Value::Object(object));
                     if out.len()>limit {
