@@ -228,7 +228,7 @@ mod tests {
             history_contiguous: true, unresolved_gaps: 0, backlog: 0,
         }).unwrap();
         assert!(delivery.certify_from_book(&book, 60_000));
-        assert!(delivery.deliver(&[0], true).is_empty() == false);
+        assert!(!delivery.deliver(&[0], true).is_empty());
         assert!(delivery.allow_new_risk);
         assert_eq!(delivery.status(62_001), Err(SessionError::Expired));
         delivery.degrade();
