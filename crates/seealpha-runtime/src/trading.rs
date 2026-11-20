@@ -41,9 +41,11 @@ impl Runtime {
         // Migration gate: allow synthetic loopback fixtures only. In particular,
         // production tenant status must never authorize an external REST write.
         // This check intentionally precedes all intent/order state mutations.
-        if !(command.venue_base.starts_with("http://127.0.0.1:")
-            || command.venue_base.starts_with("http://[::1]:"))
-        {
+        let loopback_only = command.venue_base.strip_prefix("http://")
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .and_then(|authority| authority.parse::<std::net::SocketAddr>().ok())
+            .is_some_and(|address| address.ip().is_loopback());
+        if !loopback_only {
             return Err(RuntimeError::Conflict(
                 "Rust 实盘订单发送尚未通过验收，禁止访问外部交易所。".into(),
             ));
