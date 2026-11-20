@@ -3,6 +3,7 @@
 //! Uses the same SQLite table and trigger names as PairStore/FundingStore;
 //! the normal Python calculation worker can still consume pending_updates.
 //! This module is intentionally isolated from live order and account APIs.
+use std::collections::BTreeMap;
 #[cfg(test)]
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -213,6 +214,80 @@ impl PairJournal {
             .db
             .query_row("SELECT count(*) FROM trades", [], |r| r.get(0))?)
     }
+    /// Validate a page before any insert. A conflicting id inside the page
+    /// latches the journal and leaves the trade table unchanged.
+    pub fn ingest_page(&mut self, rows: &[Value], now_ms: i64) -> Result<usize> {
+        let mut parsed = Vec::with_capacity(rows.len());
+        for row in rows {
+            parsed.push(CanonicalTrade::parse(row, now_ms)?);
+        }
+        let mut unique: BTreeMap<i64, CanonicalTrade> = BTreeMap::new();
+        for trade in parsed {
+            if let Some(previous) = unique.get(&trade.id)
+                && previous != &trade
+            {
+                self.journal_lock.lock_exclusive()?;
+                let noted = self.note_conflict(&trade);
+                let unlocked = FileExt::unlock(&self.journal_lock);
+                unlocked?;
+                noted?;
+                return Err("conflicting raw trade in one page".into());
+            }
+            unique.insert(trade.id, trade);
+        }
+        self.journal_lock.lock_exclusive()?;
+        let mut wrote = 0;
+        let result = (|| {
+            for trade in unique.values() {
+                if self.stored_conflict(trade)? {
+                    self.note_conflict(trade)?;
+                    return Err("conflicting raw trade; preserved original".into());
+                }
+            }
+            for trade in unique.values() {
+                if self.write_under_lock(trade, now_ms)? == WriteReceipt::Accepted {
+                    wrote += 1;
+                }
+            }
+            Ok(wrote)
+        })();
+        let unlocked = FileExt::unlock(&self.journal_lock);
+        unlocked?;
+        result
+    }
+
+    fn note_conflict(&self, trade: &CanonicalTrade) -> Result<()> {
+        self.db.execute(
+            "INSERT OR IGNORE INTO conflicts VALUES (?)",
+            [serde_json::to_string(&json!([
+                trade.id,
+                trade.time,
+                trade.price.to_string(),
+                trade.quantity.to_string(),
+                i64::from(trade.maker)
+            ]))?],
+        )?;
+        Ok(())
+    }
+
+    fn stored_conflict(&self, trade: &CanonicalTrade) -> Result<bool> {
+        let old: Option<(i64, String, String, i64)> = self
+            .db
+            .query_row(
+                "SELECT timestamp_ms,price,size,maker FROM trades WHERE id=?",
+                [trade.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        let Some((stamp, price, size, maker)) = old else {
+            return Ok(false);
+        };
+        Ok(stamp != trade.time
+            || Decimal::from_str(&price)? != trade.price
+            || Decimal::from_str(&size)? != trade.quantity
+            || maker != i64::from(trade.maker))
+    }
+
     pub fn write_trade(&mut self, row: &Value, now_ms: i64) -> Result<WriteReceipt> {
         let trade = CanonicalTrade::parse(row, now_ms)?;
         self.journal_lock.lock_exclusive()?;
@@ -413,6 +488,81 @@ impl FundingJournal {
         tx.commit()?;
         Ok(WriteReceipt::Accepted)
     }
+
+    pub fn next_rest_start(&self) -> Result<i64> {
+        let last: Option<i64> = self
+            .db
+            .query_row(
+                "SELECT max(funding_time_ms) FROM funding_settlements",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(last.map(|stamp| stamp.saturating_add(1)).unwrap_or(0))
+    }
+
+    pub fn current_rate(&self) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT rate FROM funding_current WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .optional()?)
+    }
+}
+
+pub struct FundingView {
+    pub next_funding_ms: Option<i64>,
+    pub rate: Option<String>,
+    pub pending: bool,
+    pub settlements: Vec<(i64, String)>,
+}
+
+/// A missing file stays missing. This reader does not create a database.
+pub fn read_funding(path: &Path, symbol: &str, now_ms: i64) -> Result<FundingView> {
+    if !path.exists() {
+        return Ok(FundingView {
+            next_funding_ms: None,
+            rate: None,
+            pending: false,
+            settlements: Vec::new(),
+        });
+    }
+    let db = Connection::open(path)?;
+    let configured: Option<String> = db
+        .query_row("SELECT symbol FROM funding_config LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    if configured.as_deref() != Some(symbol) {
+        return Err("funding journal belongs to another symbol".into());
+    }
+    let current: Option<(i64, String)> = db
+        .query_row(
+            "SELECT next_funding_ms, rate FROM funding_current WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let mut statement = db.prepare(
+        "SELECT funding_time_ms, rate FROM funding_settlements ORDER BY funding_time_ms DESC",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let mut settlements = Vec::new();
+    for row in rows {
+        settlements.push(row?);
+    }
+    let (next_funding_ms, rate) = match current {
+        Some((next, rate)) => (Some(next), Some(rate)),
+        None => (None, None),
+    };
+    Ok(FundingView {
+        pending: next_funding_ms.is_some_and(|stamp| stamp > now_ms),
+        next_funding_ms,
+        rate,
+        settlements,
+    })
 }
 
 #[cfg(test)]

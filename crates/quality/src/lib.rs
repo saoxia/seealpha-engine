@@ -339,4 +339,59 @@ mod tests {
             Err(QualityError::InvalidTrade("price"))
         );
     }
+
+    #[test]
+    fn test_archive_validation_rejects_internal_gap() {
+        assert_eq!(
+            validate_klines(&[bar(0), bar(120_000)], 60_000),
+            Err(QualityError::InvalidKline("open time order/gap"))
+        );
+    }
+
+    #[test]
+    fn test_archive_validation_rejects_invalid_ohlc() {
+        let mut row = bar(0);
+        row.high = 1.0;
+        row.low = 5.0;
+        assert_eq!(
+            validate_klines(&[row], 60_000),
+            Err(QualityError::InvalidKline("OHLC"))
+        );
+    }
+
+    #[test]
+    fn test_trade_archive_keeps_last_duplicate_id_across_chunks() {
+        let kept = validate_trades(&[trade(1, 1), trade(1, 2), trade(2, 2)], false).unwrap();
+        assert_eq!(kept, vec![trade(1, 2), trade(2, 2)]);
+    }
+
+    #[test]
+    fn test_trade_archive_rejects_descending_ids() {
+        assert_eq!(
+            validate_trades(&[trade(2, 1), trade(1, 2)], false),
+            Err(QualityError::InvalidTrade("trade ID order"))
+        );
+    }
+
+    #[test]
+    fn test_trade_archive_rejects_invalid_maker_flag() {
+        assert_eq!(parse_buyer_maker("1"), Err(QualityError::InvalidMakerFlag));
+        assert_eq!(
+            parse_buyer_maker("yes"),
+            Err(QualityError::InvalidMakerFlag)
+        );
+    }
+
+    #[test]
+    fn test_mixed_boolean_and_numeric_maker_is_not_silently_accepted() {
+        assert_eq!(parse_buyer_maker("true"), Ok(true));
+        assert_eq!(parse_buyer_maker("0"), Err(QualityError::InvalidMakerFlag));
+    }
+
+    #[test]
+    fn test_trade_archive_validates_discarded_duplicates_and_normalizes_flags() {
+        let kept = validate_trades(&[trade(1, 1), trade(1, 1), trade(2, 2)], false).unwrap();
+        assert_eq!(kept.len(), 2);
+        assert!(parse_buyer_maker(" TRUE ").unwrap());
+    }
 }

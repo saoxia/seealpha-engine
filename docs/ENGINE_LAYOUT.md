@@ -1,6 +1,6 @@
 # Engine 领域目录布局（2026-11-20）
 
-当前代码在 `crates/`。本页保留迁出前的 Python 目录对照。运行结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。HTTP v2 契约文件没有改动。实盘签名下单不再执行。
+当前代码在 `crates/`。本页保留迁出前的 Python 目录对照。运行结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。HTTP v2 契约文件没有改动。行情门禁、滚动合成、删除快照和特征预热在 `crates/seealpha-feed`。旧 `tests/feed` 与 `tests/pipeline` 的对照见 [TEST_MAP_FEED_PIPELINE.md](TEST_MAP_FEED_PIPELINE.md)。
 
 本次为第一阶段代码组织重构，保持对外 HTTP v2 契约、NautilusTrader 版本、SQLite/Parquet 数据目录和订单幂等语义不变。
 
