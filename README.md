@@ -1,6 +1,6 @@
 # SeeAlpha Engine
 
-SeeAlpha 的独立量化引擎。进程是 Rust 二进制 `seealpha-engine`。Python 只保留策略包和加载它们的宿主。
+SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。迁移期间已恢复旧 Python Engine 作为**独立、显式启用的兼容运行时**；Python 策略宿主仍由 Rust Engine 单独调用。
 
 Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。`core/engine_contracts.py` 与 `core/trading_contracts.py` 必须与 [saoxia/SeeAlpha](https://github.com/saoxia/SeeAlpha) 逐字节一致。
 
@@ -13,6 +13,12 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 - `docs/ARCHITECTURE.md`：运行路径和已退役的实盘行为。
 
 行情读取不会启动采集器。模拟会话把公开行情送进流水线，再交给策略宿主；差额记在 `venue=paper`。实盘下单、连接登记和账户快照返回 409，不保存密钥，也不调用带签名的交易所接口。
+
+## 尚未迁移完成的 Python 功能
+
+从 [`f18e48e`](https://github.com/saoxia/seealpha-engine/tree/f18e48e995becc0662df288058be6059c91c45b0) 恢复了被提前删除的旧 Python 引擎、测试及锁定依赖。**Rust 默认容器不包含旧 Python Engine**；如需使用旧能力，单独构建 `docker/engine-legacy.Dockerfile` 并使用独立端口、数据卷和状态目录。不要把两个运行时连接到同一可写账本或采集任务。
+
+恢复步骤、风险隔离、启动方式及逐功能替换标准见 [Python Engine 恢复与迁移规则](docs/LEGACY_PYTHON_RECOVERY.md)。完整 Rust 功能等价尚未通过验收，不应删除仍承担旧功能的 Python 模块。
 
 ## 本地开发
 

@@ -1,12 +1,23 @@
 [project]
 name = "seealpha-engine"
 version = "0.1.0"
-description = "Standalone SeeAlpha quantitative engine. The process is Rust; Python hosts strategy packages."
-requires-python = ">=3.11"
-dependencies = []
+description = "Standalone SeeAlpha quantitative data, strategy and trading engine"
+requires-python = ">=3.13,<3.16"
+dependencies = [
+    "nautilus-trader==2.0.0rc9",
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+    "pyarrow>=26.0.0",
+    "websockets>=17.3",
+    "fastapi==0.164.0",
+    "pydantic>=2.14,<3",
+    "uvicorn==0.54.0",
+]
 
 [dependency-groups]
 dev = [
+    "httpx==0.28.1",
+    "pytest>=9.1.1",
     "ruff>=0.17.2",
 ]
 
@@ -14,10 +25,17 @@ dev = [
 package = false
 default-groups = ["dev"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+python_files = ["*_test.py"]
+pythonpath = ["."]
+cache_dir = ".local/cache/pytest"
+
 [tool.ruff]
 cache-dir = ".local/cache/ruff"
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 extend-exclude = [
-    ".local", ".venv", "data", "logs", "reports", "target",
+    ".local", ".venv", "data", "logs", "reports",
 ]
