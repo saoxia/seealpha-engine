@@ -62,6 +62,25 @@ been implemented by this reorganization.
    guessing a production host. Connection and account-snapshot routes still do
    not retain secrets.
 
+## Python runtime boundary (Target A)
+
+The **default Rust Engine container** must contain no Python trading, market
+data, accounting, research or API implementation. Python is permitted only
+inside `python/strategy_host/` and user-authored `packages/`, which are called
+as a restricted subprocess from the Rust strategy layer. The native container
+must not copy `engine/` (the isolated Legacy Engine) or `core/*.py` (Python
+contract/test definitions; API contract is implemented by Rust HTTP).
+
+The native Docker CI enumerates every `/app/**/*.py` source file and refuses
+anything outside the two strategy-related prefixes, and separately runs the
+Python strategy host entrypoint. This is **deployment dependency isolation**,
+not proof that Rust has replaced all Legacy Engine capabilities.
+
+The opt-in `docker/engine-legacy.Dockerfile` remains available in isolation
+until the functional, historical, fault, Platform, and risk/execution parity
+gates in Issue #86 are satisfied. Never run legacy and native engines against
+the same writable state/Catalog. Live exchange writes remain fail-closed.
+
 ## Python that remains
 
 `python/strategy_host/host.py` is the glue. Strategy packages such as
