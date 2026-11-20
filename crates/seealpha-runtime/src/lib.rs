@@ -166,11 +166,11 @@ impl Runtime {
     #[allow(clippy::too_many_arguments)]
     pub fn finish_order_reconciliation(
         &self, tenant:&str, account:&str, request:&str, worker:&str,
-        now_ms:i64, outcome:&str, error_code:Option<&str>,
+        expected_attempts:i64, now_ms:i64, outcome:&str, error_code:Option<&str>,
     ) -> Result<(),RuntimeError> {
         self.require_active(tenant)?;
         self.ledger.finish_order_reconciliation(
-            tenant,account,request,worker,now_ms,outcome,error_code,
+            tenant,account,request,worker,expected_attempts,now_ms,outcome,error_code,
         ).map_err(map_ledger)
     }
 
