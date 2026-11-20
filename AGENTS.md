@@ -17,15 +17,13 @@
 
 ## 必须执行的开发工作流
 
-1. 检查当前分支/工作区与 `engine/README.md`、相关模块说明，确认变更归属。
-2. 最小化代码修改，保留已使用的入口。清理冗余前追踪真正调用路径。
-3. 同步受影响测试、文档及独立构建/CI。
-4. 检查 diff，不引入 `api/`、`web/` 依赖或无关重构。
-5. 运行 `uv run ruff check .` 和受影响的 `uv run pytest -q ...`；跨模块或交易/数据/契约更改扩展至完整 Engine 测试，Rust 相关改动运行 `cargo test --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml`。
+1. 检查当前分支/工作区与 `README.md`、`docs/ARCHITECTURE.md`，确认变更归属。
+2. 最小化代码修改。策略包契约和 HTTP v2 是对外入口。
+3. 同步受影响测试、文档及 Docker/CI。
+4. 检查 diff，不引入 Platform 的 `api/`、`web/` 或用户库。
+5. 运行 `cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked` 和 `python3 -m unittest discover -s tests -t . -p '*_test.py' -v`。发布构建用 `cargo build --workspace --locked --release`。
 6. 报告已做、未做及失败项，不把未执行的线上/长期验证描述为通过。
 
-阶段一完成标准：独立仓库可从零安装、构建、启动与运行自动化测试；原仓库无需改动。阶段二及后续切换/删除旧目录必须单独授权。
+## 领域目录
 
-## 领域目录 (2026-11-20)
-
-主实现按 `engine/market_data/`（control、collection、calculation、repair、storage、access、quality）、`engine/backtesting/`、`engine/portfolio/`、`engine/trading/`、`engine/research/`、`engine/api/` 和 `engine/infrastructure/` 分类。`engine/feed/`、`engine/pipeline/` 的少量旧 CLI 文件仅用于命令兼容，不得再增加新的业务实现。迁移须保持持久化数据路径、Engine HTTP 契约、账户订单安全语义及模拟/回放隔离不变。
+运行时代码在 `crates/`。`python/strategy_host/` 只负责加载策略包。`packages/` 是示例策略。`core/engine_contracts.py` 与 `core/trading_contracts.py` 仍是 v2 契约，必须与 Platform 逐字节一致。实盘签名下单已关闭：对应 HTTP 路由返回 409，不保存密钥。模拟成交只写入 `venue=paper`。

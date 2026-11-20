@@ -1,122 +1,62 @@
 # SeeAlpha Engine
 
-SeeAlpha 的独立量化数据、行情、回测、模拟与交易执行内核，基于 NautilusTrader。
+SeeAlpha 的独立量化引擎。进程是 Rust 二进制 `seealpha-engine`。Python 只保留策略包和加载它们的宿主。
 
-> **阶段一（隔离迁移）**：本仓库从 [saoxia/SeeAlpha](https://github.com/saoxia/SeeAlpha) 的 `02ba14d58c700d472584ab17494484a024a04ba1` 快照迁入 Engine 相关代码。原项目当前仍保留自己的 `engine/`；**原 Platform 尚未切换到本仓库**，不要把这次迁入视为生产部署授权。
+Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。`core/engine_contracts.py` 与 `core/trading_contracts.py` 必须与 [saoxia/SeeAlpha](https://github.com/saoxia/SeeAlpha) 逐字节一致。
 
-## 职责与目录
+## 目录
 
-- `engine/connectors/`：交易所协议和 NautilusTrader 适配器。
-- `engine/market_data/`：按持久化配置独立采集、计算、历史核验补齐、存储和统一访问。
-- `engine/strategies/`：策略包检查与加载。
-- `engine/backtesting/`：回测与离线模拟。
-- `engine/portfolio/`：组合目标、篮子管理与净额协调。
-- `engine/trading/`：账户/订单运行事实、幂等和恢复。
-- `engine/research/`：研究候选、研究证据和只读快照。
-- `engine/api/`、`engine/infrastructure/`：HTTP 边界、任务协调及进程基础设施。
-- `core/`：目前仍需要的轻量共享领域模型和 Engine HTTP 契约。
-- `packages/`：仅用于演示和离线测试的策略包示例。
-- `tests/`：从原仓库迁入的 Engine 相关测试；不包含 Platform 源码。
+- `crates/`：Cargo workspace。行情、流水线、组合净额、账本、策略宿主、研究授权和 HTTP 各自一箱。
+- `python/strategy_host/`：一次请求一个进程，加载策略包并收回 `publish` 的目标持仓。
+- `packages/`：示例策略。`ema_crossover` 只公布目标，不提交订单。
+- `core/`：与 Platform 共享的契约模块。
+- `docs/ARCHITECTURE.md`：运行路径和已退役的实盘行为。
 
-本仓库不含 SeeAlpha 的 `api/`、`web/`、业务数据库迁移或用户身份数据。Platform 应通过受认证、版本化 HTTP 接口调用独立部署的 Engine，不应导入本仓库的内部 Python 模块。
+行情读取不会启动采集器。模拟会话把公开行情送进流水线，再交给策略宿主；差额记在 `venue=paper`。实盘下单、连接登记和账户快照返回 409，不保存密钥，也不调用带签名的交易所接口。
 
-## 行情管理与统一访问（架构目标）
-
-行情的运行由**持久化行情配置**决定，不随回测或策略订阅启停；按永续合约现有思路拆分**实时获取、自动计算、历史扫描/补齐**三个可独立恢复的维护任务。现已取消策略订阅对实时采集启停的隐式覆盖，并为回测增加统一历史数据读取入口；交易估值等其他数据路径仍待逐步迁移。
-
-目录归属见 [Engine 代码布局](docs/ENGINE_LAYOUT.md)，运行不变量见 [统一行情数据架构设计决策](docs/MARKET_DATA_ARCHITECTURE.md)。
-
-## RC9 原生能力适配
-
-交易事件兼容、Arrow 流式回测、原生 Funding/Greeks/L2 数据、离线执行研究、
-安全边界与验收范围见 [RC9 原生能力记录](docs/RC9_NATIVE_CAPABILITIES.md)。
-本次不包含实盘启用或 Platform HTTP v2 契约变更。
-
-## 本地开发与测试
-
-从仓库根目录执行：
+## 本地开发
 
 ```bash
-uv sync --locked
-uv run ruff check .
-uv run pytest -q tests/engine tests/connectors tests/feed tests/pipeline tests/core
-cargo test --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --workspace --locked --release
+python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
 
-部分转换/数据管道测试需要先构建 Rust 转换器：
-
-```bash
-cargo build --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
-```
-
-本仓库已独立命名为 `seealpha-engine`，运行依赖只声明 NautilusTrader、FastAPI/Uvicorn、Pydantic、WebSocket 和数据处理库；开发依赖仅包括 HTTPX、pytest、Ruff。原 Platform 的 `api`/`research` 依赖组不再纳入 Engine 项目。当前锁文件保留部分先前已解析但可能未使用的包记录，等待重新生成锁文件时进一步清理；实际运行安装以根依赖图为准。
+热路径对照见 [docs/BENCHMARKS.md](docs/BENCHMARKS.md)。
 
 ## 启动
 
 ```bash
-uv run python -m engine
+cargo run --locked --release -p seealpha-engine
 ```
 
-开发默认只监听 `127.0.0.1:8766`。环境变量参见 [engine/README.md](engine/README.md)。本机独立启动默认 `ENGINE_AUTH_MODE=none`，不需要令牌，仅允许监听回环地址。Platform 托管的容器必须显式配置 `ENGINE_AUTH_MODE=token`，并由 Platform 生成、保存及注入专属的 `ENGINE_TOKEN`（至少 32 字符）。无效模式、缺失令牌或试图将无鉴权服务绑定到外部地址都会拒绝启动。所有实盘、账户连接、状态卷数据迁移都需要单独批准。
+开发默认监听 `127.0.0.1:8766`，`ENGINE_AUTH_MODE=none` 时只能绑定回环地址。Platform 托管容器使用 `ENGINE_AUTH_MODE=token` 和至少 32 字符的 `ENGINE_TOKEN`。状态库是 `$ENGINE_STATE/book.sqlite`（默认 `.local/state/engine/book.sqlite`）。
 
-也可从本仓库根目录构建容器：
+公开行情不需要交易所密钥。用 Binance 现货或 USD-M 的公开 kline、成交和深度跑示例策略：
+
+```bash
+ENGINE_STATE=/tmp/seealpha-smoke ENGINE_AUTH_MODE=none \
+  cargo run --locked --release -p seealpha-engine -- smoke
+```
+
+该命令只读公开接口，纸面记账，`exchange_orders` 为 0。
+
+## 镜像
 
 ```bash
 docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 ```
 
-此镜像仅包含 Engine、轻量契约、示例包、锁定依赖和 Rust 转换器，不包含 SeeAlpha Platform。按租户创建/停止容器的控制面仍在原 SeeAlpha 项目。
+镜像包含引擎二进制、策略宿主、示例包和两份契约文件，不包含 Platform，也不包含已退役的 Python 引擎。
 
-## CI 与 Docker 构建策略
+## HTTP
 
-每次 PR 和 `main` 分支提交仍执行锁定依赖安装、Python Ruff/Engine 测试、Rust Release 构建和 Rust 测试。CI 的 `docker-scope` 检查很轻量，**不会在大部分普通 Python 代码修改时构建 Docker**。
+未带令牌访问受保护路由返回 401，契约版本不是 `2` 返回 426，固定租户引擎拒绝其他租户返回 403。主要纸面入口是 `POST /tenants/{tenant_id}/accounts/{account_id}/paper/sessions`（开发租户可设 `use_sample: true`）。`GET .../backtests/latest` 在没有 Nautilus 目录回测时返回 404，正文含 `还没有回测`，供 Platform 客户端把它当成“尚无结果”。
 
-下列情况会额外执行完整 Docker 构建、镜像源码范围检查、匿名令牌拒绝及租户权限 HTTP 冒烟测试：
+研究签名密钥与 `ENGINE_TOKEN` 必须不同。设置 `ENGINE_RESEARCH_SIGNING_KEY` 后只挂载 `GET /research/v1/datasets`，并校验研究授权。
 
-- 修改 `docker/`、`.dockerignore`、`pyproject.toml`、`uv.lock`、`.python-version`、`rust-toolchain.toml`、`engine/market_data/repair/rust_converter/` 或 Engine CI 工作流；
-- 推送 `v*` 版本标签（用于发布前验收，不自动推送镜像到镜像仓库）；
-- 在 GitHub Actions 中手动运行 **Engine standalone CI → Run workflow**，需要复查完整镜像时使用。
+## License
 
-如果提交只改 `engine/` 下的普通 Python 代码、`core/`、测试或文档，Docker Job 将跳过，但 Python/Rust 回归仍执行。此优化只省去重复构建，不表示新代码自动具有实盘资格。正式发布必须使用对应提交的完整 Docker 检查结果，并完成 Platform 兼容性及升级/回滚验证。
-
-
-### Rust 历史成交归档转换
-
-Binance 日成交 ZIP 的首次转换及“已有 Tick、需要从原始成交补充 Bar”的路径
-统一使用 Rust `nautilus-data-converter`。Docker 和 CI 已构建该二进制；本地
-开发须先执行：
-
-```bash
-cargo build --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
-```
-
-该转换器缺失或被 `NAUTILUS_RUST_CONVERTER=off` 显式禁用时会报错，
-不会再回退到旧 Python CSV 转换实现。已有低周期 Bar 之间的增量聚合、
-Catalog 发布协调和历史补齐调度仍在 Python 中。Binance 实时 Rust 采集与
-计算暂未完成正式切换，不能据此认为整个 Engine 已运行在 Rust 中。
-
-## HTTP 契约与边界
-
-当前主契约版本：`2`，请求与成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。变更交易命令、错误语义或请求/响应字段前须协调 Platform 并跑跨仓库兼容测试，不能擅自降级或隐式切换到进程内执行。
-
-交易风险检查、订单幂等、未知结果不重发、状态恢复、租户数据隔离、回放数据不准用于新风险决策等约束必须保留。任何自动化测试均不可使用真实凭据、发真实订单或修改生产状态卷。
-
-## Engine Research API（默认关闭）
-
-已添加独立的 `/research/v1/*` 研究服务，支持经任务级授权发现 Catalog 数据、生成有界只读 Parquet 快照，并将已授权开发策略的回测请求映射到原有异步任务队列。
-
-仅在固定**开发租户**的 Engine 环境中设置独立 `ENGINE_RESEARCH_SIGNING_KEY` 才启用；与管理 API 的 `ENGINE_TOKEN` 完全隔离。Platform 颁发授权、Harness 安全工具网关与跨仓库联调尚未实现。参见 [Research API 说明](docs/RESEARCH_API.md)。不应给 Agent Shell 签名密钥或研究 Bearer 凭据。
-
-## 当前明确未验收
-
-跨仓库独立发布、双仓库完整 HTTP 回归、真实交易账户、长时间行情运行、生产状态卷备份恢复与正式切换尚未完成。此次提交只建立新仓库的独立源码、构建和测试基线。详见 [迁移边界](docs/STANDALONE_MIGRATION.md) 和 [Platform 跨仓库接入预演](docs/PLATFORM_INTEGRATION.md)。
-
-## License and community / 许可证与社区
-
-本仓库的项目自有核心代码拟采用 [Apache License 2.0](LICENSE)，允许按许可证免费使用、修改、分发和商业经营；官方托管、私有策略及其他服务另行约定。示例策略包可能采用目录级 MIT 许可证，详见相应 LICENSE。
-
-详见 [贡献指南](CONTRIBUTING.md)、[CLA 草案（尚未生效）](CLA.md)、[自愿商业登记](COMMERCIAL_USE.md)、[品牌政策](TRADEMARKS.md)、[漏洞报告](SECURITY.md) 和 [第三方许可说明](THIRD_PARTY_NOTICES.md)。商业登记完全自愿。
-
-## Rust 原生迁移（独立 Draft PR）
-
-计划在保留当前领域目录和 HTTP/数据契约的前提下，以 Rust 替换全部 Engine Python 运行实现；仅 Python 编写的策略使用可选隔离 Python Worker。当前 Rust 质量校验仅为未接入执行路径的候选实现，**不代表全量迁移或生产验收完成**。参见 [Rust Native Migration](docs/RUST_NATIVE_MIGRATION.md)。迁移 PR 未验收之前不合并 main、不切换实盘。
+项目自有代码采用 [Apache License 2.0](LICENSE)。示例策略包可能在目录内另有 MIT 许可证。贡献、安全报告和第三方声明见仓库中的对应文件。

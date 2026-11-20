@@ -1,0 +1,17 @@
+[package]
+name = "seealpha-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+seealpha-ledger = { path = "../seealpha-ledger" }
+seealpha-market = { path = "../seealpha-market" }
+seealpha-portfolio = { path = "../seealpha-portfolio" }
+seealpha-strategy = { path = "../seealpha-strategy" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+rust_decimal = "1"
+thiserror = "2"

@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/quality",
+    "crates/data-converter",
+    "crates/binance-source",
+    "crates/seealpha-market",
+    "crates/seealpha-portfolio",
+    "crates/seealpha-ledger",
+    "crates/seealpha-research",
+    "crates/seealpha-strategy",
+    "crates/seealpha-runtime",
+    "crates/seealpha-http",
+    "crates/seealpha-engine",
+    "crates/seealpha-bench",
+]
+
+[profile.release]
+lto = "thin"
+codegen-units = 16

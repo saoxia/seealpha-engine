@@ -1,0 +1,17 @@
+[package]
+name = "seealpha-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[[bin]]
+name = "seealpha-bench"
+path = "src/main.rs"
+
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+rust_decimal = "1"
+seealpha-market = { path = "../seealpha-market" }
+seealpha-quality = { path = "../quality" }
+serde_json = "1"

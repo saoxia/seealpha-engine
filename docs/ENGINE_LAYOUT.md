@@ -1,5 +1,7 @@
 # Engine 领域目录布局（2026-11-20）
 
+当前代码在 `crates/`。本页保留迁出前的 Python 目录对照。运行结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。HTTP v2 契约文件没有改动。实盘签名下单不再执行。
+
 本次为第一阶段代码组织重构，保持对外 HTTP v2 契约、NautilusTrader 版本、SQLite/Parquet 数据目录和订单幂等语义不变。
 
 | 路径 | 所有权与职责 |

@@ -1,22 +1,20 @@
-# Build from the repository root: docker build -f docker/engine.Dockerfile -t seealpha-engine:latest .
-FROM rust:1.100-slim AS converter
-WORKDIR /build
-COPY engine/market_data/repair/rust_converter/ ./rust_converter/
-RUN cargo build --locked --release --manifest-path rust_converter/Cargo.toml
+# Build from the repository root:
+#   docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
+FROM rust:1.100-slim AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --locked --release -p seealpha-engine
 
 FROM python:3.15-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    ENGINE_PROJECT=/app ENGINE_PYTHON=python \
+    ENGINE_HOST=127.0.0.1 ENGINE_PORT=8766 \
+    ENGINE_STATE=/app/.local/state/engine
 WORKDIR /app
-RUN python -m pip install --no-cache-dir uv==0.13.9
-COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-default-groups --no-install-project
-# Only Engine-owned code and the shared market/HTTP contracts are shipped.
-# No API, database migration, web frontend or admin source in the image.
-COPY core/ ./core/
-COPY engine/ ./engine/
-COPY nautilus_support.py ./
-COPY packages/ ./packages/
-COPY --from=converter /build/rust_converter/target/release/nautilus-data-converter /app/engine/market_data/repair/rust_converter/target/release/nautilus-data-converter
-ENV PATH="/app/.venv/bin:$PATH"
+COPY --from=build /src/target/release/seealpha-engine /usr/local/bin/seealpha-engine
+COPY python/strategy_host ./python/strategy_host
+COPY packages ./packages
+COPY core/engine_contracts.py core/trading_contracts.py ./core/
 EXPOSE 8766
-CMD ["python", "-m", "engine"]
+CMD ["seealpha-engine"]

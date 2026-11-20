@@ -1,8 +1,12 @@
-# SeeAlpha Engine Rust-native migration (single draft PR)
+# SeeAlpha Engine Rust-native migration
+
+## Status
+
+The owner authorized the directory move and the cutover. The resident process is `seealpha-engine`. Python is limited to `python/strategy_host/` and strategy packages under `packages/`. Live signed trading is refused. Details and the current crate map are in [ARCHITECTURE.md](ARCHITECTURE.md). The notes below record the pre-cutover plan and the safety gates that the paper ledger, HTTP v2 checks, and strategy host are still expected to meet.
 
 ## Decision
 
-This is a long-lived, **single draft PR** to replace the Python implementation of SeeAlpha Engine with Rust. **The only intentionally retained Python runtime is the optional process for Python-authored strategies.** No partial migration commit may be merged to main. Do not replace or force-push main; the final merge must be explicitly approved after all acceptance gates pass.
+The Python engine implementation has been removed from this repository. **The only intentionally retained Python runtime is the process that loads Python-authored strategies.**
 
 Maintain the existing repository layout and ownership boundaries, including engine/market_data/sources/binance_perpetual, binance_spot, binance_options and binance_shared. Rust crates can live inside the same domain directories, not in a new parallel business tree. Existing Python implementation remains authoritative until Rust has passed parity and integration tests.
 
