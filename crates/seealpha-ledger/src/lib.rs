@@ -2,6 +2,7 @@
 mod records;
 mod parity;
 mod funding;
+mod verified_fills;
 pub use records::CatalogBar;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
@@ -47,6 +48,16 @@ CREATE TABLE IF NOT EXISTS fills (
     fill_json TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, environment, fill_id)
+);
+CREATE TABLE IF NOT EXISTS quarantined_unverified_fills (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    fill_id TEXT NOT NULL,
+    fill_json TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    quarantined_at INTEGER NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,environment,fill_id)
 );
 CREATE TABLE IF NOT EXISTS positions (
     tenant_id TEXT NOT NULL,
