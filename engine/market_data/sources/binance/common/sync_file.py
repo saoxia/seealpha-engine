@@ -18,9 +18,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+from core.paths import PROJECT_ROOT
+
 BASE_URL = "https://data.binance.vision/"
 ALLOWED_HOST = "data.binance.vision"
-from core.paths import PROJECT_ROOT
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "binance" / "raw"
 CHUNK_SIZE = 1024 * 1024
 MAX_CHECKSUM_SIZE = 64 * 1024
