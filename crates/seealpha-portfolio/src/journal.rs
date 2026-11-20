@@ -1,6 +1,6 @@
 //! Versioned, canonical, replay-verified checkpoint serialization.
 //! The authoritative persistence transaction is provided by seealpha-ledger.
-use std::collections::{BTreeMap,BTreeSet};
+use std::collections::BTreeMap;
 use rust_decimal::Decimal;
 use serde::{Serialize,Deserialize};
 use sha2::{Digest,Sha256};
@@ -89,6 +89,9 @@ fn unwire_event(event:WireEvent)->Result<JournalEvent,BasketError>{
 }
 fn digest(raw:&[u8])->String{
     Sha256::digest(raw).iter().map(|b|format!("{b:02x}")).collect()
+}
+pub fn plan_fingerprint(plan:&Plan)->Result<String,BasketError>{
+    Ok(digest(&encode(&wire_plan(plan))?))
 }
 fn encode<T:Serialize>(v:&T)->Result<Vec<u8>,BasketError>{
     serde_json::to_vec(v).map_err(|_|BasketError::Evidence)
