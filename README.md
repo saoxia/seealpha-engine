@@ -79,6 +79,22 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 
 如果提交只改 `engine/` 下的普通 Python 代码、`core/`、测试或文档，Docker Job 将跳过，但 Python/Rust 回归仍执行。此优化只省去重复构建，不表示新代码自动具有实盘资格。正式发布必须使用对应提交的完整 Docker 检查结果，并完成 Platform 兼容性及升级/回滚验证。
 
+
+### Rust 历史成交归档转换
+
+Binance 日成交 ZIP 的首次转换及“已有 Tick、需要从原始成交补充 Bar”的路径
+统一使用 Rust `nautilus-data-converter`。Docker 和 CI 已构建该二进制；本地
+开发须先执行：
+
+```bash
+cargo build --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
+```
+
+该转换器缺失或被 `NAUTILUS_RUST_CONVERTER=off` 显式禁用时会报错，
+不会再回退到旧 Python CSV 转换实现。已有低周期 Bar 之间的增量聚合、
+Catalog 发布协调和历史补齐调度仍在 Python 中。Binance 实时 Rust 采集与
+计算暂未完成正式切换，不能据此认为整个 Engine 已运行在 Rust 中。
+
 ## HTTP 契约与边界
 
 当前主契约版本：`2`，请求与成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。变更交易命令、错误语义或请求/响应字段前须协调 Platform 并跑跨仓库兼容测试，不能擅自降级或隐式切换到进程内执行。
