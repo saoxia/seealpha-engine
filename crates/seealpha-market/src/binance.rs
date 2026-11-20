@@ -43,6 +43,16 @@ impl BinanceSource {
             Product::FuturesUm => "https://fapi.binance.com/fapi/v1/klines",
         };
         let mut result = Vec::new();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+            .ok_or(MarketError::Time)?;
+        // A kline with a future exchange close time is still forming,
+        // even if Binance returns a syntactically complete OHLCV tuple.
+        if end_ms > now_ms {
+            return Err(MarketError::Time);
+        }
         let mut cursor = start_ms;
         while cursor < end_ms {
             let take = ((end_ms - cursor) / step).min(1000);
