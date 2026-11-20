@@ -249,10 +249,9 @@ impl Ledger {
                 |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))
             ).optional().map_err(sqlite)?;
             if let Some(value)=old {
-                let incoming=(&bar.open,&bar.high,&bar.low,&bar.close,&bar.volume);
-                if value.0!=*incoming.0 || value.1!=*incoming.1
-                    || value.2!=*incoming.2 || value.3!=*incoming.3
-                    || value.4!=*incoming.4 {
+                if value.0.as_str()!=bar.open.as_str() || value.1.as_str()!=bar.high.as_str()
+                    || value.2.as_str()!=bar.low.as_str() || value.3.as_str()!=bar.close.as_str()
+                    || value.4.as_str()!=bar.volume.as_str() {
                     return Err(LedgerError::Conflict("历史 K 线与已保存证据冲突，未写入。".into()));
                 }
                 continue;
@@ -262,7 +261,7 @@ impl Ledger {
                  (tenant_id,product,symbol,interval,open_time_ms,open,high,low,close,volume)
                  VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
                 params![tenant_id,product,symbol,interval,bar.open_time_ms,
-                    bar.open,bar.high,bar.low,bar.close,bar.volume]
+                    bar.open.as_str(),bar.high.as_str(),bar.low.as_str(),bar.close.as_str(),bar.volume.as_str()]
             ).map_err(sqlite)?;
         }
         tx.commit().map_err(sqlite)?;
