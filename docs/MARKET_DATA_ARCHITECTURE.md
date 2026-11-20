@@ -21,10 +21,10 @@
 
 ### 本次 Binance 数据源实现迁移
 
-- `sources/binance/perpetual/`：独立采集、计算、历史核验/补齐入口，以及 USD-M 专有资金费率采集与历史观测。
-- `sources/binance/spot/`：独立采集、计算、历史核验/补齐入口。
-- `sources/binance/options/`：期权实时采集实现与历史报价、成交、盘口证据维护实现。
-- `sources/binance/shared/`：市场间复用的共享 WebSocket 批处理、逐笔持久化、计算和历史修复算法；它不负责决定某市场是否启动。各产品入口验证产品身份，复用公共核心以免复制错误敏感的处理逻辑。
+- `sources/binance_perpetual/`：独立采集、计算、历史核验/补齐入口，以及 USD-M 专有资金费率采集与历史观测。
+- `sources/binance_spot/`：独立采集、计算、历史核验/补齐入口。
+- `sources/binance_options/`：期权实时采集实现与历史报价、成交、盘口证据维护实现。
+- `sources/binance_shared/`：市场间复用的共享 WebSocket 批处理、逐笔持久化、计算和历史修复算法；它不负责决定某市场是否启动。各产品入口验证产品身份，复用公共核心以免复制错误敏感的处理逻辑。
 - 旧 `collection/{futures_service,pair_service,options_service,funding_service}.py`、`calculation/pair_calculation.py` 和 `repair/{pair_data,options_data,funding_data}.py` 仍作为兼容导入。旧 `python -m engine.market_data.repair.pair_data` CLI 保留并委托新实现。
 - 当前改动是**源码归属与调用入口迁移**；不是交易所网络行为重写、独立容器部署或生产运行验收。对现有存储目录、质量门禁、锁及 HTTP 契约不做更改。共享实现仍含少量产品分支，未来扩展新的 venue 时优先通过显式 source 路由而非复制核心。
 
