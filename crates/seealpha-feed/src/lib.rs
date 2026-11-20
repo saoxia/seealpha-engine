@@ -68,10 +68,29 @@ impl Gate {
     }
 }
 
+/// Evidence supplied by a trusted producer/reconciliation coordinator.
+/// The reader must not manufacture these confirmations from a received bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceProof {
+    pub latest_closed_open_ms: i64,
+    pub journal_committed_open_ms: i64,
+    pub exchange_confirmed_ms: i64,
+    pub checked_at_ms: i64,
+    pub valid_until_ms: i64,
+    pub connected: bool,
+    pub clock_healthy: bool,
+    pub overlap_verified: bool,
+    pub history_contiguous: bool,
+    pub unresolved_gaps: u32,
+    pub backlog: u32,
+}
+
 #[derive(Debug, Default)]
 pub struct Book {
     bars: BTreeMap<i64, Bar>,
     pub gate: Gate,
+    step_ms: Option<i64>,
+    proof: Option<SourceProof>,
 }
 
 impl Default for Gate {
@@ -82,11 +101,21 @@ impl Default for Gate {
 
 impl Book {
     pub fn accept_page(&mut self, page: &[Bar], step_ms: i64) -> Result<(), FeedError> {
+        // A newly received page must be reconciled and committed again before
+        // it can be exposed as verified live data, even if it is a duplicate.
+        self.gate.ready = false;
+        self.proof = None;
         if self.gate.conflict_latched {
             return Err(FeedError::Conflict);
         }
         if page.is_empty() {
             return Err(FeedError::Gap);
+        }
+        if step_ms <= 0 || self.step_ms.is_some_and(|old| old != step_ms)
+            || page.iter().any(|bar| bar.open_time_ms < 0
+                || bar.open_time_ms % step_ms != 0 || bar.volume < Decimal::ZERO) {
+            self.gate.repair_required = true;
+            return Err(FeedError::OutOfOrder);
         }
         if page.iter().any(|bar| {
             bar.high < bar.low
@@ -100,12 +129,12 @@ impl Book {
         let mut ordered = page.to_vec();
         ordered.sort_by_key(|bar| bar.open_time_ms);
         for window in ordered.windows(2) {
-            if window[1].open_time_ms - window[0].open_time_ms != step_ms {
+            if window[1].open_time_ms.checked_sub(window[0].open_time_ms) != Some(step_ms) {
                 return Err(FeedError::OutOfOrder);
             }
         }
         if let Some((&last, _)) = self.bars.iter().next_back() {
-            let expected = last + step_ms;
+            let expected = last.checked_add(step_ms).ok_or(FeedError::OutOfOrder)?;
             if ordered[0].open_time_ms > expected {
                 self.gate.ready = false;
                 self.gate.repair_required = true;
@@ -120,7 +149,7 @@ impl Book {
         }
         for bar in ordered {
             if let Some(existing) = self.bars.get(&bar.open_time_ms) {
-                if existing.close != bar.close || existing.volume != bar.volume {
+                if !same_ohlcv(existing, &bar) {
                     self.gate.conflict_latched = true;
                     self.gate.ready = false;
                     return Err(FeedError::Conflict);
@@ -132,14 +161,47 @@ impl Book {
         if let Some((&last, _)) = self.bars.iter().next_back() {
             self.gate.confirmed_ms = last;
         }
-        self.gate.ready = !self.gate.repair_required && !self.gate.conflict_latched;
+        self.gate.ready = false;
+        self.step_ms = Some(step_ms);
         Ok(())
+    }
+
+    /// Only an explicit evidence handoff can make a page READY. An empty
+    /// REST page, an accepted candle, or a WebSocket heartbeat is not proof.
+    pub fn confirm_source(&mut self, proof: SourceProof) -> Result<(), FeedError> {
+        self.gate.ready = false;
+        self.proof = None;
+        let step = self.step_ms.ok_or(FeedError::Gap)?;
+        if self.gate.conflict_latched { return Err(FeedError::Conflict); }
+        let end_exclusive = self.gate.confirmed_ms.checked_add(step)
+            .ok_or(FeedError::OutOfOrder)?;
+        if !proof.connected || !proof.clock_healthy || !proof.overlap_verified
+            || !proof.history_contiguous || proof.unresolved_gaps != 0
+            || proof.backlog != 0 || proof.latest_closed_open_ms != self.gate.confirmed_ms
+            || proof.journal_committed_open_ms < proof.latest_closed_open_ms
+            || proof.exchange_confirmed_ms < end_exclusive
+            || proof.checked_at_ms > proof.exchange_confirmed_ms
+            || proof.valid_until_ms <= proof.checked_at_ms {
+            self.gate.repair_required = true;
+            return Err(FeedError::Gap);
+        }
+        self.gate.repair_required = false;
+        self.gate.ready = true;
+        self.proof = Some(proof);
+        Ok(())
+    }
+
+    /// Verify expiry at the caller's current exchange-checked time.
+    pub fn verified_ready(&self, now_ms: i64) -> bool {
+        self.gate.ready && !self.gate.repair_required && !self.gate.conflict_latched
+            && self.proof.as_ref().is_some_and(|proof|
+                now_ms >= proof.checked_at_ms && now_ms <= proof.valid_until_ms)
     }
 
     fn conflicts(&self, bar: &Bar) -> bool {
         self.bars
             .get(&bar.open_time_ms)
-            .is_some_and(|existing| existing.close != bar.close || existing.volume != bar.volume)
+            .is_some_and(|existing| !same_ohlcv(existing, bar))
     }
 
     pub fn close_after_repair_failure(&mut self) {
@@ -162,6 +224,12 @@ impl Book {
     pub fn get(&self, open_time_ms: i64) -> Option<&Bar> {
         self.bars.get(&open_time_ms)
     }
+}
+
+fn same_ohlcv(left: &Bar, right: &Bar) -> bool {
+    left.open == right.open && left.high == right.high
+        && left.low == right.low && left.close == right.close
+        && left.volume == right.volume
 }
 
 pub fn rollup(bars: &[Bar], factor: i64) -> Vec<Bar> {
@@ -645,7 +713,66 @@ mod tests {
             .unwrap();
         btc.accept_page(&[minute(0, 1)], MINUTE_MS).unwrap();
         let _ = btc.accept_page(&[minute(2, 1)], MINUTE_MS);
-        assert!(eth.gate.ready);
+        assert!(!eth.gate.ready); // Not certified merely by ingesting bars.
         assert!(!btc.gate.ready);
     }
+
+    fn proof(last_ms: i64) -> SourceProof {
+        SourceProof {
+            latest_closed_open_ms: last_ms,
+            journal_committed_open_ms: last_ms,
+            exchange_confirmed_ms: last_ms + MINUTE_MS + 50,
+            checked_at_ms: last_ms + MINUTE_MS,
+            valid_until_ms: last_ms + MINUTE_MS + 3_000,
+            connected: true,
+            clock_healthy: true,
+            overlap_verified: true,
+            history_contiguous: true,
+            unresolved_gaps: 0,
+            backlog: 0,
+        }
+    }
+
+    #[test]
+    fn test_ready_needs_committed_reconciled_live_source_not_a_candle() {
+        let mut book = Book::default();
+        book.accept_page(&[minute(0, 5)], MINUTE_MS).unwrap();
+        assert!(!book.gate.ready);
+        assert!(!book.verified_ready(MINUTE_MS));
+        let mut incomplete = proof(0);
+        incomplete.backlog = 1;
+        assert_eq!(book.confirm_source(incomplete), Err(FeedError::Gap));
+        assert!(!book.gate.ready);
+        book.confirm_source(proof(0)).unwrap();
+        assert!(book.verified_ready(MINUTE_MS + 50));
+        assert!(!book.verified_ready(MINUTE_MS + 3_001));
+        book.accept_page(&[minute(1, 6)], MINUTE_MS).unwrap();
+        assert!(!book.verified_ready(2 * MINUTE_MS));
+        book.restart();
+        assert!(!book.gate.ready);
+    }
+
+    #[test]
+    fn test_same_close_but_different_high_is_a_conflict_and_no_ready() {
+        let mut book = Book::default();
+        book.accept_page(&[minute(0, 5)], MINUTE_MS).unwrap();
+        let mut different = minute(0, 5);
+        different.high = Decimal::from(6);
+        assert_eq!(book.accept_page(&[different], MINUTE_MS), Err(FeedError::Conflict));
+        assert!(book.gate.conflict_latched);
+        assert!(!book.gate.ready);
+    }
+
+    #[test]
+    fn test_unaligned_history_page_never_mutates_checkpoint() {
+        let mut book = Book::default();
+        assert_eq!(book.accept_page(&[minute(0, 1)], MINUTE_MS), Ok(()));
+        let checkpoint = book.gate.confirmed_ms;
+        let mut bad = minute(1, 2);
+        bad.open_time_ms += 1;
+        assert_eq!(book.accept_page(&[bad], MINUTE_MS), Err(FeedError::OutOfOrder));
+        assert_eq!(book.gate.confirmed_ms, checkpoint);
+        assert!(!book.gate.ready);
+    }
+
 }
