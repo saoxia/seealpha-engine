@@ -7,7 +7,7 @@
 use crate::{HostCommand, PackageMetadata, StrategyError, StrategyRun, inspect_archive, run_host};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -160,6 +160,7 @@ impl Drop for StagedArchive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn meta() -> PackageMetadata {
         PackageMetadata {
