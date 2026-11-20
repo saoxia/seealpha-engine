@@ -71,14 +71,14 @@ def prepare(root: Path) -> None:
     catalog.write_data(trades)
     quotes = [
         QuoteTick(
-            instrument.id, instrument.make_price("2000.00"),
-            instrument.make_price("2000.05"), instrument.make_qty("0.250"),
-            instrument.make_qty("0.375"), start_ns + 3, start_ns + 3,
+            instrument.id, instrument.make_price(Decimal("2000.00")),
+            instrument.make_price(Decimal("2000.05")), instrument.make_qty(Decimal("0.250")),
+            instrument.make_qty(Decimal("0.375")), start_ns + 3, start_ns + 3,
         ),
         QuoteTick(
-            instrument.id, instrument.make_price("2000.01"),
-            instrument.make_price("2000.06"), instrument.make_qty("0.250"),
-            instrument.make_qty("0.375"), start_ns + 4, start_ns + 4,
+            instrument.id, instrument.make_price(Decimal("2000.01")),
+            instrument.make_price(Decimal("2000.06")), instrument.make_qty(Decimal("0.250")),
+            instrument.make_qty(Decimal("0.375")), start_ns + 4, start_ns + 4,
         ),
     ]
     catalog.write_data(quotes)
@@ -92,10 +92,10 @@ def prepare(root: Path) -> None:
     depth = [
         OrderBookDepth(
             instrument.id,
-            [BookOrder(OrderSide.BUY, instrument.make_price("2000.00"),
-                       instrument.make_qty("0.250"), 0)],
-            [BookOrder(OrderSide.SELL, instrument.make_price("2000.05"),
-                       instrument.make_qty("0.375"), 0)],
+            [BookOrder(OrderSide.BUY, instrument.make_price(Decimal("2000.00")),
+                       instrument.make_qty(Decimal("0.250")), 0)],
+            [BookOrder(OrderSide.SELL, instrument.make_price(Decimal("2000.05")),
+                       instrument.make_qty(Decimal("0.375")), 0)],
             [0], [0],
             RecordFlag.F_SNAPSHOT.value | RecordFlag.F_LAST.value,
             1234, start_ns + 6, start_ns + 6,
