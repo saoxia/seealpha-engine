@@ -387,6 +387,14 @@ fn mark_from_quote(q: &Quote, position: Option<&Position>) -> Decimal {
 
 fn fill_quote(q: &Quote, policy: Policy, state: &mut Ledger,
     contracts: &BTreeMap<String, Contract>) -> Result<Vec<Fill>, String> {
+    if let Product::CashOption {expiry_ms, ..} = &contracts[&q.instrument].product {
+        if q.time_ms >= *expiry_ms {
+            if !state.settled_options.contains(&q.instrument) {
+                return Err("expired option requires verified settlement".into());
+            }
+            return Ok(Vec::new());
+        }
+    }
     state.marks.insert(q.instrument.clone(), Price {
         value: mark_from_quote(q, state.positions.get(&q.instrument)), at_ms: q.time_ms,
     });
@@ -507,7 +515,7 @@ fn check_expired(at_ms: i64, state: &Ledger,
     contracts: &BTreeMap<String, Contract>) -> Result<(), String> {
     for (id, p) in &state.positions {
         if let Product::CashOption {expiry_ms, ..} = &contracts[id].product {
-            if at_ms > *expiry_ms && !p.qty.is_zero() {
+            if at_ms >= *expiry_ms && !p.qty.is_zero() {
                 return Err(format!("missing verified expiry settlement for {id}"));
             }
         }
@@ -553,7 +561,9 @@ pub fn replay<S: Strategy>(contracts: &[Contract], events: &[Event],
     let mut curve = Vec::with_capacity(events.len());
     for (_, event) in ordered {
         let now = event.time_ms();
-        check_expired(now, &state, &registry)?;
+        if !matches!(event, Event::OptionSettlement(_)) {
+            check_expired(now, &state, &registry)?;
+        }
         match event {
             Event::Quote(q) => {
                 let fills = fill_quote(q, policy, &mut state, &registry)?;
