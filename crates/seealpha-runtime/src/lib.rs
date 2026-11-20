@@ -204,6 +204,18 @@ impl Runtime {
                 "策略包入口与下发记录不一致。".into(),
             ));
         }
+        // Integration admission: authenticate the immutable package envelope before
+        // invoking the only retained Python execution boundary.
+        seealpha_strategy::authorize_issued(
+            seealpha_strategy::IssuedStrategy {
+                tenant_id, account_id, issuance_id, grant_purpose,
+                code_key, version, entry_point, package_hash,
+            },
+            seealpha_strategy::AccountScope {
+                tenant_id, account_id, purpose: &tenant.purpose,
+            },
+            &metadata,
+        ).map_err(map_strategy)?;
         let path = write_archive(archive)?;
         let prepared = seealpha_strategy::run_host(&HostCommand {
             python: &self.python,
