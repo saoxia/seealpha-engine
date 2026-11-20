@@ -130,7 +130,7 @@ pub(crate) fn candidate_files(
     files.sort();
     Ok(files)
 }
-fn get_ts_for_column(batch:&RecordBatch,name:&str,row:usize)
+pub(crate) fn get_ts_for_column(batch:&RecordBatch,name:&str,row:usize)
     ->Result<i64,CatalogError>{
     let col=batch.column_by_name(name)
         .ok_or_else(||CatalogError::Invalid("Parquet 记录缺少时间字段。".into()))?;
@@ -161,7 +161,7 @@ fn get_decimal(batch:&RecordBatch,name:&str,row:usize)->Result<Decimal,CatalogEr
     Decimal::try_from_i128_with_scale(arr.value(row),scale)
         .map_err(|_|CatalogError::Invalid("Decimal128 精度超出 Rust Decimal 范围。".into()))
 }
-fn row_value(array:&dyn Array,i:usize)->Result<Value,CatalogError>{
+pub(crate) fn row_value(array:&dyn Array,i:usize)->Result<Value,CatalogError>{
     nested_row_value(array,i,0)
 }
 fn nested_row_value(array:&dyn Array,i:usize,depth:usize)->Result<Value,CatalogError>{
