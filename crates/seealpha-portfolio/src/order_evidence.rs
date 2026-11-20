@@ -109,6 +109,18 @@ pub fn reconcile_order_evidence(
         terminal.insert(row.leg.clone(),row.status==VenueOrderStatus::Filled);
         if row.status!=VenueOrderStatus::Filled { issue=Some("pending, unknown or failed venue order"); }
     }
+    // A partially completed multi-leg phase is not an excuse to skip the
+    // authoritative account check. The sum of independently witnessed fills
+    // must already match the account snapshot even if another leg is unknown.
+    let mut observed_from_fills = checkpoint.positions.clone();
+    for (leg, filled) in &checkpoint.fills {
+        let slot = observed_from_fills.get_mut(leg).ok_or(BasketError::Evidence)?;
+        *slot = slot.checked_add(*filled).ok_or(BasketError::Overflow)?;
+    }
+    if &observed_from_fills != positions {
+        checkpoint.freeze("authoritative account positions disagree with cumulative fills")?;
+        return Ok(checkpoint);
+    }
     if let Some(reason)=issue {
         checkpoint.freeze(reason)?;
         return Ok(checkpoint);
