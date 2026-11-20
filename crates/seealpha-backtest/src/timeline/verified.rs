@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rust_decimal::Decimal;
 
-use super::matching::Side;
+use crate::matching::Side;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptionRight { Call, Put }
@@ -265,13 +265,13 @@ fn order_valid(order: &Order, contracts: &BTreeMap<String, Contract>, now: i64,
     if order.id.is_empty() || order.quantity <= Decimal::ZERO || settled.contains(&order.instrument) {
         return false;
     }
-    if let Product::CashOption { expiry_ms, .. } = c.product {
-        if now >= expiry_ms { return false; }
+    if let Product::CashOption { expiry_ms, .. } = &c.product {
+        if now >= *expiry_ms { return false; }
     }
-    match order.kind {
+    match &order.kind {
         OrderType::Market => true,
-        OrderType::Limit(v) | OrderType::StopMarket(v) => v > Decimal::ZERO,
-        OrderType::StopLimit { stop, limit } => stop > Decimal::ZERO && limit > Decimal::ZERO,
+        OrderType::Limit(v) | OrderType::StopMarket(v) => *v > Decimal::ZERO,
+        OrderType::StopLimit { stop, limit } => *stop > Decimal::ZERO && *limit > Decimal::ZERO,
     }
 }
 fn apply_commands(commands: Vec<Command>, at_ms: i64, state: &mut Ledger,
@@ -398,7 +398,7 @@ fn fill_quote(q: &Quote, policy: Policy, state: &mut Ledger,
         let working = &state.pending[index];
         if working.order.instrument != q.instrument
             || working.eligible_after_ms >= q.time_ms
-            || matches!(working.order.kind, OrderType::StopMarket(_) | OrderType::StopLimit {..})
+            || matches!(&working.order.kind, OrderType::StopMarket(_) | OrderType::StopLimit {..})
                 && working.stop_triggered_at_ms.is_none()
             || working.stop_triggered_at_ms.is_some_and(|t| t >= q.time_ms)
         {
@@ -414,9 +414,9 @@ fn fill_quote(q: &Quote, policy: Policy, state: &mut Ledger,
         let execution_price = if side == Side::Buy {
             add(quote_price, adjustment)?
         } else { sub(quote_price, adjustment)? };
-        let limit = match working.order.kind {
-            OrderType::Limit(v) => Some(v),
-            OrderType::StopLimit {limit, ..} => Some(limit),
+        let limit = match &working.order.kind {
+            OrderType::Limit(v) => Some(*v),
+            OrderType::StopLimit {limit, ..} => Some(*limit),
             _ => None,
         };
         if execution_price <= Decimal::ZERO || limit.is_some_and(|v|
@@ -491,10 +491,10 @@ fn validate_event(event: &Event, contracts: &BTreeMap<String, Contract>,
             && q.ask_size >= Decimal::ZERO && q.bid_size >= Decimal::ZERO => {}
         Event::Trade(t) if t.price > Decimal::ZERO => {}
         Event::Mark(m) if m.price > Decimal::ZERO => {}
-        Event::Funding(f) if matches!(contracts[id].product, Product::LinearPerpetual)
+        Event::Funding(f) if matches!(&contracts[id].product, Product::LinearPerpetual)
             && f.mark_price > Decimal::ZERO && f.rate.abs() <= Decimal::ONE
             && !f.evidence_id.is_empty() && proofs.insert(format!("funding:{}",f.evidence_id)) => {}
-        Event::OptionSettlement(s) if matches!(contracts[id].product, Product::CashOption { .. })
+        Event::OptionSettlement(s) if matches!(&contracts[id].product, Product::CashOption { .. })
             && s.underlying_settlement_price >= Decimal::ZERO && !s.evidence_id.is_empty()
             && proofs.insert(format!("option:{}",s.evidence_id))
             && matches!(&contracts[id].product,Product::CashOption{expiry_ms,..} if s.time_ms == *expiry_ms) => {}
@@ -506,8 +506,8 @@ fn validate_event(event: &Event, contracts: &BTreeMap<String, Contract>,
 fn check_expired(at_ms: i64, state: &Ledger,
     contracts: &BTreeMap<String, Contract>) -> Result<(), String> {
     for (id, p) in &state.positions {
-        if let Product::CashOption {expiry_ms, ..} = contracts[id].product {
-            if at_ms > expiry_ms && !p.qty.is_zero() {
+        if let Product::CashOption {expiry_ms, ..} = &contracts[id].product {
+            if at_ms > *expiry_ms && !p.qty.is_zero() {
                 return Err(format!("missing verified expiry settlement for {id}"));
             }
         }
@@ -568,9 +568,9 @@ pub fn replay<S: Strategy>(contracts: &[Contract], events: &[Event],
                 for working in &mut state.pending {
                     if working.order.instrument != t.instrument || working.eligible_after_ms >= now
                         || working.stop_triggered_at_ms.is_some() {continue;}
-                    let stop = match working.order.kind {
-                        OrderType::StopMarket(v) => Some(v),
-                        OrderType::StopLimit { stop, .. } => Some(stop),
+                    let stop = match &working.order.kind {
+                        OrderType::StopMarket(v) => Some(*v),
+                        OrderType::StopLimit { stop, .. } => Some(*stop),
                         _ => None,
                     };
                     if stop.is_some_and(|v| if working.order.side == Side::Buy {t.price >= v}
