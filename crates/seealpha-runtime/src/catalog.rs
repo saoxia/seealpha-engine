@@ -78,6 +78,53 @@ impl Runtime{
         }))
     }
 
+    /// Joint public-data evidence view from the sole native Source journal
+    /// and the authoritative Parquet Catalog. This is an inspection gate,
+    /// not an issuer of Feed READY or venue permission.
+    pub fn inspect_source_catalog_window(
+        &self, tenant: &str, product_name: &str, symbol: &str,
+        interval: &str, start_ms: i64, end_ms: i64, limit: usize,
+    ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant)?;
+        if !matches!(product_name, "spot" | "futures_um") {
+            return Err(RuntimeError::Conflict("数据源产品尚未完成原生恢复。".into()));
+        }
+        let policy = self.ledger.policies(tenant).map_err(map_ledger)?
+            .into_iter()
+            .find(|v| v["product"] == product_name && v["symbol"] == symbol)
+            .ok_or_else(|| RuntimeError::Conflict("缺少持久化数据源授权。".into()))?;
+        let base = policy["base_level"].as_str()
+            .ok_or_else(|| RuntimeError::Conflict("数据源最小周期缺失。".into()))?;
+        let base = if base == "auto" { "1m" } else { base };
+        let source_root = crate::sources::source_root(&self.project, product_name)?;
+        let dataset = source_root.join(symbol).join(base).canonicalize()
+            .map_err(|_| RuntimeError::Conflict("原始数据 Journal 不存在。".into()))?;
+        if !dataset.starts_with(&source_root) {
+            return Err(RuntimeError::Conflict("数据源目录越界。".into()));
+        }
+        let inspection = seealpha_binance_market_data_source::store::inspect_pair_journal(
+            &dataset, symbol, base,
+        ).map_err(|e| RuntimeError::Conflict(format!("源数据 Journal 不可信：{e}")))?;
+        let catalog = self.inspect_catalog_coverage(
+            tenant, product_name, symbol, interval, start_ms, end_ms, limit,
+        )?;
+        Ok(json!({
+            "catalog": catalog,
+            "source": {
+                "last_trade_id": inspection.last_trade_id,
+                "trade_count": inspection.trade_count,
+                "unresolved_gaps": inspection.unresolved_gaps,
+                "pending_updates": inspection.pending_updates,
+                "conflicts": inspection.conflicts,
+            },
+            "journal_gap_free": inspection.unresolved_gaps == 0
+                && inspection.conflicts == 0,
+            "data_ready": false,
+            "allow_new_risk": false,
+            "reason": "仍需核验 REST/WS 衔接、已提交发布 checkpoint 和完整 Feed MarketProof。",
+        }))
+    }
+
     pub fn market_data_backend(&self)->Result<&'static str,RuntimeError>{
         Ok(if self.native_catalog()?.is_some(){"nautilus_v2_parquet"}
             else {"engine_sqlite_compat"})
