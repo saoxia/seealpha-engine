@@ -92,11 +92,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/connections",
-            post(live_disabled),
+            post(register_connection).delete(forget_connection),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/snapshots",
-            post(live_disabled),
+            post(account_snapshot),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/backtests/latest",
@@ -646,10 +646,66 @@ async fn latest_backtest(
     ))
 }
 
-async fn live_disabled() -> Result<Json<Value>, AppError> {
-    Err(AppError::conflict(
-        "实盘下单已关闭，引擎不会向交易所发送订单或保存密钥。",
+async fn register_connection(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let environment = text(&body, "environment");
+    let api_key = text(&body, "api_key");
+    let secret = text(&body, "api_secret");
+    Ok(Json(
+        state
+            .runtime
+            .register_connection(&tenant_id, &account_id, &environment, &api_key, &secret)
+            .map_err(AppError::from)?,
     ))
+}
+
+async fn forget_connection(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Query(query): Query<EnvironmentQuery>,
+) -> Result<Json<Value>, AppError> {
+    let environment = query
+        .environment
+        .ok_or_else(|| AppError::Unprocessable("账户环境无效。".into()))?;
+    Ok(Json(
+        state
+            .runtime
+            .forget_connection(&tenant_id, &account_id, &environment)
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn account_snapshot(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let environment = text(&body, "environment");
+    let api_key = text(&body, "api_key");
+    let secret = text(&body, "api_secret");
+    Ok(Json(
+        state
+            .runtime
+            .account_snapshot(
+                &tenant_id,
+                &account_id,
+                &environment,
+                &api_key,
+                &secret,
+                state.config.venue_base.as_deref(),
+            )
+            .map_err(AppError::from)?,
+    ))
+}
+
+fn text(body: &Value, field: &str) -> String {
+    body.get(field)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned()
 }
 
 async fn no_carry() -> Result<Json<Value>, AppError> {
@@ -1170,5 +1226,57 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn connection_and_snapshot_routes_do_not_echo_secrets() {
+        let app = router(state());
+        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
+        let (status, _, _) = call(
+            &app,
+            Request::builder()
+                .method("PUT")
+                .uri("/tenants/42")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"purpose":"development","status":"active"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, body) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/tenants/42/accounts/11/connections")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"environment":"production","api_key":"key-one","api_secret":"secret-one"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let rendered = body.to_string();
+        assert!(!rendered.contains("secret-one"));
+        assert!(!rendered.contains("key-one"));
+        let (status, _, body) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/tenants/42/accounts/11/snapshots")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"environment":"production","api_key":"key-one","api_secret":"secret-one"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let rendered = body.to_string();
+        assert!(!rendered.contains("secret-one"));
+        assert!(rendered.contains("交易网关未配置"));
     }
 }

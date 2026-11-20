@@ -137,6 +137,26 @@ impl Ledger {
             .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
+    pub fn upsert_connection(
+        &self,
+        tenant_id: &str,
+        account_id: &str,
+        environment: &str,
+        status: &str,
+    ) -> Result<(), LedgerError> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO connections (tenant_id, account_id, environment, status, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(tenant_id, account_id, environment) DO UPDATE SET
+                   status=excluded.status, updated_at=excluded.updated_at",
+                params![tenant_id, account_id, environment, status, now_ms()],
+            )
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        Ok(())
+    }
+
     pub fn add_event(
         &self,
         tenant_id: &str,

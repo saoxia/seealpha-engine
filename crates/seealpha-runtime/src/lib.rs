@@ -1,4 +1,5 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
+mod accounts;
 mod config;
 mod session;
 mod trading;

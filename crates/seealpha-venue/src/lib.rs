@@ -161,6 +161,13 @@ impl VenueClient {
         }
     }
 
+    /// Signed account read. The returned JSON keeps balances and positions only.
+    pub fn account_snapshot(&self, credentials: &Credentials) -> Result<Value, VenueError> {
+        check_credentials(credentials)?;
+        let value = self.signed(credentials, "GET", "/fapi/v2/account", &[])?;
+        Ok(snapshot_view(&value))
+    }
+
     fn signed(
         &self,
         credentials: &Credentials,
@@ -266,6 +273,15 @@ fn encode(value: &str) -> String {
         }
     }
     out
+}
+
+fn snapshot_view(value: &Value) -> Value {
+    json!({
+        "balances": value.get("assets").cloned().unwrap_or_else(|| json!([])),
+        "positions": value.get("positions").cloned().unwrap_or_else(|| json!([])),
+        "info": { "canTrade": value.get("canTrade").cloned().unwrap_or(Value::Bool(false)) },
+        "observed_at": value.get("updateTime").cloned().unwrap_or(Value::Null),
+    })
 }
 
 fn order_view(value: &Value, client_order_id: &str) -> Value {
