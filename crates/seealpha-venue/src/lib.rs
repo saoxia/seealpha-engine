@@ -380,7 +380,13 @@ impl VenueClient {
             .map_err(|_| VenueError::Unconfirmed)?;
         let status = response.status();
         let body = response.text().map_err(|_| VenueError::Unconfirmed)?;
-        if body.len() > 128 * 1024 {
+        // A legitimate 1000-trade Binance page can exceed 128 KiB.
+        // Keep a bounded larger allowance only for signed trade-history GETs.
+        let maximum=if method=="GET" && matches!(path,
+            "/api/v3/myTrades"|"/fapi/v1/userTrades"|"/eapi/v1/userTrades") {
+            2*1024*1024
+        }else{128*1024};
+        if body.len()>maximum {
             return Err(VenueError::Unconfirmed);
         }
         let value: Value = serde_json::from_str(&body).unwrap_or(json!({ "raw": "unparsed" }));
