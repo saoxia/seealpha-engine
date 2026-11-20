@@ -112,7 +112,7 @@ def test_collector_journal_to_strategy_view_and_disconnect_invalidates(tmp_path,
         snapshot = bridge.view(
             "prod", "desk", "issued",
             now_ns=now * 1_000_000,
-            positions={ETH: Decimal("0")},
+            positions={ETH: Decimal(0)},
             max_age_ns=300_000_000_000,
         )
         assert snapshot["markets"]["futures_um:ETHUSDT"]["price"] == "100"
@@ -125,7 +125,7 @@ def test_collector_journal_to_strategy_view_and_disconnect_invalidates(tmp_path,
             bridge.view(
                 "prod", "desk", "issued",
                 now_ns=now * 1_000_000,
-                positions={ETH: Decimal("0")},
+                positions={ETH: Decimal(0)},
                 max_age_ns=300_000_000_000,
             )
     finally:
