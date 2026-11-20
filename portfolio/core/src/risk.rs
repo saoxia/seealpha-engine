@@ -174,7 +174,8 @@ mod tests {
             product: Product::FuturesUm,
             ..spot.clone()
         };
-        let positions: BTreeMap<LegId, Decimal> = [(spot.clone(), d(1)), (perp.clone(), d(-1))].into();
+        let positions: BTreeMap<LegId, Decimal> =
+            [(spot.clone(), d(1)), (perp.clone(), d(-1))].into();
         let plan = Plan {
             targets: positions.clone(),
             phases: Vec::<Phase>::new(),
