@@ -22,6 +22,9 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions/{issuance_id}",
             delete(strategy_unsubscribe))
         .route("/market/strategy-subscriptions",get(strategy_status))
+        .route("/tenants/{tenant_id}/data/control/source/{product}/start",post(source_start))
+        .route("/tenants/{tenant_id}/data/control/source/{product}/stop",post(source_stop))
+        .route("/tenants/{tenant_id}/data/control/source/{product}",get(source_status))
         .route("/tenants/{tenant_id}/data/control/storage",post(storage))
         .route("/tenants/{tenant_id}/data/control/sync",post(data_sync))
         .route("/tenants/{tenant_id}/data/control/subscriptions",post(data_policies))
@@ -116,6 +119,21 @@ async fn strategy_status(
     Ok(Json(state.runtime.strategy_market_status(tenant).map_err(AppError::from)?))
 }
 
+async fn source_start(
+    State(state):State<AppState>,Path((tenant,product)):Path<(String,String)>,
+)->Result<Json<Value>,AppError>{
+    Ok(Json(state.runtime.start_native_source(&tenant,&product).map_err(AppError::from)?))
+}
+async fn source_stop(
+    State(state):State<AppState>,Path((tenant,product)):Path<(String,String)>,
+)->Result<Json<Value>,AppError>{
+    Ok(Json(state.runtime.stop_native_source(&tenant,&product).map_err(AppError::from)?))
+}
+async fn source_status(
+    State(state):State<AppState>,Path((tenant,product)):Path<(String,String)>,
+)->Result<Json<Value>,AppError>{
+    Ok(Json(state.runtime.native_source_status(&tenant,&product).map_err(AppError::from)?))
+}
 async fn storage(
     State(state):State<AppState>,Path(tenant):Path<String>,
 )->Result<Json<Value>,AppError>{
