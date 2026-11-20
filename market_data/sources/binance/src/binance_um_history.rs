@@ -39,7 +39,7 @@ async fn run()->Result<(),String>{
     }
     let output=PathBuf::from(option(&args,"--output-dir")?);
     let refresh=args.iter().any(|arg|arg=="--refresh");
-    let client=reqwest::Client::builder().timeout(std::time::Duration::from_secs(120))
+    let client=reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(30))
         .user_agent("SeeAlpha-Rust-Binance-History/0.1")
         .redirect(reqwest::redirect::Policy::none())
         .build().map_err(|e|e.to_string())?;
