@@ -19,7 +19,8 @@ class MarketDataHubError(ValueError):
 _SOURCE = re.compile(r"^[A-Z0-9_-]{2,40}$")
 _PRODUCT = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 _SYMBOL = re.compile(r"^[A-Z0-9_-]{2,64}$")
-_INTERVAL = re.compile(r"^[0-9]+[smhdwM]$")
+_INTERVAL = re.compile(r"^(?:[1-9][0-9]*[smhdwM]|event)$")
+_KIND = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 MAX_HISTORY_BARS = 256
 
 
@@ -35,6 +36,7 @@ class MarketStream:
     product: str
     symbol: str
     interval: str
+    kind: str = "closed_bars"
 
     def __post_init__(self):
         for value, pattern in (
@@ -42,9 +44,12 @@ class MarketStream:
             (self.product, _PRODUCT),
             (self.symbol, _SYMBOL),
             (self.interval, _INTERVAL),
+            (self.kind, _KIND),
         ):
             if not isinstance(value, str) or pattern.fullmatch(value) is None:
                 raise MarketDataHubError("市场流身份无效")
+        if self.kind == "closed_bars" and self.interval == "event":
+            raise MarketDataHubError("K线流必须声明完整周期")
 
     @property
     def label(self):
@@ -163,7 +168,10 @@ class SharedMarketData:
         Duplicate *identical* delivery is idempotent. Conflicting or older data
         fails closed and is left to the real feed's repair/evidence subsystem.
         """
-        if stream not in self._history or not isinstance(bar, ClosedBar):
+        if (
+            stream not in self._history or not isinstance(bar, ClosedBar)
+            or stream.kind != "closed_bars"
+        ):
             raise MarketDataHubError("未订阅的市场或非法闭合行情")
         history = self._history[stream]
         if history and bar.ts_ns <= history[-1].ts_ns:
@@ -189,6 +197,8 @@ class SharedMarketData:
         ):
             raise MarketDataHubError("行情决策时间或持仓证据无效")
         keys, lookback = request
+        if any(key.kind != "closed_bars" for key in keys):
+            raise MarketDataHubError("非K线流尚无历史策略视图适配器")
         markets, history, holdings, timestamps = {}, {}, {}, set()
         for key in sorted(keys):
             rows = self._history.get(key)

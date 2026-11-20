@@ -254,7 +254,7 @@ Engine 内部只读接口：`POST /tenants/{tenant_id}/data/funding`，请求体
 
 `engine.feed.subscription_hub` 定义独立于连接器、策略和交易账户的四个基础对象：
 
-- `MarketStream(source, product, symbol, interval)`：市场数据的物理身份，区别交易所、产品、标的和周期，不按策略或租户复制相同的公开行情；
+- `MarketStream(source, product, symbol, interval, kind="closed_bars")`：市场数据的物理身份，区别交易所、产品、标的、周期以及 K 线/Tick/盘口等数据类别，不按策略或租户复制相同的公开行情。Tick 可用 `kind="trade_ticks", interval="event"` 表达需求，但目前**仅验证 K 线闭合数据交付**；
 - `SharedMarketData.register(tenant_id, consumer_id, streams, lookback_bars)`：可信 Engine 运行时在验证策略发行授权及市场数据权限之后，登记每个消费者的订阅需求，重复登记幂等，不允许静默改写；
 - `requirements`：输出**去重后的上游市场集合及每个市场所需的最大历史窗口**，为后续共享采集器分配连接/缓存提供纯数据协议，不会自行新建 Binance socket、文件、数据库或后台进程；
 - `accept_closed_bar(stream, bar)` / `view(tenant_id, consumer_id, now_ns, positions, max_age_ns)`：同一市场只存一个有界历史环形缓冲，按策略订阅范围返回独立拷贝，拒绝不完整、乱序、冲突、过期、未闭合/未来和多腿时间不齐的数据。持仓由可信 Engine 注入，不能从公开行情缓存推断账户数据。移除最后一个消费者时回收本地流缓存。

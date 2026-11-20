@@ -64,7 +64,8 @@ def test_market_key_prevents_cross_venue_product_or_timeframe_aliasing():
         MarketStream("BINANCE", "futures_um", "BTCUSDT", "1m"),
         MarketStream("OTHER", "spot", "BTCUSDT", "1m"),
         MarketStream("BINANCE", "spot", "BTCUSDT", "5m"),
-    }) == 4
+        MarketStream("BINANCE", "spot", "BTCUSDT", "event", "trade_ticks"),
+    }) == 5
     hub = SharedMarketData((BTC,))
     with pytest.raises(MarketDataHubError, match="未获"):
         hub.register("tenant", "other", (ETH,), lookback_bars=1)
@@ -131,3 +132,17 @@ def test_ring_buffer_retains_only_up_to_max_bars_and_numeric_quality():
         "dev", "one", now_ns=241, positions={BTC: Decimal(1)}, max_age_ns=60,
     )
     assert [row["ts_ns"] for row in view["history"]["spot:BTCUSDT"]] == [180, 240]
+
+
+
+def test_non_bar_data_type_has_distinct_requirement_but_no_unverified_adapter():
+    ticks = MarketStream("BINANCE", "spot", "BTCUSDT", "event", "trade_ticks")
+    hub = SharedMarketData((BTC, ticks))
+    hub.register("dev", "research", (ticks,))
+    assert hub.requirements == {ticks: 1}
+    with pytest.raises(MarketDataHubError, match="非法"):
+        hub.accept_closed_bar(ticks, bar(60))
+    with pytest.raises(MarketDataHubError, match="非K线"):
+        hub.view("dev", "research", now_ns=121, positions={}, max_age_ns=60)
+    with pytest.raises(MarketDataHubError, match="周期"):
+        MarketStream("BINANCE", "spot", "BTCUSDT", "event")
