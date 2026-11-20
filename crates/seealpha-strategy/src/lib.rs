@@ -2,6 +2,7 @@
 //!
 //! The host is the only Python process. It may publish target holdings and
 //! cannot submit orders. Package bytes are checked before the process starts.
+mod decimal;
 mod host_policy;
 mod host_process;
 mod issued;
