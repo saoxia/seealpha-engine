@@ -335,6 +335,24 @@ mod tests{
         let recovered=Checkpoint::replay(p,positions,&c.events).unwrap();
         assert_eq!(recovered,c);
     }
+    #[test] fn declared_hedge_acquires_spot_before_increasing_perpetual(){
+        let s=leg(Product::Spot,"ETHUSDT");
+        let f=leg(Product::FuturesUm,"ETHUSDT");
+        let targets=vec![
+            LegTarget{member_id:"spot".into(),leg:s.clone(),signed_quantity:d(1)},
+            LegTarget{member_id:"perp".into(),leg:f.clone(),signed_quantity:d(-1)},
+        ];
+        let start=[(s.clone(),d(0)),(f.clone(),d(0))].into();
+        let e=[(s.clone(),Evidence{price:d(100),increment:d(1),
+            multiplier:d(1),timestamp_ns:10}),
+            (f.clone(),Evidence{price:d(100),increment:d(1),
+            multiplier:d(1),timestamp_ns:10})].into();
+        let plan=plan_with_constraints(&targets,&start,&e,11,5,d(200),
+            Policy::Generic,d(0),&[(s,f)],false).unwrap();
+        assert_eq!(plan.phases.len(),2);
+        assert_eq!(plan.phases[0].name,"acquire_hedge_spot");
+        assert_eq!(plan.phases[1].name,"increase_hedged_perpetual");
+    }
     #[test] fn incomplete_fill_does_not_advance(){
         let s=leg(Product::Spot,"ETHUSDT");
         let p=Plan{targets:[(s.clone(),d(1))].into(),phases:vec![Phase{name:"buy".into(),
