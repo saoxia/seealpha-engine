@@ -2,6 +2,7 @@
 //! any potential Venue side effect. This module never sends an order.
 use crate::{map_ledger, Runtime, RuntimeError};
 use rust_decimal::Decimal;
+use seealpha_ledger::{BasketAdmission, IntentStart};
 use seealpha_portfolio::{
     basket::{Evidence, LegId, Product},
     journal::{decode_checkpoint, encode_checkpoint},
@@ -11,6 +12,76 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 impl Runtime {
+    /// Register one already risk-reserved basket leg without sending an order.
+    /// The sole-leg restriction is deliberate: a multi-leg phase needs an
+    /// explicit coordinated dispatch/recovery protocol before admission.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preregister_reserved_basket_leg(
+        &self,
+        tenant: &str,
+        account: &str,
+        environment: &str,
+        basket_id: &str,
+        expected_basket_revision: &str,
+        expected_account_revision: i64,
+        request_id: &str,
+        client_order_id: &str,
+        fingerprint: &str,
+        intent: &Value,
+    ) -> Result<IntentStart, RuntimeError> {
+        self.require_active(tenant)?;
+        let stored = self.ledger.load_basket_journal(tenant, account, basket_id)
+            .map_err(map_ledger)?
+            .ok_or_else(|| RuntimeError::Conflict("篮子风控阶段不存在。".into()))?;
+        if stored.revision != expected_basket_revision {
+            return Err(RuntimeError::Conflict("篮子风控阶段版本已变化。".into()));
+        }
+        let verified = decode_checkpoint(basket_id, &stored.body_json)
+            .map_err(|_| RuntimeError::Conflict("篮子风控检查点无法验证。".into()))?;
+        if verified.revision != expected_basket_revision
+            || verified.checkpoint.request_id.as_deref() != Some(request_id)
+            || verified.checkpoint.state != seealpha_portfolio::basket::State::AwaitingConfirmation
+        {
+            return Err(RuntimeError::Conflict("篮子没有预留当前订单请求。".into()));
+        }
+        let phase = verified.checkpoint.plan.phases.get(verified.checkpoint.phase_index)
+            .ok_or_else(|| RuntimeError::Conflict("篮子没有待执行阶段。".into()))?;
+        if phase.changes.len() != 1 {
+            return Err(RuntimeError::Conflict("多腿阶段尚无独立授权的发送协议。".into()));
+        }
+        let (leg, delta) = phase.changes.iter().next()
+            .ok_or_else(|| RuntimeError::Conflict("缺少待执行的篮子腿。".into()))?;
+        let product = match leg.product {
+            Product::Spot => "spot",
+            Product::FuturesUm => "futures_um",
+            Product::Option => "options",
+        };
+        let side = if *delta > Decimal::ZERO { "BUY" } else { "SELL" };
+        let requested = intent["quantity"].as_str().and_then(|v| v.parse::<Decimal>().ok());
+        if delta.is_zero() || leg.tenant != tenant || leg.account != account
+            || intent["action"] != "NEW"
+            || intent["environment"].as_str() != Some(environment)
+            || intent["product"].as_str() != Some(product)
+            || intent["symbol"].as_str() != Some(leg.symbol.as_str())
+            || intent["side"].as_str() != Some(side)
+            || requested != Some(delta.abs())
+            || intent["client_order_id"].as_str() != Some(client_order_id)
+        {
+            return Err(RuntimeError::Conflict("订单与已预留的风控阶段不一致。".into()));
+        }
+        // The Ledger checks the account and basket CAS revisions in its own
+        // IMMEDIATE transaction alongside the insert. This Runtime read is
+        // for semantic validation, not an atomic authorization by itself.
+        self.ledger.preregister_basket_order_intent(
+            tenant, account, environment, request_id, client_order_id,
+            fingerprint, intent, BasketAdmission {
+                basket_id,
+                basket_revision: expected_basket_revision,
+                account_revision: expected_account_revision,
+            },
+        ).map_err(map_ledger)
+    }
+
     /// Read the trusted, replay-verified basket checkpoint, validate all legs,
     /// then CAS-persist AwaitingConfirmation; no VENUE permission is returned.
     pub fn reserve_basket_phase(
