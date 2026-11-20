@@ -4,6 +4,7 @@
 use crate::{Bar, MarketError, interval_ms, parse_binance_klines, validate_bars};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 const KLINES: &str = "https://eapi.binance.com/eapi/v1/klines";
@@ -52,6 +53,117 @@ pub fn parse_option_symbol(raw:&str)->Result<OptionIdentity,MarketError>{
     Ok(OptionIdentity{symbol:raw.to_owned(),underlying:underlying.to_owned(),
         expiry:items[1].to_owned(),strike,right})
 }
+
+/** Parse exchange-authored, fully closed option candles in either Binance
+ * tuple form or the legacy object form. Never synthesize zero-volume gaps. */
+pub fn parse_options_klines(value: &Value, step_ms: i64) -> Result<Vec<Bar>, MarketError> {
+    let rows = value.as_array().ok_or(MarketError::Payload)?;
+    let mut normalized = Vec::with_capacity(rows.len());
+    for row in rows {
+        if row.is_array() {
+            normalized.push(row.clone());
+        } else if row.is_object() {
+            normalized.push(json!([
+                row["openTime"], row["open"], row["high"], row["low"],
+                row["close"], row["volume"], row["closeTime"]
+            ]));
+        } else {
+            return Err(MarketError::Payload);
+        }
+    }
+    parse_binance_klines(&Value::Array(normalized), step_ms)
+}
+
+/// A recent public trade is an observation, never a synthetic fill.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OptionTrade {
+    pub symbol: String,
+    pub trade_id: i64,
+    pub timestamp_ms: i64,
+    pub price: Decimal,
+    pub quantity: Decimal,
+    pub aggressor_side: i8,
+}
+
+/// REST /trades is recent-only; even a nonempty response cannot certify a
+/// historical interval. Id gaps are retained as audit evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentOptionTrades {
+    pub observations: Vec<OptionTrade>,
+    pub suspected_id_gap: bool,
+}
+impl RecentOptionTrades {
+    pub fn historical_complete(&self) -> bool { false }
+}
+
+pub fn parse_recent_option_trades(
+    value: &Value, requested_symbol: &str,
+) -> Result<RecentOptionTrades, MarketError> {
+    parse_option_symbol(requested_symbol)?;
+    let rows = value.as_array().ok_or(MarketError::Payload)?;
+    if rows.len() > 500 { return Err(MarketError::Payload); }
+    let mut unique = BTreeMap::new();
+    for row in rows {
+        let symbol = row["symbol"].as_str().unwrap_or(requested_symbol);
+        if symbol != requested_symbol { return Err(MarketError::Symbol); }
+        let id = row.get("tradeId").or_else(|| row.get("id"))
+            .and_then(Value::as_i64).ok_or(MarketError::Payload)?;
+        let time = row["time"].as_i64().ok_or(MarketError::Time)?;
+        let side = row["side"].as_i64().ok_or(MarketError::Payload)?;
+        let price = crate::pipeline::json_decimal(&row["price"])?;
+        let quantity = crate::pipeline::json_decimal(&row["qty"])?;
+        if id < 0 || time < 0 || !matches!(side, -1 | 1)
+            || price <= Decimal::ZERO || quantity <= Decimal::ZERO {
+            return Err(MarketError::Trade);
+        }
+        let trade = OptionTrade {
+            symbol: symbol.to_owned(), trade_id: id, timestamp_ms: time,
+            price, quantity, aggressor_side: side as i8,
+        };
+        if let Some(previous) = unique.insert(id, trade.clone()) {
+            if previous != trade { return Err(MarketError::Trade); }
+        }
+    }
+    let suspected_id_gap = unique.keys().zip(unique.keys().skip(1))
+        .any(|(a, b)| a.checked_add(1) != Some(*b));
+    let mut observations: Vec<_> = unique.into_values().collect();
+    observations.sort_by_key(|trade| (trade.timestamp_ms, trade.trade_id));
+    Ok(RecentOptionTrades { observations, suspected_id_gap })
+}
+
+/// EAPI bookTicker is a best-bid/ask observation, not a recoverable historical
+/// order book or proof that a disconnected interval contained no changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OptionQuote {
+    pub symbol: String,
+    pub event_time_ms: i64,
+    pub bid_price: Decimal,
+    pub ask_price: Decimal,
+    pub bid_size: Decimal,
+    pub ask_size: Decimal,
+}
+pub fn parse_option_book_ticker(
+    value: &Value, requested_symbol: &str,
+) -> Result<OptionQuote, MarketError> {
+    parse_option_symbol(requested_symbol)?;
+    if value["s"].as_str() != Some(requested_symbol) {
+        return Err(MarketError::Symbol);
+    }
+    let time = value["T"].as_i64().ok_or(MarketError::Time)?;
+    let bid = crate::pipeline::json_decimal(&value["b"])?;
+    let ask = crate::pipeline::json_decimal(&value["a"])?;
+    let bid_size = crate::pipeline::json_decimal(&value["B"])?;
+    let ask_size = crate::pipeline::json_decimal(&value["A"])?;
+    if time < 0 || [bid, ask, bid_size, ask_size].iter().any(|v| *v < Decimal::ZERO)
+        || (bid_size > Decimal::ZERO && bid <= Decimal::ZERO)
+        || (ask_size > Decimal::ZERO && ask <= Decimal::ZERO)
+        || (bid_size > Decimal::ZERO && ask_size > Decimal::ZERO && bid > ask) {
+        return Err(MarketError::Payload);
+    }
+    Ok(OptionQuote { symbol: requested_symbol.to_owned(), event_time_ms: time,
+        bid_price: bid, ask_price: ask, bid_size, ask_size })
+}
+
 #[derive(Clone)]
 pub struct OptionsSource { client:reqwest::Client }
 impl OptionsSource {
@@ -166,4 +278,44 @@ mod tests {
             assert!(parse_option_symbol(bad).is_err(),"{bad}");
         }
     }
+
+    #[test]
+    fn recent_option_trades_are_not_historical_fills_or_complete_windows() {
+        let symbol = "BTC-271231-90000-C";
+        let data = json!([
+            {"symbol":symbol,"tradeId":12,"time":200,"price":"12.50","qty":"0.2","side":1},
+            {"symbol":symbol,"tradeId":10,"time":100,"price":"11","qty":"1","side":-1},
+            {"symbol":symbol,"tradeId":10,"time":100,"price":"11","qty":"1","side":-1}
+        ]);
+        let result = parse_recent_option_trades(&data, symbol).unwrap();
+        assert_eq!(result.observations.len(), 2);
+        assert_eq!(result.observations[0].trade_id, 10);
+        assert!(result.suspected_id_gap);
+        assert!(!result.historical_complete());
+        assert!(!parse_recent_option_trades(&json!([]), symbol).unwrap().historical_complete());
+        let mut conflict = data.clone();
+        conflict[2]["price"] = json!("99");
+        assert!(parse_recent_option_trades(&conflict, symbol).is_err());
+        let mut wrong = data;
+        wrong[0]["symbol"] = json!("ETH-271231-90000-C");
+        assert!(parse_recent_option_trades(&wrong, symbol).is_err());
+    }
+
+    #[test]
+    fn option_quote_rejects_crossed_books_and_non_exchange_timestamps() {
+        let symbol = "BTC-271231-90000-P";
+        let row = json!({"s":symbol,"T":120,"b":"10","a":"11","B":"2","A":"3"});
+        let quote = parse_option_book_ticker(&row, symbol).unwrap();
+        assert_eq!(quote.bid_size, Decimal::from(2));
+        let mut crossed = row.clone();
+        crossed["b"] = json!("12");
+        assert!(parse_option_book_ticker(&crossed, symbol).is_err());
+        let mut wrong = row.clone();
+        wrong["T"] = json!(-1);
+        assert!(parse_option_book_ticker(&wrong, symbol).is_err());
+        let mut wrong_symbol = row;
+        wrong_symbol["s"] = json!("BTC-271231-90000-C");
+        assert!(parse_option_book_ticker(&wrong_symbol, symbol).is_err());
+    }
+
 }
