@@ -115,13 +115,17 @@ fn valid_identifier(value: &str, max: usize) -> bool {
         && bytes[1..].iter().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_' | b':'))
 }
 
-struct StagedArchive {
+pub(super) struct StagedArchive {
     path: PathBuf,
     _file: File,
 }
 
 impl StagedArchive {
-    fn create(bytes: &[u8]) -> Result<Self, StrategyError> {
+    pub(super) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    pub(super) fn create(bytes: &[u8]) -> Result<Self, StrategyError> {
         for _ in 0..16 {
             let n = STAGING_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
