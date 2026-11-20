@@ -23,6 +23,7 @@ from nautilus_trader.model import (
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.persistence import ParquetDataCatalog as NativeCatalog
 
+from engine.market_data.calculation.feature_source import CSV_CHUNK_ROWS, iter_trade_archive
 from engine.market_data.quality.validate_data import DataValidationError
 from engine.market_data.repair.convert_binance_bars import (
     ConversionError,
@@ -30,7 +31,6 @@ from engine.market_data.repair.convert_binance_bars import (
     read_record,
     record_path_for,
 )
-from engine.market_data.calculation.feature_source import CSV_CHUNK_ROWS, iter_trade_archive
 from engine.market_data.repair.models import (
     SyncedArchive,
     as_utc,
