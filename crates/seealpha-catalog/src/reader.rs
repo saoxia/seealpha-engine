@@ -508,6 +508,7 @@ impl Catalog{
         let mut previous=None;
         let mut out=Vec::new();
         let mut trade_ids=std::collections::HashSet::new();
+        let mut record_fingerprints=std::collections::HashSet::new();
         for path in paths {
             let file=File::open(path)?;
             let builder=ParquetRecordBatchReaderBuilder::try_new(file)
@@ -573,6 +574,15 @@ impl Catalog{
                             json!(get_ts_for_column(&batch,field.name(),row)?.to_string())
                         }else {row_value(array.as_ref(),row)?};
                         object.insert(field.name().clone(),value);
+                    }
+                    let fingerprint=serde_json::to_vec(&object)
+                        .map_err(|e|CatalogError::Invalid(
+                            format!("历史行序列化失败：{e}")
+                        ))?;
+                    if !record_fingerprints.insert(fingerprint) {
+                        return Err(CatalogError::Conflict(
+                            "历史 Parquet 含有完全相同的重复记录。".into()
+                        ));
                     }
                     out.push(Value::Object(object));
                     if out.len()>limit {
