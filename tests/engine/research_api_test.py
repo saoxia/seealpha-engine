@@ -863,13 +863,12 @@ def test_spot_research_submissions_preserve_product_and_grant_scope(service):
 
 
 def test_spot_python_candidate_is_dispatched_to_spot_worker(service):
+    import base64
     from dataclasses import replace
-    from engine.config import EngineConfig
 
-    client, _, runtime, tasks = service
+    _, _, runtime, tasks = service
     spot = "spot:ETHUSDT:1m"
     raw, digest = _python_strategy_archive()
-    import base64
 
     body = {
         "purpose": "development", "execution": "simulation",
