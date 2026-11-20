@@ -80,7 +80,7 @@ impl Runtime {
             }
         }
         let previous=self.ledger.policies(tenant_id).map_err(map_ledger)?;
-        if previous!=policies {
+        if previous.as_slice()!=policies {
             let mut processes=self.source_processes.lock()
                 .map_err(|_|RuntimeError::Conflict("数据源状态锁不可用。".into()))?;
             for product in ["spot","futures_um"] {
