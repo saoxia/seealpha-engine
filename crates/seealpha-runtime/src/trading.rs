@@ -206,27 +206,21 @@ impl Runtime {
                         &order.to_string(),
                     )
                     .map_err(map_ledger)?;
-                let fill = json!({
-                    "trade_id": format!("fill-{client_order_id}"),
-                    "symbol": symbol,
-                    "client_order_id": client_order_id,
-                });
-                self.ledger
-                    .upsert_fill_row(
-                        &command.tenant_id,
-                        &command.account_id,
-                        &command.environment,
-                        fill["trade_id"].as_str().unwrap_or("fill"),
-                        &fill.to_string(),
-                    )
-                    .map_err(map_ledger)?;
-                body["records"] = json!([fill]);
+                // Acknowledged or newly opened venue orders are NOT fills.
+                // We must only journal exchange-authored trade IDs from the
+                // authenticated trade-history or user-stream reconciliation.
+                // The previous placeholder fill-{client_order_id} fabricated
+                // executions for NEW and PARTIALLY_FILLED orders.
+                body["records"] = json!([]);
                 self.ledger
                     .add_event(
                         &command.tenant_id,
                         &command.account_id,
-                        "execution",
-                        &json!({"client_order_id": client_order_id}).to_string(),
+                        "order_acknowledged",
+                        &json!({"client_order_id": client_order_id,
+                            "status": order["status"],
+                            "executed_qty_reported": order["filled"],
+                            "fills_verified": false}).to_string(),
                     )
                     .map_err(map_ledger)?;
             }
