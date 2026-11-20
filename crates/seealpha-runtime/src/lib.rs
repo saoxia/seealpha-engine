@@ -2,6 +2,7 @@
 mod accounts;
 mod config;
 mod data;
+mod evidence;
 mod history;
 mod inspection;
 mod jobs;
