@@ -111,7 +111,7 @@ pub fn plan_with_constraints(targets:&[LegTarget],positions:&BTreeMap<LegId,Deci
         if spot.product!=Product::Spot||perpetual.product!=Product::FuturesUm||
            spot.symbol!=perpetual.symbol||!net.contains_key(spot)||!net.contains_key(perpetual)||
            !hedged.insert(spot.clone())||!hedged.insert(perpetual.clone())||
-           net[spot]+net[perpetual]!=Decimal::ZERO||positions[perpetual]>Decimal::ZERO {
+           add(net[spot],net[perpetual])?!=Decimal::ZERO||positions[perpetual]>Decimal::ZERO {
             return Err(BasketError::Risk);
         }
     }
@@ -121,12 +121,12 @@ pub fn plan_with_constraints(targets:&[LegTarget],positions:&BTreeMap<LegId,Deci
             let mut reduce=Vec::new();let mut increase=Vec::new();
             for (l,desired) in net.iter().filter(|(l,_)|!hedged.contains(*l)) {
                 let old=positions[l];
-                if old!=Decimal::ZERO&&(old* *desired<=Decimal::ZERO||desired.abs()<old.abs()){
-                    let to=if old* *desired<=Decimal::ZERO{Decimal::ZERO}else{*desired};
+                if old!=Decimal::ZERO&&((old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero())||desired.abs()<old.abs()){
+                    let to=if (old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero()){Decimal::ZERO}else{*desired};
                     reduce.push((l.clone(),to-old));
                 }
-                if *desired!=Decimal::ZERO&&(old* *desired<=Decimal::ZERO||desired.abs()>old.abs()){
-                    let from=if old* *desired<=Decimal::ZERO{Decimal::ZERO}else{old};
+                if *desired!=Decimal::ZERO&&((old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero())||desired.abs()>old.abs()){
+                    let from=if (old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero()){Decimal::ZERO}else{old};
                     increase.push((l.clone(),*desired-from));
                 }
             }
@@ -164,9 +164,9 @@ pub fn plan_with_constraints(targets:&[LegTarget],positions:&BTreeMap<LegId,Deci
             let perp=&futures[0];
             let spot=net.keys().find(|l|l.product==Product::Spot).ok_or(BasketError::Risk)?;
             if perp.symbol!=spot.symbol||net[spot]<Decimal::ZERO||net[perp]>Decimal::ZERO||
-              net[spot]+net[perp]!=Decimal::ZERO {return Err(BasketError::Risk);}
+              add(net[spot],net[perp])?!=Decimal::ZERO {return Err(BasketError::Risk);}
             if !emergency_unwind &&
-               (positions[spot]+positions[perp]).abs()>max_leg_drift {
+               add(positions[spot],positions[perp])?.abs()>max_leg_drift {
                 return Err(BasketError::Risk);
             }
             if let Some(p)=change_phase(if emergency_unwind{"emergency_coordinated_unwind"}else{"coordinated_spot_perpetual_required"},
@@ -193,11 +193,11 @@ pub fn plan_with_constraints(targets:&[LegTarget],positions:&BTreeMap<LegId,Deci
             }
             if suffixes.len()!=2{return Err(BasketError::Risk);}
             let old=positions[perp];let new=net[perp];
-            let reduce=if old!=Decimal::ZERO&&(old*new<=Decimal::ZERO||new.abs()<old.abs()){
-                Some((perp.clone(),if old*new<=Decimal::ZERO{-old}else{new-old}))
+            let reduce=if old!=Decimal::ZERO&&((old.is_sign_negative()!=new.is_sign_negative() || new.is_zero())||new.abs()<old.abs()){
+                Some((perp.clone(),if (old.is_sign_negative()!=new.is_sign_negative() || new.is_zero()){-old}else{new-old}))
             }else{None};
-            let increase=if new!=Decimal::ZERO&&(old*new<=Decimal::ZERO||new.abs()>old.abs()){
-                Some((perp.clone(),if old*new<=Decimal::ZERO{new}else{new-old}))
+            let increase=if new!=Decimal::ZERO&&((old.is_sign_negative()!=new.is_sign_negative() || new.is_zero())||new.abs()>old.abs()){
+                Some((perp.clone(),if (old.is_sign_negative()!=new.is_sign_negative() || new.is_zero()){new}else{new-old}))
             }else{None};
             let prefix=if emergency_unwind{"emergency_"}else{""};
             for (name,rows) in [
@@ -262,7 +262,7 @@ impl Checkpoint {
         let phase=&self.plan.phases[self.phase_index];
         let expected=*phase.changes.get(leg).ok_or(BasketError::Fill)?;
         let old=self.fills.get(leg).copied().unwrap_or_default();
-        if expected.is_zero()||cumulative*expected<Decimal::ZERO||cumulative.abs()>expected.abs()||
+        if expected.is_zero()||(!cumulative.is_zero() && cumulative.is_sign_negative()!=expected.is_sign_negative())||cumulative.abs()>expected.abs()||
            cumulative.abs()<old.abs(){return Err(BasketError::Fill);}
         self.fills.insert(leg.clone(),cumulative);
         self.seen_events.insert(event.into(),(request.into(),leg.clone(),cumulative));
