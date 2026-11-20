@@ -3,7 +3,7 @@
 use crate::{map_ledger, Runtime, RuntimeError};
 use rust_decimal::Decimal;
 use seealpha_portfolio::{
-    basket::{Evidence, LegId},
+    basket::{Evidence, LegId, Product},
     journal::{decode_checkpoint, encode_checkpoint},
     phase_gate::{gate_next_phase, PhaseGateLimits},
 };
@@ -17,6 +17,8 @@ impl Runtime {
         &self,
         tenant: &str,
         account: &str,
+        environment: &str,
+        expected_account_revision: i64,
         basket_id: &str,
         expected_revision: &str,
         request_id: &str,
@@ -44,8 +46,47 @@ impl Runtime {
         ) {
             return Err(RuntimeError::Conflict("篮子仓位与租户账户作用域不一致。".into()));
         }
-        // Upstream must supply independently authenticated account positions
-        // and fresh source timestamps. This method does not invent either.
+        // Bind supplied positions to one immutable, fresh, CAS-versioned
+        // authoritative account observation. Caller-provided positions alone
+        // are never an authority for a multi-leg admission.
+        if !matches!(environment, "production" | "sandbox" | "paper") {
+            return Err(RuntimeError::Conflict("账户环境无效。".into()));
+        }
+        let account_state = self.ledger.account_snapshot(tenant, account, environment)
+            .map_err(map_ledger)?
+            .ok_or_else(|| RuntimeError::Conflict("缺少已核验账户仓位快照。".into()))?;
+        if account_state.revision != expected_account_revision
+            || (environment == "paper" && account_state.source != "paper_simulator")
+            || (environment != "paper"
+                && account_state.source != "signed_exchange_account_query")
+        {
+            return Err(RuntimeError::Conflict("账户快照来源或版本不可信。".into()));
+        }
+        let snapshot_ns = u64::try_from(account_state.observed_at_ms)
+            .ok().and_then(|v| v.checked_mul(1_000_000))
+            .ok_or_else(|| RuntimeError::Conflict("账户快照时间溢出。".into()))?;
+        if snapshot_ns > limits.now_ns
+            || limits.now_ns - snapshot_ns > limits.max_age_ns
+        {
+            return Err(RuntimeError::Conflict("账户快照已过期，禁止篮子阶段登记。".into()));
+        }
+        let reported = account_state.state["positions"].as_object()
+            .ok_or_else(|| RuntimeError::Conflict("账户仓位证据缺失。".into()))?;
+        for (leg, desired) in positions {
+            let product = match leg.product {
+                Product::Spot => "spot",
+                Product::FuturesUm => "futures_um",
+                Product::Option => "options",
+            };
+            let key = format!("{product}:{}", leg.symbol);
+            let amount = reported.get(&key).and_then(Value::as_str)
+                .ok_or_else(|| RuntimeError::Conflict("账户快照未覆盖篮子全部腿。".into()))?
+                .parse::<Decimal>()
+                .map_err(|_| RuntimeError::Conflict("账户仓位精度或数值无效。".into()))?;
+            if amount != *desired {
+                return Err(RuntimeError::Conflict("账户快照与篮子持仓不一致。".into()));
+            }
+        }
         let gate = gate_next_phase(
             &decoded.checkpoint, positions, evidence, limits, hedge_pairs,
         ).map_err(|e| RuntimeError::Conflict(e.to_string()))?;
