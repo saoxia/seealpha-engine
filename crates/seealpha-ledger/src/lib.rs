@@ -382,6 +382,19 @@ impl Ledger {
         })
     }
 
+    /// Enumerate active tenant scopes for safe recovery of never-started jobs.
+    /// This does not grant a new execution or exchange order permission.
+    pub fn active_tenant_ids(&self) -> Result<Vec<String>, LedgerError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT tenant_id FROM tenants WHERE status='active' ORDER BY tenant_id"
+        ).map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+        statement.query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| LedgerError::Sqlite(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| LedgerError::Sqlite(e.to_string()))
+    }
+
     pub fn ensure_tenant(
         &self,
         tenant_id: &str,
