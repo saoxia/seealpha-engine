@@ -109,9 +109,9 @@ impl Ledger {
             }
             return Ok(IntentStart::ReconcileOnly);
         }
-        // A different request ID cannot mint a second first-send permit for
-        // the same NEW client order ID, even with a different fingerprint.
-        if intent["action"] == "NEW" {
+        // A different request ID cannot mint a second first-send permit
+        // for the same action on the same client order ID, even after a timeout.
+        {
             let mut stmt = tx.prepare(
                 "SELECT intent_json FROM order_intents
                  WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND client_order_id=?4",
@@ -121,8 +121,8 @@ impl Ledger {
             for row in rows {
                 let stored: Value = serde_json::from_str(&row.map_err(sql)?)
                     .map_err(|_|conflict("stored order intent is corrupt"))?;
-                if stored["action"] == "NEW" {
-                    return Err(conflict("client order ID already belongs to another NEW intent"));
+                if stored["action"] == intent["action"] {
+                    return Err(conflict("client order action already has a registered intent; reconcile"));
                 }
             }
         }
