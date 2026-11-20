@@ -119,6 +119,7 @@ impl Runtime {
             "symbol": symbol,
             "action": command.action,
             "environment": command.environment,
+            "product": command.values.get("product").cloned().unwrap_or(Value::Null),
             "records": [],
             "ledger_synced": false,
         });
@@ -130,13 +131,22 @@ impl Runtime {
                 &body.to_string(),
             )
             .map_err(map_ledger)?;
-        let product = if symbol.ends_with("-PERP") {
-            Product::FuturesUm
-        } else if symbol.contains("-C") || symbol.contains("-P") {
-            Product::Option
-        } else {
-            Product::Spot
+        let product=match command.values.get("product").and_then(Value::as_str) {
+            Some("futures_um")=>Product::FuturesUm,
+            Some("spot")=>Product::Spot,
+            Some("options")=>Product::Option,
+            Some(_)=>return Err(RuntimeError::Unprocessable("交易产品无效。".into())),
+            None if symbol.ends_with("-PERP")=>Product::FuturesUm,
+            None if seealpha_market::options::parse_option_symbol(&symbol).is_ok()=>Product::Option,
+            None=>Product::Spot,
         };
+        if (product==Product::Option &&
+                seealpha_market::options::parse_option_symbol(&symbol).is_err())
+            || (product==Product::Spot && symbol.contains('-'))
+            || (product==Product::FuturesUm && symbol.contains('-') &&
+                !symbol.ends_with("-PERP")) {
+            return Err(RuntimeError::Unprocessable("交易合约与产品类型不匹配。".into()));
+        }
         let venue = VenueClient::new(&command.venue_base)
             .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
         let credentials = Credentials {
@@ -277,10 +287,13 @@ impl Runtime {
                 .as_str()
                 .unwrap_or("")
                 .to_string();
-            let product = if symbol.ends_with("-PERP") {
-                Product::FuturesUm
-            } else {
-                Product::Spot
+            let product=match stored.get("product").and_then(Value::as_str) {
+                Some("futures_um")=>Product::FuturesUm,
+                Some("options")=>Product::Option,
+                Some("spot")=>Product::Spot,
+                _ if symbol.ends_with("-PERP")=>Product::FuturesUm,
+                _ if seealpha_market::options::parse_option_symbol(&symbol).is_ok()=>Product::Option,
+                _=>Product::Spot,
             };
             if let Ok(client) = VenueClient::new(venue_base)
                 && let Ok(Some(order)) = client.query_order(
