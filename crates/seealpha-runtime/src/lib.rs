@@ -1,6 +1,7 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
 mod accounts;
 mod config;
+mod data;
 mod session;
 mod trading;
 pub use trading::OrderCommand;
@@ -74,6 +75,8 @@ impl Runtime {
                 .map_err(|_| RuntimeError::BadRequest("状态目录不可用。".into()))?;
         }
         let ledger = Ledger::open(book).map_err(map_ledger)?;
+        // Interrupted writer tasks are never blindly retried after a process crash.
+        ledger.restore_interrupted_data_jobs().map_err(map_ledger)?;
         Ok(Self {
             ledger,
             project: config.project.clone(),
