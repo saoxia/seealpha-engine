@@ -211,6 +211,11 @@ mod tests{
         catalog.append_bars("ETHUSDT",MarketProduct::FuturesUm,"1m",&bars,2,3).unwrap();
         assert_eq!(catalog.read_contiguous_bars("ETHUSDT",MarketProduct::FuturesUm,
             "1m",0,120_000,100).unwrap(),bars);
+        assert!(catalog.bar_gaps("ETHUSDT",MarketProduct::FuturesUm,
+            "1m",0,120_000,100).unwrap().is_empty());
+        assert_eq!(catalog.bar_gaps("ETHUSDT",MarketProduct::FuturesUm,
+            "1m",0,180_000,100).unwrap(),
+            vec![crate::BarGap{start_ms:120_000,end_ms:180_000}]);
         // A verified identical retry is safe after a crash between a
         // Parquet hard-link and the publication watermark transaction.
         assert!(catalog.append_bars("ETHUSDT",MarketProduct::FuturesUm,"1m",&bars,2,3).is_ok());
