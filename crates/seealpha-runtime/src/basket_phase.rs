@@ -1,5 +1,5 @@
 //! Persist a cross-leg risk decision and an unresolved basket phase before
-//! any potential Venue side effect. This module never sends an order.
+//! any potential Venue side effect. Only cfg(test) exercises a mock transport.
 use crate::{map_ledger, Runtime, RuntimeError};
 use rust_decimal::Decimal;
 #[cfg(test)]
