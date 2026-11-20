@@ -250,8 +250,8 @@ impl Checkpoint {
                 JournalEvent::Begin{request_id}=>state.begin(request_id)?,
                 JournalEvent::Fill{request_id,event_id,leg,cumulative}=>state.fill(request_id,event_id,leg,*cumulative)?,
                 JournalEvent::Confirm{request_id,positions}=>{
-                    let terminal=state.plan.phases[state.phase_index].changes.keys()
-                        .map(|l|(l.clone(),true)).collect();
+                    let phase=state.plan.phases.get(state.phase_index).ok_or(BasketError::State)?;
+                    let terminal=phase.changes.keys().map(|l|(l.clone(),true)).collect();
                     state.confirm(request_id,&terminal,positions.clone())?;
                 }
                 JournalEvent::Freeze{reason}=>state.freeze(reason)?,
