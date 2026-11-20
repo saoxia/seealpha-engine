@@ -23,9 +23,9 @@ fn explicit_enable()->bool {
         .is_ok_and(|value|matches!(value.as_str(),"1"|"true"|"TRUE"))
 }
 fn source_root(project:&std::path::Path,product:&str)->Result<PathBuf,RuntimeError>{
-    let directory=std::env::var("ENGINE_SOURCE_ROOT").map(PathBuf::from)
-        .unwrap_or_else(|_|project.join("data").join("sources").join(product));
-    directory.canonicalize().map_err(|_|bad("原生数据源根目录尚未创建，拒绝隐式创建新数据卷。"))
+    let root=std::env::var("ENGINE_SOURCE_ROOT").map(PathBuf::from)
+        .unwrap_or_else(|_|project.join("data").join("sources"));
+    root.join(product).canonicalize().map_err(|_|bad("原生产品源根目录尚未创建，拒绝隐式创建新数据卷。"))
 }
 fn manifest_bytes(policies:&[Value],product:Product)->Result<Vec<u8>,RuntimeError>{
     let mut entries=Vec::new();
