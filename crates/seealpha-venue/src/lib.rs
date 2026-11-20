@@ -588,6 +588,41 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(denied, VenueError::Rejected(_)));
+        // A separately committed journal ticket is the only way to POST.
+        use crate::order_guard::{Admission, IntentJournal, IntentRecord,
+            PreparedWrite, RecordedOutcome, WriteAction};
+        struct MockDurable { registered: bool, outcome: Option<RecordedOutcome> }
+        impl IntentJournal for MockDurable {
+            fn admit(&mut self, _: &IntentRecord) -> Result<Admission, VenueError> {
+                if self.registered { return Ok(Admission::Seen); }
+                self.registered = true;
+                Ok(Admission::Fresh)
+            }
+            fn observe(&mut self, _: &IntentRecord, outcome: RecordedOutcome)
+                -> Result<(), VenueError> {
+                self.outcome=Some(outcome);
+                Ok(())
+            }
+        }
+        let order_id="SA00000000000000000000000000000001";
+        let mut operation=PreparedWrite::new(
+            "tenant:account","mock_req_1",Product::FuturesUm,WriteAction::NewOrder,
+            "ETHUSDT-PERP",order_id,vec![
+                ("symbol".into(),"ETHUSDT".into()),
+                ("newClientOrderId".into(),order_id.into()),
+                ("type".into(),"LIMIT".into()),
+                ("side".into(),"BUY".into()),
+                ("quantity".into(),"0.01".into()),
+                ("price".into(),"2000".into()),
+                ("timeInForce".into(),"GTC".into()),
+            ],
+        ).unwrap();
+        let creds=Credentials{api_key:"key-one".into(),secret:"secret-one".into()};
+        let mut journal=MockDurable{registered:false,outcome:None};
+        let accepted=operation.dispatch_live(&mut journal,&client,&creds).unwrap();
+        assert_eq!(accepted["status"],"NEW");
+        assert_eq!(journal.outcome,Some(RecordedOutcome::Accepted));
+        assert!(operation.dispatch_live(&mut journal,&client,&creds).is_err());
         let again = client
             .query_order(
                 &Credentials {
