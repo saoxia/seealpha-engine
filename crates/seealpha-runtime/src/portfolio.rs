@@ -15,6 +15,7 @@ pub enum NativePortfolioEvent {
     CancelOrder(String),
     FlattenMember(String),
     ConfirmTerminal { order_id:String, canceled:bool, denied_at:Option<u64> },
+    CancelDenied { order_id:String, at:Option<u64> },
     Freeze(String),
 }
 pub struct NativePortfolioState {
@@ -83,6 +84,7 @@ impl Runtime {
             NativePortfolioEvent::FlattenMember(member)=>coordinator.flatten(&member),
             NativePortfolioEvent::ConfirmTerminal{order_id,canceled,denied_at}=>
                 coordinator.confirm_terminal(&order_id,canceled,denied_at),
+            NativePortfolioEvent::CancelDenied{order_id,at}=>coordinator.cancel_denied(&order_id,at),
             NativePortfolioEvent::Freeze(reason)=>{coordinator.freeze(&reason);Ok(())},
         };
         if let Err(error)=result {
