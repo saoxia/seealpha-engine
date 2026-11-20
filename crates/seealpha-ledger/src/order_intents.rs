@@ -29,12 +29,27 @@ fn identifier(value: &str) -> bool {
     !value.is_empty() && value.len() <= 128
         && value.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b':' | b'.'))
 }
+fn exact_json(value: &Value) -> bool {
+    match value {
+        Value::Number(number) => number.is_i64() || number.is_u64(),
+        Value::Array(items) => items.iter().all(exact_json),
+        Value::Object(items) => items.values().all(exact_json),
+        _ => true,
+    }
+}
 fn valid_intent(intent: &Value, environment: &str, client_id: &str) -> bool {
-    if !intent.is_object()
+    if !exact_json(intent) || !intent.is_object()
         || intent["environment"].as_str() != Some(environment)
         || intent["client_order_id"].as_str() != Some(client_id)
     {
         return false;
+    }
+    for key in ["quantity","price","stop_price","trigger_price","quote_quantity"] {
+        if let Some(field) = intent.get(key) {
+            if field.as_str().and_then(|s|s.parse::<Decimal>().ok()).is_none() {
+                return false;
+            }
+        }
     }
     match intent["action"].as_str() {
         Some("NEW") => {
@@ -281,6 +296,10 @@ mod tests {
         assert!(ledger.request("other","a","req1").unwrap().is_none());
         assert!(ledger.preregister_order_intent(
             "t","a","sandbox","req1","cl1",&"a".repeat(64),&new_intent()).is_err());
+        let mut imprecise=new_intent();
+        imprecise["price"]=json!(1024.00000001);
+        assert!(ledger.preregister_order_intent("t","a","production","r2","cl1",
+            &"b".repeat(64),&imprecise).is_err());
     }
 
     #[test]
