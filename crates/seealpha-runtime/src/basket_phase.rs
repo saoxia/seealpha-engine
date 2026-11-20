@@ -2,6 +2,10 @@
 //! any potential Venue side effect. This module never sends an order.
 use crate::{map_ledger, Runtime, RuntimeError};
 use rust_decimal::Decimal;
+#[cfg(test)]
+use seealpha_venue::order_guard::{PreparedWrite, SignedTransport};
+#[cfg(test)]
+use crate::order_journal::{BasketReservation, LedgerIntentJournal};
 use seealpha_ledger::{BasketAdmission, IntentStart};
 use seealpha_portfolio::{
     basket::{Evidence, LegId, Product},
@@ -16,7 +20,7 @@ impl Runtime {
     /// The sole-leg restriction is deliberate: a multi-leg phase needs an
     /// explicit coordinated dispatch/recovery protocol before admission.
     #[allow(clippy::too_many_arguments)]
-    pub fn preregister_reserved_basket_leg(
+    fn validate_reserved_basket_leg(
         &self,
         tenant: &str,
         account: &str,
@@ -28,7 +32,7 @@ impl Runtime {
         client_order_id: &str,
         fingerprint: &str,
         intent: &Value,
-    ) -> Result<IntentStart, RuntimeError> {
+    ) -> Result<(), RuntimeError> {
         self.require_active(tenant)?;
         let stored = self.ledger.load_basket_journal(tenant, account, basket_id)
             .map_err(map_ledger)?
@@ -72,6 +76,26 @@ impl Runtime {
         // The Ledger checks the account and basket CAS revisions in its own
         // IMMEDIATE transaction alongside the insert. This Runtime read is
         // for semantic validation, not an atomic authorization by itself.
+        Ok(())
+    }
+
+    pub fn preregister_reserved_basket_leg(
+        &self,
+        tenant: &str,
+        account: &str,
+        environment: &str,
+        basket_id: &str,
+        expected_basket_revision: &str,
+        expected_account_revision: i64,
+        request_id: &str,
+        client_order_id: &str,
+        fingerprint: &str,
+        intent: &Value,
+    ) -> Result<IntentStart, RuntimeError> {
+        self.validate_reserved_basket_leg(
+            tenant, account, environment, basket_id, expected_basket_revision,
+            expected_account_revision, request_id, client_order_id, fingerprint, intent,
+        )?;
         self.ledger.preregister_basket_order_intent(
             tenant, account, environment, request_id, client_order_id,
             fingerprint, intent, BasketAdmission {
@@ -80,6 +104,40 @@ impl Runtime {
                 account_revision: expected_account_revision,
             },
         ).map_err(map_ledger)
+    }
+
+    /// Offline-only wiring of the reserved risk stage to Venue one-shot
+    /// admission. No signed exchange transport is constructed by Runtime.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn dispatch_reserved_basket_leg_fixture<T: SignedTransport>(
+        &self,
+        tenant: &str, account: &str, environment: &str,
+        basket_id: &str, basket_revision: &str, account_revision: i64,
+        request_id: &str, client_order_id: &str,
+        intent: &Value, mut prepared: PreparedWrite, transport: &mut T,
+    ) -> Result<Value, RuntimeError> {
+        let record = prepared.record();
+        if record.request_id != request_id || record.client_order_id != client_order_id {
+            return Err(RuntimeError::Conflict("Venue 请求身份与风控预留不一致。".into()));
+        }
+        self.validate_reserved_basket_leg(
+            tenant, account, environment, basket_id, basket_revision,
+            account_revision, request_id, client_order_id,
+            &record.payload_sha256, intent,
+        )?;
+        let mut journal = LedgerIntentJournal::new_basket(
+            &self.ledger, tenant, account, environment, intent.clone(),
+            BasketReservation {
+                basket_id: basket_id.into(),
+                basket_revision: basket_revision.into(),
+                account_revision,
+            },
+        );
+        prepared.dispatch(&mut journal, transport)
+            .map_err(|_| RuntimeError::Conflict(
+                "Venue 模拟发送失败或状态未知，请按订单身份对账，禁止重复提交。".into(),
+            ))
     }
 
     /// Read the trusted, replay-verified basket checkpoint, validate all legs,
