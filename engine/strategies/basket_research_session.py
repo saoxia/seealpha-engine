@@ -216,7 +216,7 @@ class BasketResearchSession:
         ):
             raise BasketPlanError("组合请求幂等标识无效")
         if not isinstance(targets, list) or len(targets) != len(self._subscriptions[member_id]):
-            raise BasketPlanError("必须申报当前策略订阅的所有组合腿，包括零目标")
+            raise BasketPlanError("必须申报当前策略订阅的所有腿，包括零目标")
         if constraints is not None and not isinstance(constraints, dict):
             raise BasketPlanError("约束协议无效")
         # Demanded atomicity is an *intent*, not a guarantee. Reject unknown
