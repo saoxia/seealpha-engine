@@ -30,7 +30,7 @@ from engine.market_data.repair.convert_binance_bars import (
     read_record,
     record_path_for,
 )
-from engine.market_data.repair.convert_binance_trades import CSV_CHUNK_ROWS, iter_trade_archive
+from engine.market_data.calculation.feature_source import CSV_CHUNK_ROWS, iter_trade_archive
 from engine.market_data.repair.models import (
     SyncedArchive,
     as_utc,
