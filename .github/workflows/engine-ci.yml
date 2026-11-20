@@ -84,6 +84,8 @@ jobs:
         run: cargo build --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
       - name: Rust release tests
         run: cargo test --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
+      - name: Rust-native market-data quality tests (offline only)
+        run: cargo test --locked --release --manifest-path engine/market_data/quality/rust/Cargo.toml
       - name: Python lint
         run: uv run ruff check .
       - name: Engine regression tests (offline fixtures only)

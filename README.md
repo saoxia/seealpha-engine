@@ -100,3 +100,7 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 本仓库的项目自有核心代码拟采用 [Apache License 2.0](LICENSE)，允许按许可证免费使用、修改、分发和商业经营；官方托管、私有策略及其他服务另行约定。示例策略包可能采用目录级 MIT 许可证，详见相应 LICENSE。
 
 详见 [贡献指南](CONTRIBUTING.md)、[CLA 草案（尚未生效）](CLA.md)、[自愿商业登记](COMMERCIAL_USE.md)、[品牌政策](TRADEMARKS.md)、[漏洞报告](SECURITY.md) 和 [第三方许可说明](THIRD_PARTY_NOTICES.md)。商业登记完全自愿。
+
+## Rust 原生迁移（独立 Draft PR）
+
+计划在保留当前领域目录和 HTTP/数据契约的前提下，以 Rust 替换全部 Engine Python 运行实现；仅 Python 编写的策略使用可选隔离 Python Worker。当前 Rust 质量校验仅为未接入执行路径的候选实现，**不代表全量迁移或生产验收完成**。参见 [Rust Native Migration](docs/RUST_NATIVE_MIGRATION.md)。迁移 PR 未验收之前不合并 main、不切换实盘。
