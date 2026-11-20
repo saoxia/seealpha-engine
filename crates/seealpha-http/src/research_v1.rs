@@ -618,11 +618,15 @@ async fn mcp(
                 rpc_error(id,-32602,"Unknown or unavailable tool")
             } else {
                 let args = params.get("arguments").unwrap_or(&default_params);
-                let payload = match tool_call(&state, &grant, name, args) {
-                    Ok(value) => tool_success(value),
-                    Err(error) => tool_error(error),
-                };
-                rpc_result(id,payload)
+                if !args.is_object() {
+                    rpc_error(id, -32602, "Invalid tool arguments")
+                } else {
+                    let payload = match tool_call(&state, &grant, name, args) {
+                        Ok(value) => tool_success(value),
+                        Err(error) => tool_error(error),
+                    };
+                    rpc_result(id, payload)
+                }
             }
         }
         _ => rpc_error(id,-32601,"Method not found"),
