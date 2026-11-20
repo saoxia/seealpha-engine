@@ -235,7 +235,17 @@ impl VenueClient {
                 client_order_id.to_string()),
         ];
         match self.signed(credentials, "GET", path, &pairs) {
-            Ok(value) => Ok(Some(order_view(&value, client_order_id))),
+            Ok(value) => {
+                // Do not rely on order_view's presentation fallback for
+                // authority: the signed response must itself bind identity.
+                let expected_symbol=venue_symbol(symbol)?;
+                if value["clientOrderId"].as_str()!=Some(client_order_id)
+                    || value["symbol"].as_str()!=Some(expected_symbol.as_str())
+                    || value["orderId"].is_null() {
+                    return Err(VenueError::Unconfirmed);
+                }
+                Ok(Some(order_view(&value, client_order_id)))
+            },
             Err(VenueError::Rejected(message))
                 if message.contains("-2013") || message.contains("not found") =>
             {
