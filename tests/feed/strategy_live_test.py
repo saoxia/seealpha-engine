@@ -131,3 +131,52 @@ def test_collector_journal_to_strategy_view_and_disconnect_invalidates(tmp_path,
     finally:
         runtime.close()
         manager.close()
+
+
+def test_new_longer_lookback_rewarms_one_shared_stream(tmp_path, monkeypatch):
+    runtime, manager, bridge = _setup(tmp_path, monkeypatch)
+    try:
+        runtime.store.upsert_strategy_load(
+            "prod", "desk", "hedge", "alpha", "1", "production",
+            {"symbol": "ETHUSDT"}, "strategy:Alpha", "hash", b"archive",
+        )
+        bridge.subscribe("prod", "desk", "issued", (ETH,), lookback_bars=1)
+        policy = manager.subscriptions._read()[0]
+        root = manager.subscriptions.root(policy)
+        now = _journal(root)
+        _write_status(root / "status.json")
+        _write_status(root / "calculation" / "status.json")
+        bridge.poll()
+
+        assert bridge.subscribe(
+            "prod", "desk", "hedge", (ETH,), lookback_bars=2,
+        ) == {ETH: 2}
+        bridge.poll()
+        snapshot = bridge.view(
+            "prod", "desk", "hedge",
+            now_ns=now * 1_000_000,
+            positions={ETH: Decimal(0)},
+            max_age_ns=300_000_000_000,
+        )
+        assert len(snapshot["history"]["futures_um:ETHUSDT"]) == 2
+        assert bridge.unsubscribe("prod", "desk", "hedge") == {ETH: 1}
+        assert bridge.status()["requirements"][0]["lookback_bars"] == 1
+    finally:
+        runtime.close()
+        manager.close()
+
+
+def test_cannot_delete_an_issued_strategy_live_market(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    runtime, manager, bridge = _setup(tmp_path, monkeypatch)
+    try:
+        bridge.subscribe("prod", "desk", "issued", (ETH,))
+        with pytest.raises(HTTPException, match="策略仍在订阅"):
+            manager.subscriptions.pause_for_deletion("ETHUSDT", "futures_um")
+        with pytest.raises(HTTPException, match="策略仍在订阅"):
+            manager.subscriptions.remove("ETHUSDT", "futures_um")
+        assert manager.policy_repository.list("prod")[0]["symbol"] == "ETHUSDT"
+    finally:
+        runtime.close()
+        manager.close()
