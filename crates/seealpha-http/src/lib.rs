@@ -103,12 +103,28 @@ pub fn router(state: AppState) -> Router {
             get(latest_backtest),
         )
         .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/carry-backtests",
+            post(run_carry),
+        )
+        .route(
             "/tenants/{tenant_id}/accounts/{account_id}/carry-backtests/latest",
-            get(no_carry),
+            get(latest_carry),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests",
+            post(run_protected),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests/latest",
-            get(no_option),
+            get(latest_protected),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/candidate-backtests",
+            post(run_candidate).delete(cancel_candidate),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/candidate-backtests/latest",
+            get(latest_candidate),
         )
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
@@ -708,12 +724,152 @@ fn text(body: &Value, field: &str) -> String {
         .to_owned()
 }
 
-async fn no_carry() -> Result<Json<Value>, AppError> {
-    Err(AppError::not_found("还没有资金费组合回测结果"))
+fn decimal_field(
+    body: &Value,
+    field: &str,
+    default: &str,
+) -> Result<rust_decimal::Decimal, AppError> {
+    body.get(field)
+        .and_then(Value::as_str)
+        .unwrap_or(default)
+        .parse()
+        .map_err(|_| AppError::bad_request("数值无效。"))
 }
 
-async fn no_option() -> Result<Json<Value>, AppError> {
-    Err(AppError::not_found("还没有期权保护组合回测结果"))
+async fn run_carry(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let rows = body
+        .get("bars")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let bars = rows
+        .iter()
+        .filter_map(|row| {
+            Some(seealpha_backtest::matching::CarryBar {
+                spot: row.get("spot")?.as_str()?.parse().ok()?,
+                perp: row.get("perp")?.as_str()?.parse().ok()?,
+                funding_rate: row.get("funding_rate")?.as_str()?.parse().ok()?,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(
+        state
+            .runtime
+            .run_carry_backtest(
+                &tenant_id,
+                &account_id,
+                &bars,
+                decimal_field(&body, "spot_qty", "1")?,
+                decimal_field(&body, "perp_qty", "-1")?,
+                decimal_field(&body, "cash", "10000")?,
+            )
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn latest_carry(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .latest_kind(&tenant_id, &account_id, "carry", "还没有资金费组合回测结果")
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn run_protected(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .run_protected_backtest(
+                &tenant_id,
+                &account_id,
+                decimal_field(&body, "final_spot", "100")?,
+                decimal_field(&body, "strike", "100")?,
+                decimal_field(&body, "premium", "1")?,
+                decimal_field(&body, "multiplier", "1")?,
+                decimal_field(&body, "perp_qty", "-1")?,
+                decimal_field(&body, "perp_entry", "100")?,
+                decimal_field(&body, "perp_exit", "100")?,
+                decimal_field(&body, "cash", "10000")?,
+            )
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn latest_protected(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .latest_kind(
+                &tenant_id,
+                &account_id,
+                "protected_option",
+                "还没有期权保护组合回测结果",
+            )
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn run_candidate(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let name = body
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("candidate");
+    Ok(Json(
+        state
+            .runtime
+            .run_candidate_backtest(
+                &tenant_id,
+                &account_id,
+                name,
+                decimal_field(&body, "ending_balance", "0")?,
+            )
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn cancel_candidate(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, AppError> {
+    let name = query.get("name").map(String::as_str).unwrap_or("candidate");
+    Ok(Json(
+        state
+            .runtime
+            .cancel_candidate(&tenant_id, &account_id, name)
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn latest_candidate(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .latest_kind(&tenant_id, &account_id, "candidate", "还没有候选回测")
+            .map_err(AppError::from)?,
+    ))
 }
 
 async fn not_found() -> Result<Json<Value>, AppError> {
@@ -877,6 +1033,7 @@ async fn research_mcp(
                 {"name": "create_snapshot", "description": "Store a research snapshot"},
                 {"name": "get_snapshot", "description": "Read a research snapshot"},
                 {"name": "submit_backtest", "description": "Run a development backtest"},
+                {"name": "cancel_backtest", "description": "Cancel a candidate backtest"},
                 {"name": "get_backtest", "description": "Read the latest development backtest"}
             ]
         }),
@@ -891,6 +1048,51 @@ async fn research_mcp(
                         AppError::forbidden("Research operation outside granted scope")
                     })?;
                     json!({ "items": grant.datasets })
+                }
+                "create_snapshot" => {
+                    require_op(&grant, "snapshots:create", None, None).map_err(|_| {
+                        AppError::forbidden("Research operation outside granted scope")
+                    })?;
+                    let text = body
+                        .pointer("/params/arguments/body")
+                        .and_then(Value::as_str)
+                        .unwrap_or("{}");
+                    state
+                        .runtime
+                        .create_research_snapshot(&grant.tenant_id, text)
+                        .map_err(AppError::from)?
+                }
+                "submit_backtest" => {
+                    require_op(&grant, "backtests:submit", None, None).map_err(|_| {
+                        AppError::forbidden("Research operation outside granted scope")
+                    })?;
+                    let name = body
+                        .pointer("/params/arguments/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("research");
+                    let ending = body
+                        .pointer("/params/arguments/ending_balance")
+                        .and_then(Value::as_str)
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(rust_decimal::Decimal::ZERO);
+                    state
+                        .runtime
+                        .run_candidate_backtest(&grant.tenant_id, "research", name, ending)
+                        .map_err(AppError::from)?
+                }
+                "cancel_backtest" => {
+                    require_op(&grant, "backtests:cancel", None, None).map_err(|_| {
+                        AppError::forbidden("Research operation outside granted scope")
+                    })?;
+                    let name = body
+                        .pointer("/params/arguments/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("research");
+                    state
+                        .runtime
+                        .cancel_candidate(&grant.tenant_id, "research", name)
+                        .map_err(AppError::from)?
                 }
                 "get_backtest" => {
                     require_op(&grant, "backtests:read", None, None).map_err(|_| {
