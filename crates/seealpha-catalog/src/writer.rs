@@ -15,7 +15,7 @@ const MAX_WRITE:usize=50_000;
 fn decimal(v:Decimal)->Result<i128,CatalogError>{
     let mut canonical=v;
     canonical.rescale(16);
-    if canonical!=v {
+    if canonical.scale()!=16 || canonical!=v {
         return Err(CatalogError::Invalid("K 线 Decimal 超过原生 Parquet 16 位小数精度。".into()));
     }
     Ok(canonical.mantissa())
@@ -36,7 +36,7 @@ pub(crate) fn file_name(first_ns:i64,last_ns:i64)->Result<String,CatalogError>{
     if first_ns>last_ns {return Err(CatalogError::Invalid("Catalog 文件时间倒退。".into()));}
     Ok(format!("{}_{}.parquet",format_ts(first_ns)?,format_ts(last_ns)?))
 }
-fn safe_mkdir(root:&Path,rel:&Path)->Result<PathBuf,CatalogError>{
+pub(crate) fn safe_mkdir(root:&Path,rel:&Path)->Result<PathBuf,CatalogError>{
     let mut path=root.to_path_buf();
     for component in rel.components(){
         path.push(component);
@@ -85,6 +85,15 @@ impl Catalog{
         let mut events=Vec::with_capacity(bars.len());
         for bar in bars {
             bar.validate(interval,product)?;
+            for (value,precision) in [
+                (bar.open,price_precision),(bar.high,price_precision),
+                (bar.low,price_precision),(bar.close,price_precision),
+                (bar.volume,size_precision),
+            ] {
+                if value.round_dp(precision)!=value {
+                    return Err(CatalogError::Invalid("K 线数值超过声明的价格或数量精度。".into()));
+                }
+            }
             if bar.open_time_ms!=expected {
                 return Err(CatalogError::Invalid("要写入的 K 线缺失、重复或乱序。".into()));
             }
@@ -168,7 +177,7 @@ impl Catalog{
             // Hard-link is create-if-absent: unlike rename() on Unix it
             // NEVER replaces a historical artifact or races an old writer.
             fs::hard_link(&tmp,&destination)?;
-            let _=File::open(&directory).and_then(|d|d.sync_all());
+            File::open(&directory)?.sync_all()?;
             Ok(())
         })();
         let _=fs::remove_file(&tmp);
@@ -205,6 +214,9 @@ mod tests{
         // A verified identical retry is safe after a crash between a
         // Parquet hard-link and the publication watermark transaction.
         assert!(catalog.append_bars("ETHUSDT",MarketProduct::FuturesUm,"1m",&bars,2,3).is_ok());
+        let mut too_precise=bars.clone();
+        too_precise[0].close=Decimal::new(105001,3);
+        assert!(catalog.append_bars("ETHUSDT",MarketProduct::Spot,"1m",&too_precise,2,3).is_err());
         let mut conflicted=bars.clone();
         conflicted[1].close=Decimal::from(106);
         assert!(catalog.append_bars("ETHUSDT",MarketProduct::FuturesUm,
