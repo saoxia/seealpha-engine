@@ -95,7 +95,10 @@ pub fn authorize_snapshot(
         || field("format")? != "parquet"
         || tenant != context.tenant_id
         || task != context.task_id
-        || !matches!(status, "pending" | "running" | "ready" | "failed" | "interrupted")
+        || !matches!(
+            status,
+            "pending" | "running" | "ready" | "failed" | "interrupted"
+        )
     {
         return Err(ResearchError::Scope);
     }
@@ -136,10 +139,7 @@ pub fn authorize_snapshot(
 
 /// Verify the actual bytes and the journal's recorded size and checksum.
 /// The calling transport must still open the owned file without following symlinks.
-pub fn verify_snapshot_bytes(
-    evidence: &SnapshotAccess,
-    bytes: &[u8],
-) -> Result<(), ResearchError> {
+pub fn verify_snapshot_bytes(evidence: &SnapshotAccess, bytes: &[u8]) -> Result<(), ResearchError> {
     if evidence.status != "ready"
         || bytes.is_empty()
         || bytes.len() > MAX_SNAPSHOT_BYTES
@@ -186,7 +186,11 @@ pub fn authorize_candidate_envelope(
         Some(candidate.dataset_ref),
         Some(candidate.strategy_ref),
     )?;
-    let max_bytes = if candidate.unrestricted_python { 256 * 1024 } else { 64 * 1024 };
+    let max_bytes = if candidate.unrestricted_python {
+        256 * 1024
+    } else {
+        64 * 1024
+    };
     if !lower_hex(candidate.candidate_id, 32)
         || !lower_hex(candidate.package_hash, 64)
         || candidate.archive.is_empty()
@@ -205,7 +209,9 @@ pub fn authorize_candidate_envelope(
 
 fn lower_hex(input: &str, length: usize) -> bool {
     input.len() == length
-        && input.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        && input
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
 fn valid_account_ref(input: &str) -> bool {
@@ -226,7 +232,9 @@ fn valid_dataset(input: &str) -> bool {
         && matches!(product, "spot" | "futures_um")
         && matches!(interval, "1m" | "5m")
         && (3..=20).contains(&symbol.len())
-        && symbol.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        && symbol
+            .bytes()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -239,7 +247,11 @@ mod tests {
         Grant {
             tenant_id: "tenant-a".into(),
             task_id: "task-1".into(),
-            ops: vec!["snapshots:read".into(), "snapshots:create".into(), "candidates:submit".into()],
+            ops: vec![
+                "snapshots:read".into(),
+                "snapshots:create".into(),
+                "candidates:submit".into(),
+            ],
             datasets: vec!["spot:ETHUSDT:1m".into()],
             strategies: vec!["account:account1".into()],
             not_before: 100,
@@ -248,22 +260,34 @@ mod tests {
     }
 
     fn context<'a>(tenant: &'a str, task: &'a str, purpose: &'a str) -> ResearchContext<'a> {
-        ResearchContext { tenant_id: tenant, task_id: task, tenant_purpose: purpose }
+        ResearchContext {
+            tenant_id: tenant,
+            task_id: task,
+            tenant_purpose: purpose,
+        }
     }
 
     #[test]
     fn reject_cross_tenant_cross_task_production_and_ungranted_scope() {
         let g = grant();
         let dev = context("tenant-a", "task-1", "development");
-        assert!(authorize_operation(&g, dev, "snapshots:read", Some("spot:ETHUSDT:1m"), None).is_ok());
+        assert!(
+            authorize_operation(&g, dev, "snapshots:read", Some("spot:ETHUSDT:1m"), None).is_ok()
+        );
         for c in [
             context("tenant-b", "task-1", "development"),
             context("tenant-a", "task-2", "development"),
             context("tenant-a", "task-1", "production"),
         ] {
-            assert_eq!(authorize_operation(&g, c, "snapshots:read", None, None), Err(ResearchError::Scope));
+            assert_eq!(
+                authorize_operation(&g, c, "snapshots:read", None, None),
+                Err(ResearchError::Scope)
+            );
         }
-        assert_eq!(authorize_operation(&g, dev, "candidates:submit", None, Some("account:other")), Err(ResearchError::Scope));
+        assert_eq!(
+            authorize_operation(&g, dev, "candidates:submit", None, Some("account:other")),
+            Err(ResearchError::Scope)
+        );
     }
 
     #[test]
@@ -272,10 +296,22 @@ mod tests {
         let c = context("tenant-a", "task-1", "development");
         const MAX: i64 = 31 * 24 * 60 * 60 * 1_000_000_000;
         authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", 0, MAX).unwrap();
-        assert_eq!(authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", 0, MAX + 1), Err(ResearchError::Scope));
-        assert_eq!(authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", MAX, 0), Err(ResearchError::Scope));
-        assert_eq!(authorize_snapshot_request(&g, c, "spot:BTCUSDT:1m", 0, 1), Err(ResearchError::Scope));
-        assert_eq!(authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", i64::MIN, i64::MAX), Err(ResearchError::Scope));
+        assert_eq!(
+            authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", 0, MAX + 1),
+            Err(ResearchError::Scope)
+        );
+        assert_eq!(
+            authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", MAX, 0),
+            Err(ResearchError::Scope)
+        );
+        assert_eq!(
+            authorize_snapshot_request(&g, c, "spot:BTCUSDT:1m", 0, 1),
+            Err(ResearchError::Scope)
+        );
+        assert_eq!(
+            authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", i64::MIN, i64::MAX),
+            Err(ResearchError::Scope)
+        );
     }
 
     #[test]
@@ -291,7 +327,10 @@ mod tests {
         });
         let pending = authorize_snapshot(&g, c, &m).unwrap();
         assert_eq!(pending.status, "pending");
-        assert_eq!(verify_snapshot_bytes(&pending, b"PAR1xPAR1"), Err(ResearchError::Scope));
+        assert_eq!(
+            verify_snapshot_bytes(&pending, b"PAR1xPAR1"),
+            Err(ResearchError::Scope)
+        );
         m["task_id"] = json!("other");
         assert_eq!(authorize_snapshot(&g, c, &m), Err(ResearchError::Scope));
         m["task_id"] = json!("task-1");
@@ -305,7 +344,10 @@ mod tests {
         m["sha256"] = json!(format!("{:x}", Sha256::digest(bytes)));
         let ready = authorize_snapshot(&g, c, &m).unwrap();
         verify_snapshot_bytes(&ready, bytes).unwrap();
-        assert_eq!(verify_snapshot_bytes(&ready, b"PAR1bad!PAR1"), Err(ResearchError::Scope));
+        assert_eq!(
+            verify_snapshot_bytes(&ready, b"PAR1bad!PAR1"),
+            Err(ResearchError::Scope)
+        );
     }
 
     #[test]
@@ -324,12 +366,21 @@ mod tests {
         };
         authorize_candidate_envelope(&g, c, candidate).unwrap();
         candidate.strategy_ref = "account:account2";
-        assert_eq!(authorize_candidate_envelope(&g, c, candidate), Err(ResearchError::Scope));
+        assert_eq!(
+            authorize_candidate_envelope(&g, c, candidate),
+            Err(ResearchError::Scope)
+        );
         candidate.strategy_ref = "account:account1";
         candidate.unrestricted_python = true;
-        assert_eq!(authorize_candidate_envelope(&g, c, candidate), Err(ResearchError::Scope));
+        assert_eq!(
+            authorize_candidate_envelope(&g, c, candidate),
+            Err(ResearchError::Scope)
+        );
         candidate.unrestricted_python = false;
         candidate.dataset_ref = "spot:BTCUSDT:1m";
-        assert_eq!(authorize_candidate_envelope(&g, c, candidate), Err(ResearchError::Scope));
+        assert_eq!(
+            authorize_candidate_envelope(&g, c, candidate),
+            Err(ResearchError::Scope)
+        );
     }
 }

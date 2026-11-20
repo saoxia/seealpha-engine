@@ -111,9 +111,14 @@ impl Book {
         if page.is_empty() {
             return Err(FeedError::Gap);
         }
-        if step_ms <= 0 || self.step_ms.is_some_and(|old| old != step_ms)
-            || page.iter().any(|bar| bar.open_time_ms < 0
-                || bar.open_time_ms % step_ms != 0 || bar.volume < Decimal::ZERO) {
+        if step_ms <= 0
+            || self.step_ms.is_some_and(|old| old != step_ms)
+            || page.iter().any(|bar| {
+                bar.open_time_ms < 0
+                    || bar.open_time_ms % step_ms != 0
+                    || bar.volume < Decimal::ZERO
+            })
+        {
             self.gate.repair_required = true;
             return Err(FeedError::OutOfOrder);
         }
@@ -172,16 +177,26 @@ impl Book {
         self.gate.ready = false;
         self.proof = None;
         let step = self.step_ms.ok_or(FeedError::Gap)?;
-        if self.gate.conflict_latched { return Err(FeedError::Conflict); }
-        let end_exclusive = self.gate.confirmed_ms.checked_add(step)
+        if self.gate.conflict_latched {
+            return Err(FeedError::Conflict);
+        }
+        let end_exclusive = self
+            .gate
+            .confirmed_ms
+            .checked_add(step)
             .ok_or(FeedError::OutOfOrder)?;
-        if !proof.connected || !proof.clock_healthy || !proof.overlap_verified
-            || !proof.history_contiguous || proof.unresolved_gaps != 0
-            || proof.backlog != 0 || proof.latest_closed_open_ms != self.gate.confirmed_ms
+        if !proof.connected
+            || !proof.clock_healthy
+            || !proof.overlap_verified
+            || !proof.history_contiguous
+            || proof.unresolved_gaps != 0
+            || proof.backlog != 0
+            || proof.latest_closed_open_ms != self.gate.confirmed_ms
             || proof.journal_committed_open_ms < proof.latest_closed_open_ms
             || proof.exchange_confirmed_ms < end_exclusive
             || proof.checked_at_ms > proof.exchange_confirmed_ms
-            || proof.valid_until_ms <= proof.checked_at_ms {
+            || proof.valid_until_ms <= proof.checked_at_ms
+        {
             self.gate.repair_required = true;
             return Err(FeedError::Gap);
         }
@@ -192,15 +207,21 @@ impl Book {
     }
 
     pub fn verified_until_ms(&self) -> Option<i64> {
-        if self.gate.ready { self.proof.as_ref().map(|proof| proof.valid_until_ms) }
-        else { None }
+        if self.gate.ready {
+            self.proof.as_ref().map(|proof| proof.valid_until_ms)
+        } else {
+            None
+        }
     }
 
     /// Verify expiry at the caller's current exchange-checked time.
     pub fn verified_ready(&self, now_ms: i64) -> bool {
-        self.gate.ready && !self.gate.repair_required && !self.gate.conflict_latched
-            && self.proof.as_ref().is_some_and(|proof|
-                now_ms >= proof.checked_at_ms && now_ms <= proof.valid_until_ms)
+        self.gate.ready
+            && !self.gate.repair_required
+            && !self.gate.conflict_latched
+            && self.proof.as_ref().is_some_and(|proof| {
+                now_ms >= proof.checked_at_ms && now_ms <= proof.valid_until_ms
+            })
     }
 
     fn conflicts(&self, bar: &Bar) -> bool {
@@ -232,8 +253,10 @@ impl Book {
 }
 
 fn same_ohlcv(left: &Bar, right: &Bar) -> bool {
-    left.open == right.open && left.high == right.high
-        && left.low == right.low && left.close == right.close
+    left.open == right.open
+        && left.high == right.high
+        && left.low == right.low
+        && left.close == right.close
         && left.volume == right.volume
 }
 
@@ -763,7 +786,10 @@ mod tests {
         book.accept_page(&[minute(0, 5)], MINUTE_MS).unwrap();
         let mut different = minute(0, 5);
         different.high = Decimal::from(6);
-        assert_eq!(book.accept_page(&[different], MINUTE_MS), Err(FeedError::Conflict));
+        assert_eq!(
+            book.accept_page(&[different], MINUTE_MS),
+            Err(FeedError::Conflict)
+        );
         assert!(book.gate.conflict_latched);
         assert!(!book.gate.ready);
     }
@@ -775,9 +801,11 @@ mod tests {
         let checkpoint = book.gate.confirmed_ms;
         let mut bad = minute(1, 2);
         bad.open_time_ms += 1;
-        assert_eq!(book.accept_page(&[bad], MINUTE_MS), Err(FeedError::OutOfOrder));
+        assert_eq!(
+            book.accept_page(&[bad], MINUTE_MS),
+            Err(FeedError::OutOfOrder)
+        );
         assert_eq!(book.gate.confirmed_ms, checkpoint);
         assert!(!book.gate.ready);
     }
-
 }

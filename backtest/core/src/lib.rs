@@ -3,13 +3,15 @@
 //! Each publication replaces that member's target. The account trades the
 //! quantized delta at that bar's close. Cash is quote currency. Ending equity
 //! is cash plus the marked position. No exchange call is made.
+pub mod evidence;
 pub mod matching;
 pub mod timeline;
-pub mod evidence;
 
 use rust_decimal::Decimal;
-use seealpha_portfolio::{MemberTarget, PaperFill, TargetPublication, replay_targets,
-    clip_member_targets, net_signed_quantity, quantize_toward_zero};
+use seealpha_portfolio::{
+    MemberTarget, PaperFill, TargetPublication, clip_member_targets, net_signed_quantity,
+    quantize_toward_zero, replay_targets,
+};
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -131,79 +133,119 @@ pub fn run_backtest_with_curve(
     risk_limit: Decimal,
 ) -> Result<(BacktestReport, Vec<Value>), BacktestError> {
     use std::collections::BTreeMap;
-    if bars.is_empty() {return Err(BacktestError::Empty);}
-    if starting_balance<=Decimal::ZERO {return Err(BacktestError::Balance);}
-    if risk_limit<=Decimal::ZERO {
+    if bars.is_empty() {
+        return Err(BacktestError::Empty);
+    }
+    if starting_balance <= Decimal::ZERO {
+        return Err(BacktestError::Balance);
+    }
+    if risk_limit <= Decimal::ZERO {
         return Err(BacktestError::Portfolio("风险额度无效。".into()));
     }
-    let mut timeline=publications.to_vec();
-    timeline.sort_by(|a,b|a.bar_index.cmp(&b.bar_index).then(a.member_id.cmp(&b.member_id)));
-    if timeline.iter().any(|p|p.bar_index>=bars.len()) {
+    let mut timeline = publications.to_vec();
+    timeline.sort_by(|a, b| {
+        a.bar_index
+            .cmp(&b.bar_index)
+            .then(a.member_id.cmp(&b.member_id))
+    });
+    if timeline.iter().any(|p| p.bar_index >= bars.len()) {
         return Err(BacktestError::Portfolio("目标持仓不属于回测区间。".into()));
     }
-    let mut current=Decimal::ZERO;
-    let mut cash=starting_balance;
-    let mut latest=BTreeMap::<String,Decimal>::new();
-    let mut fills=Vec::new();
-    let mut equity_curve=Vec::with_capacity(bars.len());
-    let mut cursor=0_usize;
-    for (bar_index,bar) in bars.iter().enumerate() {
-        if bar.close<=Decimal::ZERO {
+    let mut current = Decimal::ZERO;
+    let mut cash = starting_balance;
+    let mut latest = BTreeMap::<String, Decimal>::new();
+    let mut fills = Vec::new();
+    let mut equity_curve = Vec::with_capacity(bars.len());
+    let mut cursor = 0_usize;
+    for (bar_index, bar) in bars.iter().enumerate() {
+        if bar.close <= Decimal::ZERO {
             return Err(BacktestError::Portfolio("K 线收盘价无效。".into()));
         }
-        let mut changed=false;
-        while cursor<timeline.len() && timeline[cursor].bar_index==bar_index {
-            let p=&timeline[cursor];
-            latest.insert(p.member_id.clone(),p.quantity);
-            cursor+=1;
-            changed=true;
+        let mut changed = false;
+        while cursor < timeline.len() && timeline[cursor].bar_index == bar_index {
+            let p = &timeline[cursor];
+            latest.insert(p.member_id.clone(), p.quantity);
+            cursor += 1;
+            changed = true;
         }
         if changed {
             // A bar's publications are merged before any execution. Never
             // turn opposing simultaneous strategies into artificial churn.
-            let targets=latest.iter().map(|(member_id,quantity)|MemberTarget{
-                member_id:member_id.clone(),signed_quantity:*quantity,risk_exit:false,
-            }).collect::<Vec<_>>();
-            let clipped=clip_member_targets(&targets,risk_limit)
-                .map_err(|e|BacktestError::Portfolio(e.to_string()))?;
-            let net=net_signed_quantity(&clipped)
-                .map_err(|e|BacktestError::Portfolio(e.to_string()))?;
-            let delta=net.checked_sub(current)
-                .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
-            let delta=quantize_toward_zero(delta,Decimal::new(1,8))
-                .map_err(|e|BacktestError::Portfolio(e.to_string()))?;
-            let position=current.checked_add(delta)
-                .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
-            let new_fills=if delta.is_zero(){Vec::new()}else{vec![PaperFill{
-                side:if delta.is_sign_negative(){"sell".into()}else{"buy".into()},
-                quantity:delta.abs(),price:bar.close,
-            }]};
+            let targets = latest
+                .iter()
+                .map(|(member_id, quantity)| MemberTarget {
+                    member_id: member_id.clone(),
+                    signed_quantity: *quantity,
+                    risk_exit: false,
+                })
+                .collect::<Vec<_>>();
+            let clipped = clip_member_targets(&targets, risk_limit)
+                .map_err(|e| BacktestError::Portfolio(e.to_string()))?;
+            let net = net_signed_quantity(&clipped)
+                .map_err(|e| BacktestError::Portfolio(e.to_string()))?;
+            let delta = net
+                .checked_sub(current)
+                .ok_or_else(|| BacktestError::Portfolio("数值溢出。".into()))?;
+            let delta = quantize_toward_zero(delta, Decimal::new(1, 8))
+                .map_err(|e| BacktestError::Portfolio(e.to_string()))?;
+            let position = current
+                .checked_add(delta)
+                .ok_or_else(|| BacktestError::Portfolio("数值溢出。".into()))?;
+            let new_fills = if delta.is_zero() {
+                Vec::new()
+            } else {
+                vec![PaperFill {
+                    side: if delta.is_sign_negative() {
+                        "sell".into()
+                    } else {
+                        "buy".into()
+                    },
+                    quantity: delta.abs(),
+                    price: bar.close,
+                }]
+            };
             for fill in new_fills {
-                let notional=fill.quantity.checked_mul(fill.price)
-                    .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
-                cash=if fill.side=="buy" {
+                let notional = fill
+                    .quantity
+                    .checked_mul(fill.price)
+                    .ok_or_else(|| BacktestError::Portfolio("数值溢出。".into()))?;
+                cash = if fill.side == "buy" {
                     cash.checked_sub(notional)
-                } else {cash.checked_add(notional)}
-                    .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
+                } else {
+                    cash.checked_add(notional)
+                }
+                .ok_or_else(|| BacktestError::Portfolio("数值溢出。".into()))?;
                 fills.push(fill);
             }
-            current=position;
+            current = position;
         }
-        let equity=cash.checked_add(
-            current.checked_mul(bar.close).ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?
-        ).ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
+        let equity = cash
+            .checked_add(
+                current
+                    .checked_mul(bar.close)
+                    .ok_or_else(|| BacktestError::Portfolio("数值溢出。".into()))?,
+            )
+            .ok_or_else(|| BacktestError::Portfolio("数值溢出。".into()))?;
         equity_curve.push(json!({"open_time_ms":bar.open_time_ms,
             "cash":cash.to_string(),"position":current.to_string(),
             "mark_price":bar.close.to_string(),"equity":equity.to_string()}));
     }
-    let ending=equity_curve.last()
-        .and_then(|row|row["equity"].as_str())
-        .and_then(|s|s.parse::<Decimal>().ok())
-        .ok_or_else(||BacktestError::Portfolio("权益记录无效。".into()))?;
-    Ok((BacktestReport{
-        bar_count:bars.len(),starting_balance,ending_balance:ending,
-        cash,position:current,fills,
-    },equity_curve))
+    let ending = equity_curve
+        .last()
+        .and_then(|row| row["equity"].as_str())
+        .and_then(|s| s.parse::<Decimal>().ok())
+        .ok_or_else(|| BacktestError::Portfolio("权益记录无效。".into()))?;
+    Ok((
+        BacktestReport {
+            bar_count: bars.len(),
+            starting_balance,
+            ending_balance: ending,
+            cash,
+            position: current,
+            fills,
+        },
+        equity_curve,
+    ))
 }
 
 pub fn basket_gross_notional(legs: &[(Decimal, Decimal)]) -> Result<Decimal, BacktestError> {
@@ -314,19 +356,31 @@ mod tests {
 
     #[test]
     fn issued_multi_member_history_has_contiguous_equity_and_netting() {
-        let bars=vec![bar(0,100),bar(60_000,110),bar(120_000,90)];
-        let publications=vec![
-            PublishedTarget{member_id:"a".into(),bar_index:0,quantity:Decimal::ONE},
-            PublishedTarget{member_id:"b".into(),bar_index:1,quantity:-Decimal::ONE},
-            PublishedTarget{member_id:"a".into(),bar_index:2,quantity:Decimal::ZERO},
+        let bars = vec![bar(0, 100), bar(60_000, 110), bar(120_000, 90)];
+        let publications = vec![
+            PublishedTarget {
+                member_id: "a".into(),
+                bar_index: 0,
+                quantity: Decimal::ONE,
+            },
+            PublishedTarget {
+                member_id: "b".into(),
+                bar_index: 1,
+                quantity: -Decimal::ONE,
+            },
+            PublishedTarget {
+                member_id: "a".into(),
+                bar_index: 2,
+                quantity: Decimal::ZERO,
+            },
         ];
-        let (result,curve)=run_backtest_with_curve(
-            &bars,&publications,Decimal::from(1000),Decimal::from(10)
-        ).unwrap();
-        assert_eq!(result.fills.len(),3);
-        assert_eq!(curve.len(),bars.len());
-        assert_eq!(result.ending_balance,Decimal::from(1010));
-        assert_eq!(curve[2]["equity"],"1010");
+        let (result, curve) =
+            run_backtest_with_curve(&bars, &publications, Decimal::from(1000), Decimal::from(10))
+                .unwrap();
+        assert_eq!(result.fills.len(), 3);
+        assert_eq!(curve.len(), bars.len());
+        assert_eq!(result.ending_balance, Decimal::from(1010));
+        assert_eq!(curve[2]["equity"], "1010");
     }
 
     #[test]

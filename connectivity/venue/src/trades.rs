@@ -1,68 +1,95 @@
 //! Canonical exchange-authored fill records, never derived from order ACKs.
 //! User trade history is a signed *read* and must not trigger another order.
-use crate::{Product,VenueError};
+use crate::{Product, VenueError};
 use rust_decimal::Decimal;
-use serde_json::{Value,json};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-fn id(value:&Value)->Option<String>{
-    value.as_u64().map(|v|v.to_string())
-        .or_else(||value.as_str().filter(|s|
-            !s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit())
-        ).map(str::to_owned))
+fn id(value: &Value) -> Option<String> {
+    value.as_u64().map(|v| v.to_string()).or_else(|| {
+        value
+            .as_str()
+            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .map(str::to_owned)
+    })
 }
-fn dec<'a>(row:&'a Value,name:&str,positive:bool)->Result<&'a str,VenueError>{
-    let raw=row[name].as_str().ok_or(VenueError::Unconfirmed)?;
-    let n=raw.parse::<Decimal>().map_err(|_|VenueError::Unconfirmed)?;
-    if positive && n<=Decimal::ZERO {return Err(VenueError::Unconfirmed);}
+fn dec<'a>(row: &'a Value, name: &str, positive: bool) -> Result<&'a str, VenueError> {
+    let raw = row[name].as_str().ok_or(VenueError::Unconfirmed)?;
+    let n = raw
+        .parse::<Decimal>()
+        .map_err(|_| VenueError::Unconfirmed)?;
+    if positive && n <= Decimal::ZERO {
+        return Err(VenueError::Unconfirmed);
+    }
     Ok(raw)
 }
 pub fn normalize_order_trades(
-    product:Product,symbol:&str,order_id:&str,payload:&Value,
-)->Result<Vec<Value>,VenueError>{
-    normalize_order_trades_page(product,symbol,order_id,payload,false)
+    product: Product,
+    symbol: &str,
+    order_id: &str,
+    payload: &Value,
+) -> Result<Vec<Value>, VenueError> {
+    normalize_order_trades_page(product, symbol, order_id, payload, false)
 }
 
 /// A saturated page is permitted ONLY inside the verified cursor-pagination
 /// loop; the public one-page parser continues to fail closed.
 pub(crate) fn normalize_order_trades_page(
-    product:Product,symbol:&str,order_id:&str,payload:&Value,allow_full:bool,
-)->Result<Vec<Value>,VenueError>{
-    if product==Product::Option || order_id.is_empty() ||
-        !order_id.bytes().all(|b|b.is_ascii_digit()) {
+    product: Product,
+    symbol: &str,
+    order_id: &str,
+    payload: &Value,
+    allow_full: bool,
+) -> Result<Vec<Value>, VenueError> {
+    if product == Product::Option
+        || order_id.is_empty()
+        || !order_id.bytes().all(|b| b.is_ascii_digit())
+    {
         return Err(VenueError::Unconfirmed);
     }
-    let rows=payload.as_array().ok_or(VenueError::Unconfirmed)?;
+    let rows = payload.as_array().ok_or(VenueError::Unconfirmed)?;
     // Full pagination is required before we can certify more than one page.
-    if rows.len()>1000 || (rows.len()==1000 && !allow_full) {
+    if rows.len() > 1000 || (rows.len() == 1000 && !allow_full) {
         return Err(VenueError::Unconfirmed);
     }
-    let mut trades=Vec::with_capacity(rows.len());
-    let mut seen=BTreeSet::new();
+    let mut trades = Vec::with_capacity(rows.len());
+    let mut seen = BTreeSet::new();
     for row in rows {
-        if row["symbol"].as_str()!=Some(symbol) ||
-            id(&row["orderId"]).as_deref()!=Some(order_id) {
+        if row["symbol"].as_str() != Some(symbol)
+            || id(&row["orderId"]).as_deref() != Some(order_id)
+        {
             return Err(VenueError::Unconfirmed);
         }
-        let trade_id=id(&row["id"]).ok_or(VenueError::Unconfirmed)?;
+        let trade_id = id(&row["id"]).ok_or(VenueError::Unconfirmed)?;
         if !seen.insert(trade_id.clone()) {
             return Err(VenueError::Unconfirmed);
         }
-        let quantity=dec(row,"qty",true)?;
-        let price=dec(row,"price",true)?;
-        let time=row["time"].as_i64().ok_or(VenueError::Unconfirmed)?;
-        if time<0 {return Err(VenueError::Unconfirmed);}
-        let side=if let Some(buyer)=row["buyer"].as_bool()
-            .or_else(||row["isBuyer"].as_bool()) {
-            if buyer{"BUY"}else{"SELL"}
-        }else{
+        let quantity = dec(row, "qty", true)?;
+        let price = dec(row, "price", true)?;
+        let time = row["time"].as_i64().ok_or(VenueError::Unconfirmed)?;
+        if time < 0 {
+            return Err(VenueError::Unconfirmed);
+        }
+        let side = if let Some(buyer) = row["buyer"].as_bool().or_else(|| row["isBuyer"].as_bool())
+        {
+            if buyer { "BUY" } else { "SELL" }
+        } else {
             match row["side"].as_str() {
-                Some("BUY")=>"BUY",Some("SELL")=>"SELL",
-                _=>return Err(VenueError::Unconfirmed),
+                Some("BUY") => "BUY",
+                Some("SELL") => "SELL",
+                _ => return Err(VenueError::Unconfirmed),
             }
         };
-        let commission=if row["commission"].is_null() {"0"}else{dec(row,"commission",false)?};
-        let realized=if row["realizedPnl"].is_null(){"0"}else{dec(row,"realizedPnl",false)?};
+        let commission = if row["commission"].is_null() {
+            "0"
+        } else {
+            dec(row, "commission", false)?
+        };
+        let realized = if row["realizedPnl"].is_null() {
+            "0"
+        } else {
+            dec(row, "realizedPnl", false)?
+        };
         trades.push(json!({
             "trade_id":format!("binance:{}:{}:{trade_id}",
                 match product{Product::Spot=>"spot",Product::FuturesUm=>"futures_um",
@@ -81,30 +108,39 @@ pub(crate) fn normalize_order_trades_page(
     Ok(trades)
 }
 #[cfg(test)]
-mod tests{
+mod tests {
     use super::*;
     #[test]
-    fn trade_rows_require_real_exchange_ids_and_matching_order(){
-        let raw=json!([{"id":77,"orderId":8,"symbol":"ETHUSDT",
+    fn trade_rows_require_real_exchange_ids_and_matching_order() {
+        let raw = json!([{"id":77,"orderId":8,"symbol":"ETHUSDT",
             "qty":"0.5","price":"2000","time":100,
             "buyer":true,"commission":"0.02","commissionAsset":"USDT"}]);
-        let rows=normalize_order_trades(Product::FuturesUm,"ETHUSDT","8",&raw).unwrap();
-        assert_eq!(rows[0]["trade_id"],"binance:futures_um:ETHUSDT:77");
-        assert_eq!(rows[0]["side"],"BUY");
-        assert!(normalize_order_trades(Product::FuturesUm,"ETHUSDT","9",&raw).is_err());
-        assert!(normalize_order_trades(Product::Option,"ETHUSDT","8",&raw).is_err());
+        let rows = normalize_order_trades(Product::FuturesUm, "ETHUSDT", "8", &raw).unwrap();
+        assert_eq!(rows[0]["trade_id"], "binance:futures_um:ETHUSDT:77");
+        assert_eq!(rows[0]["side"], "BUY");
+        assert!(normalize_order_trades(Product::FuturesUm, "ETHUSDT", "9", &raw).is_err());
+        assert!(normalize_order_trades(Product::Option, "ETHUSDT", "8", &raw).is_err());
     }
     #[test]
-    fn full_page_requires_explicit_pagination_context(){
-        let row=json!({"id":77,"orderId":8,"symbol":"ETHUSDT",
+    fn full_page_requires_explicit_pagination_context() {
+        let row = json!({"id":77,"orderId":8,"symbol":"ETHUSDT",
             "qty":"0.5","price":"2000","time":100,
             "buyer":true,"commission":"0.02","commissionAsset":"USDT"});
-        let page=Value::Array((1..=1000).map(|id|{
-            let mut v=row.clone();
-            v["id"]=json!(id);
-            v
-        }).collect());
-        assert!(normalize_order_trades(Product::Spot,"ETHUSDT","8",&page).is_err());
-        assert_eq!(normalize_order_trades_page(Product::Spot,"ETHUSDT","8",&page,true).unwrap().len(),1000);
+        let page = Value::Array(
+            (1..=1000)
+                .map(|id| {
+                    let mut v = row.clone();
+                    v["id"] = json!(id);
+                    v
+                })
+                .collect(),
+        );
+        assert!(normalize_order_trades(Product::Spot, "ETHUSDT", "8", &page).is_err());
+        assert_eq!(
+            normalize_order_trades_page(Product::Spot, "ETHUSDT", "8", &page, true)
+                .unwrap()
+                .len(),
+            1000
+        );
     }
 }

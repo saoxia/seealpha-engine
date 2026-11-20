@@ -27,13 +27,19 @@ impl BinanceSource {
     /// partial last bar, duplicate or malformed page fails the entire request;
     /// the caller must not commit a partially verified history window.
     pub async fn load_history(
-        &self, product: Product, symbol: &str, interval: &str,
-        start_ms: i64, end_ms: i64,
+        &self,
+        product: Product,
+        symbol: &str,
+        interval: &str,
+        start_ms: i64,
+        end_ms: i64,
     ) -> Result<Vec<crate::Bar>, MarketError> {
         check_symbol(symbol)?;
         let step = interval_ms(interval)?;
-        if start_ms < 0 || start_ms >= end_ms
-            || start_ms % step != 0 || end_ms % step != 0
+        if start_ms < 0
+            || start_ms >= end_ms
+            || start_ms % step != 0
+            || end_ms % step != 0
             || end_ms.saturating_sub(start_ms) / step > 5000
         {
             return Err(MarketError::Time);
@@ -43,11 +49,17 @@ impl BinanceSource {
             Product::FuturesUm => "https://fapi.binance.com/fapi/v1/klines",
         };
         let mut result = Vec::new();
-        let mut clock=crate::clock::ServerClock::new();
-        clock.sync(&self.client,match product {
-            Product::Spot=>"spot",Product::FuturesUm=>"futures_um",
-        }).await?;
-        let now_ms=clock.confirmed_ms()?;
+        let mut clock = crate::clock::ServerClock::new();
+        clock
+            .sync(
+                &self.client,
+                match product {
+                    Product::Spot => "spot",
+                    Product::FuturesUm => "futures_um",
+                },
+            )
+            .await?;
+        let now_ms = clock.confirmed_ms()?;
         // A kline with a future exchange close time is still forming,
         // even if Binance returns a syntactically complete OHLCV tuple.
         if end_ms > now_ms {
@@ -56,13 +68,18 @@ impl BinanceSource {
         let mut cursor = start_ms;
         while cursor < end_ms {
             let take = ((end_ms - cursor) / step).min(1000);
-            let value = self.get_json(endpoint, &[
-                ("symbol", symbol.to_string()),
-                ("interval", interval.to_string()),
-                ("startTime", cursor.to_string()),
-                ("endTime", (end_ms - 1).to_string()),
-                ("limit", take.to_string()),
-            ]).await?;
+            let value = self
+                .get_json(
+                    endpoint,
+                    &[
+                        ("symbol", symbol.to_string()),
+                        ("interval", interval.to_string()),
+                        ("startTime", cursor.to_string()),
+                        ("endTime", (end_ms - 1).to_string()),
+                        ("limit", take.to_string()),
+                    ],
+                )
+                .await?;
             let page = parse_binance_klines(&value, step)?;
             if page.is_empty() {
                 return Err(MarketError::Empty);
@@ -170,7 +187,10 @@ impl MemorySource {
 #[async_trait]
 impl PublicSource for MemorySource {
     async fn load(&self, query: &LoadQuery) -> Result<MarketSnapshot, MarketError> {
-        if query.product != self.snapshot.product || query.symbol != self.snapshot.symbol || query.interval != self.snapshot.interval {
+        if query.product != self.snapshot.product
+            || query.symbol != self.snapshot.symbol
+            || query.interval != self.snapshot.interval
+        {
             return Err(MarketError::Empty);
         }
         Ok(self.snapshot.clone())

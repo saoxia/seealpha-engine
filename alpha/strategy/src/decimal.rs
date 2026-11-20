@@ -13,7 +13,10 @@ pub(crate) struct Decimal {
 }
 
 impl Decimal {
-    pub(crate) const ZERO: Self = Self { mantissa: 0, scale: 0 };
+    pub(crate) const ZERO: Self = Self {
+        mantissa: 0,
+        scale: 0,
+    };
 
     pub(crate) fn scale(self) -> u32 {
         self.scale
@@ -63,7 +66,8 @@ impl FromStr for Decimal {
             if digits > 28 {
                 return Err(());
             }
-            mantissa = mantissa.checked_mul(10)
+            mantissa = mantissa
+                .checked_mul(10)
                 .and_then(|n| n.checked_add(i128::from(byte - b'0')))
                 .ok_or(())?;
             if point {
@@ -73,7 +77,10 @@ impl FromStr for Decimal {
         if digits == 0 || (point && unsigned.ends_with('.')) {
             return Err(());
         }
-        Ok(Self { mantissa: mantissa * sign, scale })
+        Ok(Self {
+            mantissa: mantissa * sign,
+            scale,
+        })
     }
 }
 
@@ -86,7 +93,17 @@ mod tests {
         assert!(Decimal::from_str("0.00000001").unwrap() > Decimal::ZERO);
         assert!(Decimal::from_str("-0.1").unwrap() < Decimal::ZERO);
         assert!(Decimal::from_str("-0").unwrap() == Decimal::ZERO);
-        for value in ["NaN", "inf", "1e-8", "1.2.3", ".", "1.", "", "１２", "100000000000000000000000000000"] {
+        for value in [
+            "NaN",
+            "inf",
+            "1e-8",
+            "1.2.3",
+            ".",
+            "1.",
+            "",
+            "１２",
+            "100000000000000000000000000000",
+        ] {
             assert!(Decimal::from_str(value).is_err(), "{value}");
         }
     }

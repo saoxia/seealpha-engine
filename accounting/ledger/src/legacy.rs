@@ -5,8 +5,15 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 use std::collections::HashSet;
 
 const RUNTIME_TABLES: [&str; 9] = [
-    "connections", "order_requests", "orders", "fills", "positions",
-    "gaps", "subscriptions", "events", "strategy_loads",
+    "connections",
+    "order_requests",
+    "orders",
+    "fills",
+    "positions",
+    "gaps",
+    "subscriptions",
+    "events",
+    "strategy_loads",
 ];
 
 fn sql(err: rusqlite::Error) -> LedgerError {
@@ -16,7 +23,8 @@ fn sql(err: rusqlite::Error) -> LedgerError {
 fn exists(tx: &Transaction<'_>, table: &str) -> Result<bool, LedgerError> {
     tx.query_row(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
-        params![table], |_| Ok(()),
+        params![table],
+        |_| Ok(()),
     )
     .optional()
     .map(|v| v.is_some())
@@ -25,8 +33,12 @@ fn exists(tx: &Transaction<'_>, table: &str) -> Result<bool, LedgerError> {
 
 fn columns(tx: &Transaction<'_>, table: &str) -> Result<HashSet<String>, LedgerError> {
     // All table identifiers come from the fixed RUNTIME_TABLES whitelist.
-    let mut stmt = tx.prepare(&format!("PRAGMA table_info({table})")).map_err(sql)?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1)).map_err(sql)?;
+    let mut stmt = tx
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(sql)?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(sql)?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(sql)
 }
 
@@ -61,12 +73,16 @@ fn legacy_copy(tx: &Transaction<'_>, table: &str) -> Result<(), LedgerError> {
 /// Execute schema creation, legacy adoption and column additions as one SQLite
 /// IMMEDIATE transaction. A failed conversion rolls back all renames and copies.
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), LedgerError> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql)?;
     let mut pending = Vec::new();
     for table in RUNTIME_TABLES {
         if exists(&tx, table)? && !columns(&tx, table)?.contains("tenant_id") {
             if exists(&tx, &format!("{table}_legacy"))? {
-                return Err(LedgerError::Conflict("unfinished legacy migration; manual inspection required".into()));
+                return Err(LedgerError::Conflict(
+                    "unfinished legacy migration; manual inspection required".into(),
+                ));
             }
             pending.push(table);
         }
@@ -85,14 +101,17 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), LedgerError>
         ("archive", "BLOB NOT NULL DEFAULT X''"),
     ] {
         if !strategy_columns.contains(name) {
-            tx.execute_batch(&format!("ALTER TABLE strategy_loads ADD COLUMN {name} {definition}"))
-                .map_err(sql)?;
+            tx.execute_batch(&format!(
+                "ALTER TABLE strategy_loads ADD COLUMN {name} {definition}"
+            ))
+            .map_err(sql)?;
         }
     }
     let migrated = !pending.is_empty();
     for table in pending {
         legacy_copy(&tx, table)?;
-        tx.execute_batch(&format!("DROP TABLE {table}_legacy")).map_err(sql)?;
+        tx.execute_batch(&format!("DROP TABLE {table}_legacy"))
+            .map_err(sql)?;
     }
     if migrated {
         tx.execute(
@@ -121,20 +140,29 @@ mod tests {
              INSERT INTO events VALUES(73,'a','unknown','{}',1);"
         ).unwrap();
         initialize(&mut old).unwrap();
-        let row: String = old.query_row(
-            "SELECT body_json FROM order_requests WHERE tenant_id='1' AND request_id='r'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let row: String = old
+            .query_row(
+                "SELECT body_json FROM order_requests WHERE tenant_id='1' AND request_id='r'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(row.contains("UNKNOWN"));
-        let count: i64 = old.query_row(
-            "SELECT COUNT(*) FROM events WHERE id=73 AND tenant_id='1'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let count: i64 = old
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE id=73 AND tenant_id='1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
-        let fill: String = old.query_row(
-            "SELECT fill_json FROM fills WHERE tenant_id='1' AND fill_id='f'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let fill: String = old
+            .query_row(
+                "SELECT fill_json FROM fills WHERE tenant_id='1' AND fill_id='f'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(fill.contains("trade_id"));
         // Existing scoped records remain untouched on repeated initialization.
         initialize(&mut old).unwrap();

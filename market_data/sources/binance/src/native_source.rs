@@ -13,8 +13,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde_json::{Value, json};
 use seealpha_market::clock::ServerClock;
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -64,8 +64,12 @@ fn write_status(journal: &PairJournal, state: &Status, product: Product) -> Resu
     let unresolved = state.gap_count.saturating_add(id_gaps);
     // The exchange clock may close calculation buckets but cannot certify
     // live feed READY before REST overlap and Catalog replay reconciliation.
-    let confirmed = if state.trade_connected && now <= state.clock_valid_until_ms
-        && unresolved == 0 { state.confirmed_ms } else { None };
+    let confirmed = if state.trade_connected && now <= state.clock_valid_until_ms && unresolved == 0
+    {
+        state.confirmed_ms
+    } else {
+        None
+    };
     atomic_status(
         &journal.status_file(),
         &json!({
@@ -149,8 +153,8 @@ fn writer_loop(
                         state.mark_connected = false;
                     }
                     state.gap_count = state.gap_count.saturating_add(1);
-                    state.confirmed_ms=None;
-                    state.clock_valid_until_ms=0;
+                    state.confirmed_ms = None;
+                    state.clock_valid_until_ms = 0;
                     state.last_error = Some(
                         item.event["error"]
                             .as_str()
@@ -159,22 +163,27 @@ fn writer_loop(
                     );
                 }
                 Some("clock") => {
-                    let recorded=item.event["checked_ms"].as_i64().ok_or("clock stamp missing")?;
-                    let confirmed=item.event["confirmed_ms"].as_i64()
+                    let recorded = item.event["checked_ms"]
+                        .as_i64()
+                        .ok_or("clock stamp missing")?;
+                    let confirmed = item.event["confirmed_ms"]
+                        .as_i64()
                         .ok_or("confirmed exchange clock missing")?;
-                    let received=stamp_ms()?;
-                    if confirmed<=0 || recorded<=0 ||
-                        received.saturating_sub(recorded)>15_000 ||
-                        confirmed>received.saturating_add(10_000) {
+                    let received = stamp_ms()?;
+                    if confirmed <= 0
+                        || recorded <= 0
+                        || received.saturating_sub(recorded) > 15_000
+                        || confirmed > received.saturating_add(10_000)
+                    {
                         return Err("invalid or expired exchange clock evidence".into());
                     }
-                    state.confirmed_ms=Some(confirmed);
-                    state.clock_valid_until_ms=received+15_000;
+                    state.confirmed_ms = Some(confirmed);
+                    state.clock_valid_until_ms = received + 15_000;
                 }
                 Some("clock_failed") => {
-                    state.confirmed_ms=None;
-                    state.clock_valid_until_ms=0;
-                    state.last_error=Some("exchange_clock_unavailable".into());
+                    state.confirmed_ms = None;
+                    state.clock_valid_until_ms = 0;
+                    state.last_error = Some("exchange_clock_unavailable".into());
                 }
                 Some("trade") => {
                     if !state.trade_connected {
@@ -183,7 +192,8 @@ fn writer_loop(
                     let row = &item.event["row"];
                     journal.write_trade(row, stamp_ms()?)?;
                     if let Some(stamp) = row["time"].as_i64() {
-                        state.last_trade_ms = Some(state.last_trade_ms.map_or(stamp, |old| old.max(stamp)));
+                        state.last_trade_ms =
+                            Some(state.last_trade_ms.map_or(stamp, |old| old.max(stamp)));
                     }
                 }
                 Some("mark") => {
@@ -260,28 +270,44 @@ async fn execute() -> Result<()> {
     let mut tasks: Vec<JoinHandle<()>> = Vec::new();
     // Keep exchange-signed endpoint time separate from WebSocket message
     // receive time. The public timer holds no trading credentials.
-    let symbols=policies.iter().filter(|p|p.realtime_enabled)
-        .map(|p|p.symbol.clone()).collect::<Vec<_>>();
-    let clock_sender=sender.clone();
+    let symbols = policies
+        .iter()
+        .filter(|p| p.realtime_enabled)
+        .map(|p| p.symbol.clone())
+        .collect::<Vec<_>>();
+    let clock_sender = sender.clone();
     tasks.push(tokio::spawn(async move {
-        let Ok(client)=reqwest::Client::builder().https_only(true)
+        let Ok(client) = reqwest::Client::builder()
+            .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(4))
-            .user_agent("seealpha-native-clock/0.1").build()
-        else{return};
-        let mut clock=ServerClock::new();
+            .user_agent("seealpha-native-clock/0.1")
+            .build()
+        else {
+            return;
+        };
+        let mut clock = ServerClock::new();
         loop {
-            let verified=clock.sync(&client,product.as_str()).await
-                .and_then(|_|clock.confirmed_ms());
-            let checked=stamp_ms().unwrap_or(0);
+            let verified = clock
+                .sync(&client, product.as_str())
+                .await
+                .and_then(|_| clock.confirmed_ms());
+            let checked = stamp_ms().unwrap_or(0);
             for symbol in &symbols {
-                let event=match &verified {
-                    Ok(ms)=>json!({"kind":"clock","confirmed_ms":ms,"checked_ms":checked}),
-                    Err(_)=>json!({"kind":"clock_failed","checked_ms":checked})
+                let event = match &verified {
+                    Ok(ms) => json!({"kind":"clock","confirmed_ms":ms,"checked_ms":checked}),
+                    Err(_) => json!({"kind":"clock_failed","checked_ms":checked}),
                 };
-                if clock_sender.send(WireEvent{
-                    symbol:symbol.clone(),event
-                }).await.is_err(){return;}
+                if clock_sender
+                    .send(WireEvent {
+                        symbol: symbol.clone(),
+                        event,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
             }
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
@@ -354,7 +380,10 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "seealpha-native-source-offline-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir(&path).unwrap();
         path
@@ -373,19 +402,24 @@ mod tests {
         let root = temp_root();
         let (sender, receiver) = mpsc::channel(16);
         let dir = root.clone();
-        let worker = std::thread::spawn(move || writer_loop(Product::Spot, dir, policy(), receiver));
-        sender.blocking_send(WireEvent {
-            symbol: "ETHUSDT".into(),
-            event: json!({"kind":"connected","channel":"Trades"})
-        }).unwrap();
-        for id in [100, 103] {
-            sender.blocking_send(WireEvent {
+        let worker =
+            std::thread::spawn(move || writer_loop(Product::Spot, dir, policy(), receiver));
+        sender
+            .blocking_send(WireEvent {
                 symbol: "ETHUSDT".into(),
-                event: json!({"kind":"trade","row":{
-                    "id":id,"time":1700000000000_i64+id,
-                    "price":"10.0","qty":"0.2","isBuyerMaker":false
-                }})
-            }).unwrap();
+                event: json!({"kind":"connected","channel":"Trades"}),
+            })
+            .unwrap();
+        for id in [100, 103] {
+            sender
+                .blocking_send(WireEvent {
+                    symbol: "ETHUSDT".into(),
+                    event: json!({"kind":"trade","row":{
+                        "id":id,"time":1700000000000_i64+id,
+                        "price":"10.0","qty":"0.2","isBuyerMaker":false
+                    }}),
+                })
+                .unwrap();
         }
         sender.blocking_send(WireEvent {
             symbol: "ETHUSDT".into(),
@@ -395,13 +429,15 @@ mod tests {
         worker.join().unwrap().unwrap();
 
         let pair = root.join("ETHUSDT").join("tick");
-        let prior: Value = serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
+        let prior: Value =
+            serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
         assert_eq!(prior["data_ready"], false);
         assert!(prior["gap_count"].as_u64().unwrap() >= 2);
         let (sender, receiver) = mpsc::channel(1);
         drop(sender);
         writer_loop(Product::Spot, root.clone(), policy(), receiver).unwrap();
-        let restarted: Value = serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
+        let restarted: Value =
+            serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
         assert_eq!(restarted["data_ready"], false);
         assert!(restarted["gap_count"].as_u64().unwrap() >= 1);
         let journal = PairJournal::open(&pair, "ETHUSDT", "tick").unwrap();
@@ -414,16 +450,19 @@ mod tests {
     fn malformed_unsubscribed_trade_fails_without_journal_insert() {
         let root = temp_root();
         let (sender, receiver) = mpsc::channel(2);
-        sender.blocking_send(WireEvent {
-            symbol: "ETHUSDT".into(),
-            event: json!({"kind":"trade","row":{
-                "id":1,"time":1,"price":"10","qty":"1","isBuyerMaker":false
-            }})
-        }).unwrap();
+        sender
+            .blocking_send(WireEvent {
+                symbol: "ETHUSDT".into(),
+                event: json!({"kind":"trade","row":{
+                    "id":1,"time":1,"price":"10","qty":"1","isBuyerMaker":false
+                }}),
+            })
+            .unwrap();
         drop(sender);
         assert!(writer_loop(Product::Spot, root.clone(), policy(), receiver).is_err());
         let pair = root.join("ETHUSDT").join("tick");
-        let state: Value = serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
+        let state: Value =
+            serde_json::from_slice(&fs::read(pair.join("status.json")).unwrap()).unwrap();
         assert_eq!(state["data_ready"], false);
         let journal = PairJournal::open(&pair, "ETHUSDT", "tick").unwrap();
         assert_eq!(journal.trade_count().unwrap(), 0);

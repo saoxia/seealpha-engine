@@ -1,13 +1,13 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
 mod accounts;
-#[allow(dead_code)] // Staged: order sender remains disabled until risk/evidence gate is wired.
-mod order_journal;
 mod basket;
 mod basket_phase;
+#[allow(dead_code)] // Staged: order sender remains disabled until risk/evidence gate is wired.
+mod order_journal;
 mod portfolio;
-pub use portfolio::{NativePortfolioState,NativePortfolioResult,NativePortfolioEvent};
-mod config;
+pub use portfolio::{NativePortfolioEvent, NativePortfolioResult, NativePortfolioState};
 mod catalog;
+mod config;
 mod data;
 mod evidence;
 mod fills;
@@ -16,8 +16,8 @@ mod verified_replay;
 pub use verified_replay::VerifiedHistoryWindow;
 mod inspection;
 mod jobs;
-mod sources;
 mod session;
+mod sources;
 mod trading;
 pub use trading::OrderCommand;
 
@@ -27,11 +27,11 @@ pub use session::{PackageBody, PaperRequest, StrategyInput};
 use seealpha_ledger::{Ledger, LedgerError, StrategyLoad, Tenant};
 use seealpha_strategy::{self, HostCommand, inspect_archive};
 use serde_json::{Value, json};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Child;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -67,7 +67,7 @@ pub struct Runtime {
     pub host: PathBuf,
     source_state_dir: PathBuf,
     inflight: AtomicUsize,
-    source_processes: Mutex<HashMap<String,Child>>,
+    source_processes: Mutex<HashMap<String, Child>>,
 }
 
 impl Runtime {
@@ -78,20 +78,23 @@ impl Runtime {
                 // An implicit /tmp book loses request-idempotency, exchange
                 // reconciliation and verified fills on restart. It is never
                 // a safe replacement for a production account ledger.
-                let explicitly_ephemeral=std::env::var("ENGINE_ALLOW_EPHEMERAL_STATE")
-                    .is_ok_and(|value|value=="1");
-                if !explicitly_ephemeral ||
-                    config.tenant_purpose.as_deref()!=Some("development")
-                    || config.venue_base.is_some() {
+                let explicitly_ephemeral =
+                    std::env::var("ENGINE_ALLOW_EPHEMERAL_STATE").is_ok_and(|value| value == "1");
+                if !explicitly_ephemeral
+                    || config.tenant_purpose.as_deref() != Some("development")
+                    || config.venue_base.is_some()
+                {
                     return Err(error);
                 }
-                let fallback=
-                    std::env::temp_dir().join(format!("seealpha-ephemeral-{}",std::process::id()));
+                let fallback =
+                    std::env::temp_dir().join(format!("seealpha-ephemeral-{}", std::process::id()));
                 eprintln!(
                     "explicit development-only ephemeral state for {}: {}; using {}",
-                    config.book_path().display(),error,fallback.display()
+                    config.book_path().display(),
+                    error,
+                    fallback.display()
                 );
-                Self::open_book(config,&fallback.join("book.sqlite"))
+                Self::open_book(config, &fallback.join("book.sqlite"))
             }
         }
     }
@@ -113,11 +116,18 @@ impl Runtime {
         // Query at most one page per tenant on startup; the paginated API
         // below exposes the entire durable queue without loading it at boot.
         for tenant in ledger.active_tenant_ids().map_err(map_ledger)? {
-            let page = ledger.order_recovery_page(&tenant, 0, 500).map_err(map_ledger)?;
+            let page = ledger
+                .order_recovery_page(&tenant, 0, 500)
+                .map_err(map_ledger)?;
             if !page.is_empty() {
                 eprintln!(
                     "order recovery: tenant={tenant} pending_reconciliation_at_least={}{}; no automatic resend",
-                    page.len(), if page.len() == 500 { " (more pages possible)" } else { "" }
+                    page.len(),
+                    if page.len() == 500 {
+                        " (more pages possible)"
+                    } else {
+                        ""
+                    }
                 );
             }
         }
@@ -126,7 +136,10 @@ impl Runtime {
             project: config.project.clone(),
             python: config.python.clone(),
             host: config.host_script(),
-            source_state_dir: book.parent().map(std::path::Path::to_path_buf).unwrap_or_else(||config.state_dir.clone()),
+            source_state_dir: book
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| config.state_dir.clone()),
             inflight: AtomicUsize::new(0),
             source_processes: Mutex::new(HashMap::new()),
         })
@@ -136,28 +149,42 @@ impl Runtime {
     /// requiring signed exchange queries and account reconciliation, not an
     /// authorization to resend or synthesize fills.
     pub fn order_recovery_page(
-        &self, tenant: &str, offset: usize, limit: usize,
+        &self,
+        tenant: &str,
+        offset: usize,
+        limit: usize,
     ) -> Result<Vec<seealpha_ledger::OrderRecoveryItem>, RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger.order_recovery_page(tenant, offset, limit).map_err(map_ledger)
+        self.ledger
+            .order_recovery_page(tenant, offset, limit)
+            .map_err(map_ledger)
     }
 
     /// Explicit scheduling only; no network IO, no order POST and no claim
     /// that an observed NEW/ACK implies a completed settlement.
     pub fn enqueue_order_reconciliations(
-        &self, tenant: &str, now_ms: i64,
+        &self,
+        tenant: &str,
+        now_ms: i64,
     ) -> Result<usize, RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger.enqueue_order_reconciliations(tenant,now_ms).map_err(map_ledger)
+        self.ledger
+            .enqueue_order_reconciliations(tenant, now_ms)
+            .map_err(map_ledger)
     }
 
     /// Atomically lease one read-side reconciliation task. The caller may
     /// perform authenticated order/trade/account GETs, never resend the order.
     pub fn claim_order_reconciliation(
-        &self, tenant:&str, worker:&str, now_ms:i64, lease_ms:i64,
-    ) -> Result<Option<seealpha_ledger::ReconciliationTask>,RuntimeError> {
+        &self,
+        tenant: &str,
+        worker: &str,
+        now_ms: i64,
+        lease_ms: i64,
+    ) -> Result<Option<seealpha_ledger::ReconciliationTask>, RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger.claim_order_reconciliation(tenant,worker,now_ms,lease_ms)
+        self.ledger
+            .claim_order_reconciliation(tenant, worker, now_ms, lease_ms)
             .map_err(map_ledger)
     }
 
@@ -165,13 +192,29 @@ impl Runtime {
     /// retriable until separately verified financial reconciliation completes.
     #[allow(clippy::too_many_arguments)]
     pub fn finish_order_reconciliation(
-        &self, tenant:&str, account:&str, request:&str, worker:&str,
-        expected_attempts:i64, now_ms:i64, outcome:&str, error_code:Option<&str>,
-    ) -> Result<(),RuntimeError> {
+        &self,
+        tenant: &str,
+        account: &str,
+        request: &str,
+        worker: &str,
+        expected_attempts: i64,
+        now_ms: i64,
+        outcome: &str,
+        error_code: Option<&str>,
+    ) -> Result<(), RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger.finish_order_reconciliation(
-            tenant,account,request,worker,expected_attempts,now_ms,outcome,error_code,
-        ).map_err(map_ledger)
+        self.ledger
+            .finish_order_reconciliation(
+                tenant,
+                account,
+                request,
+                worker,
+                expected_attempts,
+                now_ms,
+                outcome,
+                error_code,
+            )
+            .map_err(map_ledger)
     }
 
     pub fn inflight(&self) -> usize {
@@ -268,14 +311,23 @@ impl Runtime {
         // invoking the only retained Python execution boundary.
         seealpha_strategy::authorize_issued(
             seealpha_strategy::IssuedStrategy {
-                tenant_id, account_id, issuance_id, grant_purpose,
-                code_key, version, entry_point, package_hash,
+                tenant_id,
+                account_id,
+                issuance_id,
+                grant_purpose,
+                code_key,
+                version,
+                entry_point,
+                package_hash,
             },
             seealpha_strategy::AccountScope {
-                tenant_id, account_id, purpose: &tenant.purpose,
+                tenant_id,
+                account_id,
+                purpose: &tenant.purpose,
             },
             &metadata,
-        ).map_err(map_strategy)?;
+        )
+        .map_err(map_strategy)?;
         let path = write_archive(archive)?;
         let prepared = seealpha_strategy::run_host(&HostCommand {
             python: &self.python,
@@ -359,10 +411,9 @@ impl Runtime {
         loads
             .into_iter()
             .map(|load| {
-                let parameters = serde_json::from_str(&load.parameters_json)
-                    .map_err(|_| RuntimeError::Conflict(
-                        "已下发策略参数记录损坏，禁止用默认参数执行。".into(),
-                    ))?;
+                let parameters = serde_json::from_str(&load.parameters_json).map_err(|_| {
+                    RuntimeError::Conflict("已下发策略参数记录损坏，禁止用默认参数执行。".into())
+                })?;
                 Ok(StrategyInput {
                     member_id: load.issuance_id,
                     package: PackageBody::Archive(load.archive),
@@ -399,10 +450,10 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         // A running Rust Engine must never orphan its child producer processes
         // on normal shutdown. Crash recovery stays fail-closed via writer.lock.
-        if let Ok(mut sources)=self.source_processes.lock() {
-            for (_,mut child) in sources.drain() {
-                let _=child.kill();
-                let _=child.wait();
+        if let Ok(mut sources) = self.source_processes.lock() {
+            for (_, mut child) in sources.drain() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }

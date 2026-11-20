@@ -331,9 +331,9 @@ checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
 name = "cc"
-version = "1.11.2"
+version = "1.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ef9e3e8154a45c7a95cff4c1299702106ad94062d7bb85fdc5d3a5afd91d45"
+checksum = "02f0e023adb368345ce0ca6cdfc0f24a06554468d0e8503e14a0841de79bfa69"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -369,7 +369,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1706,6 +1708,7 @@ dependencies = [
  "seealpha-runtime",
  "serde",
  "serde_json",
+ "sha2",
  "subtle",
  "tokio",
  "tower",
@@ -1741,6 +1744,9 @@ name = "seealpha-portfolio"
 version = "0.1.0"
 dependencies = [
  "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
 ]
 

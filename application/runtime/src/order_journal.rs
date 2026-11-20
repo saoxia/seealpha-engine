@@ -3,11 +3,11 @@
 //! This module intentionally does not expose an order sender. A venue dispatch
 //! needs independent portfolio/risk authorization and a reviewed cutover gate.
 use seealpha_ledger::{BasketAdmission, IntentStart, Ledger};
-use seealpha_venue::{Product, VenueError};
 use seealpha_venue::order_guard::{
     Admission, IntentJournal, IntentRecord, RecordedOutcome, WriteAction,
 };
-use serde_json::{json, Value};
+use seealpha_venue::{Product, VenueError};
+use serde_json::{Value, json};
 
 pub(crate) struct LedgerIntentJournal<'a> {
     ledger: &'a Ledger,
@@ -33,7 +33,14 @@ impl<'a> LedgerIntentJournal<'a> {
         environment: &'a str,
         immutable_intent: Value,
     ) -> Self {
-        Self { ledger, tenant, account, environment, immutable_intent, basket: None }
+        Self {
+            ledger,
+            tenant,
+            account,
+            environment,
+            immutable_intent,
+            basket: None,
+        }
     }
 
     /// Basket reservation is checked by Ledger in the same transaction that
@@ -46,13 +53,24 @@ impl<'a> LedgerIntentJournal<'a> {
         immutable_intent: Value,
         basket: BasketReservation,
     ) -> Self {
-        Self { ledger, tenant, account, environment, immutable_intent, basket: Some(basket) }
+        Self {
+            ledger,
+            tenant,
+            account,
+            environment,
+            immutable_intent,
+            basket: Some(basket),
+        }
     }
 
     fn wire_matches_intent(&self, record: &IntentRecord) -> bool {
-        let field = |name: &str| record.parameters.iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_str());
+        let field = |name: &str| {
+            record
+                .parameters
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+        };
         // Values in the immutable authorization envelope must describe the
         // actual outgoing command, not merely copy an arbitrary parameter list.
         // Conservative string equality also refuses silent precision changes.
@@ -121,16 +139,19 @@ impl IntentJournal for LedgerIntentJournal<'_> {
                 &record.payload_sha256,
                 &self.immutable_intent,
             )
-        }.map_err(|_| VenueError::Unconfirmed)?;
+        }
+        .map_err(|_| VenueError::Unconfirmed)?;
         Ok(match registered {
             IntentStart::Fresh => Admission::Fresh,
             IntentStart::ReconcileOnly => Admission::Seen,
         })
     }
 
-    fn observe(&mut self, record: &IntentRecord, outcome: RecordedOutcome)
-        -> Result<(), VenueError>
-    {
+    fn observe(
+        &mut self,
+        record: &IntentRecord,
+        outcome: RecordedOutcome,
+    ) -> Result<(), VenueError> {
         if !self.valid_identity(record) {
             return Err(VenueError::Unconfirmed);
         }
@@ -149,9 +170,14 @@ impl IntentJournal for LedgerIntentJournal<'_> {
             "payload_sha256": record.payload_sha256,
             "requires_reconciliation": true,
         });
-        self.ledger.add_event(
-            self.tenant, self.account, "venue_send_attempt", &event.to_string(),
-        ).map_err(|_| VenueError::Unconfirmed)
+        self.ledger
+            .add_event(
+                self.tenant,
+                self.account,
+                "venue_send_attempt",
+                &event.to_string(),
+            )
+            .map_err(|_| VenueError::Unconfirmed)
     }
 }
 
@@ -160,11 +186,16 @@ mod tests {
     use super::*;
     use seealpha_venue::order_guard::{PreparedWrite, SignedTransport};
 
-    struct Wire { attempts: usize }
+    struct Wire {
+        attempts: usize,
+    }
     impl SignedTransport for Wire {
-        fn send(&mut self, _method: &str, _path: &str, _params: &[(String,String)])
-            -> Result<Value, VenueError>
-        {
+        fn send(
+            &mut self,
+            _method: &str,
+            _path: &str,
+            _params: &[(String, String)],
+        ) -> Result<Value, VenueError> {
             self.attempts += 1;
             Err(VenueError::Unconfirmed)
         }
@@ -173,7 +204,9 @@ mod tests {
     #[test]
     fn altered_wire_payload_cannot_create_a_ledger_intent_or_send() {
         let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
-        ledger.ensure_tenant("tenant1", "production", "active").unwrap();
+        ledger
+            .ensure_tenant("tenant1", "production", "active")
+            .unwrap();
         let immutable = json!({
             "environment":"production", "action":"NEW",
             "client_order_id":"client1", "symbol":"ETHUSDT", "product":"spot",
@@ -186,28 +219,39 @@ mod tests {
             ]
         });
         let mut changed = PreparedWrite::new(
-            "tenant1:account1:production", "request1", Product::Spot,
-            WriteAction::NewOrder, "ETHUSDT", "client1",
+            "tenant1:account1:production",
+            "request1",
+            Product::Spot,
+            WriteAction::NewOrder,
+            "ETHUSDT",
+            "client1",
             vec![
                 ("symbol".into(), "ETHUSDT".into()),
                 ("newClientOrderId".into(), "client1".into()),
                 ("side".into(), "SELL".into()),
                 ("quantity".into(), "0.01".into()),
             ],
-        ).unwrap();
-        let mut journal = LedgerIntentJournal::new(
-            &ledger, "tenant1", "account1", "production", immutable,
-        );
+        )
+        .unwrap();
+        let mut journal =
+            LedgerIntentJournal::new(&ledger, "tenant1", "account1", "production", immutable);
         let mut wire = Wire { attempts: 0 };
         assert!(changed.dispatch(&mut journal, &mut wire).is_err());
         assert_eq!(wire.attempts, 0);
-        assert!(ledger.request("tenant1", "account1", "request1").unwrap().is_none());
+        assert!(
+            ledger
+                .request("tenant1", "account1", "request1")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn internally_inconsistent_authorization_envelope_is_rejected() {
         let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
-        ledger.ensure_tenant("tenant1", "production", "active").unwrap();
+        ledger
+            .ensure_tenant("tenant1", "production", "active")
+            .unwrap();
         let intent = json!({
             "environment":"production", "action":"NEW",
             "client_order_id":"client1", "symbol":"ETHUSDT", "product":"spot",
@@ -220,8 +264,12 @@ mod tests {
         // All wire fields equal the envelope's copied parameter list,
         // but the authoritative direction disagrees. Never register/send.
         let mut write = PreparedWrite::new(
-            "tenant1:account1:production", "request2", Product::Spot,
-            WriteAction::NewOrder, "ETHUSDT", "client1",
+            "tenant1:account1:production",
+            "request2",
+            Product::Spot,
+            WriteAction::NewOrder,
+            "ETHUSDT",
+            "client1",
             vec![
                 ("symbol".into(), "ETHUSDT".into()),
                 ("newClientOrderId".into(), "client1".into()),
@@ -229,25 +277,33 @@ mod tests {
                 ("quantity".into(), "0.01".into()),
                 ("price".into(), "2000".into()),
             ],
-        ).unwrap();
-        let mut journal = LedgerIntentJournal::new(
-            &ledger, "tenant1", "account1", "production", intent,
-        );
+        )
+        .unwrap();
+        let mut journal =
+            LedgerIntentJournal::new(&ledger, "tenant1", "account1", "production", intent);
         let mut wire = Wire { attempts: 0 };
         assert!(write.dispatch(&mut journal, &mut wire).is_err());
         assert_eq!(wire.attempts, 0);
-        assert!(ledger.request("tenant1", "account1", "request2").unwrap().is_none());
+        assert!(
+            ledger
+                .request("tenant1", "account1", "request2")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn restart_is_reconciliation_only_and_never_sends_twice() {
         let path = std::env::temp_dir().join(format!(
             "seealpha-intent-adapter-{}-{:?}.sqlite",
-            std::process::id(), std::thread::current().id(),
+            std::process::id(),
+            std::thread::current().id(),
         ));
         let _ = std::fs::remove_file(&path);
         let ledger = Ledger::open(&path).unwrap();
-        ledger.ensure_tenant("tenant1", "production", "active").unwrap();
+        ledger
+            .ensure_tenant("tenant1", "production", "active")
+            .unwrap();
         let intent = json!({
             "environment":"production", "action":"NEW",
             "client_order_id":"client1", "symbol":"ETHUSDT", "product":"spot",
@@ -257,30 +313,40 @@ mod tests {
                 ["side", "BUY"], ["quantity", "0.01"], ["price", "2000"]
             ],
         });
-        let make = || PreparedWrite::new(
-            "tenant1:account1:production", "request1", Product::Spot,
-            WriteAction::NewOrder, "ETHUSDT", "client1",
-            vec![
-                ("symbol".into(),"ETHUSDT".into()),
-                ("newClientOrderId".into(),"client1".into()),
-                ("side".into(),"BUY".into()),
-                ("quantity".into(),"0.01".into()),
-                ("price".into(),"2000".into()),
-            ],
-        ).unwrap();
+        let make = || {
+            PreparedWrite::new(
+                "tenant1:account1:production",
+                "request1",
+                Product::Spot,
+                WriteAction::NewOrder,
+                "ETHUSDT",
+                "client1",
+                vec![
+                    ("symbol".into(), "ETHUSDT".into()),
+                    ("newClientOrderId".into(), "client1".into()),
+                    ("side".into(), "BUY".into()),
+                    ("quantity".into(), "0.01".into()),
+                    ("price".into(), "2000".into()),
+                ],
+            )
+            .unwrap()
+        };
         let mut wire = Wire { attempts: 0 };
         {
             let mut journal = LedgerIntentJournal::new(
-                &ledger, "tenant1", "account1", "production", intent.clone(),
+                &ledger,
+                "tenant1",
+                "account1",
+                "production",
+                intent.clone(),
             );
             assert!(make().dispatch(&mut journal, &mut wire).is_err());
         }
         assert_eq!(wire.attempts, 1);
         drop(ledger);
         let recovered = Ledger::open(&path).unwrap();
-        let mut journal = LedgerIntentJournal::new(
-            &recovered, "tenant1", "account1", "production", intent,
-        );
+        let mut journal =
+            LedgerIntentJournal::new(&recovered, "tenant1", "account1", "production", intent);
         assert!(make().dispatch(&mut journal, &mut wire).is_err());
         assert_eq!(wire.attempts, 1);
         drop(journal);

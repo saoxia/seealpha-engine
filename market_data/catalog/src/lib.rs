@@ -1,22 +1,23 @@
 //! Seealpha's native data foundation for the existing Python/Nautilus v2
 //! Catalog directory. No rewriting into SQLite or implicit subscriptions.
+mod cleanup;
 mod model;
 mod reader;
-mod cleanup;
-mod writer;
 mod records;
+mod writer;
 
 use std::path::PathBuf;
 use thiserror::Error;
 
+pub use cleanup::{DeletePreview, PlannedFile};
 pub use model::{
-    CatalogBar,MarketProduct,bar_type,bar_window,instrument_id,interval_ms,NANO_PER_MS,DAY_MS,
+    CatalogBar, DAY_MS, MarketProduct, NANO_PER_MS, bar_type, bar_window, instrument_id,
+    interval_ms,
 };
-pub use reader::{BarGap,RecordKind};
-pub use cleanup::{DeletePreview,PlannedFile};
+pub use reader::{BarGap, RecordKind};
 
-#[derive(Debug,Error)]
-pub enum CatalogError{
+#[derive(Debug, Error)]
+pub enum CatalogError {
     #[error("Catalog 文件 IO 失败：{0}")]
     Io(#[from] std::io::Error),
     #[error("Parquet 读写失败：{0}")]
@@ -32,6 +33,6 @@ pub enum CatalogError{
     #[error("Catalog 读取超出配额：{0}")]
     Limit(String),
 }
-pub struct Catalog{
-    root:PathBuf,
+pub struct Catalog {
+    root: PathBuf,
 }

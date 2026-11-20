@@ -17,7 +17,11 @@ const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_INPUT_BYTES: usize = 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) fn invoke(python: &Path, host: &Path, request: &Value) -> Result<HostResponse, StrategyError> {
+pub(super) fn invoke(
+    python: &Path,
+    host: &Path,
+    request: &Value,
+) -> Result<HostResponse, StrategyError> {
     invoke_with_timeout(python, host, request, DEFAULT_TIMEOUT)
 }
 
@@ -103,7 +107,9 @@ fn invoke_with_timeout(
     // Grandchildren may keep inherited pipes open. Never wait indefinitely,
     // even when the immediate interpreter has already exited.
     let remaining = timeout.saturating_sub(start.elapsed());
-    let wrote = write_rx.recv_timeout(remaining).map_err(|_| StrategyError::Timeout)?;
+    let wrote = write_rx
+        .recv_timeout(remaining)
+        .map_err(|_| StrategyError::Timeout)?;
     let remaining = timeout.saturating_sub(start.elapsed());
     let output = read_rx
         .recv_timeout(remaining)
@@ -129,7 +135,10 @@ mod tests {
     fn refuses_unbounded_host_input_without_a_process() {
         let massive = serde_json::json!({ "x": "x".repeat(MAX_INPUT_BYTES + 1) });
         let result = invoke_with_timeout(
-            Path::new("python3"), Path::new("absent.py"), &massive, Duration::from_millis(10),
+            Path::new("python3"),
+            Path::new("absent.py"),
+            &massive,
+            Duration::from_millis(10),
         );
         assert!(matches!(result, Err(StrategyError::Package(_))));
     }

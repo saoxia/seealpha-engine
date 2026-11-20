@@ -1,7 +1,7 @@
 //! HTTP v2 boundary. Every response carries `X-SeeAlpha-Engine-Contract-Version: 2`.
 //! Live exchange routes refuse before any credential is stored.
-mod parity;
 mod derivatives;
+mod parity;
 mod research_v1;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode};
@@ -153,13 +153,24 @@ pub async fn serve(state: AppState) -> Result<(), std::io::Error> {
 }
 
 fn resume_queued_research_jobs(state: &AppState) -> Result<(), std::io::Error> {
-    let tenants = state.runtime.ledger.active_tenant_ids()
+    let tenants = state
+        .runtime
+        .ledger
+        .active_tenant_ids()
         .map_err(std::io::Error::other)?;
     for tenant in tenants {
-        if state.config.tenant_id.as_deref().is_some_and(|id| id != tenant) {
+        if state
+            .config
+            .tenant_id
+            .as_deref()
+            .is_some_and(|id| id != tenant)
+        {
             continue;
         }
-        let jobs = state.runtime.ledger.data_jobs(&tenant)
+        let jobs = state
+            .runtime
+            .ledger
+            .data_jobs(&tenant)
             .map_err(std::io::Error::other)?;
         for job in jobs {
             if job["action"] == "backtest" && job["status"] == "queued" {
@@ -271,41 +282,70 @@ async fn runnable(
 async fn jobs(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
-) -> Result<Json<Value>,AppError> {
-    Ok(Json(state.runtime.data_job_list(&tenant_id).map_err(AppError::from)?))
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .data_job_list(&tenant_id)
+            .map_err(AppError::from)?,
+    ))
 }
 
-async fn worker_settings(
-    State(state): State<AppState>,
-) -> Result<Json<Value>,AppError> {
-    Ok(Json(state.runtime.ledger.worker_settings().map_err(|e|AppError::bad_request(e.to_string()))?))
+async fn worker_settings(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .ledger
+            .worker_settings()
+            .map_err(|e| AppError::bad_request(e.to_string()))?,
+    ))
 }
 
 async fn update_worker_settings(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(body): Json<Value>,
-) -> Result<Json<Value>,AppError> {
-    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
-    let workers=body["max_workers"].as_i64().ok_or_else(||AppError::bad_request("Worker 数量无效。"))?;
-    let timeout=body["timeout_seconds"].as_i64().ok_or_else(||AppError::bad_request("Worker 超时无效。"))?;
-    Ok(Json(state.runtime.ledger.update_worker_settings(workers,timeout)
-        .map_err(|e|AppError::bad_request(e.to_string()))?))
+) -> Result<Json<Value>, AppError> {
+    state
+        .runtime
+        .require_active(&tenant_id)
+        .map_err(AppError::from)?;
+    let workers = body["max_workers"]
+        .as_i64()
+        .ok_or_else(|| AppError::bad_request("Worker 数量无效。"))?;
+    let timeout = body["timeout_seconds"]
+        .as_i64()
+        .ok_or_else(|| AppError::bad_request("Worker 超时无效。"))?;
+    Ok(Json(
+        state
+            .runtime
+            .ledger
+            .update_worker_settings(workers, timeout)
+            .map_err(|e| AppError::bad_request(e.to_string()))?,
+    ))
 }
 
 async fn inspect_strategy(
-    State(state):State<AppState>,Path(tenant_id):Path<String>,
-    Json(body):Json<Value>,
-)->Result<Json<Value>,AppError>{
-    let encoded=body["archive"].as_str()
-        .ok_or_else(||AppError::bad_request("策略包无效。"))?;
-    if encoded.len()>400_000 {return Err(AppError::bad_request("策略包超出范围。"));}
-    let archive=base64::engine::general_purpose::STANDARD.decode(encoded)
-        .map_err(|_|AppError::bad_request("策略包无效。"))?;
-    let params=body.get("parameters").cloned().unwrap_or_else(||json!({}));
-    Ok(Json(state.runtime.inspect_strategy_package(
-        &tenant_id,&archive,&params
-    ).map_err(AppError::from)?))
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let encoded = body["archive"]
+        .as_str()
+        .ok_or_else(|| AppError::bad_request("策略包无效。"))?;
+    if encoded.len() > 400_000 {
+        return Err(AppError::bad_request("策略包超出范围。"));
+    }
+    let archive = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| AppError::bad_request("策略包无效。"))?;
+    let params = body.get("parameters").cloned().unwrap_or_else(|| json!({}));
+    Ok(Json(
+        state
+            .runtime
+            .inspect_strategy_package(&tenant_id, &archive, &params)
+            .map_err(AppError::from)?,
+    ))
 }
 
 async fn strategy_load(
@@ -559,12 +599,21 @@ async fn list_fills(
 async fn list_gaps(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
-    Query(query):Query<std::collections::HashMap<String,String>>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, AppError> {
-    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
-    let gaps=state.runtime.ledger.gaps_for_scope(
-        &tenant_id,&account_id,query.get("scope").map(String::as_str)
-    ).map_err(|error| AppError::bad_request(error.to_string()))?;
+    state
+        .runtime
+        .require_active(&tenant_id)
+        .map_err(AppError::from)?;
+    let gaps = state
+        .runtime
+        .ledger
+        .gaps_for_scope(
+            &tenant_id,
+            &account_id,
+            query.get("scope").map(String::as_str),
+        )
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
     Ok(Json(json!({ "gaps": gaps })))
 }
 
@@ -592,13 +641,27 @@ async fn put_gap(
 async fn list_events(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
-    Query(query):Query<std::collections::HashMap<String,String>>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, AppError> {
-    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
-    let after=query.get("after").and_then(|v|v.parse::<i64>().ok()).unwrap_or(0);
-    let limit=query.get("limit").and_then(|v|v.parse::<i64>().ok()).unwrap_or(200);
-    Ok(Json(state.runtime.ledger.event_page(&tenant_id,&account_id,after,limit)
-        .map_err(|error|AppError::bad_request(error.to_string()))?))
+    state
+        .runtime
+        .require_active(&tenant_id)
+        .map_err(AppError::from)?;
+    let after = query
+        .get("after")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let limit = query
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(200);
+    Ok(Json(
+        state
+            .runtime
+            .ledger
+            .event_page(&tenant_id, &account_id, after, limit)
+            .map_err(|error| AppError::bad_request(error.to_string()))?,
+    ))
 }
 
 async fn import_bars(
@@ -606,74 +669,116 @@ async fn import_bars(
     Path(tenant_id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
-    let product=body["product"].as_str().unwrap_or("spot");
-    let symbol=body["symbol"].as_str().unwrap_or("");
-    let interval=body["interval"].as_str().unwrap_or("1m");
-    let _=seealpha_market::Product::parse(product)
-        .map_err(|e|AppError::bad_request(e.to_string()))?;
-    seealpha_market::check_symbol(symbol)
-        .map_err(|e|AppError::bad_request(e.to_string()))?;
-    let step=seealpha_market::interval_ms(interval)
-        .map_err(|e|AppError::bad_request(e.to_string()))?;
-    let rows=body["bars"].as_array().ok_or_else(||AppError::bad_request("历史 K 线数组无效。"))?;
-    if rows.is_empty() || rows.len()>5000 {
+    state
+        .runtime
+        .require_active(&tenant_id)
+        .map_err(AppError::from)?;
+    let product = body["product"].as_str().unwrap_or("spot");
+    let symbol = body["symbol"].as_str().unwrap_or("");
+    let interval = body["interval"].as_str().unwrap_or("1m");
+    let _ = seealpha_market::Product::parse(product)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    seealpha_market::check_symbol(symbol).map_err(|e| AppError::bad_request(e.to_string()))?;
+    let step =
+        seealpha_market::interval_ms(interval).map_err(|e| AppError::bad_request(e.to_string()))?;
+    let rows = body["bars"]
+        .as_array()
+        .ok_or_else(|| AppError::bad_request("历史 K 线数组无效。"))?;
+    if rows.is_empty() || rows.len() > 5000 {
         return Err(AppError::bad_request("历史 K 线数量超出范围。"));
     }
-    let mut evidence=Vec::with_capacity(rows.len());
-    let mut canonical=Vec::with_capacity(rows.len());
+    let mut evidence = Vec::with_capacity(rows.len());
+    let mut canonical = Vec::with_capacity(rows.len());
     for row in rows {
-        let text=|field:&str|->Result<&str,AppError>{
-            row[field].as_str().ok_or_else(||AppError::bad_request("K 线 Decimal 字段无效。"))
+        let text = |field: &str| -> Result<&str, AppError> {
+            row[field]
+                .as_str()
+                .ok_or_else(|| AppError::bad_request("K 线 Decimal 字段无效。"))
         };
-        let start=row["open_time_ms"].as_i64()
-            .ok_or_else(||AppError::bad_request("K 线开始时间无效。"))?;
-        let open=text("open")?.parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
-        let high=text("high")?.parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
-        let low=text("low")?.parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
-        let close=text("close")?.parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
-        let volume=text("volume")?.parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("K 线成交量无效。"))?;
-        if open<=rust_decimal::Decimal::ZERO || high<=rust_decimal::Decimal::ZERO
-            || low<=rust_decimal::Decimal::ZERO || close<=rust_decimal::Decimal::ZERO {
+        let start = row["open_time_ms"]
+            .as_i64()
+            .ok_or_else(|| AppError::bad_request("K 线开始时间无效。"))?;
+        let open = text("open")?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| AppError::bad_request("K 线价格无效。"))?;
+        let high = text("high")?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| AppError::bad_request("K 线价格无效。"))?;
+        let low = text("low")?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| AppError::bad_request("K 线价格无效。"))?;
+        let close = text("close")?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| AppError::bad_request("K 线价格无效。"))?;
+        let volume = text("volume")?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| AppError::bad_request("K 线成交量无效。"))?;
+        if open <= rust_decimal::Decimal::ZERO
+            || high <= rust_decimal::Decimal::ZERO
+            || low <= rust_decimal::Decimal::ZERO
+            || close <= rust_decimal::Decimal::ZERO
+        {
             return Err(AppError::bad_request("K 线价格必须大于零。"));
         }
-        let close_ms=start.checked_add(step).and_then(|v|v.checked_sub(1))
-            .ok_or_else(||AppError::bad_request("K 线时间溢出。"))?;
-        canonical.push(seealpha_market::Bar{
-            open_time_ms:start,close_time_ms:close_ms,open,high,low,close,volume,
+        let close_ms = start
+            .checked_add(step)
+            .and_then(|v| v.checked_sub(1))
+            .ok_or_else(|| AppError::bad_request("K 线时间溢出。"))?;
+        canonical.push(seealpha_market::Bar {
+            open_time_ms: start,
+            close_time_ms: close_ms,
+            open,
+            high,
+            low,
+            close,
+            volume,
         });
-        evidence.push(seealpha_ledger::CatalogBar{
-            open_time_ms:start,open:open.to_string(),high:high.to_string(),
-            low:low.to_string(),close:close.to_string(),volume:volume.to_string(),
+        evidence.push(seealpha_ledger::CatalogBar {
+            open_time_ms: start,
+            open: open.to_string(),
+            high: high.to_string(),
+            low: low.to_string(),
+            close: close.to_string(),
+            volume: volume.to_string(),
         });
     }
-    seealpha_market::validate_bars(&canonical,step)
-        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    seealpha_market::validate_bars(&canonical, step)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
     // Parquet is the established Python Pipeline storage contract.
     // A mounted Catalog is authoritative; never silently write a separate
     // SQLite copy that backtests cannot see.
-    let native=state.runtime.market_data_backend().map_err(AppError::from)?
-        =="nautilus_v2_parquet";
+    let native = state
+        .runtime
+        .market_data_backend()
+        .map_err(AppError::from)?
+        == "nautilus_v2_parquet";
     // Python derives the precision from authoritative Instrument metadata.
     // The Rust importer refuses to invent it for a native Parquet publication.
-    if native && (body.get("price_precision").is_none() ||
-        body.get("size_precision").is_none()) {
+    if native && (body.get("price_precision").is_none() || body.get("size_precision").is_none()) {
         return Err(AppError::bad_request(
-            "写入 Nautilus Parquet 必须传入经 Instrument 验证的精度。"));
+            "写入 Nautilus Parquet 必须传入经 Instrument 验证的精度。",
+        ));
     }
-    let price_precision=body["price_precision"].as_u64()
-        .and_then(|x|u32::try_from(x).ok()).unwrap_or(8);
-    let size_precision=body["size_precision"].as_u64()
-        .and_then(|x|u32::try_from(x).ok()).unwrap_or(8);
-    let imported=state.runtime.commit_market_bars(
-        &tenant_id,product,symbol,interval,&evidence,
-        price_precision,size_precision
-    ).map_err(AppError::from)?;
+    let price_precision = body["price_precision"]
+        .as_u64()
+        .and_then(|x| u32::try_from(x).ok())
+        .unwrap_or(8);
+    let size_precision = body["size_precision"]
+        .as_u64()
+        .and_then(|x| u32::try_from(x).ok())
+        .unwrap_or(8);
+    let imported = state
+        .runtime
+        .commit_market_bars(
+            &tenant_id,
+            product,
+            symbol,
+            interval,
+            &evidence,
+            price_precision,
+            size_precision,
+        )
+        .map_err(AppError::from)?;
     Ok(Json(imported))
 }
 
@@ -705,15 +810,37 @@ async fn run_backtest(
     // Legacy API contract: a date-scoped request uses stored, issued strategy
     // packages and contiguous local catalog evidence, never injected targets.
     if body.get("bars").is_none() {
-        let start = body.get("start").and_then(Value::as_str)
-            .and_then(parse_time_ms).ok_or_else(||AppError::bad_request("开始时间无效。"))?;
-        let end = body.get("end").and_then(Value::as_str)
-            .and_then(parse_time_ms).ok_or_else(||AppError::bad_request("结束时间无效。"))?;
-        let interval=body.get("interval").and_then(Value::as_str).unwrap_or("1m");
-        let product=body.get("product").and_then(Value::as_str).unwrap_or("futures_um");
-        return Ok(Json(state.runtime.run_issued_catalog_backtest(
-            &tenant_id,&account_id,product,symbol,interval,start,end,starting,quote
-        ).map_err(AppError::from)?));
+        let start = body
+            .get("start")
+            .and_then(Value::as_str)
+            .and_then(parse_time_ms)
+            .ok_or_else(|| AppError::bad_request("开始时间无效。"))?;
+        let end = body
+            .get("end")
+            .and_then(Value::as_str)
+            .and_then(parse_time_ms)
+            .ok_or_else(|| AppError::bad_request("结束时间无效。"))?;
+        let interval = body.get("interval").and_then(Value::as_str).unwrap_or("1m");
+        let product = body
+            .get("product")
+            .and_then(Value::as_str)
+            .unwrap_or("futures_um");
+        return Ok(Json(
+            state
+                .runtime
+                .run_issued_catalog_backtest(
+                    &tenant_id,
+                    &account_id,
+                    product,
+                    symbol,
+                    interval,
+                    start,
+                    end,
+                    starting,
+                    quote,
+                )
+                .map_err(AppError::from)?,
+        ));
     }
     let raw_bars = body
         .get("bars")
@@ -882,12 +1009,16 @@ fn parse_time_ms(value: &str) -> Option<i64> {
     let mut clock = time.split(':');
     let hour: i64 = clock.next()?.parse().ok()?;
     let minute: i64 = clock.next()?.parse().ok()?;
-    let second_text=clock.next()?;
-    if second_text.contains('.') && !second_text.split('.').nth(1)?
-        .chars().all(|c|c=='0') {return None;}
+    let second_text = clock.next()?;
+    if second_text.contains('.') && !second_text.split('.').nth(1)?.chars().all(|c| c == '0') {
+        return None;
+    }
     let second: i64 = second_text.split('.').next()?.parse().ok()?;
-    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute)
-        || !(0..=59).contains(&second) || clock.next().is_some() {
+    if !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
+        || clock.next().is_some()
+    {
         return None;
     }
     let days = days_from_civil(year, month, day)?;
@@ -895,15 +1026,17 @@ fn parse_time_ms(value: &str) -> Option<i64> {
 }
 
 fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    let leap=year%4==0 && (year%100!=0 || year%400==0);
-    let max_day=match month {
-        1|3|5|7|8|10|12=>31,
-        4|6|9|11=>30,
-        2 if leap=>29,
-        2=>28,
-        _=>return None,
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
     };
-    if day<1 || day>max_day {return None;}
+    if day < 1 || day > max_day {
+        return None;
+    }
     let year = year - i64::from(month <= 2);
     let era = year.div_euclid(400);
     let yoe = year - era * 400;
@@ -923,31 +1056,47 @@ async fn run_carry(
         .and_then(Value::as_str)
         .unwrap_or("ETHUSDT");
     if body.get("start_ms").is_some() || body.get("start").is_some() {
-        let from=body["start_ms"].as_i64()
-            .or_else(||body["start"].as_str().and_then(parse_time_ms))
-            .ok_or_else(||AppError::bad_request("开始时间无效。"))?;
-        let until=body["end_ms"].as_i64()
-            .or_else(||body["end"].as_str().and_then(parse_time_ms))
-            .ok_or_else(||AppError::bad_request("结束时间无效。"))?;
-        let fee=body["fee_rate"].as_str()
-            .ok_or_else(||AppError::bad_request("必须明确设置模拟手续费费率。"))?
+        let from = body["start_ms"]
+            .as_i64()
+            .or_else(|| body["start"].as_str().and_then(parse_time_ms))
+            .ok_or_else(|| AppError::bad_request("开始时间无效。"))?;
+        let until = body["end_ms"]
+            .as_i64()
+            .or_else(|| body["end"].as_str().and_then(parse_time_ms))
+            .ok_or_else(|| AppError::bad_request("结束时间无效。"))?;
+        let fee = body["fee_rate"]
+            .as_str()
+            .ok_or_else(|| AppError::bad_request("必须明确设置模拟手续费费率。"))?
             .parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("手续费费率无效。"))?;
-        let spot=body["spot_qty"].as_str()
-            .ok_or_else(||AppError::bad_request("现货目标数量无效。"))?
+            .map_err(|_| AppError::bad_request("手续费费率无效。"))?;
+        let spot = body["spot_qty"]
+            .as_str()
+            .ok_or_else(|| AppError::bad_request("现货目标数量无效。"))?
             .parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("现货目标数量无效。"))?;
-        let perp=body["perp_qty"].as_str()
-            .ok_or_else(||AppError::bad_request("永续目标数量无效。"))?
+            .map_err(|_| AppError::bad_request("现货目标数量无效。"))?;
+        let perp = body["perp_qty"]
+            .as_str()
+            .ok_or_else(|| AppError::bad_request("永续目标数量无效。"))?
             .parse::<rust_decimal::Decimal>()
-            .map_err(|_|AppError::bad_request("永续目标数量无效。"))?;
-        return Ok(Json(state.runtime.run_evidence_carry_backtest(
-            &tenant_id,&account_id,symbol,
-            body["interval"].as_str().unwrap_or("1m"),
-            from,until,spot,perp,
-            decimal_field(&body,"starting_balance","10000")?,
-            decimal_field(&body,"max_gross_notional","10000")?,fee,
-        ).map_err(AppError::from)?));
+            .map_err(|_| AppError::bad_request("永续目标数量无效。"))?;
+        return Ok(Json(
+            state
+                .runtime
+                .run_evidence_carry_backtest(
+                    &tenant_id,
+                    &account_id,
+                    symbol,
+                    body["interval"].as_str().unwrap_or("1m"),
+                    from,
+                    until,
+                    spot,
+                    perp,
+                    decimal_field(&body, "starting_balance", "10000")?,
+                    decimal_field(&body, "max_gross_notional", "10000")?,
+                    fee,
+                )
+                .map_err(AppError::from)?,
+        ));
     }
     Ok(Json(
         state
@@ -988,31 +1137,43 @@ async fn run_protected(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     if body.get("start_ms").is_some() || body.get("start").is_some() {
-        let start=body["start_ms"].as_i64()
-            .or_else(||body["start"].as_str().and_then(parse_time_ms))
-            .ok_or_else(||AppError::bad_request("开始时间无效。"))?;
-        let end=body["end_ms"].as_i64()
-            .or_else(||body["end"].as_str().and_then(parse_time_ms))
-            .ok_or_else(||AppError::bad_request("结束时间无效。"))?;
-        let option_symbol=body["option_symbol"].as_str()
-            .ok_or_else(||AppError::bad_request("期权合约无效。"))?;
-        let perp_symbol=body["perp_symbol"].as_str()
-            .ok_or_else(||AppError::bad_request("永续合约无效。"))?;
-        if body["fee_rate"].as_str().is_none()
-            || body["option_multiplier"].as_str().is_none() {
+        let start = body["start_ms"]
+            .as_i64()
+            .or_else(|| body["start"].as_str().and_then(parse_time_ms))
+            .ok_or_else(|| AppError::bad_request("开始时间无效。"))?;
+        let end = body["end_ms"]
+            .as_i64()
+            .or_else(|| body["end"].as_str().and_then(parse_time_ms))
+            .ok_or_else(|| AppError::bad_request("结束时间无效。"))?;
+        let option_symbol = body["option_symbol"]
+            .as_str()
+            .ok_or_else(|| AppError::bad_request("期权合约无效。"))?;
+        let perp_symbol = body["perp_symbol"]
+            .as_str()
+            .ok_or_else(|| AppError::bad_request("永续合约无效。"))?;
+        if body["fee_rate"].as_str().is_none() || body["option_multiplier"].as_str().is_none() {
             return Err(AppError::bad_request("必须指定模拟手续费及期权合约乘数。"));
         }
-        return Ok(Json(state.runtime.run_evidence_protected_backtest(
-            &tenant_id,&account_id,option_symbol,perp_symbol,
-            body["interval"].as_str().unwrap_or("1m"),
-            start,end,
-            decimal_field(&body,"option_qty","0")?,
-            decimal_field(&body,"option_multiplier","0")?,
-            decimal_field(&body,"perp_qty","0")?,
-            decimal_field(&body,"starting_balance","10000")?,
-            decimal_field(&body,"max_gross_notional","10000")?,
-            decimal_field(&body,"fee_rate","0")?,
-        ).map_err(AppError::from)?));
+        return Ok(Json(
+            state
+                .runtime
+                .run_evidence_protected_backtest(
+                    &tenant_id,
+                    &account_id,
+                    option_symbol,
+                    perp_symbol,
+                    body["interval"].as_str().unwrap_or("1m"),
+                    start,
+                    end,
+                    decimal_field(&body, "option_qty", "0")?,
+                    decimal_field(&body, "option_multiplier", "0")?,
+                    decimal_field(&body, "perp_qty", "0")?,
+                    decimal_field(&body, "starting_balance", "10000")?,
+                    decimal_field(&body, "max_gross_notional", "10000")?,
+                    decimal_field(&body, "fee_rate", "0")?,
+                )
+                .map_err(AppError::from)?,
+        ));
     }
     Ok(Json(
         state
@@ -1546,79 +1707,129 @@ mod tests {
 
     #[tokio::test]
     async fn native_control_and_reader_routes_do_not_start_collectors() {
-        let app=router(state());
-        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
-        let make=|path:&str,method:&str,body:&str|{
-            Request::builder().uri(path).method(method)
-                .header("authorization",format!("Bearer {token}"))
-                .header("content-type","application/json")
-                .body(Body::from(body.to_owned())).unwrap()
+        let app = router(state());
+        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make = |path: &str, method: &str, body: &str| {
+            Request::builder()
+                .uri(path)
+                .method(method)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
         };
-        let (status,_,_)=call(&app,make("/tenants/42","PUT",
-            r#"{"purpose":"development","status":"active"}"#)).await;
-        assert_eq!(status,StatusCode::OK);
+        let (status, _, _) = call(
+            &app,
+            make(
+                "/tenants/42",
+                "PUT",
+                r#"{"purpose":"development","status":"active"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
         let (status,_,policy)=call(&app,make(
             "/tenants/42/data/control/sync","POST",
             r#"{"policies":[{"product":"spot","symbol":"ETHUSDT","realtime_enabled":true,"base_level":"1m"}]}"#
         )).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(policy["synced"],1);
-        let (status,_,subscription)=call(&app,make(
-            "/tenants/42/data/control/subscriptions","POST","{}"
-        )).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(subscription["items"].as_array().unwrap().len(),1);
-        let (status,_,service)=call(&app,make(
-            "/tenants/42/data/control/services","POST","{}"
-        )).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(service["active_collectors"],0);
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(policy["synced"], 1);
+        let (status, _, subscription) = call(
+            &app,
+            make("/tenants/42/data/control/subscriptions", "POST", "{}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(subscription["items"].as_array().unwrap().len(), 1);
+        let (status, _, service) = call(
+            &app,
+            make("/tenants/42/data/control/services", "POST", "{}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(service["active_collectors"], 0);
         let (status,_,_)=call(&app,make(
             "/tenants/42/accounts/a/strategy-market/subscriptions","POST",
             r#"{"issuance_id":"unissued","streams":[{"product":"spot","symbol":"ETHUSDT","interval":"1m"}]}"#
         )).await;
-        assert_eq!(status,StatusCode::CONFLICT);
-        let (status,_,rows)=call(&app,make(
-            "/tenants/42/accounts/a/positions?environment=paper","GET",""
-        )).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(rows["positions"].as_array().unwrap().len(),0);
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _, rows) = call(
+            &app,
+            make(
+                "/tenants/42/accounts/a/positions?environment=paper",
+                "GET",
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(rows["positions"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
     async fn native_backtest_denies_missing_history_without_fetching_or_synthesizing() {
-        let app=router(state());
-        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
-        let make=|path:&str,method:&str,body:&str|{
-            Request::builder().uri(path).method(method)
-                .header("authorization",format!("Bearer {token}"))
-                .header("content-type","application/json")
-                .body(Body::from(body.to_owned())).unwrap()
+        let app = router(state());
+        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make = |path: &str, method: &str, body: &str| {
+            Request::builder()
+                .uri(path)
+                .method(method)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
         };
-        let _=call(&app,make("/tenants/42","PUT",
-            r#"{"purpose":"development","status":"active"}"#)).await;
-        let (status,_,response)=call(&app,make(
-            "/tenants/42/accounts/a/backtests","POST",
-            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+        let _ = call(
+            &app,
+            make(
+                "/tenants/42",
+                "PUT",
+                r#"{"purpose":"development","status":"active"}"#,
+            ),
+        )
+        .await;
+        let (status, _, response) = call(
+            &app,
+            make(
+                "/tenants/42/accounts/a/backtests",
+                "POST",
+                r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
                 "start":"2026-11-20T00:00:00Z","end":"2026-11-20T00:02:00Z",
-                "starting_balance":"1000","quote_currency":"USDT"}"#
-        )).await;
-        assert_eq!(status,StatusCode::CONFLICT);
-        assert!(response["detail"].as_str().unwrap_or("").contains("历史 K 线"));
+                "starting_balance":"1000","quote_currency":"USDT"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(
+            response["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("历史 K 线")
+        );
     }
 
     #[tokio::test]
     async fn native_catalog_page_and_coverage_are_read_only_and_contiguous() {
-        let app=router(state());
-        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
-        let make=|path:&str,method:&str,body:&str|{
-            Request::builder().uri(path).method(method)
-                .header("authorization",format!("Bearer {token}"))
-                .header("content-type","application/json")
-                .body(Body::from(body.to_owned())).unwrap()
+        let app = router(state());
+        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make = |path: &str, method: &str, body: &str| {
+            Request::builder()
+                .uri(path)
+                .method(method)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
         };
-        let _=call(&app,make("/tenants/42","PUT",
-            r#"{"purpose":"development","status":"active"}"#)).await;
+        let _ = call(
+            &app,
+            make(
+                "/tenants/42",
+                "PUT",
+                r#"{"purpose":"development","status":"active"}"#,
+            ),
+        )
+        .await;
         let (status,_,imported)=call(&app,make(
             "/tenants/42/data/catalog/bars","POST",
             r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
@@ -1627,50 +1838,65 @@ mod tests {
                     {"open_time_ms":60000,"open":"100","high":"102","low":"100","close":"101","volume":"4"}
                 ]}"#
         )).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(imported["imported"],2);
-        let query=r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(imported["imported"], 2);
+        let query = r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
             "start_ms":0,"end_ms":120000}"#;
-        let (status,_,coverage)=call(&app,make(
-            "/tenants/42/data/coverage","POST",query
-        )).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(coverage["complete"],true);
-        let (status,_,page)=call(&app,make(
-            "/tenants/42/data/page","POST",query
-        )).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(page["records"].as_array().unwrap().len(),2);
-        let (status,_,_) = call(&app,make(
-            "/tenants/42/data/catalog/bars","POST",
-            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+        let (status, _, coverage) =
+            call(&app, make("/tenants/42/data/coverage", "POST", query)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(coverage["complete"], true);
+        let (status, _, page) = call(&app, make("/tenants/42/data/page", "POST", query)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(page["records"].as_array().unwrap().len(), 2);
+        let (status, _, _) = call(
+            &app,
+            make(
+                "/tenants/42/data/catalog/bars",
+                "POST",
+                r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
                 "bars":[{"open_time_ms":0,"open":"100","high":"101","low":"99",
-                        "close":"99","volume":"5"}]}"#
-        )).await;
-        assert_eq!(status,StatusCode::BAD_REQUEST);
+                        "close":"99","volume":"5"}]}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn native_funding_is_read_only_settled_exchange_evidence() {
-        let setup=state();
-        setup.runtime.ensure_tenant("42","development","active").unwrap();
-        setup.runtime.ledger.import_funding_events(
-            "42","ETHUSDT",&[json!({
-                "symbol":"ETHUSDT","funding_time_ms":100,
-                "rate_type":"Regular","funding_rate":"0.0001","mark_price":"2000"
-            })]
-        ).unwrap();
-        let app=router(setup);
-        let request=Request::builder()
-            .uri("/tenants/42/data/funding").method("POST")
-            .header("authorization","Bearer ci-engine-token-0123456789abcdef0123456789abcdef")
-            .header("content-type","application/json")
-            .body(Body::from(r#"{"symbol":"ETHUSDT","limit":10}"#)).unwrap();
-        let (status,_,data)=call(&app,request).await;
-        assert_eq!(status,StatusCode::OK);
-        assert_eq!(data["rows"].as_array().unwrap().len(),1);
-        assert_eq!(data["no_synthetic_funding"],true);
-        assert_eq!(data["completeness"],"not_certified");
+        let setup = state();
+        setup
+            .runtime
+            .ensure_tenant("42", "development", "active")
+            .unwrap();
+        setup
+            .runtime
+            .ledger
+            .import_funding_events(
+                "42",
+                "ETHUSDT",
+                &[json!({
+                    "symbol":"ETHUSDT","funding_time_ms":100,
+                    "rate_type":"Regular","funding_rate":"0.0001","mark_price":"2000"
+                })],
+            )
+            .unwrap();
+        let app = router(setup);
+        let request = Request::builder()
+            .uri("/tenants/42/data/funding")
+            .method("POST")
+            .header(
+                "authorization",
+                "Bearer ci-engine-token-0123456789abcdef0123456789abcdef",
+            )
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"symbol":"ETHUSDT","limit":10}"#))
+            .unwrap();
+        let (status, _, data) = call(&app, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(data["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(data["no_synthetic_funding"], true);
+        assert_eq!(data["completeness"], "not_certified");
     }
-
 }
