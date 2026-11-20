@@ -20,15 +20,15 @@ from core.paths import PROJECT_ROOT
 from engine.connectors.binance.pair_data import PairREST
 from engine.connectors.binance.spot import SpotREST
 from engine.market_data.repair.config import load_settings
-from engine.market_data.repair.convert_binance_bars import write_record
-from engine.market_data.repair.convert_binance_trades import (
+from engine.market_data.sources.binance.common.convert_bars import write_record
+from engine.market_data.sources.binance.common.convert_trades import (
     aggregate_parts_to_bars,
     aggregate_trade_chunk,
     iter_trade_archive,
 )
 from engine.market_data.repair.models import DataRequest
 from engine.market_data.repair.prepare_data import ensure_instruments, prepare_data
-from engine.market_data.repair.sync_binance_batch import plan_daily_archives, sync_archives
+from engine.market_data.sources.binance.common.sync_batch import plan_daily_archives, sync_archives
 from engine.market_data.storage.catalog import ParquetDataCatalog
 
 
@@ -177,8 +177,8 @@ def _history_archive_available(policy, settings, day, finish):
     from urllib.error import HTTPError
     from urllib.request import Request, urlopen
 
-    from engine.market_data.repair.sync_binance_batch import local_archive_is_verified
-    from engine.market_data.repair.sync_binance_file import (
+    from engine.market_data.sources.binance.common.sync_batch import local_archive_is_verified
+    from engine.market_data.sources.binance.common.sync_file import (
         USER_AGENT,
         SyncError,
         fetch_checksum,
@@ -314,7 +314,7 @@ async def serve_history(policy, settings, root, *, rest=None):
                     except BlockingIOError:
                         await asyncio.sleep(5)
                         continue
-                    from engine.market_data.repair.pair_repair import reconcile_day
+                    from engine.market_data.sources.binance.common.reconcile import reconcile_day
                     result = await reconcile_day(policy, source_settings, rest, source, day, finish, saved["available_ms"],
                                                  comparison_catalog=settings.catalog_dir)
                     needs_calculation = result.get("needs_calculation", False) or interrupted
@@ -508,7 +508,7 @@ def main():
         root.mkdir(parents=True, exist_ok=True)
         with (root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            from engine.market_data.repair.options_data import serve_history_batch
+            from engine.market_data.sources.binance.options.repair import serve_history_batch
             asyncio.run(serve_history_batch(args.options_config, load_settings(), args.root.parent))
         return
     if not args.request:
@@ -525,7 +525,7 @@ def main():
         with (root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if policy.get("product", "futures_um") == "options":
-                from engine.market_data.repair.options_data import (
+                from engine.market_data.sources.binance.options.repair import (
                     serve_history as serve_options_history,
                 )
                 asyncio.run(serve_options_history(policy, load_settings(), root))
