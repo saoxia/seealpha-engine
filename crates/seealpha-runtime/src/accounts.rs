@@ -135,10 +135,11 @@ impl Runtime {
             Err(err)=>{
                 // Never persist remote error strings (they might include
                 // credentials or unreliable exchange payload details).
-                let reason=if matches!(err,RuntimeError::BadRequest(_)|
-                    RuntimeError::Unprocessable(_)){"INVALID_EVIDENCE"}
-                    else{"READ_UNCONFIRMED"};
-                (Err(err),"retry",Some(reason))
+                let invalid=matches!(err,RuntimeError::BadRequest(_)|
+                    RuntimeError::Unprocessable(_));
+                let reason=if invalid {"INVALID_EVIDENCE"}
+                    else {"READ_UNCONFIRMED"};
+                (Err(err),if invalid {"manual"} else {"retry"},Some(reason))
             }
         };
         self.finish_order_reconciliation(
