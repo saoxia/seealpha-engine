@@ -112,6 +112,15 @@ impl VenueClient {
             ));
         }
         let value = self.signed(credentials, "POST", path, &pairs)?;
+        // A successful HTTP status without an exchange order identity is an
+        // unknown result, not an accepted fill or authoritative NEW order.
+        if value.get("clientOrderId").and_then(Value::as_str)
+            != Some(intent.client_order_id.as_str())
+            || value.get("status").and_then(Value::as_str).is_none()
+            || value.get("symbol").and_then(Value::as_str)
+                != Some(venue_symbol(&intent.symbol)?.as_str()) {
+            return Err(VenueError::Unconfirmed);
+        }
         Ok(order_view(&value, &intent.client_order_id))
     }
 
@@ -297,9 +306,9 @@ fn order_view(value: &Value, client_order_id: &str) -> Value {
         "quantity": value.get("origQty").and_then(Value::as_str).unwrap_or(""),
         "filled": value.get("executedQty").and_then(Value::as_str).unwrap_or("0"),
         "price": value.get("price").and_then(Value::as_str),
-        "status": value.get("status").and_then(Value::as_str).unwrap_or("NEW"),
+        "status": value.get("status").and_then(Value::as_str).unwrap_or("UNKNOWN"),
         "reduce_only": value.get("reduceOnly").and_then(Value::as_bool).unwrap_or(false),
-        "open": value.get("status").and_then(Value::as_str).is_none_or(|status| matches!(status, "NEW" | "PARTIALLY_FILLED")),
+        "open": value.get("status").and_then(Value::as_str).is_some_and(|status| matches!(status, "NEW" | "PARTIALLY_FILLED")),
     })
 }
 
