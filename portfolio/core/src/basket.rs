@@ -269,8 +269,8 @@ pub fn plan_with_constraints(
                     && ((old.is_sign_negative() != desired.is_sign_negative() || desired.is_zero())
                         || desired.abs() < old.abs())
                 {
-                    let to = if (old.is_sign_negative() != desired.is_sign_negative()
-                        || desired.is_zero())
+                    let to = if old.is_sign_negative() != desired.is_sign_negative()
+                        || desired.is_zero()
                     {
                         Decimal::ZERO
                     } else {
@@ -282,8 +282,8 @@ pub fn plan_with_constraints(
                     && ((old.is_sign_negative() != desired.is_sign_negative() || desired.is_zero())
                         || desired.abs() > old.abs())
                 {
-                    let from = if (old.is_sign_negative() != desired.is_sign_negative()
-                        || desired.is_zero())
+                    let from = if old.is_sign_negative() != desired.is_sign_negative()
+                        || desired.is_zero()
                     {
                         Decimal::ZERO
                     } else {
@@ -404,7 +404,7 @@ pub fn plan_with_constraints(
             {
                 Some((
                     perp.clone(),
-                    if (old.is_sign_negative() != new.is_sign_negative() || new.is_zero()) {
+                    if old.is_sign_negative() != new.is_sign_negative() || new.is_zero() {
                         -old
                     } else {
                         new - old
@@ -419,7 +419,7 @@ pub fn plan_with_constraints(
             {
                 Some((
                     perp.clone(),
-                    if (old.is_sign_negative() != new.is_sign_negative() || new.is_zero()) {
+                    if old.is_sign_negative() != new.is_sign_negative() || new.is_zero() {
                         new
                     } else {
                         new - old
