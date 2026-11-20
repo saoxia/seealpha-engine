@@ -3,6 +3,7 @@ mod accounts;
 mod config;
 mod data;
 mod history;
+mod jobs;
 mod sources;
 mod session;
 mod trading;
