@@ -1,5 +1,6 @@
 """All legacy native historical K-line readers enter isolated Engine scopes."""
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
