@@ -121,8 +121,8 @@ CREATE TABLE IF NOT EXISTS paper_sessions (
 
 #[derive(Debug, Error)]
 pub enum LedgerError {
-    #[error("状态库不可用")]
-    Sqlite,
+    #[error("状态库不可用。{0}")]
+    Sqlite(String),
     #[error("{0}")]
     Conflict(String),
 }
@@ -179,17 +179,19 @@ pub struct Ledger {
 impl Ledger {
     pub fn open(path: &Path) -> Result<Self, LedgerError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| LedgerError::Sqlite)?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         }
-        let connection = Connection::open(path).map_err(|_| LedgerError::Sqlite)?;
+        let connection =
+            Connection::open(path).map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(
                 "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;",
             )
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(SCHEMA)
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         Ok(Self {
             connection: std::sync::Mutex::new(connection),
         })
@@ -213,9 +215,9 @@ impl Ledger {
                  ON CONFLICT(tenant_id) DO UPDATE SET purpose=excluded.purpose, status=excluded.status",
                 params![tenant_id, purpose, status],
             )
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         self.tenant_with(&connection, tenant_id)?
-            .ok_or(LedgerError::Sqlite)
+            .ok_or_else(|| LedgerError::Sqlite("missing row".into()))
     }
 
     pub fn tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, LedgerError> {
@@ -251,7 +253,7 @@ impl Ledger {
                     now,
                 ],
             )
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         Ok(())
     }
 
@@ -267,7 +269,7 @@ impl Ledger {
                         parameters_json, entry_point, package_hash, archive
                  FROM strategy_loads WHERE tenant_id=?1 AND account_id=?2 ORDER BY issuance_id",
             )
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         let rows = statement
             .query_map(params![tenant_id, account_id], |row| {
                 Ok(StrategyLoad {
@@ -283,9 +285,9 @@ impl Ledger {
                     archive: row.get(9)?,
                 })
             })
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| LedgerError::Sqlite)
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
     pub fn begin_session(
@@ -299,7 +301,7 @@ impl Ledger {
         let mut connection = self.lock()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         let existing: Option<(String, String, String)> = transaction
             .query_row(
                 "SELECT fingerprint, status, report_json FROM paper_sessions
@@ -308,7 +310,7 @@ impl Ledger {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         if let Some((stored_fingerprint, status, report)) = existing {
             if stored_fingerprint != fingerprint {
                 return Err(LedgerError::Conflict("请求编号已用于另一笔模拟。".into()));
@@ -318,7 +320,9 @@ impl Ledger {
                 "rejected" => SessionStart::Rejected { report },
                 _ => SessionStart::Unresolved,
             };
-            transaction.commit().map_err(|_| LedgerError::Sqlite)?;
+            transaction
+                .commit()
+                .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
             return Ok(start);
         }
         let position = position_of(&transaction, tenant_id, account_id, symbol)?;
@@ -329,8 +333,10 @@ impl Ledger {
                  ) VALUES (?1, ?2, ?3, ?4, 'unknown', '{}', ?5)",
                 params![tenant_id, account_id, request_id, fingerprint, now_ms()],
             )
-            .map_err(|_| LedgerError::Sqlite)?;
-        transaction.commit().map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        transaction
+            .commit()
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         Ok(SessionStart::Fresh { position })
     }
 
@@ -359,16 +365,16 @@ impl Ledger {
                  WHERE tenant_id=?1 AND account_id=?2 AND environment=?3
                  ORDER BY updated_at, client_order_id",
             )
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         let rows = statement
             .query_map(params![tenant_id, account_id, environment], |row| {
                 Ok(StoredOrder {
                     order_json: row.get(0)?,
                 })
             })
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| LedgerError::Sqlite)
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
     pub fn order_count(&self, tenant_id: &str, account_id: &str) -> Result<i64, LedgerError> {
@@ -379,7 +385,7 @@ impl Ledger {
                 params![tenant_id, account_id],
                 |row| row.get(0),
             )
-            .map_err(|_| LedgerError::Sqlite)
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
     fn finish_session(
@@ -392,7 +398,7 @@ impl Ledger {
         let mut connection = self.lock()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         let existing: Option<(String, String)> = transaction
             .query_row(
                 "SELECT fingerprint, status FROM paper_sessions
@@ -401,7 +407,7 @@ impl Ledger {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         let Some((stored_fingerprint, stored_status)) = existing else {
             return Err(LedgerError::Conflict("模拟会话不存在。".into()));
         };
@@ -434,7 +440,7 @@ impl Ledger {
                         now_ms()
                     ],
                 )
-                .map_err(|_| LedgerError::Sqlite)?;
+                .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
             let now = now_ms();
             for (index, order) in orders.iter().enumerate() {
                 let client_order_id = format!("{}-{index}", finish.request_id);
@@ -445,7 +451,7 @@ impl Ledger {
                          ) VALUES (?1, ?2, 'paper', ?3, ?4, ?5)",
                         params![finish.tenant_id, finish.account_id, client_order_id, order, now],
                     )
-                    .map_err(|_| LedgerError::Sqlite)?;
+                    .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
                 transaction
                     .execute(
                         "INSERT INTO fills (
@@ -459,7 +465,7 @@ impl Ledger {
                             now
                         ],
                     )
-                    .map_err(|_| LedgerError::Sqlite)?;
+                    .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
             }
         }
         transaction
@@ -475,8 +481,10 @@ impl Ledger {
                     finish.request_id
                 ],
             )
-            .map_err(|_| LedgerError::Sqlite)?;
-        transaction.commit().map_err(|_| LedgerError::Sqlite)?;
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        transaction
+            .commit()
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         Ok(())
     }
 
@@ -498,11 +506,13 @@ impl Ledger {
                 },
             )
             .optional()
-            .map_err(|_| LedgerError::Sqlite)
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, LedgerError> {
-        self.connection.lock().map_err(|_| LedgerError::Sqlite)
+        self.connection
+            .lock()
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 }
 
@@ -519,9 +529,11 @@ fn position_of(
             |row| row.get(0),
         )
         .optional()
-        .map_err(|_| LedgerError::Sqlite)?;
+        .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
     match text {
-        Some(value) => value.parse().map_err(|_| LedgerError::Sqlite),
+        Some(value) => value
+            .parse()
+            .map_err(|error: rust_decimal::Error| LedgerError::Sqlite(error.to_string())),
         None => Ok(Decimal::ZERO),
     }
 }

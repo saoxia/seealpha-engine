@@ -46,9 +46,29 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn open(config: &Config) -> Result<Self, RuntimeError> {
-        ensure_state_dir(&config.state_dir)
-            .map_err(|_| RuntimeError::BadRequest("状态目录不可用。".into()))?;
-        let ledger = Ledger::open(&config.book_path()).map_err(map_ledger)?;
+        match Self::open_book(config, &config.book_path()) {
+            Ok(runtime) => Ok(runtime),
+            Err(error) => {
+                // The Platform handshake bind-mounts a 0700 directory and drops
+                // every capability, so uid 0 cannot create the book there.
+                let fallback =
+                    std::env::temp_dir().join(format!("seealpha-engine-{}", std::process::id()));
+                eprintln!(
+                    "state database {} is not writable ({error}); using {}",
+                    config.book_path().display(),
+                    fallback.display()
+                );
+                Self::open_book(config, &fallback.join("book.sqlite"))
+            }
+        }
+    }
+
+    fn open_book(config: &Config, book: &std::path::Path) -> Result<Self, RuntimeError> {
+        if let Some(parent) = book.parent() {
+            ensure_state_dir(parent)
+                .map_err(|_| RuntimeError::BadRequest("状态目录不可用。".into()))?;
+        }
+        let ledger = Ledger::open(book).map_err(map_ledger)?;
         Ok(Self {
             ledger,
             project: config.project.clone(),
@@ -261,7 +281,7 @@ impl Runtime {
 pub fn map_ledger(error: LedgerError) -> RuntimeError {
     match error {
         LedgerError::Conflict(message) => RuntimeError::Conflict(message),
-        LedgerError::Sqlite => RuntimeError::BadRequest("状态库不可用。".into()),
+        LedgerError::Sqlite(detail) => RuntimeError::BadRequest(format!("状态库不可用。{detail}")),
     }
 }
 

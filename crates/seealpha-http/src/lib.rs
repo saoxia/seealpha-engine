@@ -317,7 +317,9 @@ async fn list_orders(
         .orders(&tenant_id, &account_id, &environment)
         .map_err(|error| match error {
             seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
-            seealpha_ledger::LedgerError::Sqlite => AppError::bad_request("状态库不可用。"),
+            seealpha_ledger::LedgerError::Sqlite(detail) => {
+                AppError::bad_request(format!("状态库不可用。{detail}"))
+            }
         })?;
     let items = orders
         .into_iter()

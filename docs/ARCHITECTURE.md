@@ -69,3 +69,6 @@ still verified; `GET /research/v1/datasets` is the mounted research route when
 The book remains SQLite at `$ENGINE_STATE/book.sqlite` (WAL). Existing tenant,
 order, and strategy-load tables are created if missing. Paper positions and
 paper session idempotency use additional tables. Secrets are not columns.
+If that directory is not writable, which is the case for the Platform
+handshake mount under `--cap-drop ALL`, the process uses a temporary book
+under `/tmp` and still serves HTTP.
