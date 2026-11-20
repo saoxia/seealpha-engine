@@ -3,7 +3,7 @@ use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
 use seealpha_portfolio::{PaperFill, TargetPublication, replay_targets};
-use seealpha_strategy::{HostCommand, Publication, StrategyBar, digest_dir, run_host, sha256_hex};
+use seealpha_strategy::{HostCommand, Publication, StrategyBar, IssuedStrategy, AccountScope, digest_dir, run_host, run_issued_host, sha256_hex};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -127,8 +127,7 @@ impl Runtime {
                 PackageBody::Archive(_) => None,
             };
             let archive = temp.as_deref();
-            self.track_start();
-            let outcome = run_host(&HostCommand {
+            let host_command = HostCommand {
                 python: &self.python,
                 host: &self.host,
                 package_dir: directory,
@@ -138,7 +137,60 @@ impl Runtime {
                 interval: &request.snapshot.interval,
                 bars: &host_bars,
                 op: "run",
-            });
+            };
+            // Archive strategies are account-issued and must match the trusted
+            // Ledger bytes and parameters, not merely a request-supplied ZIP.
+            let issued = if let PackageBody::Archive(bytes) = &strategy.package {
+                let load = self.ledger.strategies(&request.tenant_id, &request.account_id)
+                    .map_err(map_ledger)?
+                    .into_iter()
+                    .find(|load| load.issuance_id == strategy.member_id)
+                    .ok_or_else(|| RuntimeError::Conflict(
+                        "模拟策略没有对应账户的可信下发记录。".into(),
+                    ))?;
+                let stored_parameters: Value = serde_json::from_str(&load.parameters_json)
+                    .map_err(|_| RuntimeError::Conflict(
+                        "已下发策略参数记录损坏。".into(),
+                    ))?;
+                if load.archive != *bytes || stored_parameters != strategy.parameters {
+                    return Err(RuntimeError::Conflict(
+                        "模拟策略包或参数与可信下发记录不一致。".into(),
+                    ));
+                }
+                Some(load)
+            } else {
+                None
+            };
+            let tenant = self.require_active(&request.tenant_id)?;
+            self.track_start();
+            let outcome = if let Some(load) = &issued {
+                run_issued_host(
+                    &host_command,
+                    IssuedStrategy {
+                        tenant_id: &load.tenant_id,
+                        account_id: &load.account_id,
+                        issuance_id: &load.issuance_id,
+                        grant_purpose: &load.grant_purpose,
+                        code_key: &load.code_key,
+                        version: &load.version,
+                        entry_point: &load.entry_point,
+                        package_hash: &load.package_hash,
+                    },
+                    AccountScope {
+                        tenant_id: &request.tenant_id,
+                        account_id: &request.account_id,
+                        purpose: &tenant.purpose,
+                    },
+                )
+            } else {
+                // Development sample directory path; never permitted to send orders.
+                if tenant.purpose != "development" {
+                    return Err(RuntimeError::Conflict(
+                        "正式租户不允许执行未下发的目录策略。".into(),
+                    ));
+                }
+                run_host(&host_command)
+            };
             self.track_end();
             if let Some(path) = &temp {
                 let _ = std::fs::remove_file(path);
