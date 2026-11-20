@@ -9,7 +9,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from engine.market_data.access.historical_data import _nanos as _nanos
+from engine.market_data.access.historical_data import _nanos
 from engine.trading.runtime import EngineConflict
 
 _INTERVALS = {"1m", "5m"}
