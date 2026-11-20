@@ -36,18 +36,13 @@ fn hash(input: &[u8]) -> String {
     let digest = Sha256::digest(input);
     digest.iter().map(|b|format!("{b:02x}")).collect()
 }
-pub fn plan_fingerprint(checkpoint: &Checkpoint) -> String {
-    // Type-tagged debug serialization is deterministic for ordered maps.
-    // Fingerprints are integrity IDs, NOT cryptographic authenticity proofs.
-    hash(format!("{:?}",checkpoint.plan).as_bytes())
-}
 pub fn bind_phase_orders(checkpoint: &Checkpoint) -> Result<BoundPhase,BasketError> {
     if checkpoint.plan.executable || checkpoint.state != State::AwaitingConfirmation {
         return Err(BasketError::State);
     }
     let phase = checkpoint.plan.phases.get(checkpoint.phase_index).ok_or(BasketError::State)?;
     let request = checkpoint.request_id.as_deref().ok_or(BasketError::State)?;
-    let fingerprint = plan_fingerprint(checkpoint);
+    let fingerprint = crate::journal::plan_fingerprint(&checkpoint.plan)?;
     let mut orders = Vec::new();
     let mut ids = BTreeSet::new();
     for (leg, change) in &phase.changes {
@@ -79,7 +74,7 @@ pub fn reconcile_order_evidence(
     }
     if positions.keys().ne(checkpoint.positions.keys()) ||
        evidence.len()!=manifest.orders.len() { return Err(BasketError::Evidence); }
-    let expected:BTreeMap<_,_>=manifest.orders.iter().map(|o|(&o.leg,o)).collect();
+    let expected:BTreeMap<_,_>=manifest.orders.iter().map(|o|(o.leg.clone(),o)).collect();
     let mut visited=BTreeSet::new();
     let mut venue_ids=BTreeSet::new();
     let mut terminal=BTreeMap::new();
