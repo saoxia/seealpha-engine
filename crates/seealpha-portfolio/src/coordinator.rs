@@ -5,19 +5,19 @@ use rust_decimal::Decimal;
 use serde::{Serialize, Deserialize};
 use crate::{execution_delta, net_signed_quantity, quantize_toward_zero, MemberTarget, PortfolioError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq), Serialize, Deserialize]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side { Buy, Sell }
 impl Side {
     fn sign(self) -> Decimal { match self { Self::Buy => Decimal::ONE, Self::Sell => -Decimal::ONE } }
 }
-#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VirtualKind {
     Market,
     Limit { price: Decimal },
     StopMarket { trigger: Decimal },
     StopLimit { trigger: Decimal, price: Decimal, triggered: bool },
 }
-#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VirtualOrder {
     pub id: String,
     pub member_id: String,
@@ -33,7 +33,7 @@ impl VirtualOrder {
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Bar { pub time: u64, pub low: Decimal, pub high: Decimal, pub close: Decimal }
-#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VirtualFill {
     pub order_id: String,
     pub member_id: String,
@@ -41,12 +41,12 @@ pub struct VirtualFill {
     pub quantity: Decimal,
     pub price: Decimal,
 }
-#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Command {
     Submit { id: String, signed_quantity: Decimal },
     Cancel { id: String },
 }
-#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Flight {
     pub id: String,
     pub signed_requested: Decimal,
@@ -55,7 +55,7 @@ pub struct Flight {
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct MemberBook { position: Decimal, explicit: Option<Decimal>, risk_exit: bool }
-#[derive(Debug, Clone), Serialize, Deserialize]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Coordinator {
     members: BTreeMap<String, MemberBook>,
     orders: BTreeMap<String, VirtualOrder>,
