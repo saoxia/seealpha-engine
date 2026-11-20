@@ -1,6 +1,12 @@
 //! Research grant signatures shared with the Platform research client.
 //!
 //! The engine verifies grants. It does not expose a route that signs them.
+mod scope;
+pub use scope::{
+    CandidateEnvelope, ResearchContext, SnapshotAccess, authorize_candidate_envelope,
+    authorize_operation, authorize_snapshot, verify_snapshot_bytes,
+};
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, Mac};
@@ -150,7 +156,9 @@ fn parse_claims(claims: &Value, now: i64) -> Result<Grant, ResearchError> {
     let not_before = integer(object, "not_before")?;
     let expires_at = integer(object, "expires_at")?;
     if !(expires_at > not_before
-        && expires_at - not_before <= 3600
+        && expires_at
+            .checked_sub(not_before)
+            .is_some_and(|duration| duration <= 3600)
         && not_before <= now
         && expires_at > now)
     {
@@ -250,6 +258,33 @@ mod tests {
             verify_research_grant(KEY, &forged, 1_700_000_400),
             Err(ResearchError::Rejected)
         );
+    }
+
+    #[test]
+    fn malicious_integer_boundaries_never_panic_or_authorize() {
+        let mut claims = json!({
+            "audience": AUDIENCE,
+            "datasets": [],
+            "expires_at": i64::MAX,
+            "not_before": i64::MIN,
+            "ops": ["datasets:read"],
+            "strategies": [],
+            "task_id": "task-1",
+            "tenant_id": "tenant-1",
+            "version": 1
+        });
+        assert_eq!(parse_claims(&claims, 0), Err(ResearchError::Rejected));
+        claims["not_before"] = json!(100);
+        claims["expires_at"] = json!(100);
+        assert_eq!(parse_claims(&claims, 100), Err(ResearchError::Rejected));
+        claims["expires_at"] = json!(3_701);
+        assert_eq!(parse_claims(&claims, 100), Err(ResearchError::Rejected));
+        claims["expires_at"] = json!(3_700);
+        assert!(parse_claims(&claims, 100).is_ok());
+        claims["ops"] = json!(["datasets:read", "datasets:read"]);
+        assert_eq!(parse_claims(&claims, 100), Err(ResearchError::Rejected));
+        claims["ops"] = json!(["execute:order"]);
+        assert_eq!(parse_claims(&claims, 100), Err(ResearchError::Rejected));
     }
 
     #[test]
