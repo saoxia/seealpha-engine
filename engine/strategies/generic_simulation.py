@@ -217,6 +217,8 @@ def run_native_generic_portfolio(
     previous = None
     previous_stamp = None
     curve, targets, count = [], [], 0
+    declared_hedges = None
+    hedge_transition_since = None
     try:
         for product, venue in _VENUES.items():
             matching = [leg for leg in legs if leg.product == product]
@@ -294,6 +296,10 @@ def run_native_generic_portfolio(
                         member_id = str(load["issuance_id"])
                         members[member_id].propose(session.member(member_id), snapshot)
                     planned = session.plan().plan
+                    if declared_hedges is None:
+                        declared_hedges = session.declared_hedges
+                    elif declared_hedges != session.declared_hedges:
+                        raise EngineConflict("回测期间不得更改已声明的跨产品对冲腿。")
                 except BasketPlanError as exc:
                     raise EngineConflict(str(exc)) from exc
                 coordinator.plan(planned)
@@ -315,6 +321,20 @@ def run_native_generic_portfolio(
             engine.clear_data()
             if coordinator.failure:
                 raise EngineConflict(coordinator.failure)
+            if declared_hedges:
+                if coordinator.pending or coordinator.remaining:
+                    if hedge_transition_since is None:
+                        hedge_transition_since = stamp
+                    elif stamp - hedge_transition_since > 3 * _STEP_NS[interval]:
+                        raise EngineConflict("跨产品对冲阶段超时，不能持续暴露未完成的单腿仓位。")
+                else:
+                    hedge_transition_since = None
+                    for spot, perpetual in declared_hedges:
+                        if (
+                            _position(engine, instruments[spot])
+                            + _position(engine, instruments[perpetual]) != 0
+                        ):
+                            raise EngineConflict("原生成交后的对冲仓位不平衡，回测已冻结。")
             closing = {leg: frame[leg].close.as_decimal() for leg in legs}
             equities = _portfolio_equity(engine, instruments, closing)
             curve.append({
@@ -350,6 +370,15 @@ def run_native_generic_portfolio(
             "venue_accounts": {p: "CASH" if p == "spot" else "MARGIN"
                                for p in _VENUES if any(leg.product == p for leg in legs)},
             "orders": coordinator.orders, "fills": coordinator.fills,
+            "declared_hedges": [
+                {"spot": spot.symbol, "perpetual": perpetual.symbol,
+                 "base_quantity_drift_limit": "0"}
+                for spot, perpetual in (declared_hedges or ())
+            ],
+            "hedge_verification": (
+                "confirmed_phases_only_non_atomic" if declared_hedges
+                else "not_declared"
+            ),
             "target_events": targets[-2000:],
             "equity_curve": curve[-2000:],
             "starting_balance": format(

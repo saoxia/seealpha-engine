@@ -123,6 +123,7 @@ def plan_basket(
     max_gross_notional: Decimal,
     policy: Literal["generic", "funding_carry", "option_protected"],
     max_leg_drift: Decimal = Decimal(0),
+    hedge_pairs: tuple[tuple[LegId, LegId], ...] = (),
     emergency_unwind: bool = False,
 ) -> BasketPlan:
     """Net identical instruments only; plan risk-reduction and hedge order.
@@ -161,6 +162,26 @@ def plan_basket(
         raise BasketPlanError("必须提供全部组合腿的实际仓位，不允许省略或额外仓位")
     if not isinstance(evidence, dict) or not legs.issubset(evidence):
         raise BasketPlanError("缺少组合腿的合约与价格证据")
+    # Opt-in, same-underlying CASH/UM base-quantity hedges. A different
+    # symbol is a statistical pair, not a verifiable one-to-one base hedge.
+    if type(hedge_pairs) is not tuple or (policy != "generic" and hedge_pairs):
+        raise BasketPlanError("跨产品对冲腿声明无效")
+    hedged_legs = set()
+    for pair in hedge_pairs:
+        if (
+            type(pair) is not tuple or len(pair) != 2
+            or not all(isinstance(leg, LegId) for leg in pair)
+        ):
+            raise BasketPlanError("跨产品对冲必须提供完整的现货与永续腿")
+        spot, perpetual = pair
+        if (
+            spot.product != "spot" or perpetual.product != "futures_um"
+            or spot.symbol != perpetual.symbol
+            or spot not in legs or perpetual not in legs
+            or spot in hedged_legs or perpetual in hedged_legs
+        ):
+            raise BasketPlanError("跨产品对冲腿必须同标的、同账户且不得重复")
+        hedged_legs.update(pair)
 
     for leg in legs:
         quote = evidence[leg]
@@ -186,6 +207,11 @@ def plan_basket(
     if policy == "generic":
         if len(legs) > 16:
             raise BasketPlanError("通用组合最多允许16条不同产品或标的腿")
+        for spot, perpetual in hedge_pairs:
+            if targets[spot] + targets[perpetual] != 0:
+                raise BasketPlanError("跨产品对冲目标必须现货多头与永续空头等量")
+            if positions[perpetual] > 0:
+                raise BasketPlanError("已有永续多头不能作为现货多头的保护腿")
     elif policy == "funding_carry":
         spots = [leg for leg in legs if leg.product == "spot"]
         if len(legs) != 2 or len(spots) != 1 or spots[0].symbol != perp.symbol:
@@ -227,10 +253,9 @@ def plan_basket(
     changes = {leg: targets[leg] - positions[leg] for leg in legs}
     phases = []
     if policy == "generic":
-        # Generic policy has no implicit hedge relationship. Split reversals
-        # and strictly reduce existing exposures before opening/increasing risk.
+        # Unpaired products keep the original independent target behavior.
         reductions, increases = [], []
-        for leg in sorted(legs):
+        for leg in sorted(legs - hedged_legs):
             old, new = positions[leg], targets[leg]
             if old and (old * new <= 0 or abs(new) < abs(old)):
                 smaller = Decimal(0) if old * new <= 0 else new
@@ -240,6 +265,32 @@ def plan_basket(
                 increases.append(LegChange(leg, new - from_quantity))
         if reductions:
             phases.append(BasketPhase("reduce_existing_exposure", tuple(reductions)))
+        # On a declared CASH/UM hedge, reduce the short perpetual before
+        # selling spot; buy spot before increasing the short perpetual.
+        # Wait for each native phase's fills; never assume venue atomicity.
+        reduce_perpetual, reduce_spot = [], []
+        increase_spot, increase_perpetual = [], []
+        for spot, perpetual in sorted(hedge_pairs):
+            if targets[perpetual] > positions[perpetual]:
+                reduce_perpetual.append(
+                    LegChange(perpetual, targets[perpetual] - positions[perpetual])
+                )
+            if targets[spot] < positions[spot]:
+                reduce_spot.append(LegChange(spot, targets[spot] - positions[spot]))
+            if targets[spot] > positions[spot]:
+                increase_spot.append(LegChange(spot, targets[spot] - positions[spot]))
+            if targets[perpetual] < positions[perpetual]:
+                increase_perpetual.append(
+                    LegChange(perpetual, targets[perpetual] - positions[perpetual])
+                )
+        for name, rows in (
+            ("reduce_hedge_perpetual", reduce_perpetual),
+            ("reduce_hedge_spot", reduce_spot),
+            ("acquire_hedge_spot", increase_spot),
+            ("increase_hedged_perpetual", increase_perpetual),
+        ):
+            if rows:
+                phases.append(BasketPhase(name, tuple(rows)))
         if increases:
             phases.append(BasketPhase("increase_new_exposure", tuple(increases)))
     elif policy == "funding_carry":

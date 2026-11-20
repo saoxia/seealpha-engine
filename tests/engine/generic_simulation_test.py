@@ -175,3 +175,55 @@ def test_two_independent_issued_strategies_share_one_native_portfolio():
     assert {row["product"] for row in report["target_events"][-1]["targets"]} == {
         "spot", "futures_um",
     }
+
+
+
+def test_native_declared_hedge_uses_two_confirmed_risk_phases():
+    spot = LegId("dev", "desk", "spot", "ETHUSDT")
+    perp = LegId("dev", "desk", "futures_um", "ETHUSDT")
+    contracts = {
+        spot: spot_instrument(),
+        perp: TestInstrumentProvider.ethusdt_perp_binance(),
+    }
+    source = _SOURCE.replace("BTCUSDT", "ETHUSDT").replace(
+        '        self.publish_basket(\n',
+        '        self.publish_basket(\n'
+        '            constraints={"spot_perpetual_hedges": [{"symbol": "ETHUSDT"}]},\n',
+    )
+    report = run_native_generic_portfolio(
+        [_load(source)], _frames(contracts), contracts,
+        interval="1m", starting_spot="1000",
+        starting_perpetual="1000", max_gross_notional="1000",
+    )
+    assert [row["phase"] for row in report["orders"]] == [
+        "acquire_hedge_spot", "increase_hedged_perpetual",
+    ]
+    assert report["declared_hedges"] == [{
+        "spot": "ETHUSDT", "perpetual": "ETHUSDT", "base_quantity_drift_limit": "0",
+    }]
+    assert report["hedge_verification"] == "confirmed_phases_only_non_atomic"
+    final = {row["product"]: Decimal(row["quantity"])
+             for row in report["equity_curve"][-1]["positions"]}
+    assert final["spot"] + final["futures_um"] == 0
+
+
+def test_native_declared_hedge_fails_on_unbalanced_target():
+    spot = LegId("dev", "desk", "spot", "ETHUSDT")
+    perp = LegId("dev", "desk", "futures_um", "ETHUSDT")
+    contracts = {
+        spot: spot_instrument(),
+        perp: TestInstrumentProvider.ethusdt_perp_binance(),
+    }
+    source = _SOURCE.replace("BTCUSDT", "ETHUSDT").replace(
+        '"quantity": "-0.1"', '"quantity": "-0.2"',
+    ).replace(
+        '        self.publish_basket(\n',
+        '        self.publish_basket(\n'
+        '            constraints={"spot_perpetual_hedges": [{"symbol": "ETHUSDT"}]},\n',
+    )
+    with pytest.raises(EngineConflict, match="等量"):
+        run_native_generic_portfolio(
+            [_load(source)], _frames(contracts), contracts,
+            interval="1m", starting_spot="1000",
+            starting_perpetual="1000", max_gross_notional="1000",
+        )
