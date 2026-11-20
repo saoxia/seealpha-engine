@@ -200,7 +200,7 @@ def test_empty_response_and_nonadvancing_pages_never_create_fake_data(context, m
 def test_worker_entry_point_carries_option_product(context, monkeypatch, tmp_path):
     import sys
 
-    from engine.pipeline import data_management
+    from engine.market_data.repair import data_management
 
     settings, _item = context
     request, calls = bars_request(), []
