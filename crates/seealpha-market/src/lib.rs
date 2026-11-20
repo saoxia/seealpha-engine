@@ -7,6 +7,7 @@ mod binance;
 mod pipeline;
 pub mod options;
 pub mod funding;
+pub mod exercise;
 
 
 pub use binance::{BinanceSource, MemorySource};
