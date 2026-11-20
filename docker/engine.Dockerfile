@@ -27,6 +27,7 @@ COPY --from=build /src/target/release/binance-native-calculation /usr/local/bin/
 COPY --from=build /src/target/release/binance-native-catalog-publish /usr/local/bin/binance-native-catalog-publish
 COPY python/strategy_host ./python/strategy_host
 COPY packages ./packages
-COPY core/engine_contracts.py core/trading_contracts.py ./core/
+# Platform's Python contract source stays in the repository for compatibility
+# checks. The production Rust Engine image runs only user Python strategies.
 EXPOSE 8766
 CMD ["seealpha-engine"]
