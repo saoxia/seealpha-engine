@@ -45,6 +45,9 @@ impl Runtime {
         let client_id=record["response"]["client_order_id"].as_str()
             .ok_or_else(||error("订单客户端编号缺失。"))?.to_owned();
         let product=market_product(&record,&symbol)?;
+        if record["algo_order"]==true {
+            return Err(error("条件单触发状态不等于真实成交；需通过 actualOrderId 与交易所成交明细核对。"));
+        }
         let client=VenueClient::new(venue_base)
             .map_err(|_|error("交易网关配置无效。"))?;
         let credentials=Credentials{api_key:api_key.to_owned(),secret:secret.to_owned()};
