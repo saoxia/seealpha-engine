@@ -42,11 +42,7 @@ pub fn parse_order_event(product:Product,raw:&Value)->Result<OrderEvent,VenueErr
         // Options and Algo messages have distinct schemas. Reconcile with GET.
         _ => return Err(VenueError::Unconfirmed),
     };
-    let keys=if product==Product::Spot {
-        ["s","c","i","q","z","l","L","t","T","x","X"]
-    } else {
-        ["s","c","i","q","z","l","L","t","T","x","X"]
-    };
+    let keys=["s","c","i","q","z","l","L","t","T","x","X"];
     let symbol=row[keys[0]].as_str().filter(|s|!s.is_empty()).ok_or(VenueError::Unconfirmed)?;
     let client=row[keys[1]].as_str().filter(|s|!s.is_empty()).ok_or(VenueError::Unconfirmed)?;
     let order_id=numeric_id(&row[keys[2]])?;
@@ -82,6 +78,7 @@ pub enum AppliedEvent { Duplicate, StatusOnly, Trade(TradeEvidence) }
 pub struct StreamReconciler {
     pub state:Option<VerifiedOrderState>,
     pub frozen:bool,
+    pub last_event_time_ms:Option<i64>,
     trades:BTreeMap<String,TradeEvidence>,
 }
 impl StreamReconciler {
@@ -89,6 +86,9 @@ impl StreamReconciler {
     pub fn trades(&self)->&BTreeMap<String,TradeEvidence>{&self.trades}
     pub fn apply(&mut self,event:OrderEvent)->Result<AppliedEvent,VenueError>{
         if self.frozen{return Err(VenueError::Unconfirmed);}
+        if self.last_event_time_ms.is_some_and(|seen|event.event_time_ms<seen){
+            self.frozen=true;return Err(VenueError::Unconfirmed);
+        }
         if let Some(prev)=&self.state {
             if prev.advance(&event.state).is_err(){
                 self.frozen=true;return Err(VenueError::Unconfirmed);
@@ -103,6 +103,7 @@ impl StreamReconciler {
                 if existing!=&trade || !delta.is_zero(){
                     self.frozen=true;return Err(VenueError::Unconfirmed);
                 }
+                self.last_event_time_ms=Some(event.event_time_ms);
                 return Ok(AppliedEvent::Duplicate);
             }
             if delta!=trade.quantity{
@@ -110,6 +111,7 @@ impl StreamReconciler {
             }
             self.trades.insert(trade.venue_trade_id.clone(),trade.clone());
             self.state=Some(event.state);
+            self.last_event_time_ms=Some(event.event_time_ms);
             Ok(AppliedEvent::Trade(trade))
         }else{
             if !delta.is_zero(){
@@ -117,6 +119,7 @@ impl StreamReconciler {
             }
             let duplicate=self.state.as_ref()==Some(&event.state);
             self.state=Some(event.state);
+            self.last_event_time_ms=Some(event.event_time_ms);
             if duplicate{Ok(AppliedEvent::Duplicate)}else{Ok(AppliedEvent::StatusOnly)}
         }
     }
@@ -146,9 +149,15 @@ impl StreamReconciler {
             }).is_some(){return Err(VenueError::Unconfirmed);}
         }
         if total!=verified.filled_quantity{self.frozen=true;return Err(VenueError::Unconfirmed);}
+        for (id,trade) in &trades {
+            if self.trades.get(id).is_some_and(|previous|previous!=trade) {
+                self.frozen=true;return Err(VenueError::Unconfirmed);
+            }
+        }
         if let Some(old)=&self.state {old.advance(&verified)?;}
         self.trades=trades;
         self.state=Some(verified);
+        self.last_event_time_ms=None; // REST has its own authoritative timestamp
         self.frozen=false;
         Ok(())
     }
@@ -190,6 +199,16 @@ mod tests{
         assert!(r.recover_from_rest(s.clone(),&fills,false).is_err());
         r.recover_from_rest(s,&fills,true).unwrap();
         assert!(!r.frozen);
+    }
+    #[test]
+    fn older_events_and_conflicting_trade_replays_freeze() {
+        let mut r=StreamReconciler::default();
+        r.apply(parse_order_event(Product::Spot,
+            &spot("NEW","NEW","0","0",0)).unwrap()).unwrap();
+        let mut stale=spot("NEW","NEW","0","0",0);
+        stale["E"]=json!(99);
+        assert!(r.apply(parse_order_event(Product::Spot,&stale).unwrap()).is_err());
+        assert!(r.frozen);
     }
     #[test]
     fn algo_trigger_and_um_amendment_are_not_trades(){
