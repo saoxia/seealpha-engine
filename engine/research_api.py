@@ -227,8 +227,8 @@ def create_research_app(config, runtime, tasks):
             market, symbol, interval = dataset_id.split(":")
         except ValueError:
             raise HTTPException(422, "Invalid backtest dataset reference") from None
-        if market != "futures_um" or interval not in {"1m", "5m"}:
-            raise HTTPException(422, "Existing Engine backtester supports only futures 1m/5m")
+        if market not in {"futures_um", "spot"} or interval not in {"1m", "5m"}:
+            raise HTTPException(422, "Backtester requires supported bar data (futures_um/spot, 1m/5m)")
         if dataset_id not in {d["id"] for d in snapshots._discover()}:
             raise HTTPException(404, "Research dataset not found")
         loads = runtime.store.strategy_loads(
@@ -243,6 +243,7 @@ def create_research_app(config, runtime, tasks):
         try:
             params = BacktestParameters(
                 account_id=account_id,
+                product=market,
                 start=body.start, end=body.end, interval=interval,
                 starting_balance=body.starting_balance,
                 quote_currency=body.quote_currency,
@@ -278,8 +279,8 @@ def create_research_app(config, runtime, tasks):
             market, symbol, interval = dataset.split(":")
         except ValueError:
             raise HTTPException(422, "Invalid candidate dataset") from None
-        if market != "futures_um" or interval not in {"1m", "5m"}:
-            raise HTTPException(422, "Candidate currently supports futures 1m/5m")
+        if market not in {"futures_um", "spot"} or interval not in {"1m", "5m"}:
+            raise HTTPException(422, "Candidate requires supported bar data (futures_um/spot, 1m/5m)")
         if dataset not in {row["id"] for row in snapshots._discover()}:
             raise HTTPException(404, "Candidate dataset does not exist")
         try:
@@ -290,6 +291,7 @@ def create_research_app(config, runtime, tasks):
                 raise ValueError("Candidate symbol outside dataset")
             params = BacktestParameters(
                 account_id=match.group(1),
+                product=market,
                 start=body.start, end=body.end, interval=interval,
                 starting_balance=body.starting_balance,
                 quote_currency=body.quote_currency,
@@ -330,8 +332,8 @@ def create_research_app(config, runtime, tasks):
             product, symbol, interval = dataset.split(":")
         except ValueError:
             raise HTTPException(422, "Invalid research dataset") from None
-        if product != "futures_um" or interval not in {"1m", "5m"}:
-            raise HTTPException(422, "Only single-product futures research supported")
+        if product not in {"futures_um", "spot"} or interval not in {"1m", "5m"}:
+            raise HTTPException(422, "Python candidate requires supported bar data (futures_um/spot, 1m/5m)")
         if dataset not in {row["id"] for row in snapshots._discover()}:
             raise HTTPException(404, "Research dataset unavailable")
         try:
@@ -340,6 +342,7 @@ def create_research_app(config, runtime, tasks):
             )
             params = BacktestParameters(
                 account_id=account.group(1),
+                product=product,
                 start=body.start, end=body.end, interval=interval,
                 starting_balance=body.starting_balance,
                 quote_currency=body.quote_currency,
