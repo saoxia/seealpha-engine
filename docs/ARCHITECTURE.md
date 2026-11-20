@@ -43,8 +43,14 @@ core/                      shared contract modules kept for Platform
    quantizes the delta toward zero. The ledger pre-registers the session.
    A repeated fingerprint replays the stored result. An unresolved `unknown`
    session is not executed again.
-6. Fills are marked `venue=paper`. Live order, connection, and snapshot routes
-   return 409 and do not store credentials or call a signed exchange endpoint.
+6. Fills from a paper session are marked `venue=paper`.
+7. Signed order routes build a Binance HMAC request and send it only when
+   `ENGINE_VENUE_BASE` is set. Credentials are not written to SQLite. A repeated
+   request id replays the stored result and does not call the venue again.
+   Transport failure leaves the intent `unknown` and reconcile queries; it does
+   not submit a second order. With no gateway URL the route refuses rather than
+   guessing a production host. Connection and account-snapshot routes still do
+   not retain secrets.
 
 ## Python that remains
 

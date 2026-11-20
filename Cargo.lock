@@ -640,6 +640,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -647,6 +648,12 @@ name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
+
+[[package]]
+name = "futures-io"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
 
 [[package]]
 name = "futures-macro"
@@ -678,9 +685,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
  "futures-core",
+ "futures-io",
  "futures-macro",
  "futures-sink",
  "futures-task",
+ "memchr",
  "pin-project-lite",
  "slab",
 ]
@@ -1465,7 +1474,9 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -1603,11 +1614,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "seealpha-backtest"
+version = "0.1.0"
+dependencies = [
+ "rust_decimal",
+ "seealpha-portfolio",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "seealpha-bench"
 version = "0.1.0"
 dependencies = [
  "rusqlite",
  "rust_decimal",
+ "seealpha-backtest",
  "seealpha-market",
  "seealpha-quality",
  "serde_json",
@@ -1646,6 +1669,7 @@ dependencies = [
  "base64 0.22.1",
  "http-body-util",
  "rust_decimal",
+ "seealpha-backtest",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-research",
@@ -1709,15 +1733,19 @@ dependencies = [
 name = "seealpha-runtime"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "rust_decimal",
+ "seealpha-backtest",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-portfolio",
  "seealpha-strategy",
+ "seealpha-venue",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1729,6 +1757,20 @@ dependencies = [
  "sha2",
  "thiserror",
  "zip 2.6.1",
+]
+
+[[package]]
+name = "seealpha-venue"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "hmac",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

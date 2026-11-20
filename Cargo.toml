@@ -9,6 +9,8 @@ members = [
     "crates/seealpha-ledger",
     "crates/seealpha-research",
     "crates/seealpha-strategy",
+    "crates/seealpha-venue",
+    "crates/seealpha-backtest",
     "crates/seealpha-runtime",
     "crates/seealpha-http",
     "crates/seealpha-engine",

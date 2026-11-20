@@ -17,6 +17,8 @@ pub struct Config {
     pub tenant_id: Option<String>,
     pub tenant_purpose: Option<String>,
     pub research_signing_key: Option<String>,
+    pub research_mcp_enabled: bool,
+    pub venue_base: Option<String>,
     pub python: PathBuf,
 }
 
@@ -63,6 +65,12 @@ impl Config {
                 .ok()
                 .filter(|value| !value.is_empty()),
             research_signing_key,
+            research_mcp_enabled: std::env::var("ENGINE_RESEARCH_MCP_ENABLED")
+                .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE"))
+                .unwrap_or(false),
+            venue_base: std::env::var("ENGINE_VENUE_BASE")
+                .ok()
+                .filter(|value| !value.is_empty()),
             python: std::env::var("ENGINE_PYTHON")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("python3")),

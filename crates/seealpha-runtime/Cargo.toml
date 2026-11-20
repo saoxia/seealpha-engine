@@ -9,9 +9,15 @@ license = "Apache-2.0"
 seealpha-ledger = { path = "../seealpha-ledger" }
 seealpha-market = { path = "../seealpha-market" }
 seealpha-portfolio = { path = "../seealpha-portfolio" }
+seealpha-backtest = { path = "../seealpha-backtest" }
 seealpha-strategy = { path = "../seealpha-strategy" }
+seealpha-venue = { path = "../seealpha-venue" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 rust_decimal = "1"
 thiserror = "2"
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }

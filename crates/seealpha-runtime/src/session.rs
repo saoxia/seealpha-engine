@@ -361,6 +361,8 @@ mod tests {
             tenant_id: None,
             tenant_purpose: None,
             research_signing_key: None,
+            research_mcp_enabled: false,
+            venue_base: None,
             python: PathBuf::from("python3"),
         };
         let runtime = Runtime::open(&config).unwrap();

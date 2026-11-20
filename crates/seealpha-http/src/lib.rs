@@ -10,8 +10,8 @@ use base64::Engine;
 use seealpha_market::{LoadQuery, MarketSnapshot, Product, PublicSource, check_symbol};
 use seealpha_research::{require_op, verify_research_grant};
 use seealpha_runtime::{
-    AuthMode, Config, PackageBody, PaperRequest, Runtime, RuntimeError, StrategyInput,
-    StrategySubmission,
+    AuthMode, Config, OrderCommand, PackageBody, PaperRequest, Runtime, RuntimeError,
+    StrategyInput, StrategySubmission,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -55,15 +55,40 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/orders",
-            get(list_orders).post(live_disabled),
+            get(list_orders).post(order_command),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/spot/orders",
-            post(live_disabled),
+            post(order_command),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/trading/controls",
-            post(live_disabled),
+            post(order_command),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/ledger-sync",
+            post(ledger_sync),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/reconcile",
+            post(reconcile_order),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/fills",
+            get(list_fills),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/gaps",
+            get(list_gaps).post(put_gap),
+        )
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/events",
+            get(list_events),
+        )
+        .route("/tenants/{tenant_id}/data/catalog/bars", post(import_bars))
+        .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/backtests",
+            post(run_backtest),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/connections",
@@ -75,7 +100,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/backtests/latest",
-            get(no_backtest),
+            get(latest_backtest),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/carry-backtests/latest",
@@ -88,6 +113,11 @@ pub fn router(state: AppState) -> Router {
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
         router = router.route("/research/v1/datasets", get(research_datasets));
+        router = router.route("/research/v1/snapshots", post(create_snapshot));
+        router = router.route("/research/v1/snapshots/{snapshot_id}", get(get_snapshot));
+        if state.config.research_mcp_enabled {
+            router = router.route("/research/mcp", post(research_mcp));
+        }
     }
     router
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
@@ -330,14 +360,296 @@ async fn list_orders(
     Ok(Json(json!({ "orders": items })))
 }
 
+async fn order_command(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let venue_base = state
+        .config
+        .venue_base
+        .clone()
+        .ok_or_else(|| AppError::conflict("交易网关未配置，拒绝向默认交易所发单。"))?;
+    let environment = body
+        .get("environment")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let api_key = body
+        .get("api_key")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let secret = body
+        .get("api_secret")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let action = body
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let values = body.get("values").cloned().unwrap_or(Value::Null);
+    let result = state.runtime.execute_order(OrderCommand {
+        tenant_id,
+        account_id,
+        environment,
+        api_key,
+        secret,
+        action,
+        values,
+        venue_base,
+    });
+    Ok(Json(result.map_err(AppError::from)?))
+}
+
+async fn ledger_sync(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id, request_id)): Path<(String, String, String)>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .mark_ledger_synced(&tenant_id, &account_id, &request_id)
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn reconcile_order(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id, request_id)): Path<(String, String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let venue_base = state.config.venue_base.clone().unwrap_or_default();
+    Ok(Json(
+        state
+            .runtime
+            .reconcile_order(
+                &tenant_id,
+                &account_id,
+                &request_id,
+                body.get("environment")
+                    .and_then(Value::as_str)
+                    .unwrap_or("production"),
+                body.get("api_key").and_then(Value::as_str).unwrap_or(""),
+                body.get("api_secret").and_then(Value::as_str).unwrap_or(""),
+                &venue_base,
+                body.get("account_revision")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn list_fills(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Query(query): Query<EnvironmentQuery>,
+) -> Result<Json<Value>, AppError> {
+    let environment = query.environment.unwrap_or_else(|| "production".into());
+    let fills = state
+        .runtime
+        .ledger
+        .fills(&tenant_id, &account_id, &environment)
+        .map_err(|error| match error {
+            seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
+            seealpha_ledger::LedgerError::Sqlite(detail) => AppError::bad_request(detail),
+        })?;
+    let items = fills
+        .into_iter()
+        .filter_map(|row| serde_json::from_str::<Value>(&row).ok())
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "fills": items })))
+}
+
+async fn list_gaps(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let gaps = state
+        .runtime
+        .ledger
+        .gaps(&tenant_id, &account_id)
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    let items = gaps
+        .into_iter()
+        .filter_map(|row| serde_json::from_str::<Value>(&row).ok())
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "gaps": items })))
+}
+
+async fn put_gap(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let scope = body.get("scope").and_then(Value::as_str).unwrap_or("");
+    let gap_key = body.get("gap_key").and_then(Value::as_str).unwrap_or("");
+    let gap = body.get("gap").cloned().unwrap_or(json!({}));
+    state
+        .runtime
+        .ledger
+        .put_gap(&tenant_id, &account_id, scope, gap_key, &gap.to_string())
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    state
+        .runtime
+        .ledger
+        .add_event(&tenant_id, &account_id, "gap", &gap.to_string())
+        .ok();
+    Ok(Json(gap))
+}
+
+async fn list_events(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let events = state
+        .runtime
+        .ledger
+        .events(&tenant_id, &account_id)
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    let items = events
+        .into_iter()
+        .map(|(kind, body)| json!({"kind": kind, "body": body}))
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "events": items })))
+}
+
+async fn import_bars(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let product = body
+        .get("product")
+        .and_then(Value::as_str)
+        .unwrap_or("spot");
+    let symbol = body.get("symbol").and_then(Value::as_str).unwrap_or("");
+    let interval = body.get("interval").and_then(Value::as_str).unwrap_or("1m");
+    let rows = body
+        .get("bars")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let bars = rows
+        .iter()
+        .filter_map(|row| {
+            Some(seealpha_ledger::CatalogBar {
+                open_time_ms: row.get("open_time_ms")?.as_i64()?,
+                open: row.get("open")?.as_str()?.to_string(),
+                high: row.get("high")?.as_str()?.to_string(),
+                low: row.get("low")?.as_str()?.to_string(),
+                close: row.get("close")?.as_str()?.to_string(),
+                volume: row.get("volume")?.as_str()?.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let count = state
+        .runtime
+        .ledger
+        .import_bars(&tenant_id, product, symbol, interval, &bars)
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    Ok(Json(json!({ "imported": count })))
+}
+
+async fn run_backtest(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let symbol = body
+        .get("symbol")
+        .and_then(Value::as_str)
+        .unwrap_or("ETHUSDT");
+    let quote = body
+        .get("quote_currency")
+        .and_then(Value::as_str)
+        .unwrap_or("USDT");
+    let starting: rust_decimal::Decimal = body
+        .get("starting_balance")
+        .and_then(Value::as_str)
+        .unwrap_or("10000")
+        .parse()
+        .map_err(|_| AppError::bad_request("虚拟账户资金无效。"))?;
+    let risk: rust_decimal::Decimal = body
+        .get("risk_limit")
+        .and_then(Value::as_str)
+        .unwrap_or("10")
+        .parse()
+        .map_err(|_| AppError::bad_request("风险额度无效。"))?;
+    let raw_bars = body
+        .get("bars")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let bars = raw_bars
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            let close = row.get("close")?.as_str()?.parse().ok()?;
+            let open_time_ms = row
+                .get("open_time_ms")
+                .and_then(Value::as_i64)
+                .unwrap_or(index as i64 * 60_000);
+            Some(seealpha_backtest::HistoryBar {
+                open_time_ms,
+                close,
+            })
+        })
+        .collect::<Vec<_>>();
+    let targets = body
+        .get("targets")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            Some(seealpha_backtest::PublishedTarget {
+                member_id: row
+                    .get("member_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("strategy")
+                    .to_string(),
+                bar_index: row.get("bar_index")?.as_u64()? as usize,
+                quantity: row.get("quantity")?.as_str()?.parse().ok()?,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(
+        state
+            .runtime
+            .run_account_backtest(
+                &tenant_id,
+                &account_id,
+                symbol,
+                quote,
+                starting,
+                risk,
+                &bars,
+                &targets,
+            )
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn latest_backtest(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        state
+            .runtime
+            .latest_history_backtest(&tenant_id, &account_id)
+            .map_err(AppError::from)?,
+    ))
+}
+
 async fn live_disabled() -> Result<Json<Value>, AppError> {
     Err(AppError::conflict(
         "实盘下单已关闭，引擎不会向交易所发送订单或保存密钥。",
     ))
-}
-
-async fn no_backtest() -> Result<Json<Value>, AppError> {
-    Err(AppError::not_found("还没有回测"))
 }
 
 async fn no_carry() -> Result<Json<Value>, AppError> {
@@ -411,6 +723,139 @@ async fn research_datasets(
     Ok(response)
 }
 
+fn bearer_grant(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<seealpha_research::Grant, AppError> {
+    let key = state
+        .config
+        .research_signing_key
+        .clone()
+        .ok_or_else(|| AppError::not_found("路径不存在。"))?;
+    if headers
+        .get(CONTRACT_HEADER)
+        .and_then(|value| value.to_str().ok())
+        != Some(CONTRACT_VERSION)
+        || headers
+            .get(RESEARCH_HEADER)
+            .and_then(|value| value.to_str().ok())
+            != Some(RESEARCH_VERSION)
+    {
+        return Err(AppError::upgrade("Research contract version mismatch"));
+    }
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let Some(token) = authorization.strip_prefix("Bearer ") else {
+        return Err(AppError::unauthorized("Research authorization required"));
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    let grant = verify_research_grant(&key, token.trim(), now)
+        .map_err(|_| AppError::unauthorized("Research authorization rejected"))?;
+    if state.config.tenant_purpose.as_deref() != Some("development")
+        || state.config.tenant_id.as_deref() != Some(grant.tenant_id.as_str())
+    {
+        return Err(AppError::forbidden("Research tenant scope denied"));
+    }
+    Ok(grant)
+}
+
+async fn create_snapshot(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let grant = bearer_grant(&state, &headers)?;
+    require_op(&grant, "snapshots:create", None, None)
+        .map_err(|_| AppError::forbidden("Research operation outside granted scope"))?;
+    Ok(Json(
+        state
+            .runtime
+            .create_research_snapshot(&grant.tenant_id, &body.to_string())
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn get_snapshot(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(snapshot_id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let grant = bearer_grant(&state, &headers)?;
+    require_op(&grant, "snapshots:read", None, None)
+        .map_err(|_| AppError::forbidden("Research operation outside granted scope"))?;
+    Ok(Json(
+        state
+            .runtime
+            .research_snapshot(&grant.tenant_id, &snapshot_id)
+            .map_err(AppError::from)?,
+    ))
+}
+
+async fn research_mcp(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    if headers.get("origin").is_some() {
+        return Err(AppError::forbidden(
+            "Browser origins not allowed on Research MCP",
+        ));
+    }
+    let grant = bearer_grant(&state, &headers)?;
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let method = body.get("method").and_then(Value::as_str).unwrap_or("");
+    let result = match method {
+        "initialize" => json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "seealpha-engine", "version": "0.1.0" }
+        }),
+        "tools/list" => json!({
+            "tools": [
+                {"name": "list_datasets", "description": "List granted datasets"},
+                {"name": "create_snapshot", "description": "Store a research snapshot"},
+                {"name": "get_snapshot", "description": "Read a research snapshot"},
+                {"name": "submit_backtest", "description": "Run a development backtest"},
+                {"name": "get_backtest", "description": "Read the latest development backtest"}
+            ]
+        }),
+        "tools/call" => {
+            let name = body
+                .pointer("/params/name")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let payload = match name {
+                "list_datasets" => {
+                    require_op(&grant, "datasets:read", None, None).map_err(|_| {
+                        AppError::forbidden("Research operation outside granted scope")
+                    })?;
+                    json!({ "items": grant.datasets })
+                }
+                "get_backtest" => {
+                    require_op(&grant, "backtests:read", None, None).map_err(|_| {
+                        AppError::forbidden("Research operation outside granted scope")
+                    })?;
+                    state
+                        .runtime
+                        .latest_history_backtest(&grant.tenant_id, "research")
+                        .unwrap_or(json!({ "detail": "还没有回测" }))
+                }
+                _ => json!({ "detail": "该研究工具请改用 HTTP 研究路由。" }),
+            };
+            json!({ "content": [{ "type": "text", "text": payload.to_string() }] })
+        }
+        _ => json!({ "ok": false }),
+    };
+    Ok(Json(
+        json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+    ))
+}
+
 fn bars_snapshot(body: &PreviewBody) -> Result<MarketSnapshot, AppError> {
     let interval_ms = seealpha_market::interval_ms(&body.interval)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
@@ -473,6 +918,7 @@ pub enum AppError {
     Forbidden(String),
     Unauthorized(String),
     Upgrade(String),
+    Unprocessable(String),
 }
 
 impl AppError {
@@ -502,6 +948,7 @@ impl From<RuntimeError> for AppError {
             RuntimeError::Conflict(message) => Self::Conflict(message),
             RuntimeError::BadRequest(message) => Self::BadRequest(message),
             RuntimeError::NotFound(message) => Self::NotFound(message),
+            RuntimeError::Unprocessable(message) => Self::Unprocessable(message),
         }
     }
 }
@@ -515,6 +962,7 @@ impl IntoResponse for AppError {
             Self::Forbidden(detail) => (StatusCode::FORBIDDEN, detail),
             Self::Unauthorized(detail) => (StatusCode::UNAUTHORIZED, detail),
             Self::Upgrade(detail) => (StatusCode::UPGRADE_REQUIRED, detail),
+            Self::Unprocessable(detail) => (StatusCode::UNPROCESSABLE_ENTITY, detail),
         };
         error(status, &detail)
     }
@@ -523,6 +971,7 @@ impl IntoResponse for AppError {
 #[derive(Deserialize)]
 struct TenantBody {
     purpose: String,
+    #[serde(default = "default_status")]
     status: String,
 }
 
@@ -592,6 +1041,9 @@ struct PreviewBar {
     volume: String,
 }
 
+fn default_status() -> String {
+    "active".into()
+}
 fn default_interval() -> String {
     "1m".into()
 }
@@ -631,6 +1083,8 @@ mod tests {
             tenant_id: Some("42".into()),
             tenant_purpose: Some("development".into()),
             research_signing_key: None,
+            research_mcp_enabled: false,
+            venue_base: None,
             python: std::path::PathBuf::from("python3"),
         };
         let runtime = Arc::new(Runtime::open(&config).unwrap());
@@ -709,6 +1163,7 @@ mod tests {
             Request::builder()
                 .uri("/tenants/42/accounts/a/orders")
                 .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
                 .method("POST")
                 .body(Body::from("{}"))
                 .unwrap(),

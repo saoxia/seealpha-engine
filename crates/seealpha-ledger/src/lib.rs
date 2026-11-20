@@ -1,8 +1,6 @@
-//! SQLite runtime book for tenants, strategy packages, and paper order intents.
-//!
-//! Live exchange credentials are never written. A paper session is pre-registered
-//! as `unknown` and is not applied twice: a completed fingerprint replays, and an
-//! unresolved unknown result is returned instead of being blindly re-executed.
+//! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
+mod records;
+pub use records::CatalogBar;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use std::path::Path;
@@ -106,6 +104,35 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     quantity TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, symbol)
+);
+CREATE TABLE IF NOT EXISTS catalog_bars (
+    tenant_id TEXT NOT NULL,
+    product TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    interval TEXT NOT NULL,
+    open_time_ms INTEGER NOT NULL,
+    open TEXT NOT NULL,
+    high TEXT NOT NULL,
+    low TEXT NOT NULL,
+    close TEXT NOT NULL,
+    volume TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, product, symbol, interval, open_time_ms)
+);
+CREATE TABLE IF NOT EXISTS backtest_results (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, account_id, kind)
+);
+CREATE TABLE IF NOT EXISTS research_snapshots (
+    tenant_id TEXT NOT NULL,
+    snapshot_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    body_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, snapshot_id)
 );
 CREATE TABLE IF NOT EXISTS paper_sessions (
     tenant_id TEXT NOT NULL,
@@ -509,7 +536,7 @@ impl Ledger {
             .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, LedgerError> {
+    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, LedgerError> {
         self.connection
             .lock()
             .map_err(|error| LedgerError::Sqlite(error.to_string()))

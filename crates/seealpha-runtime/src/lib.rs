@@ -1,6 +1,8 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
 mod config;
 mod session;
+mod trading;
+pub use trading::OrderCommand;
 
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
@@ -20,6 +22,8 @@ pub enum RuntimeError {
     BadRequest(String),
     #[error("{0}")]
     NotFound(String),
+    #[error("{0}")]
+    Unprocessable(String),
 }
 
 #[derive(Clone, Copy)]
@@ -96,9 +100,12 @@ impl Runtime {
     pub fn runnable(&self, tenant_id: &str, action: &str) -> Result<Value, RuntimeError> {
         let tenant = self.require_active(tenant_id)?;
         match action {
-            "live" => Err(RuntimeError::Conflict(
-                "实盘下单已关闭，引擎不会向交易所发送订单或保存密钥。".into(),
-            )),
+            "live" if tenant.purpose == "production" => Ok(json!({
+                "tenant_id": tenant.tenant_id,
+                "action": action,
+                "status": "runnable",
+            })),
+            "live" => Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into())),
             "backtest" | "paper" => Ok(json!({
                 "tenant_id": tenant.tenant_id,
                 "action": action,

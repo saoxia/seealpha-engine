@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }
 rust_decimal = "1"
+seealpha-backtest = { path = "../seealpha-backtest" }
 seealpha-market = { path = "../seealpha-market" }
 seealpha-quality = { path = "../quality" }
 serde_json = "1"

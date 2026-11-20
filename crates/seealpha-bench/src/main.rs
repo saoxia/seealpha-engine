@@ -1,5 +1,6 @@
 //! Same-workload hot-path measurements. Setup is outside the timer.
 use rust_decimal::Decimal;
+use seealpha_backtest::{HistoryBar, PublishedTarget, run_backtest};
 use seealpha_market::{PublicTrade, aggregate_trades};
 use seealpha_quality::{
     EventRange, Kline, Trade, missing_event_ranges, validate_klines, validate_trades,
@@ -21,6 +22,7 @@ fn main() {
         "klines" => klines(n),
         "trades" => trades(n),
         "sqlite" => sqlite(n),
+        "backtest" => backtest(n),
         other => {
             eprintln!("unknown workload {other}");
             std::process::exit(2);
@@ -131,6 +133,37 @@ fn trades(n: usize) -> (f64, serde_json::Value, u64) {
     let kept = validate_trades(black_box(&rows), false).expect("trades");
     let elapsed = started.elapsed().as_secs_f64();
     (elapsed, json!(kept.len()), peak_rss_kib())
+}
+
+fn backtest(n: usize) -> (f64, serde_json::Value, u64) {
+    let bars = (0..n)
+        .map(|index| HistoryBar {
+            open_time_ms: index as i64 * 60_000,
+            close: Decimal::from(100 + (index % 20) as i64),
+        })
+        .collect::<Vec<_>>();
+    let targets = (0..n)
+        .step_by(50)
+        .map(|index| PublishedTarget {
+            member_id: "ema".into(),
+            bar_index: index,
+            quantity: if (index / 50) % 2 == 0 {
+                Decimal::ONE
+            } else {
+                Decimal::ZERO
+            },
+        })
+        .collect::<Vec<_>>();
+    let started = Instant::now();
+    let report = run_backtest(
+        black_box(&bars),
+        black_box(&targets),
+        Decimal::from(1_000_000),
+        Decimal::from(10),
+    )
+    .expect("backtest");
+    let elapsed = started.elapsed().as_secs_f64();
+    (elapsed, json!(report.bar_count), peak_rss_kib())
 }
 
 fn sqlite(n: usize) -> (f64, serde_json::Value, u64) {
