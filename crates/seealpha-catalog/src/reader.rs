@@ -9,7 +9,7 @@ use arrow_array::{
     Float64Array,BooleanArray,DictionaryArray,StructArray,ListArray,
     LargeListArray,FixedSizeListArray,BinaryArray,LargeBinaryArray,
 };
-use arrow_array::types::Int8Type;
+use arrow_array::types::{Int8Type, Int16Type, Int32Type, UInt8Type, UInt16Type, UInt32Type};
 use base64::Engine;
 use arrow_schema::DataType;
 use chrono::NaiveDateTime;
@@ -107,7 +107,12 @@ pub(crate) fn candidate_files(
         if !inspect_existing_directory(&dir)? {return Ok(Vec::new());}
     }
     let mut files=Vec::new();
+    let mut visited=0usize;
     for entry in fs::read_dir(dir)?{
+        visited+=1;
+        if visited>MAX_FILES {
+            return Err(CatalogError::Limit("Catalog 目录包含过多文件，拒绝无界扫描。".into()));
+        }
         let entry=entry?;
         let ty=entry.file_type()?;
         if ty.is_symlink()||!ty.is_file(){
@@ -178,6 +183,14 @@ fn nested_row_value(array:&dyn Array,i:usize,depth:usize)->Result<Value,CatalogE
     primitive!(StringArray);primitive!(LargeStringArray);
     primitive!(Int8Array);primitive!(UInt8Array);
     primitive!(Int16Array);primitive!(UInt16Array);
+    for value in [
+        array.as_any().downcast_ref::<Float32Array>().map(|a|a.value(i) as f64),
+        array.as_any().downcast_ref::<Float64Array>().map(|a|a.value(i)),
+    ].into_iter().flatten() {
+        if !value.is_finite() {
+            return Err(CatalogError::Invalid("Arrow 浮点值为 NaN 或 Inf。".into()));
+        }
+    }
     primitive!(Float32Array);
     primitive!(Int64Array);primitive!(UInt64Array);
     primitive!(Int32Array);primitive!(UInt32Array);
@@ -222,14 +235,24 @@ fn nested_row_value(array:&dyn Array,i:usize,depth:usize)->Result<Value,CatalogE
             .map_err(|_|CatalogError::Invalid("数值超出精度。".into()))?
             .to_string()));
     }
-    if let Some(dict)=array.as_any().downcast_ref::<DictionaryArray<Int8Type>>(){
-        let key=usize::try_from(dict.keys().value(i))
-            .map_err(|_|CatalogError::Invalid("枚举字典索引无效。".into()))?;
-        let values=dict.values().as_any().downcast_ref::<StringArray>()
-            .ok_or_else(||CatalogError::Invalid("Nautilus 枚举字典无效。".into()))?;
-        if key>=values.len(){return Err(CatalogError::Invalid("枚举索引越界。".into()));}
-        return Ok(json!(values.value(key)));
+    macro_rules! dictionary_string {
+        ($key:ty) => {
+            if let Some(dict)=array.as_any().downcast_ref::<DictionaryArray<$key>>() {
+                let key=usize::try_from(dict.keys().value(i))
+                    .map_err(|_|CatalogError::Invalid("枚举字典索引无效。".into()))?;
+                let values=dict.values().as_any().downcast_ref::<StringArray>()
+                    .ok_or_else(||CatalogError::Invalid("Nautilus 枚举字典无效。".into()))?;
+                if key>=values.len(){return Err(CatalogError::Invalid("枚举索引越界。".into()));}
+                return Ok(json!(values.value(key)));
+            }
+        }
     }
+    dictionary_string!(Int8Type);
+    dictionary_string!(Int16Type);
+    dictionary_string!(Int32Type);
+    dictionary_string!(UInt8Type);
+    dictionary_string!(UInt16Type);
+    dictionary_string!(UInt32Type);
     Err(CatalogError::Invalid(format!("Parquet 字段类型未支持：{:?}",array.data_type())))
 }
 /// Decode Python's Nautilus BarType from the *right* so USD-M "-PERP"
