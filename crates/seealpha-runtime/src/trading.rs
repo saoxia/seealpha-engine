@@ -352,6 +352,14 @@ impl Runtime {
             return Err(RuntimeError::Conflict(
                 "订单尚未在交易所核实，不能标记已对账。".into()));
         }
+        let filled=stored["response"]["order"]["filled"].as_str()
+            .ok_or_else(||RuntimeError::Conflict("订单累计成交量未核实。".into()))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|RuntimeError::Conflict("订单累计成交量无效。".into()))?;
+        if filled>rust_decimal::Decimal::ZERO && stored["fills_complete"]!=true {
+            return Err(RuntimeError::Conflict(
+                "订单已有成交，但尚未核对交易所 Trade ID，不能标记已对账。".into()));
+        }
         stored["ledger_synced"] = json!(true);
         self.ledger
             .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
