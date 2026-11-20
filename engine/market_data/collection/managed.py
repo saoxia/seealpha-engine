@@ -80,15 +80,18 @@ def main():
         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             if args.policy:
-                from engine.market_data.collection.pair_service import serve_pair
+                from engine.market_data.sources.binance.shared.trades import serve_pair
                 if policy["product"] == "options":
                     if args.role == "calculation":
                         raise ValueError("期权直接保存交易所闭合 K 线，不启动本地派生")
-                    from engine.market_data.collection.options_service import serve_options
+                    from engine.market_data.sources.binance.options.implementation import serve_options
                     asyncio.run(serve_options(policy, args.root, args.catalog))
                 elif args.role == "calculation":
-                    from engine.market_data.calculation.pair_calculation import serve_calculation
-                    asyncio.run(serve_calculation(json.loads(args.policy), args.root, args.catalog))
+                    if policy["product"] == "spot":
+                        from engine.market_data.sources.binance.spot.calculation import serve_calculation
+                    else:
+                        from engine.market_data.sources.binance.perpetual.calculation import serve_calculation
+                    asyncio.run(serve_calculation(policy, args.root, args.catalog))
                 else:
                     asyncio.run(serve_pair(json.loads(args.policy), args.root, args.catalog, calculate=args.role == "combined"))
             else:
