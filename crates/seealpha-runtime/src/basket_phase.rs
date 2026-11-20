@@ -73,7 +73,7 @@ impl Runtime {
         let reported = account_state.state["positions"].as_object()
             .ok_or_else(|| RuntimeError::Conflict("账户仓位证据缺失。".into()))?;
         for (leg, desired) in positions {
-            let product = match leg.product {
+            let product = match &leg.product {
                 Product::Spot => "spot",
                 Product::FuturesUm => "futures_um",
                 Product::Option => "options",
