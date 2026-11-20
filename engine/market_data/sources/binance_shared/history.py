@@ -21,7 +21,7 @@ from engine.connectors.binance.pair_data import PairREST
 from engine.connectors.binance.spot import SpotREST
 from engine.market_data.repair.config import load_settings
 from engine.market_data.repair.convert_binance_bars import write_record
-from engine.market_data.repair.convert_binance_trades import (
+from engine.market_data.calculation.feature_source import (
     aggregate_parts_to_bars,
     aggregate_trade_chunk,
     iter_trade_archive,
