@@ -132,8 +132,14 @@ impl Runtime {
             return Err(bad("历史补齐范围须对齐 UTC K 线边界且不超过 5000 根。"));
         }
         // Deterministic identity lets a client retry without duplicating work.
-        let id=hash_job(tenant_id,payload);
-        self.ledger.queue_data_job(tenant_id,&id,action,payload).map_err(map_ledger)
+        let mut normalized=payload.clone();
+        // Legacy callers omit product for the default USD-M market.
+        if let Some(object)=normalized.as_object_mut() {
+            object.entry("product".to_string()).or_insert(json!("futures_um"));
+            object.entry("interval".to_string()).or_insert(json!("1m"));
+        }
+        let id=hash_job(tenant_id,&normalized);
+        self.ledger.queue_data_job(tenant_id,&id,action,&normalized).map_err(map_ledger)
     }
 
     pub fn cancel_data_job(&self,tenant_id:&str,id:&str)->Result<Value,RuntimeError> {
