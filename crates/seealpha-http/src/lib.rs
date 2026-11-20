@@ -1,5 +1,6 @@
 //! HTTP v2 boundary. Every response carries `X-SeeAlpha-Engine-Contract-Version: 2`.
 //! Live exchange routes refuse before any credential is stored.
+mod parity;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -39,7 +40,7 @@ pub fn router(state: AppState) -> Router {
         .route("/tenants/{tenant_id}/jobs", get(jobs))
         .route(
             "/tenants/{tenant_id}/jobs/worker-settings",
-            get(worker_settings),
+            get(worker_settings).put(update_worker_settings),
         )
         .route(
             "/tenants/{tenant_id}/strategy-loads",
@@ -126,6 +127,7 @@ pub fn router(state: AppState) -> Router {
             "/tenants/{tenant_id}/accounts/{account_id}/candidate-backtests/latest",
             get(latest_candidate),
         )
+        .merge(parity::routes())
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
         router = router.route("/research/v1/datasets", get(research_datasets));
@@ -224,12 +226,29 @@ async fn runnable(
     ))
 }
 
-async fn jobs() -> Json<Value> {
-    Json(json!({ "items": [] }))
+async fn jobs(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<Value>,AppError> {
+    Ok(Json(state.runtime.data_job_list(&tenant_id).map_err(AppError::from)?))
 }
 
-async fn worker_settings() -> Json<Value> {
-    Json(json!({ "max_workers": 1, "timeout_seconds": 3600 }))
+async fn worker_settings(
+    State(state): State<AppState>,
+) -> Result<Json<Value>,AppError> {
+    Ok(Json(state.runtime.ledger.worker_settings().map_err(|e|AppError::bad_request(e.to_string()))?))
+}
+
+async fn update_worker_settings(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>,AppError> {
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let workers=body["max_workers"].as_i64().ok_or_else(||AppError::bad_request("Worker 数量无效。"))?;
+    let timeout=body["timeout_seconds"].as_i64().ok_or_else(||AppError::bad_request("Worker 超时无效。"))?;
+    Ok(Json(state.runtime.ledger.update_worker_settings(workers,timeout)
+        .map_err(|e|AppError::bad_request(e.to_string()))?))
 }
 
 async fn strategy_load(
