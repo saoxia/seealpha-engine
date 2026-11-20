@@ -3,6 +3,7 @@
 //! Callers pass the base URL. Nothing in this crate selects a production host.
 //! Credentials are used only to build the request and are not returned or logged.
 pub mod options;
+pub mod options_rules;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
