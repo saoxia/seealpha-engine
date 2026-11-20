@@ -1,3 +1,4 @@
+pub mod protocol;
 //! Bounded, side-effect-free Binance market source policy kernel.
 //!
 //! This is an offline Rust candidate, NOT yet called by the running collectors.
