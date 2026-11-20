@@ -5,6 +5,11 @@
 //! No trading, I/O, network subscription, or storage mutation is performed here.
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod protocol;
+pub mod ws;
+pub mod store;
+pub mod calc;
+
 use serde_json::Value;
 
 pub const MAX_MANIFEST_BYTES: usize = 5 * 1024 * 1024;
