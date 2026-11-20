@@ -272,6 +272,7 @@ impl Runtime {
         venue_base: &str,
         account_revision: &str,
     ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant_id)?;
         let Some(existing) = self
             .ledger
             .get_order_request(tenant_id, account_id, request_id)
@@ -281,6 +282,9 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
+        if stored["environment"]!=environment {
+            return Err(RuntimeError::Conflict("账户环境与原始委托不一致。".into()));
+        }
         if stored["response"]["status"] == "unknown" {
             let symbol = stored["symbol"].as_str().unwrap_or("").to_string();
             let client_order_id = stored["response"]["client_order_id"]
@@ -312,13 +316,13 @@ impl Runtime {
                     "已在交易所核对到委托：{}",
                     order["status"].as_str().unwrap_or("")
                 ));
-                let _ = self.ledger.upsert_order_row(
+                self.ledger.upsert_order_row(
                     tenant_id,
                     account_id,
                     environment,
                     &client_order_id,
                     &order.to_string(),
-                );
+                ).map_err(map_ledger)?;
             }
             self.ledger
                 .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
@@ -343,6 +347,11 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
+        if stored["response"]["status"]!="completed" ||
+            stored["response"]["order"].is_null() {
+            return Err(RuntimeError::Conflict(
+                "订单尚未在交易所核实，不能标记已对账。".into()));
+        }
         stored["ledger_synced"] = json!(true);
         self.ledger
             .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
@@ -699,6 +708,8 @@ mod tests {
         };
         let first = runtime.execute_order(command()).unwrap();
         assert_eq!(first["response"]["status"], "completed");
+        // NEW/ACK is not a fill. Only signed userTrades may enter fills.
+        assert!(runtime.ledger.fills("7","11","production").unwrap().is_empty());
         assert_eq!(
             first["response"]["client_order_id"],
             "SA00000000000000000000000000000001"
