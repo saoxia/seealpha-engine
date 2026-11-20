@@ -227,3 +227,63 @@ def test_native_declared_hedge_fails_on_unbalanced_target():
             interval="1m", starting_spot="1000",
             starting_perpetual="1000", max_gross_notional="1000",
         )
+
+
+def test_one_strategy_uses_two_product_histories_for_joint_price_ratio_signal():
+    # Programmatic decisions are made from PRIOR verified closed bars only.
+    source = _SOURCE.replace(
+        "from nautilus_trader.trading import Strategy",
+        "from decimal import Decimal\nfrom nautilus_trader.trading import Strategy",
+    ).replace(
+        '            data=("closed_bars", "account_positions"),',
+        '            data=("closed_bars", "account_positions"),\n'
+        '            lookback_bars=4,',
+    ).replace(
+        '        self.publish_basket(\n',
+        '        histories = snapshot["history"]\n'
+        '        assert set(histories) == {"spot:ETHUSDT", "futures_um:BTCUSDT"}\n'
+        '        assert all(len(rows) <= 4 for rows in histories.values())\n'
+        '        assert all(row["ts_ns"] < snapshot["now_ns"]\n'
+        '                   for rows in histories.values() for row in rows)\n'
+        '        assert all(rows[-1]["close"] == snapshot["markets"][key]["price"]\n'
+        '                   for key, rows in histories.items() if rows)\n'
+        '        ready = min(map(len, histories.values())) == 4\n'
+        '        ratio = (Decimal(histories["futures_um:BTCUSDT"][-1]["close"])\n'
+        '                 / Decimal(histories["spot:ETHUSDT"][-1]["close"])) if ready else 0\n'
+        '        trade = ready and ratio > 10\n'
+        '        self.publish_basket(\n',
+    ).replace(
+        '"quantity": "0.1"', '"quantity": "0.1" if trade else "0"',
+    ).replace(
+        '"quantity": "-0.1"', '"quantity": "-0.1" if trade else "0"',
+    )
+    report = _replay(loads=[_load(source)])
+    assert len(report["orders"]) == 2
+    assert report["target_events"][0]["targets"][0]["quantity"] == "0"
+    assert any(row["quantity"] == "-0.1"
+               for event in report["target_events"] for row in event["targets"])
+    assert report["fills"]
+
+
+def test_strategy_market_snapshot_is_scoped_to_its_own_subscribed_legs():
+    spot_source = _SOURCE.replace(
+        '                {"product": "futures_um", "symbol": "BTCUSDT"},' + chr(10), "",
+    ).replace(
+        '                {"product": "futures_um", "symbol": "BTCUSDT", "quantity": "-0.1"},'
+        + chr(10), "",
+    ).replace(
+        '        self.publish_basket(\n',
+        '        assert set(snapshot["markets"]) == {"spot:ETHUSDT"}\n'
+        '        assert set(snapshot["positions"]) == {"spot:ETHUSDT"}\n'
+        '        assert set(snapshot["history"]) == {"spot:ETHUSDT"}\n'
+        '        self.publish_basket(\n',
+    )
+    perp_source = _SOURCE.replace(
+        '                {"product": "spot", "symbol": "ETHUSDT"},' + chr(10), "",
+    ).replace(
+        '                {"product": "spot", "symbol": "ETHUSDT", "quantity": "0.1"},'
+        + chr(10), "",
+    )
+    a = {**_load(spot_source), "issuance_id": "spot-signal"}
+    b = {**_load(perp_source), "issuance_id": "perp-signal"}
+    assert len(_replay(loads=[a, b])["orders"]) == 2

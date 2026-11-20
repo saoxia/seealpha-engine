@@ -24,6 +24,7 @@ from engine.strategies.basket_targets import (
 )
 
 _MAX_MEMBERS = 16
+MAX_HISTORY_BARS = 256
 _REQUIRED_DATA = {
     "generic": frozenset({"closed_bars", "account_positions"}),
     "funding_carry": frozenset({"closed_bars", "funding_rate", "account_positions"}),
@@ -127,6 +128,7 @@ class BasketResearchSession:
         data: tuple[str, ...] = (),
         option_symbols: tuple[str, ...] = (),
         legs: tuple[dict, ...] = (),
+        lookback_bars: int = 1,
     ) -> None:
         if self._decision is not None or member_id in self._intents:
             raise BasketPlanError("组合已经形成目标，不能更改历史订阅")
@@ -141,6 +143,12 @@ class BasketResearchSession:
             or set(data) != _REQUIRED_DATA[self.policy]
         ):
             raise BasketPlanError("订阅必须提供完整且无重复的策略证据")
+        if (
+            type(lookback_bars) is not int
+            or not 1 <= lookback_bars <= MAX_HISTORY_BARS
+            or (self.policy != "generic" and lookback_bars != 1)
+        ):
+            raise BasketPlanError("历史 K 线回看长度无效（通用策略支持1至256根）")
         required_legs = set(self.positions)
         if self.policy == "generic":
             if symbol is not None or products or option_symbols or not legs:
@@ -340,11 +348,11 @@ class ResearchBasketMember:
     def subscribe_market_bundle(
         self, *, symbol: str | None = None, products: tuple[str, ...] = (),
         data: tuple[str, ...] = (), option_symbols: tuple[str, ...] = (),
-        legs: tuple[dict, ...] = (),
+        legs: tuple[dict, ...] = (), lookback_bars: int = 1,
     ) -> None:
         self._session._subscribe(
             self.member_id, symbol=symbol, products=products, data=data,
-            option_symbols=option_symbols, legs=legs,
+            option_symbols=option_symbols, legs=legs, lookback_bars=lookback_bars,
         )
 
     def publish_basket(
