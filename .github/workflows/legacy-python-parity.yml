@@ -13,6 +13,8 @@ on:
       - 'nautilus_support.py'
       - 'pyproject.toml'
       - 'uv.lock'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'docker/engine-legacy.Dockerfile'
       - '.github/workflows/legacy-python-parity.yml'
   workflow_dispatch:
