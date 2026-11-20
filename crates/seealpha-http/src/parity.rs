@@ -1,6 +1,6 @@
 //! HTTP v2 compatibility endpoints migrated from the Python Engine.
 //! No handler in this module can start a live collector or issue an order.
-use crate::{AppError, AppState};
+use crate::{AppError, AppState, parse_time_ms};
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post},
@@ -184,7 +184,21 @@ async fn data_start(
     State(state):State<AppState>,Path(tenant):Path<String>,Json(body):Json<Value>,
 )->Result<Json<Value>,AppError>{
     let payload=body.get("payload").ok_or_else(||AppError::bad_request("行情任务参数无效。"))?;
-    let job=state.runtime.queue_data_job(&tenant,payload).map_err(AppError::from)?;
+    let mut normalized=payload.clone();
+    if let Some(object)=normalized.as_object_mut() {
+        // Accept the old API's UTC ISO window while retaining exact
+        // millisecond bounds in the native job journal.
+        for (legacy,native) in [("start","start_ms"),("end","end_ms")] {
+            if !object.contains_key(native) {
+                if let Some(value)=payload.get(legacy).and_then(Value::as_str) {
+                    let ms=parse_time_ms(value)
+                        .ok_or_else(||AppError::bad_request("行情任务时间无效。"))?;
+                    object.insert(native.to_string(),json!(ms));
+                }
+            }
+        }
+    }
+    let job=state.runtime.queue_data_job(&tenant,&normalized).map_err(AppError::from)?;
     if job["status"]=="queued" {
         spawn_data_job(state.runtime.clone(),tenant,job["id"].as_str().unwrap_or("").to_string());
     }
