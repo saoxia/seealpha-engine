@@ -18,7 +18,7 @@ ETH = MarketStream("BINANCE", "futures_um", "ETHUSDT", "1m")
 def bar(ts_ns, close="100"):
     price = Decimal(close)
     return ClosedBar(
-        ts_ns, price, price + 1, price - 1, price, Decimal("10"),
+        ts_ns, price, price + 1, price - 1, price, Decimal(10),
     )
 
 
@@ -33,11 +33,11 @@ def test_deduplicates_upstream_market_and_tracks_max_lookback_and_release():
     hub.accept_closed_bar(ETH, bar(60))
     a = hub.view(
         "alpha", "hedge", now_ns=61,
-        positions={BTC: Decimal("1")}, max_age_ns=60,
+        positions={BTC: Decimal(1)}, max_age_ns=60,
     )
     b = hub.view(
         "beta", "model", now_ns=61,
-        positions={BTC: Decimal("2")}, max_age_ns=60,
+        positions={BTC: Decimal(2)}, max_age_ns=60,
     )
     assert a["history"]["spot:BTCUSDT"] == b["history"]["spot:BTCUSDT"]
     assert a["positions"]["spot:BTCUSDT"] == "1"
@@ -45,7 +45,7 @@ def test_deduplicates_upstream_market_and_tracks_max_lookback_and_release():
     a["history"]["spot:BTCUSDT"][0]["close"] = "999"
     assert hub.view(
         "beta", "model", now_ns=61,
-        positions={BTC: Decimal("2")}, max_age_ns=60,
+        positions={BTC: Decimal(2)}, max_age_ns=60,
     )["history"]["spot:BTCUSDT"][0]["close"] == "100"
     hub.release("alpha", "hedge")
     assert hub.requirements[BTC] == 20

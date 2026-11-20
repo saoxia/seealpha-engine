@@ -6,10 +6,10 @@ Market sources have independent identities; subscriptions do not open sockets,
 alter Feed readiness, or grant trade permissions.
 """
 
+import re
 from collections import deque
 from dataclasses import dataclass
 from decimal import Decimal
-import re
 
 
 class MarketDataHubError(ValueError):

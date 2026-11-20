@@ -21,14 +21,14 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
-from engine.runtime import EngineConflict
-from engine.strategies.backtest_engine import backtest_engine_config
 from engine.feed.subscription_hub import (
     ClosedBar,
     MarketDataHubError,
     MarketStream,
     SharedMarketData,
 )
+from engine.runtime import EngineConflict
+from engine.strategies.backtest_engine import backtest_engine_config
 from engine.strategies.basket_research_session import BasketResearchSession
 from engine.strategies.basket_targets import BasketPlanError, LegEvidence
 from engine.strategies.carry_simulation import (
