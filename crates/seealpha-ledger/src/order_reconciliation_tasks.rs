@@ -107,10 +107,11 @@ impl Ledger {
     #[allow(clippy::too_many_arguments)]
     pub fn finish_order_reconciliation(
         &self, tenant: &str, account: &str, request: &str, worker: &str,
-        now_ms: i64, outcome: &str, error_code: Option<&str>,
+        expected_attempts: i64, now_ms: i64, outcome: &str, error_code: Option<&str>,
     ) -> Result<(), LedgerError> {
         if [tenant,account,request,worker].iter().any(|id| !identifier(id))
-            || now_ms<=0 || !matches!(outcome,"retry"|"manual"|"evidence_recorded")
+            || expected_attempts<=0 || now_ms<=0
+            || !matches!(outcome,"retry"|"manual"|"evidence_recorded")
             || error_code.is_some_and(|code| !identifier(code) || code.len()>64) {
             return Err(conflict("invalid reconciliation completion"));
         }
@@ -127,6 +128,7 @@ impl Ledger {
             return Err(conflict("reconciliation task is missing"));
         };
         if state!="leased" || owner.as_deref()!=Some(worker)
+            || attempts != expected_attempts
             || until.is_none_or(|deadline| deadline<now_ms) {
             return Err(conflict("reconciliation lease is stale or owned by another worker"));
         }
@@ -206,10 +208,10 @@ mod tests {
         assert_eq!(claimed.len(),1);
         let first=&claimed[0];
         assert!(db.finish_order_reconciliation(
-            "t","a","request","other",25,"retry",Some("TIMEOUT")).is_err());
+            "t","a","request","other",first.attempts,25,"retry",Some("TIMEOUT")).is_err());
         db.finish_order_reconciliation(
             "t","a","request",first.lease_owner.as_deref().unwrap(),
-            25,"retry",Some("TIMEOUT")).unwrap();
+            first.attempts,25,"retry",Some("TIMEOUT")).unwrap();
         assert!(db.claim_order_reconciliation("t","worker2",30,1000).unwrap().is_none());
         let next=db.claim_order_reconciliation("t","worker2",30_000,1000).unwrap().unwrap();
         assert_eq!(next.attempts,2);
@@ -231,7 +233,7 @@ mod tests {
                 "t","worker1",100,1000).unwrap().unwrap();
             assert_eq!(claimed.attempts,1);
             db.finish_order_reconciliation("t","a","request","worker1",
-                200,"retry",Some("GET_TIMEOUT")).unwrap();
+                claimed.attempts,200,"retry",Some("GET_TIMEOUT")).unwrap();
         }
         {
             let db=Ledger::open(&path).unwrap();
@@ -245,7 +247,7 @@ mod tests {
                 "t","worker2",20_201,1000).unwrap().unwrap();
             assert_eq!(next.attempts,2);
             db.finish_order_reconciliation("t","a","request","worker2",
-                20_202,"manual",Some("MISMATCH")).unwrap();
+                next.attempts,20_202,"manual",Some("MISMATCH")).unwrap();
         }
         {
             let db=Ledger::open(&path).unwrap();
@@ -268,10 +270,15 @@ mod tests {
         assert!(db.claim_order_reconciliation("t","worker2",500,1000).unwrap().is_none());
         let second=db.claim_order_reconciliation("t","worker2",1101,1000).unwrap().unwrap();
         assert_eq!(second.attempts,first.attempts+1);
-        assert!(db.finish_order_reconciliation("t","a","request","worker1",
+        // Even when the worker identity is reused, a stale attempt cannot
+        // modify a newer lease owned by that same logical worker.
+        assert!(db.finish_order_reconciliation(
+            "t","a","request","worker2",first.attempts,
             1102,"retry",None).is_err());
+        assert!(db.finish_order_reconciliation("t","a","request","worker1",
+            first.attempts,1102,"retry",None).is_err());
         db.finish_order_reconciliation("t","a","request","worker2",
-            1102,"manual",Some("EVIDENCE_CONFLICT")).unwrap();
+            second.attempts,1102,"manual",Some("EVIDENCE_CONFLICT")).unwrap();
         assert!(db.claim_order_reconciliation("t","worker3",999999,1000).unwrap().is_none());
         assert_eq!(db.order_reconciliation_task("t","a","request").unwrap().unwrap().state,"manual");
     }
