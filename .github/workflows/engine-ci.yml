@@ -104,18 +104,18 @@ jobs:
             test ! -e /app/core
             test -x /usr/local/bin/seealpha-engine
             test -f /app/python/strategy_host/host.py
-            unexpected="$(find /app -type f -name "*.py" \\
-              ! -path "/app/python/strategy_host/*" \\
+            unexpected="$(find /app -type f -name "*.py" \
+              ! -path "/app/python/strategy_host/*" \
               ! -path "/app/packages/*" -print)"
             if [ -n "$unexpected" ]; then
               echo "Non-strategy Python found in native Engine image:"
-              printf "%s\\n" "$unexpected"
+              printf "%s\n" "$unexpected"
               exit 1
             fi
           '
       - name: Verify isolated Python strategy host remains runnable
         run: |
-          printf '{}' | docker run --rm -i --entrypoint python seealpha-engine:ci \\
+          printf '{}' | docker run --rm -i --entrypoint python seealpha-engine:ci \
             -I /app/python/strategy_host/host.py > "$RUNNER_TEMP/strategy-host-response.json"
           python3 -c 'import json,sys; result=json.load(open(sys.argv[1])); assert result.get("ok") is False' "$RUNNER_TEMP/strategy-host-response.json"
       - name: Local synthetic HTTP smoke (no exchange credentials)
