@@ -1,7 +1,7 @@
 //! Isolated public Binance options market-data adapter.
 //! Unlike USD-M or Spot, an option symbol includes expiry, strike and side.
 //! This module never owns credentials or places orders.
-use crate::{Bar, MarketError, interval_ms, parse_binance_klines, validate_bars};
+use crate::{Bar, MarketError, interval_ms, parse_binance_klines};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
