@@ -7,6 +7,7 @@ orders across venues as atomic.
 """
 from contextlib import ExitStack
 from decimal import Decimal
+from uuid import uuid4
 
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.model import (
@@ -21,11 +22,11 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
+from engine.feed.market_data_service import EngineMarketDataService
 from engine.feed.subscription_hub import (
     ClosedBar,
     MarketDataHubError,
     MarketStream,
-    SharedMarketData,
 )
 from engine.runtime import EngineConflict
 from engine.strategies.backtest_engine import backtest_engine_config
@@ -174,6 +175,7 @@ def _portfolio_equity(engine, contracts, closing):
 def run_native_generic_portfolio(
     loads, frames, original_contracts, *,
     interval, starting_spot, starting_perpetual, max_gross_notional,
+    market_subscriptions=None,
 ):
     """Replay authorized basket publishers over synchronized multi-market bars.
 
@@ -231,10 +233,13 @@ def run_native_generic_portfolio(
     stream_by_name = {
         (leg.product, leg.symbol): stream for leg, stream in streams.items()
     }
-    shared_data = SharedMarketData(tuple(streams.values()))
+    registry = market_subscriptions if market_subscriptions is not None else EngineMarketDataService()
     declared_hedges = None
     hedge_transition_since = None
     try:
+        shared_data = resources.enter_context(
+            registry.backtest(uuid4().hex, tuple(streams.values()))
+        )
         for product, venue in _VENUES.items():
             matching = [leg for leg in legs if leg.product == product]
             if not matching:

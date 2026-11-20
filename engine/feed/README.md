@@ -261,4 +261,28 @@ Engine 内部只读接口：`POST /tenants/{tenant_id}/data/funding`，请求体
 
 **已接通**开发环境 `generic-portfolio-backtests`：单回测 Engine 运行时为全部发行成员登记市场需求；已核验的同步市场帧只写一次共享历史，各成员按自己的 `lookback_bars` 获取历史及持仓视图，再各自产生目标。回测行为、风险引擎和数据连续性门禁保留。其他旧 Feed、Pipeline、HTTP、数据库和实盘运行流程未切换。
 
-**尚未接通**：把 `requirements` 与 `engine.feed.managed` / Binance WS/REST 的实际连接生命周期绑定起来，跨不同回测任务与不同 Engine 进程共享连接或缓存，以及统一的异步事件总线、消费者慢速背压和长期断线恢复。实时风险资格仍只能来自既有 `Feed.check()` / `Delivery.allow_new_risk`。本抽象只是读侧基础契约，不是将研究回放接到真实下单的许可。
+### Engine 本地订阅管理：实时与回测共享接口、不同回放隔离
+
+`engine.feed.market_data_service.EngineMarketDataService` 是由每个常驻
+`EngineRuntime` 自行持有的实例，**不在用户、Platform 或所有 Engine 之间设全局单例**。
+一个用户启动两个 Engine，它们分别持有自己的需求、缓存和采集进程；不共享网络连接。
+
+可信 Engine 调用方通过 `configure_live(authorized_streams)` 登记已获得数据范围授权的
+`MarketStream`，然后通过 `subscribe_live` / `unsubscribe_live` 维护实时策略需求。
+`live_requirements` 去重合并同一 Engine 中不同消费者的物理市场流及最大历史回看长度。
+策略不能自行追加未经授权的数据源；缺少授权的订阅明确失败。已授权的新市场流可以
+动态加入注册表，但**真正启动/取消上游 WebSocket、REST 预热和重连**仍须由现有
+`engine.feed.managed` 采集主管理器进行连接适配，不能把逻辑需求当作已收到的实时行情。
+
+历史运行通过 `backtest(run_id, authorized_streams)` 创建单次任务的独立事件时间
+缓存；同一回测的所有策略成员共享这份市场序列，每个成员仅查看自身订阅范围。
+回测结束无论成功或失败均释放注册表；历史帧永远不会写进实时缓存。
+当前 `generic-portfolio-backtests` 已通过 EngineRuntime 持有的同一服务接口创建回放范围。
+其他旧回测入口尚未迁移到统一接口。隔离的 Backtest Worker 子进程与常驻进程不共享
+Python 内存；其历史回放保持任务独立，并继续直接使用 Engine Catalog。
+
+**尚未接通**：正式策略调用 `subscribe_live` 与 `Feed.check()` /
+`Delivery.allow_new_risk` 的完整实时数据/交易链路、实时闭合行情从采集子进程进入
+注册表、`live_requirements` 到 Binance WebSocket 生命周期的自动协调，
+以及旧回测路径统一迁移。不能将这次读侧接口与单任务回测整合视为
+正式策略已可实时交易。实时风险资格仍由既有就绪门禁决定。

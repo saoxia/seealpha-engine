@@ -116,6 +116,20 @@ class SharedMarketData:
         self._history = {}
         self._refs = {}
 
+    def authorize_streams(self, streams):
+        """Extend the live catalog after trusted Engine policy validation.
+
+        Registering a strategy never authorizes new market sources. Historical
+        scopes should instead start with an immutable run-specific catalog.
+        """
+        keys = tuple(streams)
+        if (
+            not keys or not all(isinstance(key, MarketStream) for key in keys)
+            or len(keys) != len(set(keys))
+        ):
+            raise MarketDataHubError("市场授权清单无效")
+        self._available = self._available.union(keys)
+
     def register(self, tenant_id, consumer_id, streams, *, lookback_bars=1):
         if (
             not isinstance(tenant_id, str) or not tenant_id.strip()

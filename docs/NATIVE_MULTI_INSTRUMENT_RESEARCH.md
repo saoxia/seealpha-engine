@@ -136,7 +136,14 @@ self.publish_basket(
 不改变策略包 `subscribe_market_bundle` / `publish_basket` 的既有协议。
 策略没有交易所密钥，行情也不会因为其他成员停止而被清空（除非是最后一个订阅者）。
 
-注意：目前已经接入的是**单一开发组合回测的共享缓存/分发**；
-跨独立运行中的策略进程或多 Engine 实例真正复用网络 WebSocket 尚未实施，
-也未建立新的常驻全局市场数据服务。现有 `engine.feed.managed` 采集管理
-和历史 Catalog 为权威来源，不被本内存抽象替代。
+本阶段进一步引入 `EngineMarketDataService`：由每个 `EngineRuntime` 分别持有，
+`generic-portfolio-backtests` 使用它的 `backtest(run_id, ...)` 生命周期管理回放。
+同一回测内多策略共享数据，同一 Engine 的不同历史任务分别拥有隔离的回放缓存，
+正式行情保留独立 `live` 域；用户运行两个 Engine 则没有跨 Engine 单例或
+隐式网络连接共享。回测结束自动释放相应范围。
+
+限制：正式策略尚未连接到此读侧服务，`live_requirements` 也尚未驱动
+`engine.feed.managed` 的实际上游订阅/重连与实时交付；旧回测入口仍使用原
+Catalog 路径。隔离 Backtest Worker 是单独进程，不跨进程复用 Python 内存，
+更不会将回放行情写入正式缓存。统一的生产级服务交付仍需这几条链路验收；
+既有采集配置和 Catalog 继续作为权威来源。
