@@ -556,7 +556,7 @@ pub fn replay<S: Strategy>(contracts: &[Contract], events: &[Event],
         rejected:Vec::new(), fills:Vec::new(), settlements:Vec::new(),
         settled_options:BTreeSet::new(), funding_total:Decimal::ZERO, fees:Decimal::ZERO,
     };
-    let initial = account(ordered[0].1.time_ms(), &state, &registry, policy.max_mark_age_ms)?;
+    let initial = account(i64::MIN, &state, &registry, policy.max_mark_age_ms)?;
     apply_commands(strategy.on_start(&initial), i64::MIN, &mut state, &registry);
     let mut curve = Vec::with_capacity(events.len());
     for (_, event) in ordered {
