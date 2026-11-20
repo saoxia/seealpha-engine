@@ -20,13 +20,23 @@ fn dec<'a>(row:&'a Value,name:&str,positive:bool)->Result<&'a str,VenueError>{
 pub fn normalize_order_trades(
     product:Product,symbol:&str,order_id:&str,payload:&Value,
 )->Result<Vec<Value>,VenueError>{
+    normalize_order_trades_page(product,symbol,order_id,payload,false)
+}
+
+/// A saturated page is permitted ONLY inside the verified cursor-pagination
+/// loop; the public one-page parser continues to fail closed.
+pub(crate) fn normalize_order_trades_page(
+    product:Product,symbol:&str,order_id:&str,payload:&Value,allow_full:bool,
+)->Result<Vec<Value>,VenueError>{
     if product==Product::Option || order_id.is_empty() ||
         !order_id.bytes().all(|b|b.is_ascii_digit()) {
         return Err(VenueError::Unconfirmed);
     }
     let rows=payload.as_array().ok_or(VenueError::Unconfirmed)?;
     // Full pagination is required before we can certify more than one page.
-    if rows.len()>=1000 {return Err(VenueError::Unconfirmed);}
+    if rows.len()>1000 || (rows.len()==1000 && !allow_full) {
+        return Err(VenueError::Unconfirmed);
+    }
     let mut trades=Vec::with_capacity(rows.len());
     let mut seen=BTreeSet::new();
     for row in rows {
@@ -83,5 +93,18 @@ mod tests{
         assert_eq!(rows[0]["side"],"BUY");
         assert!(normalize_order_trades(Product::FuturesUm,"ETHUSDT","9",&raw).is_err());
         assert!(normalize_order_trades(Product::Option,"ETHUSDT","8",&raw).is_err());
+    }
+    #[test]
+    fn full_page_requires_explicit_pagination_context(){
+        let row=json!({"id":77,"orderId":8,"symbol":"ETHUSDT",
+            "qty":"0.5","price":"2000","time":100,
+            "buyer":true,"commission":"0.02","commissionAsset":"USDT"});
+        let page=Value::Array((1..=1000).map(|id|{
+            let mut v=row.clone();
+            v["id"]=json!(id);
+            v
+        }).collect());
+        assert!(normalize_order_trades(Product::Spot,"ETHUSDT","8",&page).is_err());
+        assert_eq!(normalize_order_trades_page(Product::Spot,"ETHUSDT","8",&page,true).unwrap().len(),1000);
     }
 }
