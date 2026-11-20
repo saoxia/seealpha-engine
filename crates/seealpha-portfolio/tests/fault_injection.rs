@@ -276,3 +276,56 @@ fn completed_order_id_is_never_reused_after_snapshot_restore() {
         }),
     );
 }
+
+#[test]
+fn missing_pair_declaration_and_cross_account_scope_fail_closed() {
+    let (cp, spot, future, quotes) = basket();
+    let another = LegId {
+        symbol: "BTCUSDT".into(), ..spot.clone()
+    };
+    let positions = [
+        (spot.clone(), d(0)), (future.clone(), d(0)), (another.clone(), d(0)),
+    ].into();
+    let changes = [
+        (spot.clone(), d(1)), (future.clone(), d(-1)), (another.clone(), d(1)),
+    ].into();
+    let target = [
+        (spot.clone(), d(1)), (future.clone(), d(-1)), (another.clone(), d(1)),
+    ].into();
+    let multi = Checkpoint::new(
+        Plan {
+            targets: target,
+            phases: vec![Phase { name: "mixed".into(), changes }],
+            gross_notional: d(300), executable: false,
+        },
+        positions,
+    ).unwrap();
+    let mut evidence = quotes.clone();
+    evidence.insert(another, quote());
+    let limits = PhaseGateLimits {
+        now_ns: 11, max_age_ns: 5, max_gross_notional: d(500),
+        max_leg_drift: d(1),
+    };
+    assert!(gate_next_phase(
+        &multi, &multi.positions, &evidence, limits, &[],
+    ).is_err());
+    let mut foreign = future.clone();
+    foreign.account = "unrelated-account".into();
+    let mismatched_positions = [(spot.clone(), d(0)), (foreign.clone(), d(0))].into();
+    let mismatched = Checkpoint::new(
+        Plan {
+            targets: [(spot.clone(), d(1)), (foreign.clone(), d(-1))].into(),
+            phases: vec![Phase {
+                name: "cross_account".into(),
+                changes: [(spot.clone(), d(1)), (foreign.clone(), d(-1))].into(),
+            }],
+            gross_notional: d(200), executable: false,
+        },
+        mismatched_positions,
+    ).unwrap();
+    let mixed_quotes = [(spot, quote()), (foreign, quote())].into();
+    assert!(gate_next_phase(
+        &mismatched, &mismatched.positions, &mixed_quotes, limits, &[],
+    ).is_err());
+    assert_eq!(cp.state, State::Ready);
+}
