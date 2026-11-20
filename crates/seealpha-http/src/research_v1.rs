@@ -273,9 +273,19 @@ fn validate_backtest(
         .runtime
         .strategy_loads(&grant.tenant_id, Some(account))
         .map_err(AppError::from)?;
+    // The public load listing deliberately omits strategy parameters. Read
+    // issued Runtime records too, without exposing archives to the caller.
+    let strategies = state
+        .runtime
+        .stored_strategies(&grant.tenant_id, account)
+        .map_err(AppError::from)?;
     let issued = loads["items"].as_array().is_some_and(|items| {
         !items.is_empty() && items.iter().all(|item| {
-            item["grant_purpose"] == "development" && item["parameters"]["symbol"] == symbol
+            item["grant_purpose"] == "development"
+                && strategies.iter().any(|strategy| {
+                    item["issuance_id"] == strategy.member_id
+                        && strategy.parameters["symbol"] == symbol
+                })
         })
     });
     if !issued {
@@ -532,7 +542,9 @@ async fn mcp(
         return Ok((StatusCode::NOT_ACCEPTABLE,
             Json(json!({"detail":"MCP JSON response not accepted"}))).into_response());
     }
-    if headers.get("mcp-protocol-version").is_some_and(|value| value != MCP_VERSION) {
+    if headers.get("mcp-protocol-version")
+        .and_then(|value|value.to_str().ok())
+        .is_some_and(|version|version != MCP_VERSION) {
         return Err(AppError::bad_request("Unsupported MCP protocol version"));
     }
     if body.len() > 512 * 1024 {
