@@ -1,10 +1,6 @@
-# Application entrypoints
+# Process entrypoints
 
-Executable targets belong under `apps/`, while protocol implementations live under `interfaces/` and shared orchestration under `application/`.
+- [trading_engine](trading_engine/): active `seealpha-engine` Rust executable and HTTP service entrypoint
+- `backtest_cli/`, `api_server/`, `mcp_server/`: potential separate binaries, not yet implemented
 
-- `trading_engine/`: existing `seealpha-engine` binary in `crates/seealpha-engine`; keep its binary name and startup options
-- `backtest_cli/`: future dedicated CLI, no implemented binary implied
-- `api_server/`: optional separate HTTP process; currently part of the engine binary
-- `mcp_server/`: optional separate MCP process; not yet implemented
-
-These are **planned locations**, not runnable packages. The current workspace and deployment Dockerfile are unchanged until a tested path relocation is available.
+The existing binary name `seealpha-engine`, startup flags, port and HTTP v2 contract are unchanged.
