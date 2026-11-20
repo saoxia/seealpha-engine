@@ -2,6 +2,6 @@
 
 import sys
 
-from engine.market_data.sources.binance.shared import calculation as _implementation
+from engine.market_data.sources.binance_shared import calculation as _implementation
 
 sys.modules[__name__] = _implementation
