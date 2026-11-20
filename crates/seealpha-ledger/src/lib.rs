@@ -1,5 +1,6 @@
 //! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
 mod records;
+mod legacy;
 mod basket_journal;
 mod coordinator_state;
 pub use coordinator_state::StoredCoordinatorState;
@@ -312,16 +313,14 @@ impl Ledger {
             std::fs::create_dir_all(parent)
                 .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         }
-        let connection =
+        let mut connection =
             Connection::open(path).map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(
                 "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;",
             )
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        connection
-            .execute_batch(SCHEMA)
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        legacy::initialize(&mut connection)?;
         Ok(Self {
             connection: std::sync::Mutex::new(connection),
         })
