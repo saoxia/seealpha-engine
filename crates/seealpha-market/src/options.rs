@@ -85,13 +85,18 @@ impl OptionsSource {
             let expiry=row["expiryDate"].as_i64().ok_or(MarketError::Payload)?;
             let status=row["status"].as_str().ok_or(MarketError::Payload)?;
             let underlying=row["underlying"].as_str().ok_or(MarketError::Payload)?;
-            let unit=row["unit"].as_i64().ok_or(MarketError::Payload)?;
-            if unit<=0 || expiry<=0 || underlying.is_empty() {
+            let unit_text=if let Some(value)=row["unit"].as_str() {
+                value.to_owned()
+            }else if let Some(value)=row["unit"].as_number(){
+                value.to_string()
+            }else{return Err(MarketError::Payload)};
+            let unit=unit_text.parse::<Decimal>().map_err(|_|MarketError::Payload)?;
+            if unit<=Decimal::ZERO || expiry<=0 || underlying.is_empty() {
                 return Err(MarketError::Payload);
             }
             items.push(json!({"symbol":id.symbol,"underlying":underlying,"expiry_ms":expiry,
                 "strike":id.strike.to_string(),"right":if id.right==OptionRight::Call{"CALL"}else{"PUT"},
-                "unit":unit,"status":status,"filters":row["filters"]}));
+                "unit":unit.to_string(),"status":status,"filters":row["filters"]}));
         }
         Ok(items)
     }
