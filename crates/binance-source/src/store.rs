@@ -79,6 +79,62 @@ pub enum WriteReceipt {
     Duplicate,
     FilteredZero,
 }
+/// Read-only source journal inspection. Never opens the writer lock,
+/// starts the source, advances a checkpoint, or fabricates completeness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JournalInspection {
+    pub last_trade_id: Option<i64>,
+    pub trade_count: i64,
+    pub unresolved_gaps: i64,
+    pub pending_updates: i64,
+    pub conflicts: i64,
+}
+
+/// Existing journal only. Every missing table, corrupt field or open error
+/// fails closed rather than producing a READY-compatible empty result.
+pub fn inspect_pair_journal(
+    root: &Path, symbol: &str, base_level: &str,
+) -> Result<JournalInspection> {
+    let path = root.join("collection.sqlite");
+    if !root.is_dir() || !path.is_file() {
+        return Err("source journal is absent".into());
+    }
+    let db = Connection::open_with_flags(
+        &path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let config: (String, String) = db.query_row(
+        "SELECT symbol,base_level FROM config LIMIT 1", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        },
+    )?;
+    if config.0 != symbol || config.1 != base_level {
+        return Err("source journal identity mismatch".into());
+    }
+    let count = |table: &str| -> Result<i64> {
+        // These are fixed internal names, never caller SQL.
+        let statement = match table {
+            "trades" => "SELECT count(*) FROM trades",
+            "gaps" => "SELECT count(*) FROM gaps",
+            "pending_updates" => "SELECT count(*) FROM pending_updates",
+            "conflicts" => "SELECT count(*) FROM conflicts",
+            _ => return Err("unsupported inspection table".into()),
+        };
+        let n: i64 = db.query_row(statement, [], |r| r.get(0))?;
+        if n < 0 { return Err("negative journal count".into()); }
+        Ok(n)
+    };
+    let last_trade_id = db.query_row(
+        "SELECT max(id) FROM trades", [], |r| r.get::<_, Option<i64>>(0),
+    )?;
+    Ok(JournalInspection {
+        last_trade_id,
+        trade_count: count("trades")?,
+        unresolved_gaps: count("gaps")?,
+        pending_updates: count("pending_updates")?,
+        conflicts: count("conflicts")?,
+    })
+}
+
 /// The writer.lock is exclusive for the full native writer lifetime. The
 /// short journal.lock serializes with the existing Python calculation worker.
 pub struct PairJournal {
