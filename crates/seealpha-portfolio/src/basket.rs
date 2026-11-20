@@ -205,12 +205,12 @@ pub fn plan_with_constraints(targets:&[LegTarget],positions:&BTreeMap<LegId,Deci
             }else{None};
             let prefix=if emergency_unwind{"emergency_"}else{""};
             for (name,rows) in [
-                ("reduce_directional_risk",reduce.into_iter().collect()),
+                ("reduce_directional_risk",reduce.into_iter().collect::<Vec<_>>()),
                 ("acquire_and_confirm_protection",options.iter().filter_map(|l|{
-                    let q=net[l]-positions[l];(q>Decimal::ZERO).then(||(l.clone(),q))}).collect()),
-                ("increase_directional_risk_after_protection",increase.into_iter().collect()),
+                    let q=net[l]-positions[l];(q>Decimal::ZERO).then(||(l.clone(),q))}).collect::<Vec<_>>()),
+                ("increase_directional_risk_after_protection",increase.into_iter().collect::<Vec<_>>()),
                 ("release_protection_after_risk_reduction",options.iter().filter_map(|l|{
-                    let q=net[l]-positions[l];(q<Decimal::ZERO).then(||(l.clone(),q))}).collect()),
+                    let q=net[l]-positions[l];(q<Decimal::ZERO).then(||(l.clone(),q))}).collect::<Vec<_>>()),
             ]{
                 if let Some(p)=change_phase(&format!("{prefix}{name}"),rows){phases.push(p);}
             }
