@@ -146,7 +146,31 @@ pub async fn serve(state: AppState) -> Result<(), std::io::Error> {
     let host = state.config.host.clone();
     let port = state.config.port;
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
+    // Restart only tasks that were durably QUEUED and never started.
+    // A RUNNING task recovered as INTERRUPTED must be explicitly reviewed/retried.
+    resume_queued_research_jobs(&state)?;
     axum::serve(listener, router(state)).await
+}
+
+fn resume_queued_research_jobs(state: &AppState) -> Result<(), std::io::Error> {
+    let tenants = state.runtime.ledger.active_tenant_ids()
+        .map_err(std::io::Error::other)?;
+    for tenant in tenants {
+        if state.config.tenant_id.as_deref().is_some_and(|id| id != tenant) {
+            continue;
+        }
+        let jobs = state.runtime.ledger.data_jobs(&tenant)
+            .map_err(std::io::Error::other)?;
+        for job in jobs {
+            if job["action"] == "backtest" && job["status"] == "queued" {
+                let id = job["id"].as_str().ok_or_else(|| {
+                    std::io::Error::other("queued research task has no durable identity")
+                })?;
+                parity::spawn_backtest(state.runtime.clone(), tenant.clone(), id.to_owned());
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
