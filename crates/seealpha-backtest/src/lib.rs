@@ -297,6 +297,23 @@ mod tests {
     }
 
     #[test]
+    fn issued_multi_member_history_has_contiguous_equity_and_netting() {
+        let bars=vec![bar(0,100),bar(60_000,110),bar(120_000,90)];
+        let publications=vec![
+            PublishedTarget{member_id:"a".into(),bar_index:0,quantity:Decimal::ONE},
+            PublishedTarget{member_id:"b".into(),bar_index:1,quantity:-Decimal::ONE},
+            PublishedTarget{member_id:"a".into(),bar_index:2,quantity:Decimal::ZERO},
+        ];
+        let (result,curve)=run_backtest_with_curve(
+            &bars,&publications,Decimal::from(1000),Decimal::from(10)
+        ).unwrap();
+        assert_eq!(result.fills.len(),3);
+        assert_eq!(curve.len(),bars.len());
+        assert_eq!(result.ending_balance,Decimal::from(1010));
+        assert_eq!(curve[2]["equity"],"1010");
+    }
+
+    #[test]
     fn throughput_fixture_marks_a_flat_book() {
         let bars = (0..1_000).map(|index| bar(index, 100)).collect::<Vec<_>>();
         let report = run_backtest(&bars, &[], Decimal::from(1_000), Decimal::ONE).unwrap();
