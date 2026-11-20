@@ -33,7 +33,7 @@ impl Ledger {
             let Ok(value)=serde_json::from_str::<Value>(&text)else{continue};
             let client=value["client_order_id"].as_str().unwrap_or("");
             if !client.is_empty() && id==format!("fill-{client}") &&
-                value["trade_id"]==id &&
+                value["trade_id"].as_str()==Some(id.as_str()) &&
                 value["quantity"].is_null() && value["price"].is_null() &&
                 value["symbol"].as_str().is_some(){
                 suspected.push((tenant,account,env,id,text));
