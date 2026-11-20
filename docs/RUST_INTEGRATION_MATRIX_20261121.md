@@ -58,3 +58,15 @@ Then run synthetic scenarios for restart after write timeout; duplicate request 
 - New `seealpha-runtime/src/verified_replay.rs` exposes the native `timeline::verified::replay` engine through Runtime, with explicit dataset provenance, bounded event window, positive coverage assertion, offline-only status and Ledger report persistence. This does **not** silently upgrade the legacy OHLC HTTP task worker: the corresponding complete Quote/Trade/Mark/Funding/OptionSettlement ingestion and trusted completeness certification are still needed.
 - `session.rs` now binds archived paper execution to exact Ledger issuance (bytes, parameters and account scope) and routes through `run_issued_host`; development sample directories remain separate.
 - **Not completed:** risk → admission → single-send → signed fill → authoritative state → portfolio reconciliation; source journal→Catalog/Feed trusted READY; historical job to verified replay evidence bundle; automatic restart reconciliation. All of these must be wired and verified before merging as a complete Rust replacement.
+
+## Additional wiring (integrated but not compilation-verified)
+- `runtime/src/basket_phase.rs`: reloads basket state from Ledger, replay-verifies immutable journal/revision, checks tenant/account leg scope, calls Portfolio `gate_next_phase`, CAS-persists the next phase in `awaiting_confirmation`. No Venue dispatch authority is returned. Authenticated position provenance is still the responsibility of the trusted account coordinator.
+- `ledger::active_tenant_ids` and `http::resume_queued_research_jobs`: on startup, restore only persisted `queued` backtests for active tenants (honouring tenant pinning), using the existing bounded task executor. Previously `running` tasks stay interrupted and must be explicitly retried. No exchange credentials or blind order retries.
+- `runtime::subscribe_strategy_market` now checks Ledger-issued scope and purpose itself (not only HTTP validation); strategy subscription status reports `data_ready=false`, `allow_new_risk=false` pending proven Feed/Catalog continuity.
+
+### Remaining full-cutover gate
+1. Atomically bind **authenticated** Portfolio account/market evidence and CAS Basket phase to a specific Ledger/Venue order intent before one-shot dispatch. The adapter is not a sender.
+2. Ingest native Source/Feed journals into Catalog with durable checkpoint/gap reconciliation, prove readiness stream-by-stream; do not infer READY from subscription, source process or historical bars.
+3. Materialize a trusted immutable dataset evidence bundle for the verified replay worker. Existing HTTP backtests are still OHLC-mode.
+4. Complete signed account reconciliation and order-by-order verified fills before mutating authoritative portfolio state; restore unresolved external orders explicitly.
+5. Run Rust toolchain verification, test failures and fault scenarios on this integrated code before marking parity or merging as completed migration.
