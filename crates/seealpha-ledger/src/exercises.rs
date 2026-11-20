@@ -2,7 +2,7 @@
 //! customer exercise confirmations or automatically applied as cash fills.
 use crate::{Ledger,LedgerError};
 use rusqlite::{params,OptionalExtension,TransactionBehavior};
-use serde_json::{Value,json};
+use serde_json::Value;
 
 fn sql(e:rusqlite::Error)->LedgerError{LedgerError::Sqlite(e.to_string())}
 fn incompatible()->LedgerError{
@@ -67,6 +67,7 @@ impl Ledger{
 #[cfg(test)]
 mod tests{
     use super::*;
+    use serde_json::json;
     #[test]
     fn public_exercise_evidence_never_claims_account_settlement(){
         let p=std::env::temp_dir().join(format!("sa-option-exercise-{}.db",std::process::id()));
