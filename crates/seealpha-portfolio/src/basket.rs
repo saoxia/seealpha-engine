@@ -60,6 +60,10 @@ fn gross(p:&BTreeMap<LegId,Decimal>,e:&BTreeMap<LegId,Evidence>)->Result<Decimal
         add(sum,mul(mul(q.abs(),x.price)?,x.multiplier)?)
     })
 }
+fn valid_event_id(id:&str)->bool {
+    !id.is_empty()&&id.len()<=128&&id.bytes().all(|b|
+        b.is_ascii_alphanumeric()||b==b'_'||b==b'-'||b==b'.'||b==b':')
+}
 fn change_phase(name:&str, rows:impl IntoIterator<Item=(LegId,Decimal)>)->Option<Phase>{
     let changes:BTreeMap<_,_>=rows.into_iter().filter(|(_,q)|!q.is_zero()).collect();
     if changes.is_empty(){None}else{Some(Phase{name:name.into(),changes})}
@@ -249,12 +253,12 @@ impl Checkpoint {
     }
     pub fn begin(&mut self,id:&str)->Result<(),BasketError>{
         if self.state==State::AwaitingConfirmation&&self.request_id.as_deref()==Some(id){return Ok(());}
-        if self.state!=State::Ready||id.is_empty()||id.len()>128||self.used_requests.contains(id){return Err(BasketError::State);}
+        if self.state!=State::Ready||!valid_event_id(id)||self.used_requests.contains(id)||self.events.len()>=4096{return Err(BasketError::State);}
         self.used_requests.insert(id.into());self.request_id=Some(id.into());self.fills.clear();
         self.state=State::AwaitingConfirmation;self.events.push(JournalEvent::Begin{request_id:id.into()});Ok(())
     }
     pub fn fill(&mut self,request:&str,event:&str,leg:&LegId,cumulative:Decimal)->Result<(),BasketError>{
-        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request)||event.is_empty(){return Err(BasketError::State);}
+        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request)||!valid_event_id(event)||self.events.len()>=4096{return Err(BasketError::State);}
         if let Some(previous)=self.seen_events.get(event){
             if previous==&(request.to_owned(),leg.clone(),cumulative){return Ok(());}
             return Err(BasketError::Fill);
@@ -270,7 +274,7 @@ impl Checkpoint {
     }
     pub fn confirm(&mut self,request:&str,terminal:&BTreeMap<LegId,bool>,
         observed:BTreeMap<LegId,Decimal>)->Result<(),BasketError>{
-        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request){return Err(BasketError::State);}
+        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request)||self.events.len()>=4096{return Err(BasketError::State);}
         let phase=&self.plan.phases[self.phase_index];
         if terminal.keys().ne(phase.changes.keys())||terminal.values().any(|filled|!*filled)||
            phase.changes.iter().any(|(leg,q)|self.fills.get(leg)!=Some(q)){return Err(BasketError::Fill);}
@@ -285,7 +289,7 @@ impl Checkpoint {
         self.events.push(JournalEvent::Confirm{request_id:request.into(),positions:observed});Ok(())
     }
     pub fn freeze(&mut self,reason:&str)->Result<(),BasketError>{
-        if self.state==State::Completed||reason.is_empty()||reason.len()>512{return Err(BasketError::State);}
+        if self.state==State::Completed||reason.is_empty()||reason.len()>512||self.events.len()>=4096{return Err(BasketError::State);}
         if self.state==State::Frozen{return Ok(());}
         self.state=State::Frozen;self.reason=Some(reason.into());
         self.events.push(JournalEvent::Freeze{reason:reason.into()});Ok(())
