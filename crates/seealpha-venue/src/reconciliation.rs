@@ -194,11 +194,16 @@ impl VenueClient {
         let symbol = venue_symbol(symbol)?;
         let value = self.signed(credentials, "DELETE", "/fapi/v1/algoOrder",
             &[("clientAlgoId".into(), client_algo_id.into())])?;
-        if value.get("clientAlgoId").and_then(Value::as_str) != Some(client_algo_id)
-            || value.get("symbol").and_then(Value::as_str) != Some(symbol.as_str()) {
+        // Binance DELETE /algoOrder returns code/msg and clientAlgoId,
+        // not necessarily a symbol or final algo status. Confirm by GET.
+        if value.get("clientAlgoId").and_then(Value::as_str) != Some(client_algo_id) {
             return Err(VenueError::Unconfirmed);
         }
-        Ok(value)
+        let queried=self.query_um_conditional(credentials,&symbol,client_algo_id)?;
+        if queried.get("algoStatus").and_then(Value::as_str) != Some("CANCELED") {
+            return Err(VenueError::Unconfirmed);
+        }
+        crate::conditional::validated_algo_view(&queried,client_algo_id,&symbol)
     }
 }
 

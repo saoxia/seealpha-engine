@@ -1,6 +1,7 @@
 //! Signed order commands. Credentials stay in the request and never enter SQLite.
 use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_venue::{Credentials, OrderIntent, Product, VenueClient, VenueError};
+use seealpha_venue::conditional::{UmConditionalIntent,validated_algo_view};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -147,13 +148,43 @@ impl Runtime {
                 !symbol.ends_with("-PERP")) {
             return Err(RuntimeError::Unprocessable("交易合约与产品类型不匹配。".into()));
         }
+        let order_type=command.values.get("order_type").and_then(Value::as_str)
+            .unwrap_or("").to_ascii_uppercase();
+        let conditional=product==Product::FuturesUm &&
+            (command.values.get("algo_order").and_then(Value::as_bool)==Some(true)
+                || matches!(order_type.as_str(),"STOP"|"STOP_MARKET"|"TAKE_PROFIT"
+                    |"TAKE_PROFIT_MARKET"|"TRAILING_STOP_MARKET"));
+        body["algo_order"]=json!(conditional);
+        // Persist the recovery routing BEFORE the first network write.
+        self.ledger.save_order_request(
+            &command.tenant_id,&command.account_id,&request_id,&body.to_string()
+        ).map_err(map_ledger)?;
         let venue = VenueClient::new(&command.venue_base)
             .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
         let credentials = Credentials {
             api_key: command.api_key,
             secret: command.secret,
         };
-        let outcome = if command.action == "cancel" {
+        let outcome = if conditional && command.action=="cancel" {
+            venue.cancel_um_conditional(&credentials,&symbol,&client_order_id)
+        } else if conditional {
+            venue.place_um_conditional(&credentials,&UmConditionalIntent {
+                symbol:symbol.clone(),
+                client_algo_id:client_order_id.clone(),
+                side:command.values["side"].as_str().unwrap_or("").to_ascii_uppercase(),
+                order_type:order_type.clone(),
+                quantity:command.values["quantity"].as_str().map(str::to_owned),
+                trigger_price:command.values["trigger_price"].as_str().map(str::to_owned),
+                limit_price:command.values["price"].as_str().map(str::to_owned),
+                activate_price:command.values["activate_price"].as_str().map(str::to_owned),
+                callback_rate:command.values["callback_rate"].as_str().map(str::to_owned),
+                position_side:command.values["position_side"].as_str().unwrap_or("BOTH").to_ascii_uppercase(),
+                working_type:command.values["working_type"].as_str().unwrap_or("CONTRACT_PRICE").to_ascii_uppercase(),
+                time_in_force:command.values["time_in_force"].as_str().unwrap_or("GTC").to_ascii_uppercase(),
+                reduce_only:command.values["reduce_only"].as_bool().unwrap_or(false),
+                close_position:command.values["close_position"].as_bool().unwrap_or(false),
+            })
+        } else if command.action == "cancel" {
             venue.cancel_order(&credentials, product, &symbol, &client_order_id)
         } else {
             venue.place_order(
@@ -300,7 +331,15 @@ impl Runtime {
                 _=>Product::Spot,
             };
             if let Ok(client) = VenueClient::new(venue_base)
-                && let Ok(Some(order)) = client.query_order(
+                && let Ok(Some(order)) = (if stored["algo_order"]==true {
+                    client.query_um_conditional(&Credentials {
+                        api_key:api_key.into(),secret:secret.into(),
+                    },&symbol,&client_order_id)
+                        .and_then(|v|seealpha_venue::venue_symbol(&symbol)
+                            .and_then(|canonical|validated_algo_view(
+                                &v,&client_order_id,&canonical))).map(Some)
+                } else {
+                    client.query_order(
                     &Credentials {
                         api_key: api_key.into(),
                         secret: secret.into(),
@@ -309,6 +348,7 @@ impl Runtime {
                     &symbol,
                     &client_order_id,
                 )
+                })
             {
                 stored["response"]["status"] = json!("completed");
                 stored["response"]["order"] = order.clone();
@@ -347,12 +387,15 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
-        if stored["response"]["status"]!="completed" ||
-            stored["response"]["order"].is_null() {
+        let order=if stored["algo_order"]==true {
+            &stored["triggered_order"]
+        }else {
+            &stored["response"]["order"]
+        };
+        if stored["response"]["status"]!="completed" || order.is_null() {
             return Err(RuntimeError::Conflict(
                 "订单尚未在交易所核实，不能标记已对账。".into()));
         }
-        let order=&stored["response"]["order"];
         let terminal=matches!(order["status"].as_str(),
             Some("FILLED"|"CANCELED"|"EXPIRED"|"EXPIRED_IN_MATCH"|"REJECTED"));
         if !terminal {
