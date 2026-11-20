@@ -1,4 +1,4 @@
-"""Trusted Engine adapter: issued strategy demand -> existing shared collectors -> bars.
+"""Trusted Engine adapter: issued strategy reads from configured collectors.
 
 The collector owns Binance WebSockets, reconnects and durable journals. This
 adapter only consumes committed, complete derived bars. Public collector health
@@ -101,13 +101,13 @@ def _package_symbols(parameters):
 
 
 class ManagedJournalBridge:
-    """One Engine's live market ingress and subscriber-driven collector reconcile."""
+    """One Engine's read-only live ingress, never a collector controller."""
 
     def __init__(self, runtime, market_data):
         self.runtime = runtime
         self.manager = market_data.subscriptions
         self.service = runtime.market_subscriptions
-        self.manager.strategy_requirements = lambda: self.service.live_requirements
+        self.manager.active_readers = lambda: self.service.live_requirements
         self._lock = RLock()
         self._ready = set()
         self._latest = {}
@@ -148,33 +148,26 @@ class ManagedJournalBridge:
                     or stream.kind != "closed_bars"
                     or stream.interval not in _SUPPORTED_INTERVALS
                     or policy is None or policy.base_level == "auto"
+                    or not policy.realtime_enabled
                     or stream.interval not in policy.intervals
                     or stream.symbol not in allowed
                     or not self.runtime._has_subscription_intent(
                         tenant_id, stream.symbol, stream.product,
                     )
                 ):
-                    raise MarketDataHubError("策略行情尚未获准或缺少已配置的采集能力")
+                    raise MarketDataHubError("策略行情尚未获准，或实时采集未在配置中启用")
             self.service.configure_live(keys)
-            needed = self.service.subscribe_live(
+            return self.service.subscribe_live(
                 str(tenant_id), consumer, keys, lookback_bars=lookback_bars,
             )
-            self.manager.restore()
-            if self.manager.last_error:
-                self.service.unsubscribe_live(str(tenant_id), consumer)
-                self.manager.restore()
-                raise MarketDataHubError("订阅行情采集器启动失败：" + self.manager.last_error)
-            return needed
 
     def unsubscribe(self, tenant_id, account_id, issuance_id):
         if str(tenant_id) != str(self.manager.bound_tenant_id()):
             raise MarketDataHubError("不能释放其他租户的行情订阅")
         with self._lock:
-            needed = self.service.unsubscribe_live(
+            return self.service.unsubscribe_live(
                 str(tenant_id), self.consumer_id(account_id, issuance_id),
             )
-            self.manager.restore()
-            return needed
 
     def _reset(self, stream, reason):
         self.service.invalidate_live_stream(stream)
@@ -203,8 +196,8 @@ class ManagedJournalBridge:
             now_ms = int(time.time() * 1000)
             for stream, lookback in needed.items():
                 policy = policies.get((stream.product, stream.symbol))
-                if policy is None:
-                    self._reset(stream, "collector policy missing")
+                if policy is None or not policy.realtime_enabled:
+                    self._reset(stream, "collector policy missing or realtime disabled")
                     continue
                 root = self.manager.root(policy)
                 try:

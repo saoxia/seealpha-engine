@@ -27,36 +27,10 @@ class Subscriptions:
         self.lease = None
         self.closed = False
         self.deleting = set()
-        # Runtime demand is transient: never change persisted user policies.
-        self.strategy_requirements = dict
+        # Active read demand only protects in-use data from destructive deletion.
+        # It must never change collection or history task enablement.
+        self.active_readers = dict
         self._effective_snapshot = []
-
-    def _effective_policies(self, policies=None):
-        """Merge authorized strategy demand into the managed WebSocket manifest.
-
-        Explicit policy ownership stays with DataService. The strategy overlay
-        only turns on existing configured markets while they have consumers.
-        """
-        if policies is None:
-            policies = self.policies or []
-        requirements = self.strategy_requirements()
-        allowed = {(p.product, p.symbol): p for p in policies}
-        required = set()
-        for stream in requirements:
-            key = (stream.product, stream.symbol)
-            policy = allowed.get(key)
-            if (stream.source != "BINANCE" or stream.kind != "closed_bars"
-                    or policy is None or stream.interval not in policy.intervals
-                    and stream.interval != policy.base_level
-                    or stream.product not in {"futures_um", "spot"}
-                    or policy.base_level == "auto"):
-                raise HTTPException(409, "策略请求的市场流没有对应的可采集配置")
-            required.add(key)
-        return [
-            p.model_copy(update={"realtime_enabled": True})
-            if (p.product, p.symbol) in required and not p.realtime_enabled else p
-            for p in policies
-        ]
 
     def bound_tenant_id(self):
         return self.manager.tenant_id
@@ -173,7 +147,7 @@ class Subscriptions:
             try:
                 previous = self._effective_snapshot
                 policies = self._read(refresh=True)
-                effective = self._effective_policies(policies)
+                effective = policies
                 if any(p.product == "options" for p in [*previous, *effective]):
                     self._claim()
                     self._publish_options()
@@ -400,7 +374,7 @@ class Subscriptions:
 
         path = self.manager.directory / "futures-runtime.json"
         records = [
-            p.model_dump(mode="json") for p in self._effective_policies()
+            p.model_dump(mode="json") for p in (self.policies or [])
             if p.product == "futures_um" and p.base_level != "auto"
         ]
         write_record(path, {"version": 1, "policies": records})
@@ -411,14 +385,14 @@ class Subscriptions:
         from engine.pipeline.convert_binance_bars import write_record
 
         path = self.manager.directory / "spot-runtime.json"
-        records = [p.model_dump(mode="json") for p in self._effective_policies()
+        records = [p.model_dump(mode="json") for p in (self.policies or [])
                    if p.product == "spot" and p.base_level != "auto"]
         write_record(path, {"version": 1, "policies": records})
         return path
 
     def _start_spot(self):
         enabled = any(p.product == "spot" and p.base_level != "auto" and p.realtime_enabled
-                      for p in self._effective_policies())
+                      for p in (self.policies or []))
         key = ("spot", "ALL")
         existing = self.processes.get(key)
         if not enabled:
@@ -442,7 +416,7 @@ class Subscriptions:
         """One shared collector process, internally sharded by stream capacity."""
         enabled = any(
             p.product == "futures_um" and p.base_level != "auto" and p.realtime_enabled
-            for p in self._effective_policies()
+            for p in (self.policies or [])
         )
         key = ("futures_um", "ALL")
         existing = self.processes.get(key)
@@ -492,7 +466,7 @@ class Subscriptions:
         with self.lock:
             if any(
                 stream.product == product and stream.symbol == symbol
-                for stream in self.strategy_requirements()
+                for stream in self.active_readers()
             ):
                 raise HTTPException(409, "策略仍在订阅该行情，必须先停止策略订阅")
             self._claim()
@@ -541,7 +515,7 @@ class Subscriptions:
         with self.lock:
             if any(
                 stream.product == product and stream.symbol == symbol
-                for stream in self.strategy_requirements()
+                for stream in self.active_readers()
             ):
                 raise HTTPException(409, "策略仍在订阅该行情，必须先停止策略订阅")
             self._claim()

@@ -468,11 +468,7 @@ class EngineRuntime:
 
         from nautilus_trader.model import Money
 
-        from engine.strategies.backtest import (
-            catalog_directory,
-            parse_window,
-            read_history_batches,
-        )
+        from engine.strategies.backtest import catalog_directory, parse_window
         from engine.strategies.loading import run_issued_history_stream
 
         if product not in {"futures_um", "spot"}:
@@ -555,19 +551,17 @@ class EngineRuntime:
         # Delete/trim jobs must not unlink a Catalog dataset while a backtest
         # is loading its historical bars.
         with read_lease(self.project, symbol, product):
+            history = self.market_subscriptions.history(catalog_directory(self.project))
             instrument = None
             if product == "spot":
                 from core.market.instruments import instrument_id_for
-                from engine.pipeline.catalog import ParquetDataCatalog
 
-                catalog = ParquetDataCatalog(catalog_directory(self.project))
-                values = catalog.instruments(instrument_ids=[instrument_id_for(symbol, "spot")])
+                values = history.instruments(instrument_ids=[instrument_id_for(symbol, "spot")])
                 instrument = next((item for item in values if str(item.id) == instrument_id_for(symbol, "spot")), None)
                 if instrument is None or instrument.quote_currency.code != quote_currency:
                     raise EngineConflict("现货品种定义不存在或计价资产与回测设置不一致。")
-            batches = read_history_batches(
-                catalog_directory(self.project), symbol, interval, start_at, end_at,
-                **({"product": "spot"} if product == "spot" else {}),
+            batches = history.bar_batches(
+                symbol, interval, start_at, end_at, product=product,
             )
             # Keep the lease for the entire iterator consumption and native replay.
             # A concurrent delete must not unlink Parquet files mid-backtest.
@@ -621,8 +615,10 @@ class EngineRuntime:
         with ExitStack() as leases:
             for product in ("futures_um", "spot"):
                 leases.enter_context(read_lease(self.project, symbol, product))
+            directory = catalog_directory(self.project)
+            history = self.market_subscriptions.history(directory)
             yield from iter_carry_history(
-                catalog_directory(self.project), symbol, interval, start_at, end_at,
+                directory, symbol, interval, start_at, end_at, reader=history,
             )
 
     def run_funding_carry_backtest(
@@ -637,7 +633,6 @@ class EngineRuntime:
         """
         from core.market.instruments import instrument_id_for
         from engine.data_queries import read_lease
-        from engine.pipeline.catalog import ParquetDataCatalog
         from engine.strategies.backtest import catalog_directory, parse_window
         from engine.strategies.carry_simulation import run_native_carry
 
@@ -684,7 +679,7 @@ class EngineRuntime:
         with ExitStack() as leases:
             for product in ("futures_um", "spot"):
                 leases.enter_context(read_lease(self.project, symbol, product))
-            catalog = ParquetDataCatalog(catalog_directory(self.project))
+            catalog = self.market_subscriptions.history(catalog_directory(self.project))
             spot_id = instrument_id_for(symbol, "spot")
             perp_id = instrument_id_for(symbol, "futures_um")
             spot_rows = catalog.instruments(instrument_ids=[spot_id])
@@ -735,13 +730,7 @@ class EngineRuntime:
 
         from core.market.instruments import instrument_id_for, normalize_symbol
         from engine.data_queries import read_lease
-        from engine.pipeline.catalog import ParquetDataCatalog
-        from engine.strategies.backtest import (
-            _nanos,
-            catalog_directory,
-            parse_window,
-            read_history_batches,
-        )
+        from engine.strategies.backtest import _nanos, catalog_directory, parse_window
         from engine.strategies.basket_targets import LegId
         from engine.strategies.generic_simulation import run_native_generic_portfolio
 
@@ -801,7 +790,7 @@ class EngineRuntime:
             for leg in sorted(identities):
                 resources.enter_context(read_lease(self.project, leg.symbol, leg.product))
             catalog_dir = catalog_directory(self.project)
-            catalog = ParquetDataCatalog(catalog_dir)
+            catalog = self.market_subscriptions.history(catalog_dir)
             instruments = {}
             streams = []
             for leg in identities:
@@ -814,9 +803,8 @@ class EngineRuntime:
                     raise EngineConflict("组合历史缺少对应产品的原生合约定义。")
                 instruments[leg] = instrument
                 stream = (
-                    bar for batch in read_history_batches(
-                        catalog_dir, leg.symbol, interval, start_at, end_at,
-                        product=leg.product,
+                    bar for batch in catalog.bar_batches(
+                        leg.symbol, interval, start_at, end_at, product=leg.product,
                     ) for bar in batch
                 )
                 streams.append(stream)
@@ -905,7 +893,6 @@ class EngineRuntime:
         from nautilus_trader.model import CryptoOption, CryptoPerpetual
 
         from engine.data_queries import read_lease
-        from engine.pipeline.catalog import ParquetDataCatalog
         from engine.strategies.backtest import catalog_directory, parse_window
         from engine.strategies.option_history import (
             _instrument,
@@ -965,7 +952,7 @@ class EngineRuntime:
                 ("futures_um", symbol), ("options", call_name), ("options", put_name),
             ):
                 leases.enter_context(read_lease(self.project, name, product))
-            catalog = ParquetDataCatalog(directory)
+            catalog = self.market_subscriptions.history(directory)
             contracts_native = (
                 _instrument(catalog, symbol, "futures_um", CryptoPerpetual),
                 _instrument(catalog, put_name, "options", CryptoOption),
@@ -977,6 +964,7 @@ class EngineRuntime:
             evidence = read_option_protection_evidence(
                 directory, symbol, put_name, call_name, start_at, end_at,
                 interval, option_contracts=contracts, max_quote_age_ns=age,
+                reader=catalog,
             )
             from engine.feed.replay_adapter import replay_protected_evidence
             from engine.feed.subscription_hub import MarketStream

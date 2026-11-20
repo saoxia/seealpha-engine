@@ -11,8 +11,8 @@ from typing import Literal
 from nautilus_trader.model import Bar, BarType, FundingRateUpdate, InstrumentId
 
 from core.market.instruments import bar_type_for, instrument_id_for
+from engine.feed.historical_data import HistoricalMarketData, _nanos
 from engine.runtime import EngineConflict
-from engine.strategies.backtest import _nanos, read_history_batches
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,8 @@ def align_carry_bars(spot_batches, perpetual_batches, *, symbol, interval,
         raise EngineConflict("组合历史窗口末尾缺少 K 线。")
 
 
-def iter_carry_history(catalog_dir, symbol, interval, start, end, *, require_funding=True):
+def iter_carry_history(catalog_dir, symbol, interval, start, end, *,
+                       require_funding=True, reader=None):
     """Read Catalog records in timestamp order, retaining funding as events.
 
     A historical funding-rate observation is not an executed exchange cashflow.
@@ -76,15 +77,13 @@ def iter_carry_history(catalog_dir, symbol, interval, start, end, *, require_fun
     the preceding/following bar. The caller must establish settlement evidence,
     the position at settlement, and funding PnL in a separate backtest stage.
     """
-    from engine.pipeline.catalog import ParquetDataCatalog
-
     start_ns, end_ns = _nanos(start), _nanos(end)
     if start_ns >= end_ns or interval not in {"1m", "5m"}:
         raise EngineConflict("组合历史时间窗口无效。")
-    catalog = ParquetDataCatalog(catalog_dir)
+    reader = reader if reader is not None else HistoricalMarketData(catalog_dir)
     perp_id = InstrumentId.from_str(instrument_id_for(symbol, "futures_um"))
     # The native query end is inclusive. Our public history contract is [start, end).
-    observations = catalog.funding_rate_updates(
+    observations = reader.funding_rate_updates(
         [str(perp_id)], start=start_ns, end=end_ns - 1,
     ) or []
     if len(observations) > 10_000:
@@ -106,11 +105,11 @@ def iter_carry_history(catalog_dir, symbol, interval, start, end, *, require_fun
     if require_funding and not funding:
         raise EngineConflict("该区间缺少真实历史资金费观测，不能假定资金费为零。")
 
-    spot_batches = read_history_batches(
-        catalog_dir, symbol, interval, start, end, product="spot",
+    spot_batches = reader.bar_batches(
+        symbol, interval, start, end, product="spot",
     )
-    perp_batches = read_history_batches(
-        catalog_dir, symbol, interval, start, end, product="futures_um",
+    perp_batches = reader.bar_batches(
+        symbol, interval, start, end, product="futures_um",
     )
     bars = align_carry_bars(
         spot_batches, perp_batches, symbol=symbol, interval=interval,

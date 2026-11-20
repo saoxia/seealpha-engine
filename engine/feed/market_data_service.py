@@ -16,8 +16,8 @@ class EngineMarketDataService:
 
     Live readers share one hub and unique upstream requirements. Each historical
     run receives an independent event-time history, so replay cannot leak into
-    live trading or another backtest. A trusted feed adapter is responsible for
-    reconciling ``live_requirements`` with the existing managed collectors.
+    live trading or another backtest. Live requirements are read-side only:
+    persistent data policies alone control the managed collectors.
     """
 
     def __init__(self):
@@ -81,6 +81,13 @@ class EngineMarketDataService:
                 tenant_id, consumer_id, now_ns=now_ns,
                 positions=positions, max_age_ns=max_age_ns,
             )
+
+    @staticmethod
+    def history(catalog_dir):
+        """Read-only history source; subscriptions never enable collection."""
+        from engine.feed.historical_data import HistoricalMarketData
+
+        return HistoricalMarketData(catalog_dir)
 
     @contextmanager
     def backtest(self, run_id, authorized_streams):

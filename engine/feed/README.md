@@ -20,7 +20,7 @@
 实时获取、自动计算、历史扫描补齐应独立持续运行并能自动恢复；所有消费者经统一数据访问层读取已维护的数据。
 下面大部分段落记录不同阶段的**现有实现**，不能据此判断目标已全部落地。
 
-特别是目前 `engine.data_manager.subscriptions.Subscriptions._effective_policies()` 仍会因策略需求临时打开某些已配置但禁用实时采集的市场。这是**明确需要修改的旧行为**；本次仅更新文档，不改变现有运行结果。
+策略订阅不再通过 `Subscriptions._effective_policies()` 临时打开采集，也不调用采集器恢复；实时数据只允许访问已在配置中启用采集的市场。统一历史只读访问使用 `EngineMarketDataService.history()` 与 `HistoricalMarketData`；现有交易估值路径仍单独存在，尚未全部迁移。
 
 ## 模块边界
 
@@ -280,21 +280,21 @@ Engine 内部只读接口：`POST /tenants/{tenant_id}/data/funding`，请求体
 `MarketStream`，然后通过 `subscribe_live` / `unsubscribe_live` 维护实时策略需求。
 `live_requirements` 去重合并同一 Engine 中不同消费者的物理市场流及最大历史回看长度。
 策略不能自行追加未经授权的数据源；缺少授权的订阅明确失败。已授权的新市场流可以
-动态加入注册表，但**真正启动/取消上游 WebSocket、REST 预热和重连**仍须由现有
-`engine.feed.managed` 采集主管理器进行连接适配，不能把逻辑需求当作已收到的实时行情。
+动态加入读侧注册表，但**采集器是否运行完全由持久化 DataPolicy 配置决定**。
+实时订阅只使用已启用采集且已授权的行情，不会触发 WebSocket/REST/历史任务的启动或停止。
 
-历史运行通过 `backtest(run_id, authorized_streams)` 创建单次任务的独立事件时间
-缓存；同一回测的所有策略成员共享这份市场序列，每个成员仅查看自身订阅范围。
+历史数据从 `EngineMarketDataService.history(catalog_dir)` 获取统一的只读 Catalog 访问，
+已接入单标的、Spot/UM 资金费组合、通用组合和期权保护研究入口；资金费与期权报价
+仍按各自类型执行严格证据校验。历史运行通过 `backtest(run_id, authorized_streams)`
+创建单次任务的独立事件时间缓存；同一回测的所有策略成员共享这份市场序列，每个成员仅查看自身订阅范围。
 回测结束无论成功或失败均释放注册表；历史帧永远不会写进实时缓存。
-当前 `generic-portfolio-backtests` 已通过 EngineRuntime 持有的同一服务接口创建回放范围。
-其他旧回测入口尚未迁移到统一接口。隔离的 Backtest Worker 子进程与常驻进程不共享
-Python 内存；其历史回放保持任务独立，并继续直接使用 Engine Catalog。
+现有单标的、Spot/UM、通用组合和期权保护研究入口均已在 EngineRuntime 层
+经统一历史数据读取入口访问 Catalog；历史回放仍使用与实时完全隔离的事件时间缓存。
+隔离的 Backtest Worker 子进程与常驻进程不共享 Python 内存，历史会话保持任务独立。
 
-**尚未接通**：正式策略调用 `subscribe_live` 与 `Feed.check()` /
-`Delivery.allow_new_risk` 的完整实时数据/交易链路、实时闭合行情从采集子进程进入
-注册表、`live_requirements` 到 Binance WebSocket 生命周期的自动协调，
-以及旧回测路径统一迁移。不能将这次读侧接口与单任务回测整合视为
-正式策略已可实时交易。实时风险资格仍由既有就绪门禁决定。
+**尚未接通**：正式策略的完整实时决策/`Feed.check()` /
+`Delivery.allow_new_risk` 交易执行链路，以及交易估值等其余行情消费路径。
+不能将只读策略订阅成功解释为正式策略已经开始交易。实时风险资格仍由既有就绪门禁决定。
 
 
 ## Engine 统一策略行情订阅（新增）
@@ -318,8 +318,8 @@ Python 内存；其历史回放保持任务独立，并继续直接使用 Engine
 只有 **本租户、本账户已下发策略包** 中声明的品种、Engine 已记录的
 `intent` 和本 Engine 已配置的 `DataPolicy` 同时存在，才可以注册正式行情。
 未配置的市场、交易产品或粒度明确返回错误，不会擅自创建行情政策或替换交易所来源。
-对于已有但 `realtime_enabled=false` 的市场，**当前代码**在策略活跃期间会暂时启用采集需求，
-**不会修改持久化的政策文件**。**该行为不符合已确定的“采集只由配置决定”目标，后续重构时必须移除；在代码改变前不要把目标误认为现状。**采集器每秒检查 manifest，自动合并 Binance
+对于已有但 `realtime_enabled=false` 的市场，策略订阅立即拒绝，不会临时启动采集，
+也不会修改持久化的配置。采集器根据已保存的行情配置检查 manifest，自动合并 Binance
 Spot/UM 的逐笔 WebSocket 订阅，支持增减/重连；行情下游只读取已闭合并由
 `calculation` 核验的 SQLite K 线，绝不把原始逐笔伪装成可交易闭合线。
 

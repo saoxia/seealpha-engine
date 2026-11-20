@@ -1,4 +1,4 @@
-"""Demand-driven shared collector integration, with only synthetic journal evidence."""
+"""Configuration-owned collectors and read-only strategy market integration."""
 
 import json
 import sqlite3
@@ -32,7 +32,7 @@ def _setup(tmp_path, monkeypatch):
     manager.policy_repository.save(
         [DataPolicy(
             symbol="ETHUSDT", product="futures_um", base_level="1m",
-            intervals=["1m"], realtime_enabled=False,
+            intervals=["1m"], realtime_enabled=True,
         )], tenant_id="prod",
     )
     bridge = ManagedJournalBridge(runtime, manager)
@@ -80,19 +80,51 @@ def _journal(root):
     return now
 
 
-def test_live_demand_overlays_only_existing_configured_symbols(tmp_path, monkeypatch):
+def test_live_reads_cannot_start_or_stop_configured_collectors(tmp_path, monkeypatch):
     runtime, manager, bridge = _setup(tmp_path, monkeypatch)
+    restores = []
+    monkeypatch.setattr(manager.subscriptions, "restore", lambda: restores.append(True))
     try:
+        policy = manager.subscriptions._read()[0]
+        assert policy.realtime_enabled is True
         assert bridge.subscribe("prod", "desk", "issued", (ETH,), lookback_bars=2) == {ETH: 2}
-        assert manager.subscriptions._effective_policies()[0].realtime_enabled is True
+        assert bridge.unsubscribe("prod", "desk", "issued") == {}
+        assert restores == []
         manifest = manager.subscriptions._publish_futures()
-        rows = json.loads(manifest.read_text())["policies"]
-        assert len(rows) == 1 and rows[0]["realtime_enabled"] is True
+        assert len(json.loads(manifest.read_text())["policies"]) == 1
+
+        disabled = policy.model_copy(update={"realtime_enabled": False})
+        manager.policy_repository.save([disabled], tenant_id="prod")
+        manager.subscriptions._read(refresh=True)
+        with pytest.raises(MarketDataHubError, match="实时采集未在配置中启用"):
+            bridge.subscribe("prod", "desk", "issued", (ETH,))
+        manifest = manager.subscriptions._publish_futures()
+        assert json.loads(manifest.read_text())["policies"][0]["realtime_enabled"] is False
         assert manager.policy_repository.list("prod")[0]["realtime_enabled"] is False
+        assert restores == []
         with pytest.raises(MarketDataHubError, match="未获准"):
             bridge.subscribe("prod", "desk", "issued", (BTC,))
-        assert bridge.unsubscribe("prod", "desk", "issued") == {}
-        assert not manager.subscriptions._effective_policies()[0].realtime_enabled
+    finally:
+        runtime.close()
+        manager.close()
+
+
+def test_policy_disable_immediately_invalidates_existing_live_reader(tmp_path, monkeypatch):
+    runtime, manager, bridge = _setup(tmp_path, monkeypatch)
+    try:
+        bridge.subscribe("prod", "desk", "issued", (ETH,))
+        policy = manager.subscriptions._read()[0]
+        root = manager.subscriptions.root(policy)
+        _journal(root)
+        _write_status(root / "status.json")
+        _write_status(root / "calculation" / "status.json")
+        bridge.poll()
+        assert bridge.status()["requirements"][0]["data_ready"] is True
+        manager.policy_repository.save(
+            [policy.model_copy(update={"realtime_enabled": False})], tenant_id="prod",
+        )
+        bridge.poll()
+        assert bridge.status()["requirements"][0]["data_ready"] is False
     finally:
         runtime.close()
         manager.close()

@@ -12,9 +12,8 @@ from decimal import Decimal
 from nautilus_trader.model import Bar, CryptoOption, CryptoPerpetual, OptionKind, QuoteTick
 
 from core.market.instruments import bar_type_for, instrument_id_for, normalize_symbol
-from engine.pipeline.catalog import ParquetDataCatalog
+from engine.feed.historical_data import HistoricalMarketData, _nanos
 from engine.runtime import EngineConflict
-from engine.strategies.backtest import _nanos, read_history
 
 
 @dataclass(frozen=True)
@@ -70,7 +69,7 @@ def _at_or_before(quotes, cursor, decision_ns):
 
 def read_option_protection_evidence(
     catalog_dir, perpetual_symbol, put_symbol, call_symbol, start, end, interval,
-    *, option_contracts: Decimal, max_quote_age_ns: int,
+    *, option_contracts: Decimal, max_quote_age_ns: int, reader=None,
 ):
     """Return bounded, fully aligned native market evidence (not simulated fills).
 
@@ -95,7 +94,7 @@ def read_option_protection_evidence(
     if start_ns % step or end_ns % step:
         raise EngineConflict("期权回测窗口必须按 K 线周期对齐。")
 
-    catalog = ParquetDataCatalog(catalog_dir)
+    catalog = reader if reader is not None else HistoricalMarketData(catalog_dir)
     perp = _instrument(catalog, symbol, "futures_um", CryptoPerpetual)
     put = _instrument(catalog, put_name, "options", CryptoOption)
     call = _instrument(catalog, call_name, "options", CryptoOption)
@@ -116,9 +115,9 @@ def read_option_protection_evidence(
             raise EngineConflict("期权保护数量不符合最小合约步长。")
 
     streams = (
-        read_history(catalog_dir, symbol, interval, start, end, product="futures_um"),
-        read_history(catalog_dir, put_name, interval, start, end, product="options"),
-        read_history(catalog_dir, call_name, interval, start, end, product="options"),
+        catalog.bars(symbol, interval, start, end, product="futures_um"),
+        catalog.bars(put_name, interval, start, end, product="options"),
+        catalog.bars(call_name, interval, start, end, product="options"),
     )
     perp_bars, put_bars, call_bars = streams
     expected_count = (end_ns - start_ns) // step - 1
