@@ -176,10 +176,19 @@ impl PreparedWrite {
                 v["listClientOrderId"].as_str()==Some(id),
             WriteAction::ModifyOrder =>
                 v["clientOrderId"].as_str()==Some(id) && !v["orderId"].is_null(),
-            WriteAction::NewOrder|WriteAction::CancelOrder =>
+            WriteAction::NewOrder =>
                 v["clientOrderId"].as_str()==Some(id) &&
                 v["symbol"].as_str()==Some(self.record.symbol.as_str()) &&
                 !v["orderId"].is_null() && v["status"].as_str().is_some(),
+            WriteAction::CancelOrder =>
+                // Spot cancellation may assign a NEW clientOrderId for the
+                // cancellation request; origClientOrderId identifies the
+                // original order that must be reconciled.
+                (v["origClientOrderId"].as_str()==Some(id) ||
+                 v["clientOrderId"].as_str()==Some(id)) &&
+                v["symbol"].as_str()==Some(self.record.symbol.as_str()) &&
+                !v["orderId"].is_null() &&
+                matches!(v["status"].as_str(),Some("CANCELED"|"CANCELLED")),
         }
     }
 }
@@ -238,6 +247,30 @@ mod tests {
         assert_eq!(packet.dispatch(&mut journal,&mut transport).unwrap()["status"],"NEW");
         assert!(packet.dispatch(&mut journal,&mut transport).is_err());
         assert_eq!(transport.calls,1);
+    }
+    #[test]
+    fn spot_cancel_ack_matches_original_client_id_not_replacement_id(){
+        struct CancelMock;
+        impl SignedTransport for CancelMock {
+            fn send(&mut self,m:&str,p:&str,_:&[(String,String)])
+                -> Result<Value,VenueError>{
+                assert_eq!(m,"DELETE");
+                assert_eq!(p,"/api/v3/order");
+                Ok(json!({"origClientOrderId":"client1","clientOrderId":"cancel1",
+                    "orderId":17,"symbol":"ETHUSDT","status":"CANCELED",
+                    "executedQty":"0.25","origQty":"1"}))
+            }
+        }
+        let mut journal=Journal::default();
+        let mut packet=PreparedWrite::new("tenant:account","cancel_req1",Product::Spot,
+            WriteAction::CancelOrder,"ETHUSDT","client1",vec![
+                ("symbol".into(),"ETHUSDT".into()),
+                ("origClientOrderId".into(),"client1".into())]).unwrap();
+        let ack=packet.dispatch(&mut journal,&mut CancelMock).unwrap();
+        assert_eq!(ack["executedQty"],"0.25");
+        assert_eq!(journal.outcomes,vec![RecordedOutcome::Accepted]);
+        // The ACK is not a ledger fill; real trade ID is absent.
+        assert!(ack["id"].is_null());
     }
     #[test]
     fn rejects_conflicting_identity_and_cancel_replace_guessing(){
