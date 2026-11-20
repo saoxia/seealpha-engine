@@ -397,6 +397,7 @@ impl Runtime {
         if stored["environment"] != environment {
             return Err(RuntimeError::Conflict("账户环境与原始委托不一致。".into()));
         }
+        let prior_view = stored.clone();
         if stored["response"]["status"] == "unknown" {
             let symbol = stored["symbol"].as_str().unwrap_or("").to_string();
             let client_order_id = stored["response"]["client_order_id"]
@@ -473,7 +474,7 @@ impl Runtime {
                     )
                     .map_err(map_ledger)?;
             }
-            if stored.to_string() != existing {
+            if stored != prior_view {
                 self.ledger
                     .append_order_request_view(
                         tenant_id,
