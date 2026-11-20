@@ -5,7 +5,6 @@ import importlib
 
 import pytest
 
-from engine.market_data.sources.binance.options import collection as options
 from engine.market_data.sources.binance.perpetual import collection as perpetual
 from engine.market_data.sources.binance.spot import collection as spot
 
