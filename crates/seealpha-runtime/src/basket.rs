@@ -262,3 +262,96 @@ impl Runtime {
 fn basket_error(error:BasketError)->RuntimeError{
     RuntimeError::Conflict(error.to_string())
 }
+
+#[cfg(test)]
+mod verified_ledger_basket_tests {
+    use super::*;
+    use crate::config::{AuthMode,Config};
+    use seealpha_portfolio::{
+        basket::{LegId, Product, Plan, Phase, State},
+        order_evidence::bind_phase_orders,
+    };
+    use rust_decimal::Decimal;
+    use serde_json::json;
+
+    fn runtime(name:&str)->(Runtime,std::path::PathBuf){
+        let path=std::env::temp_dir().join(format!(
+            "seealpha-reconcile-{name}-{}-{:?}",
+            std::process::id(),std::thread::current().id(),
+        ));
+        let _=std::fs::remove_dir_all(&path);
+        let config=Config{
+            host:"127.0.0.1".into(),port:8766,auth_mode:AuthMode::None,
+            token:String::new(),state_dir:path.clone(),project:path.clone(),
+            tenant_id:None,tenant_purpose:Some("production".into()),
+            research_signing_key:None,research_mcp_enabled:false,
+            venue_base:None,python:"python3".into(),
+        };
+        (Runtime::open(&config).unwrap(),path)
+    }
+    fn stage(runtime:&Runtime,position:&str)->(String,String){
+        runtime.ensure_tenant("t","production","active").unwrap();
+        let leg=LegId{tenant:"t".into(),account:"a".into(),
+            product:Product::Spot,symbol:"ETHUSDT".into()};
+        let qty=Decimal::ONE;
+        let plan=Plan{
+            targets:[(leg.clone(),qty)].into(),
+            phases:vec![Phase{name:"buy".into(),
+                changes:[(leg.clone(),qty)].into()}],
+            gross_notional:Decimal::from(100),executable:false,
+        };
+        let mut checkpoint=Checkpoint::new(plan,[(leg,Decimal::ZERO)].into()).unwrap();
+        checkpoint.begin("request1").unwrap();
+        let issued=bind_phase_orders(&checkpoint).unwrap();
+        let revision=runtime.create_basket_checkpoint(
+            "t","a","basket1",&checkpoint).unwrap().revision;
+        runtime.ledger.save_account_snapshot(
+            "t","a","production",None,"exchange1",1,
+            "signed_exchange_account_query",
+            &json!({"balances":{"USDT":"1000"},"positions":{"spot:ETHUSDT":position}}),
+        ).unwrap();
+        (revision,issued.orders[0].client_order_id.clone())
+    }
+    #[test]
+    fn missing_order_observation_freezes_without_fabricating_a_fill(){
+        let (runtime,path)=runtime("unknown");
+        let (revision,_)=stage(&runtime,"0");
+        let result=runtime.reconcile_basket_from_ledger(
+            "t","a","production","basket1",&revision,1,1_000_000,1_000_000,
+        ).unwrap();
+        assert_eq!(result.checkpoint.state,State::Frozen);
+        assert!(result.checkpoint.fills.is_empty());
+        assert!(runtime.ledger.fills("t","a","production").unwrap().is_empty());
+        drop(runtime);
+        let _=std::fs::remove_dir_all(path);
+    }
+    #[test]
+    fn authenticated_trade_and_signed_position_confirm_complete_phase(){
+        let (runtime,path)=runtime("filled");
+        let (revision,client)=stage(&runtime,"1");
+        let intent=json!({"action":"NEW","environment":"production",
+            "client_order_id":client,"symbol":"ETHUSDT","side":"BUY","quantity":"1"});
+        runtime.ledger.preregister_order_intent(
+            "t","a","production","request1",&client,&"a".repeat(64),&intent,
+        ).unwrap();
+        let trade=json!({"trade_id":"binance:spot:ETHUSDT:901",
+            "venue_order_id":"42","quantity":"1","price":"100",
+            "source":"signed_exchange_user_trades"});
+        runtime.ledger.import_verified_fills(
+            "t","a","production","42",&[trade]).unwrap();
+        let observed=json!({"environment":"production","client_order_id":client,
+            "status":"FILLED","source":"signed_exchange_order_query",
+            "observed_at_ns":1_000_000,"venue_order_id":"42",
+            "trade_ids":["binance:spot:ETHUSDT:901"]});
+        runtime.ledger.append_order_observation(
+            "t","a","production",&client,"obs1",&observed,
+        ).unwrap();
+        let result=runtime.reconcile_basket_from_ledger(
+            "t","a","production","basket1",&revision,1,1_000_000,1_000_000,
+        ).unwrap();
+        assert_eq!(result.checkpoint.state,State::Completed);
+        assert_eq!(result.checkpoint.positions.values().next(),Some(&Decimal::ONE));
+        drop(runtime);
+        let _=std::fs::remove_dir_all(path);
+    }
+}
