@@ -352,10 +352,18 @@ fn data_query_range(body:&Value)->Result<(&str,&str,&str,i64,i64,i64),AppError>{
         .or_else(||body["intervals"].as_array()
             .and_then(|v|v.first()).and_then(Value::as_str))
         .unwrap_or("1m");
-    let _=seealpha_market::Product::parse(product)
-        .map_err(|_|AppError::bad_request("产品不支持原生历史读取。"))?;
-    seealpha_market::check_symbol(symbol)
-        .map_err(|_|AppError::bad_request("查询品种无效。"))?;
+    if product=="options"{
+        seealpha_market::options::parse_option_symbol(symbol)
+            .map_err(|_|AppError::bad_request("期权合约无效。"))?;
+        if !matches!(interval,"1m"|"5m"|"15m"){
+            return Err(AppError::bad_request("期权原生历史周期不支持。"));
+        }
+    }else{
+        let _=seealpha_market::Product::parse(product)
+            .map_err(|_|AppError::bad_request("产品不支持原生历史读取。"))?;
+        seealpha_market::check_symbol(symbol)
+            .map_err(|_|AppError::bad_request("查询品种无效。"))?;
+    }
     let step=seealpha_market::interval_ms(interval)
         .map_err(|_|AppError::bad_request("历史 K 线周期无效。"))?;
     let stamp=|key:&str,native:&str|->Result<i64,AppError>{
@@ -489,10 +497,19 @@ async fn data_chart(
     state.runtime.require_active(&tenant).map_err(AppError::from)?;
     let symbol=body["symbol"].as_str()
         .ok_or_else(||AppError::bad_request("品种无效。"))?;
-    seealpha_market::check_symbol(symbol)
-        .map_err(|_|AppError::bad_request("品种无效。"))?;
     let product=body["product"].as_str().unwrap_or("futures_um");
     let interval=body["interval"].as_str().unwrap_or("1m");
+    if product=="options" {
+        seealpha_market::options::parse_option_symbol(symbol)
+            .map_err(|_|AppError::bad_request("期权合约无效。"))?;
+        if !matches!(interval,"1m"|"5m"|"15m") {
+            return Err(AppError::bad_request("期权原生周期无效。"));
+        }
+    } else {
+        seealpha_market::Product::parse(product).map_err(|_|AppError::bad_request("产品无效。"))?;
+        seealpha_market::check_symbol(symbol)
+            .map_err(|_|AppError::bad_request("品种无效。"))?;
+    }
     let step=seealpha_market::interval_ms(interval)
         .map_err(|_|AppError::bad_request("K 线周期无效。"))?;
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
