@@ -20,7 +20,7 @@ pub(super) fn check_command(command: &HostCommand<'_>) -> Result<(), StrategyErr
         || command.interval.is_empty()
         || command.interval.len() > 16
         || !command.interval.bytes().all(|c| c.is_ascii_alphanumeric())
-        || !command.parameters.is_object()
+        || !(command.parameters.is_object() || command.parameters.is_null())
     {
         return Err(invalid("策略宿主输入无效。"));
     }
@@ -97,6 +97,10 @@ pub(super) fn check_response(
 }
 
 fn check_parameter_values(parameters: &Value) -> Result<(), StrategyError> {
+    if parameters.is_null() {
+        // Legacy Python host interprets missing parameters as an empty map.
+        return Ok(());
+    }
     let map = parameters.as_object().ok_or_else(|| invalid("策略参数无效。"))?;
     if map.len() > 128 {
         return Err(invalid("策略参数超过数量限制。"));
