@@ -21,6 +21,63 @@ impl BinanceSource {
         Ok(Self { client })
     }
 
+    /// Bounded historical closed-bar reads for the native Rust data manager.
+    ///
+    /// [start_ms,end_ms) is an exact aligned time range. A missing bar,
+    /// partial last bar, duplicate or malformed page fails the entire request;
+    /// the caller must not commit a partially verified history window.
+    pub async fn load_history(
+        &self, product: Product, symbol: &str, interval: &str,
+        start_ms: i64, end_ms: i64,
+    ) -> Result<Vec<crate::Bar>, MarketError> {
+        check_symbol(symbol)?;
+        let step = interval_ms(interval)?;
+        if start_ms < 0 || start_ms >= end_ms
+            || start_ms % step != 0 || end_ms % step != 0
+            || end_ms.saturating_sub(start_ms) / step > 5000
+        {
+            return Err(MarketError::Time);
+        }
+        let endpoint = match product {
+            Product::Spot => "https://data-api.binance.vision/api/v3/klines",
+            Product::FuturesUm => "https://fapi.binance.com/fapi/v1/klines",
+        };
+        let mut result = Vec::new();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+            .ok_or(MarketError::Time)?;
+        // A kline with a future exchange close time is still forming,
+        // even if Binance returns a syntactically complete OHLCV tuple.
+        if end_ms > now_ms {
+            return Err(MarketError::Time);
+        }
+        let mut cursor = start_ms;
+        while cursor < end_ms {
+            let take = ((end_ms - cursor) / step).min(1000);
+            let value = self.get_json(endpoint, &[
+                ("symbol", symbol.to_string()),
+                ("interval", interval.to_string()),
+                ("startTime", cursor.to_string()),
+                ("endTime", (end_ms - 1).to_string()),
+                ("limit", take.to_string()),
+            ]).await?;
+            let page = parse_binance_klines(&value, step)?;
+            if page.is_empty() {
+                return Err(MarketError::Empty);
+            }
+            for bar in page {
+                if bar.open_time_ms != cursor || bar.close_time_ms >= end_ms {
+                    return Err(MarketError::Time);
+                }
+                cursor = cursor.checked_add(step).ok_or(MarketError::Overflow)?;
+                result.push(bar);
+            }
+        }
+        Ok(result)
+    }
+
     async fn get_json(&self, url: &str, query: &[(&str, String)]) -> Result<Value, MarketError> {
         let mut attempt = 0;
         loop {

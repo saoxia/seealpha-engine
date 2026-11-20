@@ -1,6 +1,11 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
 mod accounts;
 mod config;
+mod data;
+mod history;
+mod inspection;
+mod jobs;
+mod sources;
 mod session;
 mod trading;
 pub use trading::OrderCommand;
@@ -13,6 +18,9 @@ use seealpha_strategy::{self, HostCommand, inspect_archive};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::collections::HashMap;
+use std::process::Child;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -46,7 +54,9 @@ pub struct Runtime {
     pub project: PathBuf,
     pub python: PathBuf,
     pub host: PathBuf,
+    source_state_dir: PathBuf,
     inflight: AtomicUsize,
+    source_processes: Mutex<HashMap<String,Child>>,
 }
 
 impl Runtime {
@@ -74,12 +84,16 @@ impl Runtime {
                 .map_err(|_| RuntimeError::BadRequest("状态目录不可用。".into()))?;
         }
         let ledger = Ledger::open(book).map_err(map_ledger)?;
+        // Interrupted writer tasks are never blindly retried after a process crash.
+        ledger.restore_interrupted_data_jobs().map_err(map_ledger)?;
         Ok(Self {
             ledger,
             project: config.project.clone(),
             python: config.python.clone(),
             host: config.host_script(),
+            source_state_dir: book.parent().map(std::path::Path::to_path_buf).unwrap_or_else(||config.state_dir.clone()),
             inflight: AtomicUsize::new(0),
+            source_processes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -283,6 +297,19 @@ impl Runtime {
 
     pub(crate) fn track_end(&self) {
         self.inflight.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        // A running Rust Engine must never orphan its child producer processes
+        // on normal shutdown. Crash recovery stays fail-closed via writer.lock.
+        if let Ok(mut sources)=self.source_processes.lock() {
+            for (_,mut child) in sources.drain() {
+                let _=child.kill();
+                let _=child.wait();
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 //! HTTP v2 boundary. Every response carries `X-SeeAlpha-Engine-Contract-Version: 2`.
 //! Live exchange routes refuse before any credential is stored.
+mod parity;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -39,7 +40,11 @@ pub fn router(state: AppState) -> Router {
         .route("/tenants/{tenant_id}/jobs", get(jobs))
         .route(
             "/tenants/{tenant_id}/jobs/worker-settings",
-            get(worker_settings),
+            get(worker_settings).put(update_worker_settings),
+        )
+        .route(
+            "/tenants/{tenant_id}/strategy-packages/inspect",
+            post(inspect_strategy),
         )
         .route(
             "/tenants/{tenant_id}/strategy-loads",
@@ -126,6 +131,7 @@ pub fn router(state: AppState) -> Router {
             "/tenants/{tenant_id}/accounts/{account_id}/candidate-backtests/latest",
             get(latest_candidate),
         )
+        .merge(parity::routes())
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
         router = router.route("/research/v1/datasets", get(research_datasets));
@@ -224,12 +230,44 @@ async fn runnable(
     ))
 }
 
-async fn jobs() -> Json<Value> {
-    Json(json!({ "items": [] }))
+async fn jobs(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<Value>,AppError> {
+    Ok(Json(state.runtime.data_job_list(&tenant_id).map_err(AppError::from)?))
 }
 
-async fn worker_settings() -> Json<Value> {
-    Json(json!({ "max_workers": 1, "timeout_seconds": 3600 }))
+async fn worker_settings(
+    State(state): State<AppState>,
+) -> Result<Json<Value>,AppError> {
+    Ok(Json(state.runtime.ledger.worker_settings().map_err(|e|AppError::bad_request(e.to_string()))?))
+}
+
+async fn update_worker_settings(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>,AppError> {
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let workers=body["max_workers"].as_i64().ok_or_else(||AppError::bad_request("Worker 数量无效。"))?;
+    let timeout=body["timeout_seconds"].as_i64().ok_or_else(||AppError::bad_request("Worker 超时无效。"))?;
+    Ok(Json(state.runtime.ledger.update_worker_settings(workers,timeout)
+        .map_err(|e|AppError::bad_request(e.to_string()))?))
+}
+
+async fn inspect_strategy(
+    State(state):State<AppState>,Path(tenant_id):Path<String>,
+    Json(body):Json<Value>,
+)->Result<Json<Value>,AppError>{
+    let encoded=body["archive"].as_str()
+        .ok_or_else(||AppError::bad_request("策略包无效。"))?;
+    if encoded.len()>400_000 {return Err(AppError::bad_request("策略包超出范围。"));}
+    let archive=base64::engine::general_purpose::STANDARD.decode(encoded)
+        .map_err(|_|AppError::bad_request("策略包无效。"))?;
+    let params=body.get("parameters").cloned().unwrap_or_else(||json!({}));
+    Ok(Json(state.runtime.inspect_strategy_package(
+        &tenant_id,&archive,&params
+    ).map_err(AppError::from)?))
 }
 
 async fn strategy_load(
@@ -483,17 +521,13 @@ async fn list_fills(
 async fn list_gaps(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
+    Query(query):Query<std::collections::HashMap<String,String>>,
 ) -> Result<Json<Value>, AppError> {
-    let gaps = state
-        .runtime
-        .ledger
-        .gaps(&tenant_id, &account_id)
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    let items = gaps
-        .into_iter()
-        .filter_map(|row| serde_json::from_str::<Value>(&row).ok())
-        .collect::<Vec<_>>();
-    Ok(Json(json!({ "gaps": items })))
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let gaps=state.runtime.ledger.gaps_for_scope(
+        &tenant_id,&account_id,query.get("scope").map(String::as_str)
+    ).map_err(|error| AppError::bad_request(error.to_string()))?;
+    Ok(Json(json!({ "gaps": gaps })))
 }
 
 async fn put_gap(
@@ -520,17 +554,13 @@ async fn put_gap(
 async fn list_events(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
+    Query(query):Query<std::collections::HashMap<String,String>>,
 ) -> Result<Json<Value>, AppError> {
-    let events = state
-        .runtime
-        .ledger
-        .events(&tenant_id, &account_id)
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    let items = events
-        .into_iter()
-        .map(|(kind, body)| json!({"kind": kind, "body": body}))
-        .collect::<Vec<_>>();
-    Ok(Json(json!({ "events": items })))
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let after=query.get("after").and_then(|v|v.parse::<i64>().ok()).unwrap_or(0);
+    let limit=query.get("limit").and_then(|v|v.parse::<i64>().ok()).unwrap_or(200);
+    Ok(Json(state.runtime.ledger.event_page(&tenant_id,&account_id,after,limit)
+        .map_err(|error|AppError::bad_request(error.to_string()))?))
 }
 
 async fn import_bars(
@@ -538,36 +568,58 @@ async fn import_bars(
     Path(tenant_id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    let product = body
-        .get("product")
-        .and_then(Value::as_str)
-        .unwrap_or("spot");
-    let symbol = body.get("symbol").and_then(Value::as_str).unwrap_or("");
-    let interval = body.get("interval").and_then(Value::as_str).unwrap_or("1m");
-    let rows = body
-        .get("bars")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let bars = rows
-        .iter()
-        .filter_map(|row| {
-            Some(seealpha_ledger::CatalogBar {
-                open_time_ms: row.get("open_time_ms")?.as_i64()?,
-                open: row.get("open")?.as_str()?.to_string(),
-                high: row.get("high")?.as_str()?.to_string(),
-                low: row.get("low")?.as_str()?.to_string(),
-                close: row.get("close")?.as_str()?.to_string(),
-                volume: row.get("volume")?.as_str()?.to_string(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let count = state
-        .runtime
-        .ledger
-        .import_bars(&tenant_id, product, symbol, interval, &bars)
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    Ok(Json(json!({ "imported": count })))
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let product=body["product"].as_str().unwrap_or("spot");
+    let symbol=body["symbol"].as_str().unwrap_or("");
+    let interval=body["interval"].as_str().unwrap_or("1m");
+    let _=seealpha_market::Product::parse(product)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    seealpha_market::check_symbol(symbol)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let step=seealpha_market::interval_ms(interval)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let rows=body["bars"].as_array().ok_or_else(||AppError::bad_request("历史 K 线数组无效。"))?;
+    if rows.is_empty() || rows.len()>5000 {
+        return Err(AppError::bad_request("历史 K 线数量超出范围。"));
+    }
+    let mut evidence=Vec::with_capacity(rows.len());
+    let mut canonical=Vec::with_capacity(rows.len());
+    for row in rows {
+        let text=|field:&str|->Result<&str,AppError>{
+            row[field].as_str().ok_or_else(||AppError::bad_request("K 线 Decimal 字段无效。"))
+        };
+        let start=row["open_time_ms"].as_i64()
+            .ok_or_else(||AppError::bad_request("K 线开始时间无效。"))?;
+        let open=text("open")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let high=text("high")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let low=text("low")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let close=text("close")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let volume=text("volume")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线成交量无效。"))?;
+        if open<=rust_decimal::Decimal::ZERO || high<=rust_decimal::Decimal::ZERO
+            || low<=rust_decimal::Decimal::ZERO || close<=rust_decimal::Decimal::ZERO {
+            return Err(AppError::bad_request("K 线价格必须大于零。"));
+        }
+        let close_ms=start.checked_add(step).and_then(|v|v.checked_sub(1))
+            .ok_or_else(||AppError::bad_request("K 线时间溢出。"))?;
+        canonical.push(seealpha_market::Bar{
+            open_time_ms:start,close_time_ms:close_ms,open,high,low,close,volume,
+        });
+        evidence.push(seealpha_ledger::CatalogBar{
+            open_time_ms:start,open:open.to_string(),high:high.to_string(),
+            low:low.to_string(),close:close.to_string(),volume:volume.to_string(),
+        });
+    }
+    seealpha_market::validate_bars(&canonical,step)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let count=state.runtime.ledger.import_verified_catalog_bars(
+        &tenant_id,product,symbol,interval,&evidence
+    ).map_err(|e|AppError::bad_request(e.to_string()))?;
+    Ok(Json(json!({"imported":count,"verified":true,"exchange_orders":0})))
 }
 
 async fn run_backtest(
@@ -595,6 +647,19 @@ async fn run_backtest(
         .unwrap_or("10")
         .parse()
         .map_err(|_| AppError::bad_request("风险额度无效。"))?;
+    // Legacy API contract: a date-scoped request uses stored, issued strategy
+    // packages and contiguous local catalog evidence, never injected targets.
+    if body.get("bars").is_none() {
+        let start = body.get("start").and_then(Value::as_str)
+            .and_then(parse_time_ms).ok_or_else(||AppError::bad_request("开始时间无效。"))?;
+        let end = body.get("end").and_then(Value::as_str)
+            .and_then(parse_time_ms).ok_or_else(||AppError::bad_request("结束时间无效。"))?;
+        let interval=body.get("interval").and_then(Value::as_str).unwrap_or("1m");
+        let product=body.get("product").and_then(Value::as_str).unwrap_or("futures_um");
+        return Ok(Json(state.runtime.run_issued_catalog_backtest(
+            &tenant_id,&account_id,product,symbol,interval,start,end,starting,quote
+        ).map_err(AppError::from)?));
+    }
     let raw_bars = body
         .get("bars")
         .and_then(Value::as_array)
@@ -762,15 +827,28 @@ fn parse_time_ms(value: &str) -> Option<i64> {
     let mut clock = time.split(':');
     let hour: i64 = clock.next()?.parse().ok()?;
     let minute: i64 = clock.next()?.parse().ok()?;
-    let second: i64 = clock.next()?.split('.').next()?.parse().ok()?;
+    let second_text=clock.next()?;
+    if second_text.contains('.') && !second_text.split('.').nth(1)?
+        .chars().all(|c|c=='0') {return None;}
+    let second: i64 = second_text.split('.').next()?.parse().ok()?;
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second) || clock.next().is_some() {
+        return None;
+    }
     let days = days_from_civil(year, month, day)?;
     Some(((days * 24 + hour) * 60 + minute) * 60 + second).map(|secs| secs * 1000)
 }
 
 fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
+    let leap=year%4==0 && (year%100!=0 || year%400==0);
+    let max_day=match month {
+        1|3|5|7|8|10|12=>31,
+        4|6|9|11=>30,
+        2 if leap=>29,
+        2=>28,
+        _=>return None,
+    };
+    if day<1 || day>max_day {return None;}
     let year = year - i64::from(month <= 2);
     let era = year.div_euclid(400);
     let yoe = year - era * 400;
@@ -1737,4 +1815,110 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CONFLICT, "{again}");
     }
+    #[tokio::test]
+    async fn native_control_and_reader_routes_do_not_start_collectors() {
+        let app=router(state());
+        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make=|path:&str,method:&str,body:&str|{
+            Request::builder().uri(path).method(method)
+                .header("authorization",format!("Bearer {token}"))
+                .header("content-type","application/json")
+                .body(Body::from(body.to_owned())).unwrap()
+        };
+        let (status,_,_)=call(&app,make("/tenants/42","PUT",
+            r#"{"purpose":"development","status":"active"}"#)).await;
+        assert_eq!(status,StatusCode::OK);
+        let (status,_,policy)=call(&app,make(
+            "/tenants/42/data/control/sync","POST",
+            r#"{"policies":[{"product":"spot","symbol":"ETHUSDT","realtime_enabled":true,"base_level":"1m"}]}"#
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(policy["synced"],1);
+        let (status,_,subscription)=call(&app,make(
+            "/tenants/42/data/control/subscriptions","POST","{}"
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(subscription["items"].as_array().unwrap().len(),1);
+        let (status,_,service)=call(&app,make(
+            "/tenants/42/data/control/services","POST","{}"
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(service["active_collectors"],0);
+        let (status,_,_)=call(&app,make(
+            "/tenants/42/accounts/a/strategy-market/subscriptions","POST",
+            r#"{"issuance_id":"unissued","streams":[{"product":"spot","symbol":"ETHUSDT","interval":"1m"}]}"#
+        )).await;
+        assert_eq!(status,StatusCode::CONFLICT);
+        let (status,_,rows)=call(&app,make(
+            "/tenants/42/accounts/a/positions?environment=paper","GET",""
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(rows["positions"].as_array().unwrap().len(),0);
+    }
+
+    #[tokio::test]
+    async fn native_backtest_denies_missing_history_without_fetching_or_synthesizing() {
+        let app=router(state());
+        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make=|path:&str,method:&str,body:&str|{
+            Request::builder().uri(path).method(method)
+                .header("authorization",format!("Bearer {token}"))
+                .header("content-type","application/json")
+                .body(Body::from(body.to_owned())).unwrap()
+        };
+        let _=call(&app,make("/tenants/42","PUT",
+            r#"{"purpose":"development","status":"active"}"#)).await;
+        let (status,_,response)=call(&app,make(
+            "/tenants/42/accounts/a/backtests","POST",
+            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "start":"2026-11-20T00:00:00Z","end":"2026-11-20T00:02:00Z",
+                "starting_balance":"1000","quote_currency":"USDT"}"#
+        )).await;
+        assert_eq!(status,StatusCode::CONFLICT);
+        assert!(response["detail"].as_str().unwrap_or("").contains("历史 K 线"));
+    }
+
+    #[tokio::test]
+    async fn native_catalog_page_and_coverage_are_read_only_and_contiguous() {
+        let app=router(state());
+        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make=|path:&str,method:&str,body:&str|{
+            Request::builder().uri(path).method(method)
+                .header("authorization",format!("Bearer {token}"))
+                .header("content-type","application/json")
+                .body(Body::from(body.to_owned())).unwrap()
+        };
+        let _=call(&app,make("/tenants/42","PUT",
+            r#"{"purpose":"development","status":"active"}"#)).await;
+        let (status,_,imported)=call(&app,make(
+            "/tenants/42/data/catalog/bars","POST",
+            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "bars":[
+                    {"open_time_ms":0,"open":"100","high":"101","low":"99","close":"100","volume":"5"},
+                    {"open_time_ms":60000,"open":"100","high":"102","low":"100","close":"101","volume":"4"}
+                ]}"#
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(imported["imported"],2);
+        let query=r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+            "start_ms":0,"end_ms":120000}"#;
+        let (status,_,coverage)=call(&app,make(
+            "/tenants/42/data/coverage","POST",query
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(coverage["complete"],true);
+        let (status,_,page)=call(&app,make(
+            "/tenants/42/data/page","POST",query
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(page["records"].as_array().unwrap().len(),2);
+        let (status,_,_) = call(&app,make(
+            "/tenants/42/data/catalog/bars","POST",
+            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "bars":[{"open_time_ms":0,"open":"100","high":"101","low":"99",
+                        "close":"99","volume":"5"}]}"#
+        )).await;
+        assert_eq!(status,StatusCode::BAD_REQUEST);
+    }
+
 }

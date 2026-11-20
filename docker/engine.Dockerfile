@@ -4,7 +4,7 @@ FROM rust:1.100-slim AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN cargo build --locked --release -p seealpha-engine
+RUN cargo build --locked --release -p seealpha-engine -p seealpha-binance-market-data-source --bins
 
 FROM python:3.15-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
@@ -13,6 +13,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     ENGINE_STATE=/app/.local/state/engine
 WORKDIR /app
 COPY --from=build /src/target/release/seealpha-engine /usr/local/bin/seealpha-engine
+COPY --from=build /src/target/release/binance-native-source /usr/local/bin/binance-native-source
+COPY --from=build /src/target/release/binance-native-calculation /usr/local/bin/binance-native-calculation
 COPY python/strategy_host ./python/strategy_host
 COPY packages ./packages
 COPY core/engine_contracts.py core/trading_contracts.py ./core/

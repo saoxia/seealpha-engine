@@ -7,6 +7,7 @@ license = "Apache-2.0"
 
 [dependencies]
 seealpha-ledger = { path = "../seealpha-ledger" }
+seealpha-binance-market-data-source = { path = "../binance-source" }
 seealpha-market = { path = "../seealpha-market" }
 seealpha-portfolio = { path = "../seealpha-portfolio" }
 seealpha-backtest = { path = "../seealpha-backtest" }
