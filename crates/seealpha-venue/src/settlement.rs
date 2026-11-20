@@ -56,6 +56,12 @@ pub fn normalize_option_exercises(rows:&Value,symbol:&str)->Result<Vec<Value>,Ve
             .and_then(|v|v.as_str().map(str::to_owned)
                 .or_else(||v.as_u64().map(|n|n.to_string())))
             .filter(|v|!v.is_empty()).ok_or(VenueError::Unconfirmed)?;
+        for field in ["exercisePrice","quantity","amount","fee"] {
+            parse_amount(row.get(field).ok_or(VenueError::Unconfirmed)?)?;
+        }
+        if row.get("createDate").and_then(Value::as_i64).is_none_or(|t|t<=0) {
+            return Err(VenueError::Unconfirmed);
+        }
         if !seen.insert(exercise_id.clone()){return Err(VenueError::Unconfirmed);}
         result.push(json!({"product":"options","symbol":symbol,
             "exercise_id":exercise_id,"source":"binance_signed_exercise_record",
@@ -107,11 +113,16 @@ impl VenueClient {
             ("symbol".into(),symbol.clone()),
             ("startTime".into(),start_ms.to_string()),
             ("endTime".into(),(end_ms-1).to_string()),
-            ("limit".into(),"100".into()),
+            ("limit".into(),"1000".into()),
         ])?;
         let rows=value.as_array().ok_or(VenueError::Unconfirmed)?;
-        if rows.len()>=100{return Err(VenueError::Unconfirmed);}
-        normalize_option_exercises(&value,&symbol)
+        if rows.len()>=1000{return Err(VenueError::Unconfirmed);}
+        let normalized=normalize_option_exercises(&value,&symbol)?;
+        if normalized.iter().any(|r|r["raw"]["createDate"].as_i64()
+            .is_none_or(|t|t<start_ms||t>=end_ms)){
+            return Err(VenueError::Unconfirmed);
+        }
+        Ok(normalized)
     }
 }
 #[cfg(test)]
