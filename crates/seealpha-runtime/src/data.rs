@@ -79,8 +79,22 @@ impl Runtime {
                 return Err(bad("行情配置包含重复交易对。"));
             }
         }
-        // The control-plane journal is independent from the collector journal.
-        // Updating a policy does NOT start or cancel a producer.
+        let previous=self.ledger.policies(tenant_id).map_err(map_ledger)?;
+        if previous!=policies {
+            let mut processes=self.source_processes.lock()
+                .map_err(|_|RuntimeError::Conflict("数据源状态锁不可用。".into()))?;
+            for product in ["spot","futures_um"] {
+                let key=format!("{tenant_id}:{product}");
+                if let Some(child)=processes.get_mut(&key) {
+                    if child.try_wait().map_err(|_|RuntimeError::Conflict("数据源状态未知。".into()))?.is_none() {
+                        return Err(RuntimeError::Conflict(
+                            "原生数据源正在运行，请先停止后再修改持久化采集配置。".into()));
+                    }
+                }
+            }
+        }
+        // The control-plane journal is independent from collector journals.
+        // A policy change cannot start a producer through a read subscription.
         self.ledger.replace_policies(tenant_id,policies).map_err(map_ledger)?;
         Ok(json!({"synced":policies.len(),"last_error":null}))
     }
