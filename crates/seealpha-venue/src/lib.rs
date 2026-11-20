@@ -11,6 +11,9 @@ pub mod settlement;
 pub mod option_trades;
 pub mod conditional;
 pub mod spot_oco;
+pub mod order_guard;
+pub mod user_stream;
+pub mod spot_oto;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -312,6 +315,23 @@ impl VenueClient {
         path: &str,
         pairs: &[(String, String)],
     ) -> Result<Value, VenueError> {
+        // Legacy entrypoints have no auditable admission proof: fail closed.
+        // Only PreparedWrite::dispatch_live may reach signed_wire after a
+        // successfully committed IntentJournal::admit.
+        if method != "GET" {
+            return Err(VenueError::Rejected(
+                "交易命令未通过持久化订单意图登记门禁。".into()));
+        }
+        self.signed_wire(credentials, method, path, pairs)
+    }
+
+    fn signed_wire(
+        &self,
+        credentials: &Credentials,
+        method: &str,
+        path: &str,
+        pairs: &[(String, String)],
+    ) -> Result<Value, VenueError> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_millis() as i64)
@@ -548,7 +568,7 @@ mod tests {
         });
         let port = receiver.recv().unwrap();
         let client = VenueClient::new(format!("http://127.0.0.1:{port}")).unwrap();
-        let order = client
+        let denied = client
             .place_order(
                 &Credentials {
                     api_key: "key-one".into(),
@@ -566,12 +586,8 @@ mod tests {
                     time_in_force: "GTC".into(),
                 },
             )
-            .unwrap();
-        assert_eq!(
-            order["client_order_id"],
-            "SA00000000000000000000000000000001"
-        );
-        assert_eq!(order["status"], "NEW");
+            .unwrap_err();
+        assert!(matches!(denied, VenueError::Rejected(_)));
         let again = client
             .query_order(
                 &Credentials {
