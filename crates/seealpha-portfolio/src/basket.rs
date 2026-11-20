@@ -4,10 +4,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use rust_decimal::Decimal;
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Product { Spot, FuturesUm, Option }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LegId { pub tenant: String, pub account: String, pub product: Product, pub symbol: String }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegTarget { pub member_id: String, pub leg: LegId, pub signed_quantity: Decimal }
