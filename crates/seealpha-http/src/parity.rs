@@ -8,11 +8,17 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc,OnceLock};
+use axum::http::StatusCode;
 use std::collections::HashMap;
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
+        .route("/tenants/{tenant_id}/jobs",post(submit_job))
+        .route("/tenants/{tenant_id}/jobs/{identity}",get(task))
+        .route("/tenants/{tenant_id}/jobs/{identity}/result",get(task_result))
+        .route("/tenants/{tenant_id}/jobs/{identity}/cancel",post(task_cancel))
+        .route("/tenants/{tenant_id}/jobs/{identity}/retry",post(task_retry))
         .route("/tenants/{tenant_id}/accounts/{account_id}/positions",get(positions))
         .route("/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}",get(request))
         .route("/tenants/{tenant_id}/accounts/{account_id}/market/subscriptions",
@@ -134,6 +140,79 @@ async fn source_status(
 )->Result<Json<Value>,AppError>{
     Ok(Json(state.runtime.native_source_status(&tenant,&product).map_err(AppError::from)?))
 }
+async fn submit_job(
+    State(state):State<AppState>,Path(tenant):Path<String>,Json(body):Json<Value>,
+)->Result<(StatusCode,Json<Value>),AppError>{
+    let kind=body["kind"].as_str().ok_or_else(||AppError::bad_request("任务类型无效。"))?;
+    let params=body.get("parameters").ok_or_else(||AppError::bad_request("任务参数无效。"))?;
+    let mut params=params.clone();
+    if let Some(obj)=params.as_object_mut() {
+        for (source,target) in [("start","start_ms"),("end","end_ms")] {
+            if !obj.contains_key(target) {
+                if let Some(value)=params.get(source).and_then(Value::as_str)
+                    && let Some(milliseconds)=parse_time_ms(value) {
+                    obj.insert(target.to_string(),json!(milliseconds));
+                }
+            }
+        }
+    }
+    let job=if kind=="backtest" {
+        let queued=state.runtime.schedule_backtest_job(
+            &tenant,&params,body["idempotency_key"].as_str()
+        ).map_err(AppError::from)?;
+        if queued["status"]=="queued" {
+            spawn_backtest(state.runtime.clone(),tenant,queued["id"].as_str().unwrap_or("").into());
+        }
+        queued
+    } else if kind=="data" {
+        let queued=state.runtime.queue_data_job(&tenant,&params).map_err(AppError::from)?;
+        if queued["status"]=="queued" {
+            spawn_data_job(state.runtime.clone(),tenant,queued["id"].as_str().unwrap_or("").into());
+        }
+        queued
+    } else {return Err(AppError::bad_request("任务类型无效。"));};
+    Ok((StatusCode::ACCEPTED,Json(job)))
+}
+async fn task(
+    State(state):State<AppState>,Path((tenant,id)):Path<(String,String)>,
+)->Result<Json<Value>,AppError>{
+    Ok(Json(state.runtime.data_job(&tenant,&id).map_err(AppError::from)?))
+}
+async fn task_result(
+    State(state):State<AppState>,Path((tenant,id)):Path<(String,String)>,
+)->Result<Json<Value>,AppError>{
+    let task=state.runtime.data_job(&tenant,&id).map_err(AppError::from)?;
+    if task["status"]=="completed" {return Ok(Json(task["result"].clone()));}
+    if task["status"]=="failed" {return Err(AppError::conflict("任务失败，请查看任务记录。"));}
+    Err(AppError::conflict("任务尚未完成，不能读取结果。"))
+}
+async fn task_cancel(
+    State(state):State<AppState>,Path((tenant,id)):Path<(String,String)>,
+)->Result<Json<Value>,AppError>{
+    Ok(Json(state.runtime.cancel_data_job(&tenant,&id).map_err(AppError::from)?))
+}
+async fn task_retry(
+    State(state):State<AppState>,Path((tenant,id)):Path<(String,String)>,
+)->Result<(StatusCode,Json<Value>),AppError>{
+    let before=state.runtime.data_job(&tenant,&id).map_err(AppError::from)?;
+    let status=before["status"].as_str().unwrap_or("");
+    if !matches!(status,"failed"|"interrupted") {
+        return Err(AppError::conflict("任务未处于失败或中断状态。"));
+    }
+    if !state.runtime.ledger.transition_data_job(&tenant,&id,status,"queued",None)
+        .map_err(|e|AppError::bad_request(e.to_string()))? {
+        return Err(AppError::conflict("任务状态发生并发变化。"));
+    }
+    if before["action"]=="backtest"{
+        spawn_backtest(state.runtime.clone(),tenant.clone(),id.clone());
+    }else{
+        spawn_data_job(state.runtime.clone(),tenant.clone(),id.clone());
+    }
+    Ok((StatusCode::ACCEPTED,Json(
+        state.runtime.data_job(&tenant,&id).map_err(AppError::from)?
+    )))
+}
+
 async fn storage(
     State(state):State<AppState>,Path(tenant):Path<String>,
 )->Result<Json<Value>,AppError>{
@@ -204,9 +283,22 @@ async fn data_start(
     }
     Ok(Json(job))
 }
+fn task_gate()->Arc<tokio::sync::Semaphore> {
+    static GATE:OnceLock<Arc<tokio::sync::Semaphore>>=OnceLock::new();
+    GATE.get_or_init(||Arc::new(tokio::sync::Semaphore::new(1))).clone()
+}
 fn spawn_data_job(runtime:Arc<seealpha_runtime::Runtime>,tenant:String,id:String) {
     tokio::spawn(async move {
+        let Ok(_permit)=task_gate().acquire_owned().await else {return;};
         let _=runtime.execute_data_job(&tenant,&id).await;
+    });
+}
+fn spawn_backtest(runtime:Arc<seealpha_runtime::Runtime>,tenant:String,id:String){
+    tokio::spawn(async move {
+        let Ok(_permit)=task_gate().acquire_owned().await else {return;};
+        let _=tokio::task::spawn_blocking(move||{
+            let _=runtime.execute_backtest_job(&tenant,&id);
+        }).await;
     });
 }
 async fn data_cancel(
