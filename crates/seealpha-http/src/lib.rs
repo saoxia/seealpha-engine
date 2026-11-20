@@ -736,36 +736,70 @@ fn decimal_field(
         .map_err(|_| AppError::bad_request("数值无效。"))
 }
 
+fn window_count(body: &Value) -> Result<usize, AppError> {
+    let start = body.get("start").and_then(Value::as_str).unwrap_or("");
+    let end = body.get("end").and_then(Value::as_str).unwrap_or("");
+    let interval = body.get("interval").and_then(Value::as_str).unwrap_or("1m");
+    let start_ms = parse_time_ms(start).ok_or_else(|| AppError::bad_request("开始时间无效。"))?;
+    let end_ms = parse_time_ms(end).ok_or_else(|| AppError::bad_request("结束时间无效。"))?;
+    seealpha_backtest::matching::window_bars(start_ms, end_ms, interval)
+        .map_err(|error| AppError::conflict(error.to_owned()))
+}
+
+fn parse_time_ms(value: &str) -> Option<i64> {
+    if let Ok(millis) = value.parse::<i64>() {
+        return Some(millis);
+    }
+    let text = value
+        .trim()
+        .trim_end_matches('Z')
+        .trim_end_matches("+00:00");
+    let (date, time) = text.split_once('T')?;
+    let mut dates = date.split('-');
+    let year: i64 = dates.next()?.parse().ok()?;
+    let month: i64 = dates.next()?.parse().ok()?;
+    let day: i64 = dates.next()?.parse().ok()?;
+    let mut clock = time.split(':');
+    let hour: i64 = clock.next()?.parse().ok()?;
+    let minute: i64 = clock.next()?.parse().ok()?;
+    let second: i64 = clock.next()?.split('.').next()?.parse().ok()?;
+    let days = days_from_civil(year, month, day)?;
+    Some(((days * 24 + hour) * 60 + minute) * 60 + second).map(|secs| secs * 1000)
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let mp = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146097 + doe - 719468)
+}
+
 async fn run_carry(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    let rows = body
-        .get("bars")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let bars = rows
-        .iter()
-        .filter_map(|row| {
-            Some(seealpha_backtest::matching::CarryBar {
-                spot: row.get("spot")?.as_str()?.parse().ok()?,
-                perp: row.get("perp")?.as_str()?.parse().ok()?,
-                funding_rate: row.get("funding_rate")?.as_str()?.parse().ok()?,
-            })
-        })
-        .collect::<Vec<_>>();
+    let symbol = body
+        .get("symbol")
+        .and_then(Value::as_str)
+        .unwrap_or("ETHUSDT");
     Ok(Json(
         state
             .runtime
-            .run_carry_backtest(
+            .run_carry_window(
                 &tenant_id,
                 &account_id,
-                &bars,
-                decimal_field(&body, "spot_qty", "1")?,
-                decimal_field(&body, "perp_qty", "-1")?,
-                decimal_field(&body, "cash", "10000")?,
+                symbol,
+                window_count(&body)?,
+                decimal_field(&body, "starting_spot_balance", "1000")?,
+                decimal_field(&body, "starting_perpetual_balance", "1000")?,
+                decimal_field(&body, "max_gross_notional", "1000")?,
             )
             .map_err(AppError::from)?,
     ))
@@ -778,7 +812,12 @@ async fn latest_carry(
     Ok(Json(
         state
             .runtime
-            .latest_kind(&tenant_id, &account_id, "carry", "还没有资金费组合回测结果")
+            .latest_kind(
+                &tenant_id,
+                &account_id,
+                "carry",
+                "还没有资金费组合回测结果。",
+            )
             .map_err(AppError::from)?,
     ))
 }
@@ -791,17 +830,13 @@ async fn run_protected(
     Ok(Json(
         state
             .runtime
-            .run_protected_backtest(
+            .run_protected_window(
                 &tenant_id,
                 &account_id,
-                decimal_field(&body, "final_spot", "100")?,
-                decimal_field(&body, "strike", "100")?,
-                decimal_field(&body, "premium", "1")?,
-                decimal_field(&body, "multiplier", "1")?,
-                decimal_field(&body, "perp_qty", "-1")?,
-                decimal_field(&body, "perp_entry", "100")?,
-                decimal_field(&body, "perp_exit", "100")?,
-                decimal_field(&body, "cash", "10000")?,
+                window_count(&body)?,
+                decimal_field(&body, "starting_options_balance", "1000")?,
+                decimal_field(&body, "starting_perpetual_balance", "1000")?,
+                decimal_field(&body, "max_gross_notional", "1000")?,
             )
             .map_err(AppError::from)?,
     ))
@@ -818,7 +853,7 @@ async fn latest_protected(
                 &tenant_id,
                 &account_id,
                 "protected_option",
-                "还没有期权保护组合回测结果",
+                "还没有期权保护组合回测结果。",
             )
             .map_err(AppError::from)?,
     ))
@@ -1480,5 +1515,75 @@ mod tests {
         let rendered = body.to_string();
         assert!(!rendered.contains("secret-one"));
         assert!(rendered.contains("交易网关未配置"));
+    }
+
+    #[tokio::test]
+    async fn carry_and_protected_latest_return_the_saved_result() {
+        let app = router(state());
+        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
+        let headers = format!("Bearer {token}");
+        let (status, _, _) = call(
+            &app,
+            Request::builder()
+                .method("PUT")
+                .uri("/tenants/42")
+                .header("authorization", &headers)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"purpose":"development","status":"active"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body = r#"{"start":"0","end":"1080000","interval":"1m","starting_spot_balance":"1000","starting_perpetual_balance":"1000","max_gross_notional":"1000"}"#;
+        let (status, _, carry) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/tenants/42/accounts/desk/carry-backtests")
+                .header("authorization", &headers)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(carry["mode"], "native_dual_venue_development_only");
+        assert_eq!(carry["bar_count"], 18);
+        let (status, _, latest) = call(
+            &app,
+            Request::builder()
+                .uri("/tenants/42/accounts/desk/carry-backtests/latest")
+                .header("authorization", &headers)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(latest, carry);
+        let protected = r#"{"start":"0","end":"240000","interval":"1m","starting_options_balance":"1000","starting_perpetual_balance":"1000","max_gross_notional":"1000"}"#;
+        let (status, _, option) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/tenants/42/accounts/desk/protected-option-backtests")
+                .header("authorization", &headers)
+                .header("content-type", "application/json")
+                .body(Body::from(protected))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(option["fills"].as_array().unwrap().len(), 6);
+        let (status, _, latest_option) = call(
+            &app,
+            Request::builder()
+                .uri("/tenants/42/accounts/desk/protected-option-backtests/latest")
+                .header("authorization", &headers)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(latest_option, option);
     }
 }
