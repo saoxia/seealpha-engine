@@ -81,7 +81,9 @@ jobs:
       - name: Release build
         run: cargo build --workspace --locked --release
       - name: Strategy package tests
-        run: python3 -m unittest discover -s tests -t . -p '*_test.py' -v
+        run: |
+          python3 -m unittest discover -s tests/core -t . -p '*_test.py' -v
+          python3 -m unittest discover -s tests/strategy -t . -p '*_test.py' -v
 
   docker:
     needs: docker-scope
