@@ -175,10 +175,10 @@ pub fn parse_recent_option_trades(
             quantity,
             aggressor_side: side as i8,
         };
-        if let Some(previous) = unique.insert(id, trade.clone()) {
-            if previous != trade {
-                return Err(MarketError::Trade);
-            }
+        if let Some(previous) = unique.insert(id, trade.clone())
+            && previous != trade
+        {
+            return Err(MarketError::Trade);
         }
     }
     let suspected_id_gap = unique
