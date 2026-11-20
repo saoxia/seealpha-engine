@@ -9,7 +9,7 @@ TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
 
 def test_tenant_data_reads_reject_unauthorized_and_other_tenant(tmp_path, monkeypatch):
-    from engine import data_queries
+    from engine.api import data_queries
 
     root = tmp_path / "data"
     root.mkdir()

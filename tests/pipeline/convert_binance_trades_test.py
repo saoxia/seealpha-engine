@@ -377,7 +377,7 @@ def test_new_period_aggregates_existing_bars_without_rewriting_ticks(
     incremental_dataset,
     monkeypatch,
 ):
-    from engine.pipeline import convert_binance_trades as converter
+    from engine.market_data.repair import convert_binance_trades as converter
 
     synced, instrument, catalog, kwargs, _ = incremental_dataset
     root = Path(catalog.path)
@@ -476,7 +476,7 @@ def test_prepare_only_materializes_requested_period(incremental_dataset, monkeyp
 
     from engine.market_data.repair.config import load_settings
     from engine.market_data.repair.models import DataRequest
-    from engine.pipeline import prepare_data as preparation
+    from engine.market_data.repair import prepare_data as preparation
 
     synced, instrument, catalog, kwargs, _ = incremental_dataset
     settings = replace(

@@ -10,7 +10,7 @@ from engine.market_data.repair.sync_binance_file import (
     normalize_source,
     parse_checksum,
 )
-from engine.pipeline import sync_binance_file
+from engine.market_data.repair import sync_binance_file
 
 SOURCE_PATH = "data/spot/monthly/klines/ETHUSDT/15m/ETHUSDT-15m-2026-07.zip"
 SOURCE_URL = f"https://data.binance.vision/{SOURCE_PATH}"

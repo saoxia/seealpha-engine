@@ -98,7 +98,7 @@ def test_rejects_more_than_bounded_group_without_network(monkeypatch):
 
 
 def test_batch_fans_out_two_pairs_without_opening_per_symbol_sockets(tmp_path, monkeypatch):
-    from engine.feed import futures_service as module
+    from engine.market_data.collection import futures_service as module
 
     async def scenario():
         root = tmp_path / "data/market_data/binance_um_1m/managed"

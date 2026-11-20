@@ -13,7 +13,7 @@ from engine.market_data.repair.models import (
     normalize_symbol,
 )
 from engine.market_data.repair.sync_binance_batch import archive_path, plan_daily_archives
-from engine.pipeline import sync_binance_batch
+from engine.market_data.repair import sync_binance_batch
 
 
 def test_default_settings_define_three_trade_level_usdt_perpetuals() -> None:

@@ -215,7 +215,7 @@ def feature_dataset(tmp_path, monkeypatch):
 def test_parquet_roundtrip_projection_idempotence_and_catalog_custom_data(
     feature_dataset, monkeypatch
 ):
-    from engine.pipeline import bar_features
+    from engine.market_data.calculation import bar_features
 
     catalog, _, archives, kwargs = feature_dataset
     prepare_bar_features(archives, catalog, bar_intervals=("1m",), **kwargs)

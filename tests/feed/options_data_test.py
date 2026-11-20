@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from engine.feed import options_service
+from engine.market_data.collection import options_service
 
 
 def test_stream_flush_checkpoint_reconnect_and_expiry(tmp_path, monkeypatch):
@@ -112,7 +112,7 @@ def test_batch_collector_applies_single_contract_stop_and_keeps_shared_transport
 
 
 def test_managed_batch_entry_point_validates_mount_without_single_contract_args(tmp_path, monkeypatch):
-    from engine.feed import managed
+    from engine.market_data.collection import managed
 
     data = tmp_path / "data"
     root = data / "managed/.options"

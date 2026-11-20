@@ -2,7 +2,7 @@ import asyncio
 
 from nautilus_trader.adapters.binance import BinanceEnvironment, BinanceProductType
 
-from engine.pipeline import prepare_data
+from engine.market_data.repair import prepare_data
 from nautilus_support import TestInstrumentProvider
 
 
