@@ -96,7 +96,7 @@ pub fn verify_local_archive(entry:&ArchiveDay,root:&Path)->Result<(),String>{
         return Err("archive root symlink".into());
     }
     for component in relative.strip_prefix(root).map_err(|_|"archive escaped root")?.components(){
-        cursor.push(component);
+        cursor.push(component.as_os_str());
         if !fs::symlink_metadata(&cursor).map_err(|e|e.to_string())?.is_dir(){
             return Err("archive path contains non-directory".into());
         }
@@ -142,7 +142,7 @@ fn safe_directory(root:&Path, parent:&Path) -> Result<(),String> {
         return Err("archive root is a symlink".into());
     }
     for part in relative.components() {
-        cursor.push(part);
+        cursor.push(part.as_os_str());
         match fs::symlink_metadata(&cursor) {
             Ok(meta) if meta.file_type().is_dir()=>{},
             Ok(_)=>return Err("archive path contains symlink/non-directory".into()),
@@ -209,7 +209,7 @@ pub async fn sync(client:&reqwest::Client, entry:&ArchiveDay, root:&Path, refres
         .map_err(|e|e.to_string())?;
     lock.lock_exclusive().map_err(|e|e.to_string())?;
     let result=sync_locked(client,entry,&target,refresh).await;
-    let _=lock.unlock();
+    let _=FileExt::unlock(&lock);
     result
 }
 
