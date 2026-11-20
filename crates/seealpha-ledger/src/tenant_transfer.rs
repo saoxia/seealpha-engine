@@ -162,7 +162,7 @@ impl Ledger {
             for item in entries {
                 let obj = item.as_object()
                     .ok_or_else(||invalid("exported row must be an object"))?;
-                if obj["tenant_id"].as_str()!=Some(origin) {
+                if obj.get("tenant_id").and_then(Value::as_str)!=Some(origin) {
                     return Err(invalid("mixed-source tenant export rejected"));
                 }
                 if obj.keys().any(|key| !names.contains(key)) {
