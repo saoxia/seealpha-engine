@@ -18,7 +18,7 @@ fn digest(bytes:&[u8])->String {
 }
 fn scope_ok(scope:&str)->bool {
     !scope.is_empty()&&scope.len()<=128&&scope.bytes().all(|b|
-        b.is_ascii_alphanumeric()||b==b'_'||b==b'-'||b==b':')
+        b.is_ascii_alphanumeric()||b==b'_'||b==b'-'||b==b':'||b==b'.'||b==b'@'||b==b'/')
 }
 pub fn encode_coordinator(scope:&str,state:&Coordinator)->Result<EncodedCoordinator,CoordinatorError>{
     if !scope_ok(scope){return Err(CoordinatorError::Invalid);}
