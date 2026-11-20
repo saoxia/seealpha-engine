@@ -272,9 +272,10 @@ impl VenueClient {
             .ok_or(VenueError::Unconfirmed)?))
     }
 
-    /// Exchange-authored fills for one verified order. No signed POST occurs.
-    /// A full page is not considered complete until cursor-based pagination
-    /// exists; unresolved venue history fails closed.
+    /// Verified exchange trade IDs with bounded fromId pagination. The caller
+    /// must ALSO compare cumulative trade quantity with a signed GET order.
+    /// A saturated final page, repeated ID, malformed cursor or expired
+    /// exchange history fails closed; only signed GET requests are sent.
     pub fn query_order_trades(
         &self, credentials:&Credentials,product:Product,
         symbol:&str,order_id:&str,
@@ -283,8 +284,7 @@ impl VenueClient {
         if product==Product::Option {
             return self.option_order_trades(credentials,symbol,order_id);
         }
-        if order_id.is_empty() ||
-            !order_id.bytes().all(|b|b.is_ascii_digit()) {
+        if order_id.is_empty() || !order_id.bytes().all(|b|b.is_ascii_digit()){
             return Err(VenueError::Unconfirmed);
         }
         let path=match product{
@@ -292,13 +292,39 @@ impl VenueClient {
             Product::FuturesUm=>"/fapi/v1/userTrades",
             Product::Option=>return Err(VenueError::Unconfirmed),
         };
-        let canonical=venue_symbol(symbol)?;
-        let value=self.signed(credentials,"GET",path,&[
-            ("symbol".into(),canonical.clone()),
-            ("orderId".into(),order_id.to_owned()),
-            ("limit".into(),"1000".into())
-        ])?;
-        trades::normalize_order_trades(product,&canonical,order_id,&value)
+        let symbol=venue_symbol(symbol)?;
+        let mut next_id=None::<u64>;
+        let mut latest=None::<u64>;
+        let mut out=Vec::new();
+        for _ in 0..32 {
+            let mut params=vec![
+                ("symbol".into(),symbol.clone()),
+                ("orderId".into(),order_id.to_owned()),
+                ("limit".into(),"1000".into()),
+            ];
+            if let Some(cursor)=next_id {
+                params.push(("fromId".into(),cursor.to_string()));
+            }
+            let raw=self.signed(credentials,"GET",path,&params)?;
+            let size=raw.as_array().ok_or(VenueError::Unconfirmed)?.len();
+            let page=trades::normalize_order_trades_page(
+                product,&symbol,order_id,&raw,true)?;
+            for row in page {
+                let id=row["venue_trade_id"].as_str()
+                    .ok_or(VenueError::Unconfirmed)?
+                    .parse::<u64>().map_err(|_|VenueError::Unconfirmed)?;
+                if latest.is_some_and(|previous|id<=previous) ||
+                   next_id.is_some_and(|cursor|id<cursor){
+                    return Err(VenueError::Unconfirmed);
+                }
+                latest=Some(id);
+                out.push(row);
+            }
+            if size<1000{return Ok(out);}
+            next_id=Some(latest.ok_or(VenueError::Unconfirmed)?
+                .checked_add(1).ok_or(VenueError::Unconfirmed)?);
+        }
+        Err(VenueError::Unconfirmed)
     }
 
     /// Signed account read. The returned JSON keeps balances and positions only.
