@@ -14,6 +14,8 @@ use std::collections::HashMap;
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
+        .route("/tenants/{tenant_id}/export",get(export_tenant))
+        .route("/tenants/{tenant_id}/import",post(import_tenant))
         .route("/tenants/{tenant_id}/jobs",post(submit_job))
         .route("/tenants/{tenant_id}/jobs/{identity}",get(task))
         .route("/tenants/{tenant_id}/jobs/{identity}/result",get(task_result))
@@ -58,6 +60,44 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/data/catalog/events",post(native_events))
         .route("/tenants/{tenant_id}/data/catalog/inventory",post(native_inventory))
         .route("/tenants/{tenant_id}/data/catalog/bars",get(catalog_bars))
+}
+
+// Legacy Python v1 tenant backup is intentionally lossless-or-error:
+// Ledger rejects exports containing Rust-only evidence that v1 cannot encode.
+async fn export_tenant(
+    State(state): State<AppState>,
+    Path(tenant): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    state.runtime.require_active(&tenant).map_err(AppError::from)?;
+    let value = state.runtime.ledger.export_tenant(&tenant)
+        .map_err(|error| AppError::conflict(error.to_string()))?;
+    Ok(Json(value))
+}
+
+#[derive(Deserialize)]
+struct TenantImportBody {
+    purpose: String,
+    payload: Value,
+}
+
+// Import is create-only and transactional. Existing tenant evidence is never
+// replaced, and the legacy envelope is validated by Ledger before insertion.
+async fn import_tenant(
+    State(state): State<AppState>,
+    Path(tenant): Path<String>,
+    Json(body): Json<TenantImportBody>,
+) -> Result<Json<Value>, AppError> {
+    if !matches!(body.purpose.as_str(), "production" | "development") {
+        return Err(AppError::unprocessable("租户用途无效。"));
+    }
+    let result = state.runtime.ledger.import_tenant_new(
+        &tenant, &body.purpose, &body.payload,
+    ).map_err(|error| AppError::conflict(error.to_string()))?;
+    Ok(Json(json!({
+        "tenant_id": result.tenant_id,
+        "purpose": result.purpose,
+        "status": result.status,
+    })))
 }
 
 #[derive(Deserialize)]
