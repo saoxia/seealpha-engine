@@ -2,7 +2,7 @@
 mod accounts;
 mod basket;
 mod portfolio;
-pub use portfolio::{NativePortfolioState,NativePortfolioResult};
+pub use portfolio::{NativePortfolioState,NativePortfolioResult,NativePortfolioEvent};
 mod config;
 mod data;
 mod evidence;
