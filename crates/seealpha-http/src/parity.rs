@@ -149,7 +149,7 @@ async fn submit_job(
     if let Some(obj)=params.as_object_mut() {
         for (source,target) in [("start","start_ms"),("end","end_ms")] {
             if !obj.contains_key(target) {
-                if let Some(value)=params.get(source).and_then(Value::as_str)
+                if let Some(value)=obj.get(source).and_then(Value::as_str)
                     && let Some(milliseconds)=parse_time_ms(value) {
                     obj.insert(target.to_string(),json!(milliseconds));
                 }
