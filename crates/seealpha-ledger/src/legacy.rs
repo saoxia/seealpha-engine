@@ -89,14 +89,12 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), LedgerError>
                 .map_err(sql)?;
         }
     }
+    let migrated = !pending.is_empty();
     for table in pending {
         legacy_copy(&tx, table)?;
         tx.execute_batch(&format!("DROP TABLE {table}_legacy")).map_err(sql)?;
     }
-    if tx.query_row(
-        "SELECT 1 FROM orders WHERE tenant_id='1' LIMIT 1",
-        [], |_| Ok(()),
-    ).optional().map_err(sql)?.is_some() {
+    if migrated {
         tx.execute(
             "INSERT OR IGNORE INTO tenants(tenant_id,purpose,status) VALUES('1','production','active')",
             [],
