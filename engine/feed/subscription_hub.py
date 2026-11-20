@@ -167,6 +167,13 @@ class SharedMarketData:
                 del self._refs[key]
                 del self._history[key]
 
+    def consumer_streams(self, tenant_id, consumer_id):
+        """Return only the streams declared by this individual strategy."""
+        request = self._subscribers.get((tenant_id, consumer_id))
+        if request is None:
+            raise MarketDataHubError("策略未授权订阅市场数据")
+        return request[0]
+
     def invalidate_stream(self, stream):
         """Discard stale history after collector degradation or data revision."""
         history = self._history.get(stream)
