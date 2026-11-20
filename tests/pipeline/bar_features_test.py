@@ -181,8 +181,7 @@ def test_multi_period_aggregation_matches_direct_trade_sums(tmp_path, intervals,
 
 
 @pytest.fixture
-def feature_dataset(tmp_path, monkeypatch):
-    monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", "off")
+def feature_dataset(tmp_path):
     catalog = ParquetDataCatalog(str(tmp_path / "catalog"))
     instrument = TestInstrumentProvider.ethusdt_perp_binance()
     kwargs = {"raw_dir": tmp_path / "raw", "state_dir": tmp_path / "state"}
