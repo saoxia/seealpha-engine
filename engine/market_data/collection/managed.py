@@ -40,12 +40,14 @@ def main():
         args.root.mkdir(parents=True, exist_ok=True)
         with (args.root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            from engine.market_data.collection.futures_service import serve_futures_batch
+            if args.spot_config:
+                from engine.market_data.sources.binance.spot.collection import serve_batch
+            else:
+                from engine.market_data.sources.binance.perpetual.collection import serve_batch
             try:
-                asyncio.run(serve_futures_batch(
+                asyncio.run(serve_batch(
                     args.spot_config or args.futures_config, args.root.parent, args.catalog,
                     project=args.data_root.parent,
-                    product="spot" if args.spot_config else "futures_um",
                 ))
             except KeyboardInterrupt:
                 pass
@@ -58,7 +60,7 @@ def main():
         args.root.mkdir(parents=True, exist_ok=True)
         with (args.root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            from engine.market_data.collection.options_service import serve_batch
+            from engine.market_data.sources.binance.options.collection import serve_batch
             try:
                 asyncio.run(serve_batch(args.options_config, args.root.parent, args.catalog))
             except KeyboardInterrupt:
