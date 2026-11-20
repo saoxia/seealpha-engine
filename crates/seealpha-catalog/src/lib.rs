@@ -4,6 +4,7 @@ mod model;
 mod reader;
 mod cleanup;
 mod writer;
+mod records;
 
 use std::path::PathBuf;
 use thiserror::Error;
