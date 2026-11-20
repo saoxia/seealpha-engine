@@ -111,6 +111,7 @@ class ManagedJournalBridge:
         self._lock = RLock()
         self._ready = set()
         self._latest = {}
+        self._warmed_bars = {}
         self._errors = {}
 
     @staticmethod
@@ -174,6 +175,7 @@ class ManagedJournalBridge:
         self.service.invalidate_live_stream(stream)
         self._ready.discard(stream)
         self._latest.pop(stream, None)
+        self._warmed_bars.pop(stream, None)
         self._errors[stream] = reason
 
     def poll(self):
@@ -214,6 +216,11 @@ class ManagedJournalBridge:
                     if len(tail) < lookback:
                         raise MarketDataHubError("策略历史预热K线不足")
                     latest = self._latest.get(stream)
+                    if latest is not None and lookback > self._warmed_bars.get(stream, 0):
+                        # A new strategy may need a longer history than the
+                        # previously cached one-bar feed; replay the entire tail.
+                        self._reset(stream, "expanding warmup")
+                        latest = None
                     if latest is not None and any(
                         bar.ts_ns == latest.ts_ns and bar != latest for bar in tail
                     ):
@@ -232,6 +239,7 @@ class ManagedJournalBridge:
                             self.service.accept_live_closed_bar(stream, bar)
                             latest = bar
                     self._latest[stream] = latest
+                    self._warmed_bars[stream] = lookback
                     self._ready.add(stream)
                     self._errors.pop(stream, None)
                 except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
