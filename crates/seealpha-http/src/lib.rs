@@ -549,36 +549,58 @@ async fn import_bars(
     Path(tenant_id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    let product = body
-        .get("product")
-        .and_then(Value::as_str)
-        .unwrap_or("spot");
-    let symbol = body.get("symbol").and_then(Value::as_str).unwrap_or("");
-    let interval = body.get("interval").and_then(Value::as_str).unwrap_or("1m");
-    let rows = body
-        .get("bars")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let bars = rows
-        .iter()
-        .filter_map(|row| {
-            Some(seealpha_ledger::CatalogBar {
-                open_time_ms: row.get("open_time_ms")?.as_i64()?,
-                open: row.get("open")?.as_str()?.to_string(),
-                high: row.get("high")?.as_str()?.to_string(),
-                low: row.get("low")?.as_str()?.to_string(),
-                close: row.get("close")?.as_str()?.to_string(),
-                volume: row.get("volume")?.as_str()?.to_string(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let count = state
-        .runtime
-        .ledger
-        .import_bars(&tenant_id, product, symbol, interval, &bars)
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    Ok(Json(json!({ "imported": count })))
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let product=body["product"].as_str().unwrap_or("spot");
+    let symbol=body["symbol"].as_str().unwrap_or("");
+    let interval=body["interval"].as_str().unwrap_or("1m");
+    let _=seealpha_market::Product::parse(product)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    seealpha_market::check_symbol(symbol)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let step=seealpha_market::interval_ms(interval)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let rows=body["bars"].as_array().ok_or_else(||AppError::bad_request("历史 K 线数组无效。"))?;
+    if rows.is_empty() || rows.len()>5000 {
+        return Err(AppError::bad_request("历史 K 线数量超出范围。"));
+    }
+    let mut evidence=Vec::with_capacity(rows.len());
+    let mut canonical=Vec::with_capacity(rows.len());
+    for row in rows {
+        let text=|field:&str|->Result<&str,AppError>{
+            row[field].as_str().ok_or_else(||AppError::bad_request("K 线 Decimal 字段无效。"))
+        };
+        let start=row["open_time_ms"].as_i64()
+            .ok_or_else(||AppError::bad_request("K 线开始时间无效。"))?;
+        let open=text("open")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let high=text("high")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let low=text("low")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let close=text("close")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线价格无效。"))?;
+        let volume=text("volume")?.parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("K 线成交量无效。"))?;
+        if open<=rust_decimal::Decimal::ZERO || high<=rust_decimal::Decimal::ZERO
+            || low<=rust_decimal::Decimal::ZERO || close<=rust_decimal::Decimal::ZERO {
+            return Err(AppError::bad_request("K 线价格必须大于零。"));
+        }
+        let close_ms=start.checked_add(step).and_then(|v|v.checked_sub(1))
+            .ok_or_else(||AppError::bad_request("K 线时间溢出。"))?;
+        canonical.push(seealpha_market::Bar{
+            open_time_ms:start,close_time_ms:close_ms,open,high,low,close,volume,
+        });
+        evidence.push(seealpha_ledger::CatalogBar{
+            open_time_ms:start,open:open.to_string(),high:high.to_string(),
+            low:low.to_string(),close:close.to_string(),volume:volume.to_string(),
+        });
+    }
+    seealpha_market::validate_bars(&canonical,step)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let count=state.runtime.ledger.import_verified_catalog_bars(
+        &tenant_id,product,symbol,interval,&evidence
+    ).map_err(|e|AppError::bad_request(e.to_string()))?;
+    Ok(Json(json!({"imported":count,"verified":true,"exchange_orders":0})))
 }
 
 async fn run_backtest(
