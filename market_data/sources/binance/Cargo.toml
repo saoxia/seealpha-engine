@@ -13,8 +13,8 @@ tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 fs2 = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 rust_decimal = "1"
-seealpha-market = { path = "../seealpha-market" }
-seealpha-catalog = { path = "../seealpha-catalog" }
+seealpha-market = { path = "../../market" }
+seealpha-catalog = { path = "../../catalog" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 
 [lib]

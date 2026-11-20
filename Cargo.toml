@@ -1,22 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/quality",
-    "crates/data-converter",
-    "crates/seealpha-catalog",
-    "crates/binance-source",
-    "crates/seealpha-market",
-    "crates/seealpha-feed",
-    "crates/seealpha-portfolio",
-    "crates/seealpha-ledger",
-    "crates/seealpha-research",
-    "crates/seealpha-strategy",
-    "crates/seealpha-venue",
-    "crates/seealpha-backtest",
-    "crates/seealpha-runtime",
-    "crates/seealpha-http",
-    "crates/seealpha-engine",
-    "crates/seealpha-bench",
+    "market_data/quality",
+    "market_data/converter",
+    "market_data/catalog",
+    "market_data/sources/binance",
+    "market_data/market",
+    "market_data/feed",
+    "portfolio/core",
+    "accounting/ledger",
+    "application/research",
+    "alpha/strategy",
+    "connectivity/venue",
+    "backtest/core",
+    "application/runtime",
+    "interfaces/api/http",
+    "apps/trading_engine",
+    "benchmarks/rust",
 ]
 # These crates are preserved only for the opt-in legacy Python runtime.
 # Do not include them in the native Rust workspace.

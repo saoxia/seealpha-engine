@@ -6,7 +6,7 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 
 ## 目录
 
-- `crates/`：Cargo workspace。行情、流水线、组合净额、账本、策略宿主、研究授权和 HTTP 各自一箱。
+- Rust Cargo Workspace：交易业务直接位于 `market_data/`、`alpha/`、`portfolio/`、`accounting/`、`connectivity/` 和 `backtest/`；应用编排位于 `application/`，HTTP/MCP 接口位于 `interfaces/`，二进制入口位于 `apps/`。
 - `python/strategy_host/`：一次请求一个进程，加载策略包并收回 `publish` 的目标持仓。
 - `packages/`：示例策略。`ema_crossover` 只公布目标，不提交订单。
 - `core/`：与 Platform 共享的契约模块。
@@ -28,7 +28,7 @@ Python Engine 仍作为独立兼容运行时保留。详细实现边界、未迁
 
 ## Rust 数据底座：对齐 Python Nautilus v2 Catalog
 
-已增加 `crates/seealpha-catalog`，以原 Python `core/market/instruments.py`、`engine/market_data/storage/catalog.py`、`HistoricalMarketData` 的语义，直接从现有 Nautilus v2 Parquet 读取多类型历史数据；历史回测、K 线覆盖率与分页入口优先使用该目录，不再要求把已有历史数据复制到 Engine SQLite。
+已增加 `market_data/catalog`，以原 Python `core/market/instruments.py`、`engine/market_data/storage/catalog.py`、`HistoricalMarketData` 的语义，直接从现有 Nautilus v2 Parquet 读取多类型历史数据；历史回测、K 线覆盖率与分页入口优先使用该目录，不再要求把已有历史数据复制到 Engine SQLite。
 
 Rust 新增了 Parquet Bar 原子写入、源进程独立的交易所时钟、计算 Journal→Parquet 显式发布任务及全日删除预览。**现阶段数据源仍不宣称 READY**；Tick/L2/Greeks 的完整写入、交易所历史重叠修复、与 Nautilus 真实文件的互操作验收仍在迁移。如何调用、目录和质量约束详见 [Rust 数据底座迁移记录](docs/RUST_DATA_FOUNDATION_20261121.md)。
 

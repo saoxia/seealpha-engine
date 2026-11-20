@@ -10,8 +10,8 @@ name = "seealpha-engine"
 path = "src/main.rs"
 
 [dependencies]
-seealpha-http = { path = "../seealpha-http" }
-seealpha-market = { path = "../seealpha-market" }
-seealpha-runtime = { path = "../seealpha-runtime" }
+seealpha-http = { path = "../../interfaces/api/http" }
+seealpha-market = { path = "../../market_data/market" }
+seealpha-runtime = { path = "../../application/runtime" }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

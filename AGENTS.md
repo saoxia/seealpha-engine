@@ -26,4 +26,4 @@
 
 ## 领域目录
 
-运行时代码在 `crates/`。`python/strategy_host/` 只负责加载策略包。`packages/` 是示例策略。`core/engine_contracts.py` 与 `core/trading_contracts.py` 仍是 v2 契约，必须与 Platform 逐字节一致。实盘签名下单已关闭：对应 HTTP 路由返回 409，不保存密钥。模拟成交只写入 `venue=paper`。
+Rust 代码按业务流程组织在根目录：`market_data/`、`alpha/`、`portfolio/`、`accounting/`、`connectivity/`、`backtest/`，应用编排在 `application/`，外部协议在 `interfaces/`，可执行程序在 `apps/`。`python/strategy_host/` 只负责加载策略包。`packages/` 是示例策略。`core/engine_contracts.py` 与 `core/trading_contracts.py` 仍是 v2 契约，必须与 Platform 逐字节一致。实盘签名下单已关闭：对应 HTTP 路由返回 409，不保存密钥。模拟成交只写入 `venue=paper`。
