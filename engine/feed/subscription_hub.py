@@ -167,6 +167,12 @@ class SharedMarketData:
                 del self._refs[key]
                 del self._history[key]
 
+    def invalidate_stream(self, stream):
+        """Discard stale history after collector degradation or data revision."""
+        history = self._history.get(stream)
+        if history is not None:
+            history.clear()
+
     @property
     def requirements(self):
         """Unique upstream keys and maximum requested warm-up length."""
