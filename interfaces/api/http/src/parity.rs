@@ -333,12 +333,11 @@ async fn submit_job(
     let mut params = params.clone();
     if let Some(obj) = params.as_object_mut() {
         for (source, target) in [("start", "start_ms"), ("end", "end_ms")] {
-            if !obj.contains_key(target) {
-                if let Some(value) = obj.get(source).and_then(Value::as_str)
-                    && let Some(milliseconds) = parse_time_ms(value)
-                {
-                    obj.insert(target.to_string(), json!(milliseconds));
-                }
+            if !obj.contains_key(target)
+                && let Some(value) = obj.get(source).and_then(Value::as_str)
+                && let Some(milliseconds) = parse_time_ms(value)
+            {
+                obj.insert(target.to_string(), json!(milliseconds));
             }
         }
     }
@@ -562,12 +561,12 @@ async fn data_start(
         // Accept the old API's UTC ISO window while retaining exact
         // millisecond bounds in the native job journal.
         for (legacy, native) in [("start", "start_ms"), ("end", "end_ms")] {
-            if !object.contains_key(native) {
-                if let Some(value) = payload.get(legacy).and_then(Value::as_str) {
-                    let ms = parse_time_ms(value)
-                        .ok_or_else(|| AppError::bad_request("行情任务时间无效。"))?;
-                    object.insert(native.to_string(), json!(ms));
-                }
+            if !object.contains_key(native)
+                && let Some(value) = payload.get(legacy).and_then(Value::as_str)
+            {
+                let ms = parse_time_ms(value)
+                    .ok_or_else(|| AppError::bad_request("行情任务时间无效。"))?;
+                object.insert(native.to_string(), json!(ms));
             }
         }
     }
