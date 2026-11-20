@@ -86,14 +86,14 @@ async fn sync_verified_fills(
 )->Result<Json<Value>,AppError>{
     let environment=body["environment"].as_str()
         .ok_or_else(||AppError::bad_request("账户环境缺失。"))?;
-    let api_key=body["api_key"].as_str()
-        .ok_or_else(||AppError::bad_request("交易所凭据缺失。"))?;
-    let secret=body["secret"].as_str()
-        .ok_or_else(||AppError::bad_request("交易所凭据缺失。"))?;
+    if body.get("api_key").is_some() || body.get("secret").is_some(){
+        return Err(AppError::bad_request(
+            "对账请求不得携带密钥，必须先登记账户连接。"));
+    }
     let venue=state.config.venue_base.as_deref()
         .ok_or_else(||AppError::conflict("交易网关未配置，拒绝读取账户。"))?;
-    Ok(Json(state.runtime.sync_verified_order_fills(
-        &tenant,&account,environment,&request_id,api_key,secret,venue
+    Ok(Json(state.runtime.sync_registered_fills(
+        &tenant,&account,environment,&request_id,venue
     ).map_err(AppError::from)?))
 }
 
