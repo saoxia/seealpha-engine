@@ -381,11 +381,7 @@ mod tests {
         assert_eq!(curve.len(), bars.len());
         assert_eq!(result.ending_balance, Decimal::from(1010));
         // Decimal scale is preserved in JSON, but economic equity is scale-independent.
-        let closing_equity: Decimal = curve[2]["equity"]
-            .as_str()
-            .unwrap()
-            .parse()
-            .unwrap();
+        let closing_equity: Decimal = curve[2]["equity"].as_str().unwrap().parse().unwrap();
         assert_eq!(closing_equity, Decimal::from(1010));
     }
 
