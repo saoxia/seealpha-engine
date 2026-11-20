@@ -335,8 +335,9 @@ impl Runtime {
                     client.query_um_conditional(&Credentials {
                         api_key:api_key.into(),secret:secret.into(),
                     },&symbol,&client_order_id)
-                        .and_then(|v|validated_algo_view(&v,&client_order_id,
-                            &seealpha_venue::venue_symbol(&symbol)?)).map(Some)
+                        .and_then(|v|seealpha_venue::venue_symbol(&symbol)
+                            .and_then(|canonical|validated_algo_view(
+                                &v,&client_order_id,&canonical))).map(Some)
                 } else {
                     client.query_order(
                     &Credentials {
