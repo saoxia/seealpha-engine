@@ -1878,4 +1878,47 @@ mod tests {
         assert!(response["detail"].as_str().unwrap_or("").contains("历史 K 线"));
     }
 
+    #[tokio::test]
+    async fn native_catalog_page_and_coverage_are_read_only_and_contiguous() {
+        let app=router(state());
+        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make=|path:&str,method:&str,body:&str|{
+            Request::builder().uri(path).method(method)
+                .header("authorization",format!("Bearer {token}"))
+                .header("content-type","application/json")
+                .body(Body::from(body.to_owned())).unwrap()
+        };
+        let _=call(&app,make("/tenants/42","PUT",
+            r#"{"purpose":"development","status":"active"}"#)).await;
+        let (status,_,imported)=call(&app,make(
+            "/tenants/42/data/catalog/bars","POST",
+            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "bars":[
+                    {"open_time_ms":0,"open":"100","high":"101","low":"99","close":"100","volume":"5"},
+                    {"open_time_ms":60000,"open":"100","high":"102","low":"100","close":"101","volume":"4"}
+                ]}"#
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(imported["imported"],2);
+        let query=r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+            "start_ms":0,"end_ms":120000}"#;
+        let (status,_,coverage)=call(&app,make(
+            "/tenants/42/data/coverage","POST",query
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(coverage["complete"],true);
+        let (status,_,page)=call(&app,make(
+            "/tenants/42/data/page","POST",query
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(page["records"].as_array().unwrap().len(),2);
+        let (status,_,_) = call(&app,make(
+            "/tenants/42/data/catalog/bars","POST",
+            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "bars":[{"open_time_ms":0,"open":"100","high":"101","low":"99",
+                        "close":"99","volume":"5"}]}"#
+        )).await;
+        assert_eq!(status,StatusCode::BAD_REQUEST);
+    }
+
 }
