@@ -1,5 +1,7 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
 mod accounts;
+#[allow(dead_code)] // Staged: order sender remains disabled until risk/evidence gate is wired.
+mod order_journal;
 mod basket;
 mod portfolio;
 pub use portfolio::{NativePortfolioState,NativePortfolioResult,NativePortfolioEvent};
