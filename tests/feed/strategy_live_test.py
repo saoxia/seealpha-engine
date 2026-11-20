@@ -41,7 +41,7 @@ def _setup(tmp_path, monkeypatch):
     return runtime, manager, bridge
 
 
-def _write_status(path, *, ready=True, calculation=False):
+def _write_status(path, *, ready=True):
     now = int(time.time() * 1000)
     value = {
         "state": "READY" if ready else "DEGRADED",
