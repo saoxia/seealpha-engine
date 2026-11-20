@@ -170,7 +170,7 @@ impl MemorySource {
 #[async_trait]
 impl PublicSource for MemorySource {
     async fn load(&self, query: &LoadQuery) -> Result<MarketSnapshot, MarketError> {
-        if query.symbol != self.snapshot.symbol || query.interval != self.snapshot.interval {
+        if query.product != self.snapshot.product || query.symbol != self.snapshot.symbol || query.interval != self.snapshot.interval {
             return Err(MarketError::Empty);
         }
         Ok(self.snapshot.clone())
