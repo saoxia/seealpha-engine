@@ -180,3 +180,54 @@ def test_cannot_delete_an_issued_strategy_live_market(tmp_path, monkeypatch):
     finally:
         runtime.close()
         manager.close()
+
+
+def test_older_committed_bar_revision_invalidates_all_live_readers(tmp_path, monkeypatch):
+    runtime, manager, bridge = _setup(tmp_path, monkeypatch)
+    try:
+        bridge.subscribe("prod", "desk", "issued", (ETH,), lookback_bars=2)
+        root = manager.subscriptions.root(manager.subscriptions._read()[0])
+        _journal(root)
+        _write_status(root / "status.json")
+        _write_status(root / "calculation" / "status.json")
+        bridge.poll()
+        assert bridge.status()["requirements"][0]["data_ready"] is True
+
+        db = sqlite3.connect(root / "collection.sqlite")
+        row = db.execute("SELECT start_ms,value FROM candles ORDER BY start_ms LIMIT 1").fetchone()
+        body = json.loads(row[1])
+        body["high"] = "102"
+        db.execute(
+            "UPDATE candles SET value=? WHERE start_ms=?",
+            (json.dumps(body), row[0]),
+        )
+        db.commit()
+        db.close()
+        bridge.poll()
+        assert bridge.status()["requirements"][0]["data_ready"] is False
+        assert "修订" in bridge.status()["requirements"][0]["reason"]
+    finally:
+        runtime.close()
+        manager.close()
+
+
+def test_pinned_engine_refuses_other_tenant_market_requests(tmp_path, monkeypatch):
+    runtime, manager, bridge = _setup(tmp_path, monkeypatch)
+    try:
+        runtime.ensure_tenant("other", "production")
+        runtime.store.upsert_strategy_load(
+            "other", "desk", "issued", "alpha", "1", "production",
+            {"symbol": "ETHUSDT"}, "strategy:Alpha", "hash", b"archive",
+        )
+        runtime.note_subscription(
+            "other", "desk", "futures_um", "ETHUSDT",
+            "intent", "configured", {},
+        )
+        with pytest.raises(MarketDataHubError, match="租户"):
+            bridge.subscribe("other", "desk", "issued", (ETH,))
+        with pytest.raises(MarketDataHubError, match="租户"):
+            bridge.unsubscribe("other", "desk", "issued")
+        assert bridge.status()["requirements"] == []
+    finally:
+        runtime.close()
+        manager.close()
