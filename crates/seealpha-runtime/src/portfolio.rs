@@ -3,9 +3,20 @@
 use crate::{Runtime,RuntimeError,map_ledger};
 use rust_decimal::Decimal;
 use seealpha_portfolio::{
-    coordinator::{Bar,Command,Coordinator,VirtualFill},
+    coordinator::{Bar,Command,Coordinator,VirtualFill,VirtualOrder,VirtualKind},
     coordinator_snapshot::{decode_coordinator,encode_coordinator},
 };
+/// All events are applied to an isolated snapshot and atomically persisted.
+pub enum NativePortfolioEvent {
+    RegisterMember(String),
+    PublishTarget { member:String, quantity:Decimal, risk_exit:bool },
+    AcceptOrder { order:VirtualOrder, armed_at:Option<u64> },
+    ModifyOrder { id:String, quantity:Option<Decimal>, kind:Option<VirtualKind> },
+    CancelOrder(String),
+    FlattenMember(String),
+    ConfirmTerminal { order_id:String, canceled:bool, denied_at:Option<u64> },
+    Freeze(String),
+}
 pub struct NativePortfolioState {
     pub coordinator:Coordinator,
     pub revision:String,
@@ -49,6 +60,33 @@ impl Runtime {
         self.ledger.save_coordinator_state(tenant,account,instrument,
             &encoded.json,&encoded.revision,expected).map_err(map_ledger)?;
         Ok(NativePortfolioState{coordinator:coordinator.clone(),revision:encoded.revision})
+    }
+    pub fn apply_native_portfolio_event(
+        &self,tenant:&str,account:&str,instrument:&str,
+        expected_revision:&str,event:NativePortfolioEvent,
+    )->Result<NativePortfolioState,RuntimeError>{
+        let state=self.recover_native_portfolio(tenant,account,instrument)?
+            .ok_or_else(||RuntimeError::NotFound("portfolio state missing".into()))?;
+        if state.revision!=expected_revision{
+            return Err(RuntimeError::Conflict("stale portfolio state".into()));
+        }
+        let mut coordinator=state.coordinator;
+        let result=match event {
+            NativePortfolioEvent::RegisterMember(id)=>coordinator.register(&id),
+            NativePortfolioEvent::PublishTarget{member,quantity,risk_exit}=>
+                coordinator.report_target(&member,quantity,risk_exit),
+            NativePortfolioEvent::AcceptOrder{order,armed_at}=>
+                coordinator.accept_order(order,armed_at),
+            NativePortfolioEvent::ModifyOrder{id,quantity,kind}=>
+                coordinator.modify(&id,quantity,kind),
+            NativePortfolioEvent::CancelOrder(id)=>coordinator.cancel(&id),
+            NativePortfolioEvent::FlattenMember(member)=>coordinator.flatten(&member),
+            NativePortfolioEvent::ConfirmTerminal{order_id,canceled,denied_at}=>
+                coordinator.confirm_terminal(&order_id,canceled,denied_at),
+            NativePortfolioEvent::Freeze(reason)=>{coordinator.freeze(&reason);Ok(())},
+        };
+        result.map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+        self.save_native_portfolio(tenant,account,instrument,&coordinator,Some(expected_revision))
     }
     /// Caller supplies authoritative net position; persisted flight is a prerequisite
     /// for interpreting Submit as a request eligible for subsequent risk checks.
