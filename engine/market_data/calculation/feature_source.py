@@ -12,6 +12,11 @@ from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
 import pandas as pd
+from nautilus_trader.model import Bar, BarType
+
+from engine.market_data.repair.models import interval_delta
+from engine.market_data.storage.catalog import BarDataWrangler
+from nautilus_support import Instrument
 
 from engine.market_data.quality.validate_data import (
     TRADE_COLUMNS,
@@ -75,5 +80,51 @@ def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS, *, market="
                     yield pending
     except (BadZipFile, OSError) as exc:
         raise DataValidationError(f"无法读取 Trade ZIP 归档：{path}") from exc
+
+
+
+
+# Maintained only for the historical 1-second Bar compatibility path; the
+# trade ZIP -> TradeTick/quote/Bar converter itself runs exclusively in Rust.
+def aggregate_trade_chunk(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
+    """将一个已校验 Trade 块压缩为中间 OHLCV；跨块桶稍后再次合并。"""
+    interval_ms = int(interval_delta(interval).total_seconds() * 1_000)
+    values = frame[["timestamp", "price", "quantity"]].copy()
+    values["bucket"] = (values["timestamp"] // interval_ms) * interval_ms
+    return values.groupby("bucket", sort=False).agg(
+        open=("price", "first"),
+        high=("price", "max"),
+        low=("price", "min"),
+        close=("price", "last"),
+        volume=("quantity", "sum"),
+    )
+
+
+def aggregate_parts_to_bars(
+    parts: list[pd.DataFrame],
+    instrument: Instrument,
+    interval: str,
+    bar_type: str,
+) -> list[Bar]:
+    """合并跨 CSV 块的时间桶并生成 Nautilus 外部 Bar。"""
+    combined = pd.concat(parts)
+    frame = combined.groupby(level=0, sort=True).agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+    )
+    interval_ms = int(interval_delta(interval).total_seconds() * 1_000)
+    close_times = frame.index.to_numpy(dtype="int64") + interval_ms - 1
+    wrangler_frame = pd.DataFrame(index=pd.to_datetime(close_times, unit="ms", utc=True))
+    for column in ("open", "high", "low", "close", "volume"):
+        # 独立的可写数组兼容 BarDataWrangler 的 Cython memoryview。
+        wrangler_frame[column] = frame[column].to_numpy(dtype="float64", copy=True)
+    wrangler_frame.index.name = "timestamp"
+    parsed_bar_type = BarType.from_str(bar_type)
+    return BarDataWrangler(bar_type=parsed_bar_type, instrument=instrument).process(
+        wrangler_frame,
+    )
 
 
