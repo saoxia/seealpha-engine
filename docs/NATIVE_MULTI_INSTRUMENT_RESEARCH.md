@@ -71,3 +71,33 @@ uv run ruff check engine/strategies tests/engine/generic_portfolio_targets_test.
 ```
 
 设计依据：https://nautilustrader.io/docs/latest/concepts/backtesting/apis-and-runs/ 及 https://nautilustrader.io/docs/latest/concepts/execution/
+
+
+
+## 显式 Spot + USD-M 同标的数量对冲（开发研究）
+
+通用 `policy=generic` 仍默认让不同标的独立运行。需要把同一标的现货多头与 USD-M
+空头视为严格的对冲腿时，已授权策略可通过现有 `publish_basket` 约束协议显式声明，
+无需新增 HTTP 路由或修改发行授权。
+
+```python
+self.publish_basket(
+    targets=[
+        {"product": "spot", "symbol": "ETHUSDT", "quantity": "0.2"},
+        {"product": "futures_um", "symbol": "ETHUSDT", "quantity": "-0.2"},
+    ],
+    constraints={"spot_perpetual_hedges": [{"symbol": "ETHUSDT"}]},
+)
+```
+
+声明成员必须自己订阅该同标的两腿。Engine 在组合内净额合并**全部**策略成员后校验
+每组目标 BASE 数量严格相等（不允许以不同合约、不同币种的相近美元价值冒充完全对冲），
+沿用原有量化步长与账户毛名义预算。建仓先模拟买现货并确认成交，再增加永续空头；
+退出先平永续，再减少现货。每个阶段必须确认原生订单完成，阶段稳定后检查
+`spot_qty + perpetual_qty == 0`，连续三个 K 线周期仍未完成的对冲阶段直接终止回测。
+报告 `declared_hedges` 和 `hedge_verification` 区分主动声明对冲与没有声明的普通组合。
+
+该顺序**不是跨 Venue 原子成交**，过渡阶段可能持有单腿敞口；数量中性也不等于
+资金费、价差、交易成本、滑点、强平和基差风险全部被抵消。当前只支持相同标的的
+现货多头/永续空头；不同币种的统计配对、期权 Greeks Delta 与生产实盘
+仍需分别验证，不能借用这一声明冒充完美对冲。

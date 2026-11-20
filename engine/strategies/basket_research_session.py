@@ -102,6 +102,7 @@ class BasketResearchSession:
         self.max_leg_drift = max_leg_drift
         self._subscriptions: dict[str, frozenset[LegId]] = {}
         self._intents: dict[str, tuple[str, tuple[MemberLegTarget, ...]]] = {}
+        self._member_hedges: dict[str, tuple[tuple[LegId, LegId], ...]] = {}
         self._decision: BasketResearchDecision | None = None
 
     def member(self, member_id: str) -> "ResearchBasketMember":
@@ -224,7 +225,8 @@ class BasketResearchSession:
         allowed = (
             {"atomic_hedge", "max_leg_drift"} if self.policy == "funding_carry"
             else {"hedges_filled_before_risk", "atomic_reconciliation"}
-            if self.policy == "option_protected" else set()
+            if self.policy == "option_protected" else {"spot_perpetual_hedges"}
+            if self.policy == "generic" else set()
         )
         if constraints and (set(constraints) - allowed):
             raise BasketPlanError("未知多腿执行约束")
@@ -243,6 +245,24 @@ class BasketResearchSession:
         ):
             raise BasketPlanError("必须保留保护腿优先及成交核对约束")
         lookup = {(leg.product, leg.symbol): leg for leg in self._subscriptions[member_id]}
+        hedges = ()
+        if self.policy == "generic" and constraints:
+            declarations = constraints.get("spot_perpetual_hedges")
+            if not isinstance(declarations, list) or not 1 <= len(declarations) <= 8:
+                raise BasketPlanError("跨产品对冲声明必须为1至8组现货/永续配对")
+            pairs = []
+            for row in declarations:
+                if (
+                    not isinstance(row, dict) or set(row) != {"symbol"}
+                    or not isinstance(row["symbol"], str)
+                ):
+                    raise BasketPlanError("跨产品对冲声明格式无效")
+                spot = lookup.get(("spot", row["symbol"]))
+                perpetual = lookup.get(("futures_um", row["symbol"]))
+                if spot is None or perpetual is None or (spot, perpetual) in pairs:
+                    raise BasketPlanError("对冲声明必须绑定本成员已订阅的完整且不重复的同标的腿")
+                pairs.append((spot, perpetual))
+            hedges = tuple(sorted(pairs))
         parsed = {}
         for row in targets:
             if not isinstance(row, dict) or set(row) != {"product", "symbol", "quantity"}:
@@ -265,12 +285,19 @@ class BasketResearchSession:
         intent = tuple(MemberLegTarget(member_id, leg, parsed[leg]) for leg in sorted(parsed))
         old = self._intents.get(member_id)
         if old is not None:
-            if old == (request_id, intent):
-                return  # canonical idempotent retry
+            if old == (request_id, intent) and self._member_hedges[member_id] == hedges:
+                return  # canonical idempotent retry, including hedge declarations
             raise BasketPlanError("相同成员不能重放不同请求或改变已发布目标")
         if any(old_id == request_id for old_id, _ in self._intents.values()):
             raise BasketPlanError("组合请求标识不能跨成员重用")
         self._intents[member_id] = (request_id, intent)
+        self._member_hedges[member_id] = hedges
+
+    @property
+    def declared_hedges(self) -> tuple[tuple[LegId, LegId], ...]:
+        return tuple(sorted({
+            pair for pairs in self._member_hedges.values() for pair in pairs
+        }))
 
     def plan(self) -> BasketResearchDecision:
         """Net ALL registered members only after all declared inputs are complete."""
@@ -289,6 +316,7 @@ class BasketResearchSession:
             now_ns=self.now_ns, max_age_ns=self.max_age_ns,
             max_gross_notional=self.max_gross_notional,
             policy=self.policy, max_leg_drift=self.max_leg_drift,
+            hedge_pairs=self.declared_hedges,
         )
         self._decision = BasketResearchDecision(
             plan=plan, member_count=len(self._subscriptions),

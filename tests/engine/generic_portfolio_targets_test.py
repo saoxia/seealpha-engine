@@ -125,3 +125,66 @@ def test_short_spot_naked_option_and_quantization_rejected():
     with pytest.raises(BasketPlanError, match="最小步长"):
         plan([MemberLegTarget("x", spot, Decimal("0.05")),
               MemberLegTarget("x", option, Decimal(0))], positions)
+
+
+
+def test_declared_spot_perpetual_hedge_orders_cash_before_new_perpetual_risk():
+    spot = leg("spot", "ETHUSDT")
+    perp = leg("futures_um", "ETHUSDT")
+    kwargs = {
+        "now_ns": NOW, "max_age_ns": 1_000_000_000,
+        "max_gross_notional": Decimal(5000), "policy": "generic",
+        "hedge_pairs": ((spot, perp),),
+    }
+    evidence = {
+        key: LegEvidence(Decimal(1000), Decimal("0.1"), Decimal(1), NOW)
+        for key in (spot, perp)
+    }
+    opening = plan_basket(
+        [MemberLegTarget("a", spot, Decimal("0.3")),
+         MemberLegTarget("a", perp, Decimal("-0.3"))],
+        {spot: Decimal(0), perp: Decimal(0)}, evidence, **kwargs,
+    )
+    assert [phase.name for phase in opening.phases] == [
+        "acquire_hedge_spot", "increase_hedged_perpetual",
+    ]
+    closing = plan_basket(
+        [MemberLegTarget("a", spot, Decimal(0)),
+         MemberLegTarget("a", perp, Decimal(0))],
+        {spot: Decimal("0.3"), perp: Decimal("-0.3")}, evidence, **kwargs,
+    )
+    assert [phase.name for phase in closing.phases] == [
+        "reduce_hedge_perpetual", "reduce_hedge_spot",
+    ]
+
+
+def test_declared_hedge_rejects_unbalanced_forged_and_overbudget_transitions():
+    spot = leg("spot", "ETHUSDT")
+    perp = leg("futures_um", "ETHUSDT")
+    btc = leg("futures_um", "BTCUSDT")
+    current = {spot: Decimal(0), perp: Decimal(0)}
+    rows = [MemberLegTarget("a", spot, Decimal("0.2")),
+            MemberLegTarget("a", perp, Decimal("-0.1"))]
+    kwargs = {
+        "now_ns": NOW, "max_age_ns": 1_000_000_000,
+        "max_gross_notional": Decimal(1000), "policy": "generic",
+    }
+    evidence = {
+        key: LegEvidence(Decimal(1000), Decimal("0.1"), Decimal(1), NOW)
+        for key in (spot, perp)
+    }
+    with pytest.raises(BasketPlanError, match="等量"):
+        plan_basket(rows, current, evidence, hedge_pairs=((spot, perp),), **kwargs)
+    with pytest.raises(BasketPlanError, match="同标的"):
+        plan_basket(rows, current, evidence, hedge_pairs=((spot, btc),), **kwargs)
+    balanced = [MemberLegTarget("a", spot, Decimal("0.6")),
+                MemberLegTarget("a", perp, Decimal("-0.6"))]
+    with pytest.raises(BasketPlanError, match="预算"):
+        plan_basket(balanced, current, evidence, hedge_pairs=((spot, perp),), **kwargs)
+    with pytest.raises(BasketPlanError, match="永续多头"):
+        plan_basket(
+            [MemberLegTarget("a", spot, Decimal("0.1")),
+             MemberLegTarget("a", perp, Decimal("-0.1"))],
+            {spot: Decimal(0), perp: Decimal("0.1")}, evidence,
+            hedge_pairs=((spot, perp),), **kwargs,
+        )

@@ -329,3 +329,59 @@ def test_generic_independent_members_can_publish_disjoint_instrument_subsets():
     assert dict(session.plan().plan.targets) == {
         eth: Decimal("0.2"), btc: Decimal("-0.3"),
     }
+
+
+
+def test_generic_declared_hedge_requires_member_scope_and_aggregate_balance():
+    spot = LegId("development", "virtual", "spot", "ETHUSDT")
+    perp = LegId("development", "virtual", "futures_um", "ETHUSDT")
+    positions = {spot: Decimal(0), perp: Decimal(0)}
+    evidence = {
+        leg: LegEvidence(Decimal(1000), Decimal("0.1"), Decimal(1), _NOW)
+        for leg in positions
+    }
+    session = BasketResearchSession(
+        tenant_id="development", account_id="virtual", policy="generic",
+        positions=positions, evidence=evidence, now_ns=_NOW,
+        max_age_ns=1000, max_gross_notional=Decimal(1000),
+    )
+    member = session.member("hedger")
+    member.subscribe_market_bundle(
+        legs=({"product": "spot", "symbol": "ETHUSDT"},
+              {"product": "futures_um", "symbol": "ETHUSDT"}),
+        data=("closed_bars", "account_positions"),
+    )
+    targets = [
+        {"product": "spot", "symbol": "ETHUSDT", "quantity": "0.2"},
+        {"product": "futures_um", "symbol": "ETHUSDT", "quantity": "-0.2"},
+    ]
+    hedge = {"spot_perpetual_hedges": [{"symbol": "ETHUSDT"}]}
+    with pytest.raises(BasketPlanError, match="订阅"):
+        member.publish_basket(
+            targets=targets, constraints={"spot_perpetual_hedges": [{"symbol": "BTCUSDT"}]},
+        )
+    member.publish_basket(targets=targets, constraints=hedge, request_id="same")
+    member.publish_basket(targets=targets, constraints=hedge, request_id="same")
+    with pytest.raises(BasketPlanError, match="不同请求|改变"):
+        member.publish_basket(targets=targets, constraints=None, request_id="same")
+    assert session.declared_hedges == ((spot, perp),)
+    assert [phase.name for phase in session.plan().plan.phases] == [
+        "acquire_hedge_spot", "increase_hedged_perpetual",
+    ]
+
+    other = BasketResearchSession(
+        tenant_id="development", account_id="virtual", policy="generic",
+        positions=positions, evidence=evidence, now_ns=_NOW,
+        max_age_ns=1000, max_gross_notional=Decimal(1000),
+    ).member("hedger")
+    other.subscribe_market_bundle(
+        legs=({"product": "spot", "symbol": "ETHUSDT"},
+              {"product": "futures_um", "symbol": "ETHUSDT"}),
+        data=("closed_bars", "account_positions"),
+    )
+    other.publish_basket(
+        targets=[targets[0], {**targets[1], "quantity": "-0.1"}],
+        constraints=hedge,
+    )
+    with pytest.raises(BasketPlanError, match="等量"):
+        other._session.plan()
