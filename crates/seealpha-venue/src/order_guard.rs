@@ -131,12 +131,15 @@ impl PreparedWrite {
         if journal.admit(&self.record)?!=Admission::Fresh {
             return Err(VenueError::Unconfirmed);
         }
+        // An exchange 4xx may still mean ambiguous execution (e.g. timeout).
+        // No response failure is proof that a write did not take effect.
         let result=transport.send(self.method,self.path,&self.parameters)
+            .map_err(|_|VenueError::Unconfirmed)
             .and_then(|v|if self.ack_matches(&v){Ok(v)}else{Err(VenueError::Unconfirmed)});
-        let outcome=match &result {
-            Ok(_)=>RecordedOutcome::Accepted,
-            Err(VenueError::Rejected(_))=>RecordedOutcome::Rejected,
-            Err(_)=>RecordedOutcome::Unknown,
+        let outcome=if result.is_ok() {
+            RecordedOutcome::Accepted
+        } else {
+            RecordedOutcome::Unknown
         };
         // Persistence failure after a wire call must stay UNKNOWN.
         journal.observe(&self.record,outcome).map_err(|_|VenueError::Unconfirmed)?;
@@ -145,16 +148,28 @@ impl PreparedWrite {
     pub fn dispatch_live<J:IntentJournal>(
         &mut self,journal:&mut J,client:&VenueClient,credentials:&Credentials,
     )->Result<Value,VenueError>{
+        crate::check_credentials(credentials)?;
         let mut wire=RegisteredTransport{client,credentials};
         self.dispatch(journal,&mut wire)
     }
     fn ack_matches(&self,v:&Value)->bool {
         let id=self.record.client_order_id.as_str();
         match self.record.action {
-            WriteAction::NewOco|WriteAction::NewOto|WriteAction::NewOtoco =>
+            WriteAction::NewOco|WriteAction::NewOto|WriteAction::NewOtoco => {
+                let kind=match self.record.action {
+                    WriteAction::NewOco=>"OCO",
+                    WriteAction::NewOto=>"OTO",
+                    _=>"OTOCO",
+                };
+                let expected=if kind=="OTOCO"{3}else{2};
                 v["listClientOrderId"].as_str()==Some(id) &&
-                v["orderListId"].as_u64().is_some(),
-            WriteAction::NewUmAlgo|WriteAction::CancelUmAlgo =>
+                v["contingencyType"].as_str()==Some(kind) &&
+                v["orderListId"].as_u64().is_some() &&
+                v["orders"].as_array().is_some_and(|a|a.len()==expected)
+            },
+            WriteAction::NewUmAlgo =>
+                v["clientAlgoId"].as_str()==Some(id) && v["algoId"].as_u64().is_some(),
+            WriteAction::CancelUmAlgo =>
                 v["clientAlgoId"].as_str()==Some(id),
             WriteAction::CancelReplace => false, // mixed leg outcomes need read-side reconciliation
             WriteAction::CancelList =>
@@ -164,7 +179,7 @@ impl PreparedWrite {
             WriteAction::NewOrder|WriteAction::CancelOrder =>
                 v["clientOrderId"].as_str()==Some(id) &&
                 v["symbol"].as_str()==Some(self.record.symbol.as_str()) &&
-                !v["orderId"].is_null(),
+                !v["orderId"].is_null() && v["status"].as_str().is_some(),
         }
     }
 }
