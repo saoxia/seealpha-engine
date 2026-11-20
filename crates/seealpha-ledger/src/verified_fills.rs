@@ -121,7 +121,16 @@ mod tests{
             std::process::id(),now_ms()));
         let book=Ledger::open(&path).unwrap();
         let legacy=json!({"trade_id":"fill-A","client_order_id":"A","symbol":"ETHUSDT"});
-        book.upsert_fill_row("t","a","production","fill-A",&legacy.to_string()).unwrap();
+        // Seed a pre-migration row directly: live raw upserts are now forbidden.
+        {
+            let conn=book.lock().unwrap();
+            conn.execute(
+                "INSERT INTO fills(tenant_id,account_id,environment,fill_id,fill_json,updated_at)
+                 VALUES('t','a','production','fill-A',?1,0)",
+                rusqlite::params![legacy.to_string()],
+            ).unwrap();
+        }
+        assert!(book.upsert_fill_row("t","a","production","fill-B","{}").is_err());
         assert_eq!(book.quarantine_synthetic_fills().unwrap(),1);
         assert!(book.fills("t","a","production").unwrap().is_empty());
         assert_eq!(book.quarantined_fill_count("t","a").unwrap(),1);
