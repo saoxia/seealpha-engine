@@ -92,6 +92,26 @@ impl Ledger {
     /// represented by this legacy format; use a separate v2 backup for those.
     pub fn export_tenant(&self, tenant_id: &str) -> Result<Value,LedgerError> {
         let conn = self.lock()?;
+        // The Python v1 envelope cannot represent newer Rust evidence.
+        // Fail closed instead of producing an apparently complete backup
+        // that would silently lose irreversible trading facts on import.
+        for table in [
+            "portfolio_coordinator_states","basket_journals","order_intents",
+            "order_observations","account_evidence_events","account_snapshots",
+            "quarantined_unverified_fills","paper_positions","catalog_bars",
+            "option_exercise_observations","account_settlements",
+            "funding_observations","backtest_results","research_snapshots",
+            "data_policies","strategy_market_subscriptions","data_jobs",
+            "paper_sessions",
+        ] {
+            let present: bool = conn.query_row(
+                &format!("SELECT 1 FROM {table} WHERE tenant_id=?1 LIMIT 1"),
+                params![tenant_id], |_|Ok(()),
+            ).optional().map_err(sqlite)?.is_some();
+            if present {
+                return Err(invalid("Python v1 export would omit Rust-only tenant evidence; use a complete v2 backup"));
+            }
+        }
         let tenant: Option<(String,String,String)> = conn.query_row(
             "SELECT tenant_id,purpose,status FROM tenants WHERE tenant_id=?1",
             params![tenant_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
@@ -131,6 +151,10 @@ impl Ledger {
         if target_tenant.is_empty() || target_tenant.len()>128
             || !matches!(purpose,"production"|"development") {
             return Err(invalid("invalid tenant import identity"));
+        }
+        if payload.as_object().is_none_or(|m|
+            m.len()!=2 || !m.contains_key("tenant") || !m.contains_key("tables")) {
+            return Err(invalid("unexpected fields in Python v1 tenant envelope"));
         }
         let tables = payload["tables"].as_object()
             .ok_or_else(|| invalid("missing Python tenant tables"))?;
