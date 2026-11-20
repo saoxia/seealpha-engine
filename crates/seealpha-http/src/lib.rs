@@ -1977,4 +1977,27 @@ mod tests {
         assert_eq!(status,StatusCode::BAD_REQUEST);
     }
 
+    #[tokio::test]
+    async fn native_funding_is_read_only_settled_exchange_evidence() {
+        let setup=state();
+        setup.runtime.ensure_tenant("42","development","active").unwrap();
+        setup.runtime.ledger.import_funding_events(
+            "42","ETHUSDT",&[json!({
+                "symbol":"ETHUSDT","funding_time_ms":100,
+                "rate_type":"Regular","funding_rate":"0.0001","mark_price":"2000"
+            })]
+        ).unwrap();
+        let app=router(setup);
+        let request=Request::builder()
+            .uri("/tenants/42/data/funding").method("POST")
+            .header("authorization","Bearer ci-engine-token-0123456789abcdef0123456789abcdef")
+            .header("content-type","application/json")
+            .body(Body::from(r#"{"symbol":"ETHUSDT","limit":10}"#)).unwrap();
+        let (status,_,data)=call(&app,request).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(data["rows"].as_array().unwrap().len(),1);
+        assert_eq!(data["no_synthetic_funding"],true);
+        assert_eq!(data["completeness"],"not_certified");
+    }
+
 }
