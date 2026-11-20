@@ -211,12 +211,11 @@ mod tests {
                 .preview_delete("ETHUSDT", MarketProduct::Spot, 1, DAY_MS)
                 .is_err()
         );
-        assert_eq!(
-            catalog
+        assert!(
+            !catalog
                 .preview_delete("ETHUSDT", MarketProduct::Spot, 0, DAY_MS)
                 .unwrap()
-                .can_execute,
-            false
+                .can_execute
         );
         let _ = fs::remove_dir(p);
     }

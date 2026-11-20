@@ -126,6 +126,7 @@ impl Catalog {
         let lock_path = directory.join(".writer.lock");
         let lease = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)?;

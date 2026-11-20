@@ -159,10 +159,10 @@ mod tests {
             "income_type":"FUNDING_FEE","income":"-0.1","asset":"USDT",
             "time_ms":10,"transaction_id":"11","source":"binance_signed_income"});
         ledger
-            .import_account_settlements("t", "a", "production", "futures_um", &[row.clone()])
+            .import_account_settlements("t", "a", "production", "futures_um", std::slice::from_ref(&row))
             .unwrap();
         ledger
-            .import_account_settlements("t", "a", "production", "futures_um", &[row.clone()])
+            .import_account_settlements("t", "a", "production", "futures_um", std::slice::from_ref(&row))
             .unwrap();
         assert_eq!(
             ledger

@@ -186,7 +186,7 @@ mod tests {
         let real = json!({"trade_id":"binance:futures_um:ETHUSDT:123",
             "venue_order_id":"9","quantity":"1","price":"100",
             "source":"signed_exchange_user_trades"});
-        book.import_verified_fills("t", "a", "production", "9", &[real.clone()])
+        book.import_verified_fills("t", "a", "production", "9", std::slice::from_ref(&real))
             .unwrap();
         book.import_verified_fills("t", "a", "production", "9", &[real])
             .unwrap();

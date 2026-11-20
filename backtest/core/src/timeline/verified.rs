@@ -308,10 +308,10 @@ fn order_valid(
     {
         return false;
     }
-    if let Product::CashOption { expiry_ms, .. } = &c.product {
-        if now >= *expiry_ms {
-            return false;
-        }
+    if let Product::CashOption { expiry_ms, .. } = &c.product
+        && now >= *expiry_ms
+    {
+        return false;
     }
     match &order.kind {
         OrderType::Market => true,
@@ -502,13 +502,13 @@ fn fill_quote(
     state: &mut Ledger,
     contracts: &BTreeMap<String, Contract>,
 ) -> Result<Vec<Fill>, String> {
-    if let Product::CashOption { expiry_ms, .. } = &contracts[&q.instrument].product {
-        if q.time_ms >= *expiry_ms {
-            if !state.settled_options.contains(&q.instrument) {
-                return Err("expired option requires verified settlement".into());
-            }
-            return Ok(Vec::new());
+    if let Product::CashOption { expiry_ms, .. } = &contracts[&q.instrument].product
+        && q.time_ms >= *expiry_ms
+    {
+        if !state.settled_options.contains(&q.instrument) {
+            return Err("expired option requires verified settlement".into());
         }
+        return Ok(Vec::new());
     }
     state.marks.insert(
         q.instrument.clone(),
@@ -699,10 +699,11 @@ fn check_expired(
     contracts: &BTreeMap<String, Contract>,
 ) -> Result<(), String> {
     for (id, p) in &state.positions {
-        if let Product::CashOption { expiry_ms, .. } = &contracts[id].product {
-            if at_ms >= *expiry_ms && !p.qty.is_zero() {
-                return Err(format!("missing verified expiry settlement for {id}"));
-            }
+        if let Product::CashOption { expiry_ms, .. } = &contracts[id].product
+            && at_ms >= *expiry_ms
+            && !p.qty.is_zero()
+        {
+            return Err(format!("missing verified expiry settlement for {id}"));
         }
     }
     Ok(())

@@ -164,7 +164,7 @@ mod tests {
         let row = json!({"symbol":"BTCUSDT","funding_time_ms":100,
             "rate_type":"Regular","funding_rate":"0.0001","mark_price":"100"});
         assert_eq!(
-            book.import_funding_events("t", "BTCUSDT", &[row.clone()])
+            book.import_funding_events("t", "BTCUSDT", std::slice::from_ref(&row))
                 .unwrap(),
             1
         );

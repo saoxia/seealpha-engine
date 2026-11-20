@@ -63,12 +63,12 @@ fn schema_check(
             "Bar 必须使用 append_bars 的窗口和 OHLCV 校验。".into(),
         ));
     }
-    if let Some(expected) = type_name(kind) {
-        if schema.metadata().get("type_name").map(String::as_str) != Some(expected) {
-            return Err(CatalogError::Invalid(format!(
-                "Nautilus type_name 与 {expected} 不一致。"
-            )));
-        }
+    if let Some(expected) = type_name(kind)
+        && schema.metadata().get("type_name").map(String::as_str) != Some(expected)
+    {
+        return Err(CatalogError::Invalid(format!(
+            "Nautilus type_name 与 {expected} 不一致。"
+        )));
     }
     // Custom feature identifiers denote the catalog root, not necessarily
     // the instrument to which individual custom events refer.
@@ -290,6 +290,7 @@ impl Catalog {
         let directory = safe_mkdir(&self.root, &rel)?;
         let lease = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(directory.join(".writer.lock"))?;
@@ -469,7 +470,7 @@ mod tests {
             let ts = [1_795_132_800_000_000_001, 1_795_132_800_000_000_002];
             let batch = fixture(&kind, &ts, ids.as_deref());
             let first = catalog
-                .append_record_batches(&kind, instrument, &[batch.clone()])
+                .append_record_batches(&kind, instrument, std::slice::from_ref(&batch))
                 .unwrap();
             assert_eq!(
                 catalog

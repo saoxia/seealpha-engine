@@ -102,7 +102,7 @@ mod tests {
             "source":"binance_public_exercise_history",
             "account_exercise_confirmed":false,"outcome":"REALISTIC_VALUE_STRICKEN",
             "strike":"90000","settlement_price":"81000"});
-        ledger.import_public_exercises("t", &[row.clone()]).unwrap();
+        ledger.import_public_exercises("t", std::slice::from_ref(&row)).unwrap();
         ledger.import_public_exercises("t", &[row]).unwrap();
         assert_eq!(
             ledger

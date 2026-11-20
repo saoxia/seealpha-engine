@@ -323,8 +323,8 @@ fn nested_row_value(array: &dyn Array, i: usize, depth: usize) -> Result<Value, 
             .as_any()
             .downcast_ref::<FixedSizeListArray>()
             .map(|a| a.value(i)),
-    ] {
-        if let Some(values) = list {
+    ].into_iter().flatten() {
+        let values = list;
             if values.len() > 50_000 {
                 return Err(CatalogError::Limit(
                     "单条盘口或特征数组超过 50,000 项。".into(),
@@ -335,7 +335,6 @@ fn nested_row_value(array: &dyn Array, i: usize, depth: usize) -> Result<Value, 
                 result.push(nested_row_value(values.as_ref(), offset, depth + 1)?);
             }
             return Ok(Value::Array(result));
-        }
     }
     if let Some(decimal) = array.as_any().downcast_ref::<Decimal128Array>() {
         let scale = match array.data_type() {
