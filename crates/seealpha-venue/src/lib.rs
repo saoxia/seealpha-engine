@@ -4,6 +4,7 @@
 //! Credentials are used only to build the request and are not returned or logged.
 pub mod options;
 pub mod options_rules;
+pub mod trades;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -171,6 +172,32 @@ impl VenueClient {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Exchange-authored fills for one verified order. No signed POST occurs.
+    /// A full page is not considered complete until cursor-based pagination
+    /// exists; unresolved venue history fails closed.
+    pub fn query_order_trades(
+        &self, credentials:&Credentials,product:Product,
+        symbol:&str,order_id:&str,
+    )->Result<Vec<Value>,VenueError>{
+        check_credentials(credentials)?;
+        if product==Product::Option || order_id.is_empty() ||
+            !order_id.bytes().all(|b|b.is_ascii_digit()) {
+            return Err(VenueError::Unconfirmed);
+        }
+        let path=match product{
+            Product::Spot=>"/api/v3/myTrades",
+            Product::FuturesUm=>"/fapi/v1/userTrades",
+            Product::Option=>return Err(VenueError::Unconfirmed),
+        };
+        let canonical=venue_symbol(symbol)?;
+        let value=self.signed(credentials,"GET",path,&[
+            ("symbol".into(),canonical.clone()),
+            ("orderId".into(),order_id.to_owned()),
+            ("limit".into(),"1000".into())
+        ])?;
+        trades::normalize_order_trades(product,&canonical,order_id,&value)
     }
 
     /// Signed account read. The returned JSON keeps balances and positions only.
