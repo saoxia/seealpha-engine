@@ -3,6 +3,7 @@ mod records;
 mod legacy;
 mod order_intents;
 mod account_snapshots;
+mod account_events;
 pub use order_intents::IntentStart;
 pub use account_snapshots::AccountSnapshot;
 mod basket_journal;
@@ -63,6 +64,19 @@ CREATE TABLE IF NOT EXISTS order_observations (
 );
 CREATE INDEX IF NOT EXISTS order_observations_by_time
     ON order_observations(tenant_id,account_id,environment,client_order_id,observed_at_ns);
+CREATE TABLE IF NOT EXISTS account_evidence_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL,
+    UNIQUE(tenant_id,account_id,environment,kind,evidence_id)
+);
+CREATE INDEX IF NOT EXISTS account_evidence_events_page
+    ON account_evidence_events(tenant_id,account_id,environment,id);
 CREATE TABLE IF NOT EXISTS account_snapshots (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
