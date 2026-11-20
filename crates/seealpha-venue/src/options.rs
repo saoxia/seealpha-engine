@@ -140,7 +140,7 @@ impl OptionsExecutor {
         self.posts += 1;
         let mut params = HashMap::from([
             ("clientOrderId".into(), wire),
-            ("quantity".into(), "0.10".into()),
+            ("quantity".into(), order.quantity.to_string()),
             ("reduceOnly".into(), bool_text(order.reduce_only)),
             ("postOnly".into(), bool_text(order.post_only)),
             (
@@ -283,6 +283,23 @@ mod tests {
             assert!(!rendered.contains("secret-one"));
             assert!(!rendered.contains("key-one"));
         }
+    }
+
+    #[test]
+    fn order_quantity_is_not_a_hard_coded_legacy_value() {
+        let mut executor=OptionsExecutor::new("account","key","secret");
+        let mut request=order(false,false);
+        request.quantity=Decimal::new(25,2);
+        let mut observed=None;
+        executor.submit(&request,|call|{
+            if call.method=="POST" {
+                observed=call.params.get("quantity").cloned();
+                TransportResult::Found
+            }else{
+                TransportResult::NotFound
+            }
+        }).unwrap();
+        assert_eq!(observed.as_deref(),Some("0.25"));
     }
 
     #[test]

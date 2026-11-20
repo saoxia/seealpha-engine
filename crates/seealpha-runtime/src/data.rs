@@ -5,6 +5,9 @@
 use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_ledger::CatalogBar;
 use seealpha_market::{BinanceSource, Product, check_symbol, interval_ms};
+use seealpha_market::options::{OptionsSource,parse_option_symbol};
+use seealpha_market::funding::FundingSource;
+use seealpha_market::exercise::{ExerciseSource,as_evidence};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -135,15 +138,36 @@ impl Runtime {
         }
         let product=payload.get("product").and_then(Value::as_str).unwrap_or("futures_um");
         let symbol=field(payload,"symbol")?;
-        if !valid_symbol(product,symbol) || product=="options" {
-            return Err(bad("目前只支持现货与永续的 Rust 历史 K 线补齐。"));
+        let kind=payload.get("data_kind").and_then(Value::as_str).unwrap_or("bars");
+        let exercise=kind=="exercise";
+        if !matches!(kind,"bars"|"funding"|"exercise") ||
+            (exercise && (product!="options" ||
+                !(symbol.ends_with("USDT")&&check_symbol(symbol).is_ok()))) ||
+            (!exercise && !valid_symbol(product,symbol)) ||
+            (!exercise && product=="options" && parse_option_symbol(symbol).is_err()) ||
+            (kind=="funding" && product!="futures_um") {
+            return Err(bad("行情产品、合约或历史数据类型不支持。"));
         }
         let start=payload.get("start_ms").and_then(Value::as_i64).ok_or_else(||bad("开始时间无效。"))?;
         let end=payload.get("end_ms").and_then(Value::as_i64).ok_or_else(||bad("结束时间无效。"))?;
         let interval=payload.get("interval").and_then(Value::as_str).unwrap_or("1m");
-        let step=interval_ms(interval).map_err(|_|bad("K 线周期无效。"))?;
-        if start<0 || start>=end || start%step!=0 || end%step!=0 || (end-start)/step>5000 {
-            return Err(bad("历史补齐范围须对齐 UTC K 线边界且不超过 5000 根。"));
+        if start<0 || start>=end {return Err(bad("历史补齐时间范围无效。"));}
+        if kind=="funding" {
+            if end.saturating_sub(start)>365*86_400_000 {
+                return Err(bad("单次资金费读取超过一年。"));
+            }
+        } else if exercise {
+            if end.saturating_sub(start)>90*86_400_000 {
+                return Err(bad("单次公开行权事件读取超过 90 天。"));
+            }
+        } else {
+            let step=interval_ms(interval).map_err(|_|bad("K 线周期无效。"))?;
+            if product=="options" && !matches!(interval,"1m"|"5m"|"15m") {
+                return Err(bad("原生期权历史只支持 1m/5m/15m。"));
+            }
+            if start%step!=0 || end%step!=0 || (end-start)/step>5000 {
+                return Err(bad("历史补齐范围须对齐 UTC K 线边界且不超过 5000 根。"));
+            }
         }
         // Deterministic identity lets a client retry without duplicating work.
         let mut normalized=payload.clone();
@@ -190,10 +214,43 @@ impl Runtime {
         let interval=payload.get("interval").and_then(Value::as_str).unwrap_or("1m");
         let begin=payload["start_ms"].as_i64().ok_or_else(||bad("开始时间无效。"))?;
         let end=payload["end_ms"].as_i64().ok_or_else(||bad("结束时间无效。"))?;
-        let market=Product::parse(product).map_err(|_|bad("行情产品无效。"))?;
-        let source=BinanceSource::new().map_err(|_|RuntimeError::Conflict("行情客户端不可用。".into()))?;
-        let bars=source.load_history(market,symbol,interval,begin,end).await
-            .map_err(|e|RuntimeError::Conflict(format!("历史数据质量或远端读取失败：{e}")))?;
+        let kind=payload.get("data_kind").and_then(Value::as_str).unwrap_or("bars");
+        if kind=="exercise" {
+            let source=ExerciseSource::new()
+                .map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+            let events=source.history(symbol,begin,end).await
+                .map_err(|e|RuntimeError::Conflict(format!("期权公开行权记录获取失败：{e}")))?;
+            let rows=events.iter().map(as_evidence).collect::<Vec<_>>();
+            self.ledger.import_public_exercises(tenant_id,&rows).map_err(map_ledger)?;
+            return Ok(json!({"action":"backfill","data_kind":"exercise",
+                "product":"options","underlying":symbol,
+                "start_ms":begin,"end_ms":end,"observations":rows.len(),
+                "account_exercise_confirmed":false,"exchange_orders":0,
+                "completeness":"single_public_page_only"}));
+        }
+        if kind=="funding" {
+            let source=FundingSource::new()
+                .map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+            let events=source.history(symbol,begin,end).await
+                .map_err(|e|RuntimeError::Conflict(format!("结算资金费读取失败：{e}")))?;
+            let rows=events.iter().map(|record|json!({
+                "symbol":record.symbol,"funding_time_ms":record.funding_time_ms,
+                "funding_rate":record.funding_rate,"mark_price":record.mark_price,
+                "rate_type":record.rate_type
+            })).collect::<Vec<_>>();
+            self.ledger.import_funding_events(tenant_id,symbol,&rows).map_err(map_ledger)?;
+            return Ok(json!({"action":"backfill","data_kind":"funding","symbol":symbol,
+                "start_ms":begin,"end_ms":end,"observations":rows.len(),
+                "completeness":"event_pages_only","exchange_orders":0}));
+        }
+        let bars=if product=="options" {
+            let source=OptionsSource::new().map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+            source.history(symbol,interval,begin,end).await
+        } else {
+            let market=Product::parse(product).map_err(|_|bad("行情产品无效。"))?;
+            let source=BinanceSource::new().map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+            source.load_history(market,symbol,interval,begin,end).await
+        }.map_err(|e|RuntimeError::Conflict(format!("历史数据质量或远端读取失败：{e}")))?;
         // A historical response must never be published as a live ready feed.
         let records=bars.iter().map(|bar|CatalogBar{
             open_time_ms:bar.open_time_ms,
@@ -214,8 +271,8 @@ impl Runtime {
     )->Result<Value,RuntimeError>{
         self.require_active(tenant_id)?;
         if !valid_symbol(product,symbol)||role.len()>48||role.is_empty()
-            || !matches!(state,"running"|"stopped"|"error"|"unknown"|"ready"|"disabled") {
-            return Err(bad("行情订阅状态无效。"));
+            || !matches!(state,"running"|"stopped"|"error"|"unknown"|"disabled") {
+            return Err(bad("行情订阅状态无效：未经数据质量证明的 READY 不得由外部上报。"));
         }
         let result=self.ledger.record_subscription(
             tenant_id,account_id,product,symbol,role,state,progress

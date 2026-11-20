@@ -1,6 +1,7 @@
 //! HTTP v2 boundary. Every response carries `X-SeeAlpha-Engine-Contract-Version: 2`.
 //! Live exchange routes refuse before any credential is stored.
 mod parity;
+mod derivatives;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -132,6 +133,7 @@ pub fn router(state: AppState) -> Router {
             get(latest_candidate),
         )
         .merge(parity::routes())
+        .merge(derivatives::routes())
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
         router = router.route("/research/v1/datasets", get(research_datasets));
@@ -867,6 +869,33 @@ async fn run_carry(
         .get("symbol")
         .and_then(Value::as_str)
         .unwrap_or("ETHUSDT");
+    if body.get("start_ms").is_some() || body.get("start").is_some() {
+        let from=body["start_ms"].as_i64()
+            .or_else(||body["start"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("开始时间无效。"))?;
+        let until=body["end_ms"].as_i64()
+            .or_else(||body["end"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("结束时间无效。"))?;
+        let fee=body["fee_rate"].as_str()
+            .ok_or_else(||AppError::bad_request("必须明确设置模拟手续费费率。"))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("手续费费率无效。"))?;
+        let spot=body["spot_qty"].as_str()
+            .ok_or_else(||AppError::bad_request("现货目标数量无效。"))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("现货目标数量无效。"))?;
+        let perp=body["perp_qty"].as_str()
+            .ok_or_else(||AppError::bad_request("永续目标数量无效。"))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("永续目标数量无效。"))?;
+        return Ok(Json(state.runtime.run_evidence_carry_backtest(
+            &tenant_id,&account_id,symbol,
+            body["interval"].as_str().unwrap_or("1m"),
+            from,until,spot,perp,
+            decimal_field(&body,"starting_balance","10000")?,
+            decimal_field(&body,"max_gross_notional","10000")?,fee,
+        ).map_err(AppError::from)?));
+    }
     Ok(Json(
         state
             .runtime
@@ -905,6 +934,33 @@ async fn run_protected(
     Path((tenant_id, account_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
+    if body.get("start_ms").is_some() || body.get("start").is_some() {
+        let start=body["start_ms"].as_i64()
+            .or_else(||body["start"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("开始时间无效。"))?;
+        let end=body["end_ms"].as_i64()
+            .or_else(||body["end"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("结束时间无效。"))?;
+        let option_symbol=body["option_symbol"].as_str()
+            .ok_or_else(||AppError::bad_request("期权合约无效。"))?;
+        let perp_symbol=body["perp_symbol"].as_str()
+            .ok_or_else(||AppError::bad_request("永续合约无效。"))?;
+        if body["fee_rate"].as_str().is_none()
+            || body["option_multiplier"].as_str().is_none() {
+            return Err(AppError::bad_request("必须指定模拟手续费及期权合约乘数。"));
+        }
+        return Ok(Json(state.runtime.run_evidence_protected_backtest(
+            &tenant_id,&account_id,option_symbol,perp_symbol,
+            body["interval"].as_str().unwrap_or("1m"),
+            start,end,
+            decimal_field(&body,"option_qty","0")?,
+            decimal_field(&body,"option_multiplier","0")?,
+            decimal_field(&body,"perp_qty","0")?,
+            decimal_field(&body,"starting_balance","10000")?,
+            decimal_field(&body,"max_gross_notional","10000")?,
+            decimal_field(&body,"fee_rate","0")?,
+        ).map_err(AppError::from)?));
+    }
     Ok(Json(
         state
             .runtime
@@ -1919,6 +1975,29 @@ mod tests {
                         "close":"99","volume":"5"}]}"#
         )).await;
         assert_eq!(status,StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn native_funding_is_read_only_settled_exchange_evidence() {
+        let setup=state();
+        setup.runtime.ensure_tenant("42","development","active").unwrap();
+        setup.runtime.ledger.import_funding_events(
+            "42","ETHUSDT",&[json!({
+                "symbol":"ETHUSDT","funding_time_ms":100,
+                "rate_type":"Regular","funding_rate":"0.0001","mark_price":"2000"
+            })]
+        ).unwrap();
+        let app=router(setup);
+        let request=Request::builder()
+            .uri("/tenants/42/data/funding").method("POST")
+            .header("authorization","Bearer ci-engine-token-0123456789abcdef0123456789abcdef")
+            .header("content-type","application/json")
+            .body(Body::from(r#"{"symbol":"ETHUSDT","limit":10}"#)).unwrap();
+        let (status,_,data)=call(&app,request).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(data["rows"].as_array().unwrap().len(),1);
+        assert_eq!(data["no_synthetic_funding"],true);
+        assert_eq!(data["completeness"],"not_certified");
     }
 
 }

@@ -107,6 +107,27 @@ impl Runtime {
         }))
     }
 
+    /// Reconcile an order using the account credentials already registered
+    /// in memory. The HTTP reconciliation request never needs API secrets.
+    pub fn sync_registered_fills(
+        &self,tenant:&str,account:&str,environment:&str,request_id:&str,
+        venue_base:&str,
+    )->Result<Value,RuntimeError>{
+        self.require_active(tenant)?;
+        if !matches!(environment,"production"|"sandbox"){
+            return Err(RuntimeError::Unprocessable("账户环境无效。".into()));
+        }
+        let credentials=secrets().lock()
+            .map_err(|_|RuntimeError::Conflict("账户连接状态锁不可用。".into()))?
+            .get(&key(tenant,account,environment)).cloned()
+            .ok_or_else(||RuntimeError::Conflict(
+                "尚未登记账户凭据，不能核对交易所真实成交。".into()))?;
+        self.sync_verified_order_fills(
+            tenant,account,environment,request_id,
+            &credentials.api_key,&credentials.secret,venue_base
+        )
+    }
+
     pub fn account_snapshot(
         &self,
         tenant_id: &str,

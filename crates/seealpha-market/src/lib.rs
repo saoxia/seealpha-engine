@@ -5,6 +5,10 @@
 //! features. Neither path starts a collector as a side effect of a read.
 mod binance;
 mod pipeline;
+pub mod options;
+pub mod funding;
+pub mod exercise;
+
 
 pub use binance::{BinanceSource, MemorySource};
 pub use pipeline::{

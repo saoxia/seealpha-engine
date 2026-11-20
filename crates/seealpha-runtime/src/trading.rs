@@ -119,6 +119,7 @@ impl Runtime {
             "symbol": symbol,
             "action": command.action,
             "environment": command.environment,
+            "product": command.values.get("product").cloned().unwrap_or(Value::Null),
             "records": [],
             "ledger_synced": false,
         });
@@ -130,13 +131,22 @@ impl Runtime {
                 &body.to_string(),
             )
             .map_err(map_ledger)?;
-        let product = if symbol.ends_with("-PERP") {
-            Product::FuturesUm
-        } else if symbol.contains("-C") || symbol.contains("-P") {
-            Product::Option
-        } else {
-            Product::Spot
+        let product=match command.values.get("product").and_then(Value::as_str) {
+            Some("futures_um")=>Product::FuturesUm,
+            Some("spot")=>Product::Spot,
+            Some("options")=>Product::Option,
+            Some(_)=>return Err(RuntimeError::Unprocessable("交易产品无效。".into())),
+            None if symbol.ends_with("-PERP")=>Product::FuturesUm,
+            None if seealpha_market::options::parse_option_symbol(&symbol).is_ok()=>Product::Option,
+            None=>Product::Spot,
         };
+        if (product==Product::Option &&
+                seealpha_market::options::parse_option_symbol(&symbol).is_err())
+            || (product==Product::Spot && symbol.contains('-'))
+            || (product==Product::FuturesUm && symbol.contains('-') &&
+                !symbol.ends_with("-PERP")) {
+            return Err(RuntimeError::Unprocessable("交易合约与产品类型不匹配。".into()));
+        }
         let venue = VenueClient::new(&command.venue_base)
             .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
         let credentials = Credentials {
@@ -206,27 +216,21 @@ impl Runtime {
                         &order.to_string(),
                     )
                     .map_err(map_ledger)?;
-                let fill = json!({
-                    "trade_id": format!("fill-{client_order_id}"),
-                    "symbol": symbol,
-                    "client_order_id": client_order_id,
-                });
-                self.ledger
-                    .upsert_fill_row(
-                        &command.tenant_id,
-                        &command.account_id,
-                        &command.environment,
-                        fill["trade_id"].as_str().unwrap_or("fill"),
-                        &fill.to_string(),
-                    )
-                    .map_err(map_ledger)?;
-                body["records"] = json!([fill]);
+                // Acknowledged or newly opened venue orders are NOT fills.
+                // We must only journal exchange-authored trade IDs from the
+                // authenticated trade-history or user-stream reconciliation.
+                // The previous placeholder fill-{client_order_id} fabricated
+                // executions for NEW and PARTIALLY_FILLED orders.
+                body["records"] = json!([]);
                 self.ledger
                     .add_event(
                         &command.tenant_id,
                         &command.account_id,
-                        "execution",
-                        &json!({"client_order_id": client_order_id}).to_string(),
+                        "order_acknowledged",
+                        &json!({"client_order_id": client_order_id,
+                            "status": order["status"],
+                            "executed_qty_reported": order["filled"],
+                            "fills_verified": false}).to_string(),
                     )
                     .map_err(map_ledger)?;
             }
@@ -268,6 +272,7 @@ impl Runtime {
         venue_base: &str,
         account_revision: &str,
     ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant_id)?;
         let Some(existing) = self
             .ledger
             .get_order_request(tenant_id, account_id, request_id)
@@ -277,16 +282,22 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
+        if stored["environment"]!=environment {
+            return Err(RuntimeError::Conflict("账户环境与原始委托不一致。".into()));
+        }
         if stored["response"]["status"] == "unknown" {
             let symbol = stored["symbol"].as_str().unwrap_or("").to_string();
             let client_order_id = stored["response"]["client_order_id"]
                 .as_str()
                 .unwrap_or("")
                 .to_string();
-            let product = if symbol.ends_with("-PERP") {
-                Product::FuturesUm
-            } else {
-                Product::Spot
+            let product=match stored.get("product").and_then(Value::as_str) {
+                Some("futures_um")=>Product::FuturesUm,
+                Some("options")=>Product::Option,
+                Some("spot")=>Product::Spot,
+                _ if symbol.ends_with("-PERP")=>Product::FuturesUm,
+                _ if seealpha_market::options::parse_option_symbol(&symbol).is_ok()=>Product::Option,
+                _=>Product::Spot,
             };
             if let Ok(client) = VenueClient::new(venue_base)
                 && let Ok(Some(order)) = client.query_order(
@@ -305,13 +316,13 @@ impl Runtime {
                     "已在交易所核对到委托：{}",
                     order["status"].as_str().unwrap_or("")
                 ));
-                let _ = self.ledger.upsert_order_row(
+                self.ledger.upsert_order_row(
                     tenant_id,
                     account_id,
                     environment,
                     &client_order_id,
                     &order.to_string(),
-                );
+                ).map_err(map_ledger)?;
             }
             self.ledger
                 .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
@@ -336,6 +347,27 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
+        if stored["response"]["status"]!="completed" ||
+            stored["response"]["order"].is_null() {
+            return Err(RuntimeError::Conflict(
+                "订单尚未在交易所核实，不能标记已对账。".into()));
+        }
+        let order=&stored["response"]["order"];
+        let terminal=matches!(order["status"].as_str(),
+            Some("FILLED"|"CANCELED"|"EXPIRED"|"EXPIRED_IN_MATCH"|"REJECTED"));
+        if !terminal {
+            return Err(RuntimeError::Conflict(
+                "订单仍可能继续成交，不能将开放委托标记为全部对账。".into()));
+        }
+        let filled=order["filled"].as_str()
+            .ok_or_else(||RuntimeError::Conflict("订单累计成交量未核实。".into()))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|RuntimeError::Conflict("订单累计成交量无效。".into()))?;
+        if filled<rust_decimal::Decimal::ZERO ||
+            (filled>rust_decimal::Decimal::ZERO && stored["fills_complete"]!=true) {
+            return Err(RuntimeError::Conflict(
+                "订单已有成交但交易所 Trade ID 尚未完整核对。".into()));
+        }
         stored["ledger_synced"] = json!(true);
         self.ledger
             .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
@@ -692,6 +724,8 @@ mod tests {
         };
         let first = runtime.execute_order(command()).unwrap();
         assert_eq!(first["response"]["status"], "completed");
+        // NEW/ACK is not a fill. Only signed userTrades may enter fills.
+        assert!(runtime.ledger.fills("7","11","production").unwrap().is_empty());
         assert_eq!(
             first["response"]["client_order_id"],
             "SA00000000000000000000000000000001"

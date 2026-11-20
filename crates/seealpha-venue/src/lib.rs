@@ -4,6 +4,7 @@
 //! Credentials are used only to build the request and are not returned or logged.
 pub mod options;
 pub mod options_rules;
+pub mod trades;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -51,6 +52,49 @@ pub struct Credentials {
     pub secret: String,
 }
 
+/// Signed Binance requests must never leak API keys to a configurable
+/// arbitrary HTTPS origin. Loopback is reserved for local test/proxy adapters.
+fn checked_gateway(base:&str)->Result<String,VenueError>{
+    let url=reqwest::Url::parse(base)
+        .map_err(|_|VenueError::Rejected("交易网关 URL 无效。".into()))?;
+    if !url.username().is_empty() || url.password().is_some() ||
+        url.query().is_some() || url.fragment().is_some() ||
+        !matches!(url.path(),""|"/") {
+        return Err(VenueError::Rejected("交易网关包含不允许的路径或用户信息。".into()));
+    }
+    let host=url.host_str().ok_or_else(||
+        VenueError::Rejected("交易网关域名无效。".into()))?;
+    let official=matches!(host,"api.binance.com"|"fapi.binance.com"|"eapi.binance.com");
+    let sandbox=matches!(host,"testnet.binancefuture.com"|"testnet.binance.vision");
+    let local=matches!(host,"127.0.0.1"|"localhost"|"::1");
+    if (url.scheme()=="https" && (official||sandbox) && url.port().is_none())
+        || (url.scheme()=="http" && local && url.port().is_some()) {
+        return Ok(base.trim_end_matches('/').to_owned());
+    }
+    Err(VenueError::Rejected("交易所签名请求仅允许 Binance 官方域名或带端口的本地网关。".into()))
+}
+fn route_gateway<'a>(base:&'a str,path:&str)->Result<&'a str,VenueError>{
+    let host=reqwest::Url::parse(base).ok()
+        .and_then(|url|url.host_str().map(str::to_owned))
+        .ok_or_else(||VenueError::Rejected("交易网关 URL 无效。".into()))?;
+    if matches!(host.as_str(),"api.binance.com"|"fapi.binance.com"|"eapi.binance.com"){
+        // Static official hosts have equal lifetime to 'base', but avoid
+        // returning a temporary URL string by selecting a static literal.
+        return Ok(match path.split('/').nth(1).unwrap_or("") {
+            "api"=>"https://api.binance.com",
+            "fapi"=>"https://fapi.binance.com",
+            "eapi"=>"https://eapi.binance.com",
+            _=>return Err(VenueError::Symbol),
+        });
+    }
+    if (host=="testnet.binancefuture.com" && path.starts_with("/fapi/"))
+        || (host=="testnet.binance.vision" && path.starts_with("/api/"))
+        || matches!(host.as_str(),"127.0.0.1"|"localhost"|"::1") {
+        return Ok(base);
+    }
+    Err(VenueError::Rejected("沙盒交易网关与订单产品不匹配，拒绝跨市场发送密钥。".into()))
+}
+
 pub struct VenueClient {
     http: reqwest::blocking::Client,
     base: String,
@@ -58,12 +102,7 @@ pub struct VenueClient {
 
 impl VenueClient {
     pub fn new(base: impl Into<String>) -> Result<Self, VenueError> {
-        let base = base.into().trim_end_matches('/').to_string();
-        if !(base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:"))
-            && !base.starts_with("https://")
-        {
-            return Err(VenueError::Rejected("交易网关地址无效。".into()));
-        }
+        let base=checked_gateway(&base.into())?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(8))
             .redirect(reqwest::redirect::Policy::none())
@@ -93,7 +132,11 @@ impl VenueClient {
             ("type".to_string(), intent.order_type.to_ascii_uppercase()),
             ("quantity".to_string(), intent.quantity.clone()),
             (
-                "newClientOrderId".to_string(),
+                if intent.product==Product::Option {
+                    "clientOrderId".to_string()
+                } else {
+                    "newClientOrderId".to_string()
+                },
                 intent.client_order_id.clone(),
             ),
         ];
@@ -105,13 +148,34 @@ impl VenueClient {
             pairs.push(("price".to_string(), price));
             pairs.push(("timeInForce".to_string(), intent.time_in_force.clone()));
         }
-        if intent.product == Product::FuturesUm {
+        if matches!(intent.product, Product::FuturesUm | Product::Option) {
             pairs.push((
                 "reduceOnly".to_string(),
                 if intent.reduce_only { "true" } else { "false" }.into(),
             ));
         }
+        if intent.product==Product::Option {
+            // Binance European Options currently defines LIMIT as the
+            // supported order type. Reject rather than guessing MARKET.
+            if !intent.order_type.eq_ignore_ascii_case("limit") {
+                return Err(VenueError::Rejected("期权订单仅支持已核实的 LIMIT 类型。".into()));
+            }
+            if !matches!(intent.time_in_force.to_ascii_uppercase().as_str(),
+                "GTC"|"IOC"|"FOK"|"GTX") {
+                return Err(VenueError::Rejected("期权订单有效期无效。".into()));
+            }
+            pairs.push(("postOnly".to_string(),"false".to_string()));
+        }
         let value = self.signed(credentials, "POST", path, &pairs)?;
+        // A successful HTTP status without an exchange order identity is an
+        // unknown result, not an accepted fill or authoritative NEW order.
+        if value.get("clientOrderId").and_then(Value::as_str)
+            != Some(intent.client_order_id.as_str())
+            || value.get("status").and_then(Value::as_str).is_none()
+            || value.get("symbol").and_then(Value::as_str)
+                != Some(venue_symbol(&intent.symbol)?.as_str()) {
+            return Err(VenueError::Unconfirmed);
+        }
         Ok(order_view(&value, &intent.client_order_id))
     }
 
@@ -130,7 +194,8 @@ impl VenueClient {
         };
         let pairs = vec![
             ("symbol".to_string(), venue_symbol(symbol)?),
-            ("origClientOrderId".to_string(), client_order_id.to_string()),
+            (if product==Product::Option {"clientOrderId"}else{"origClientOrderId"}.to_string(),
+                client_order_id.to_string()),
         ];
         let value = self.signed(credentials, "DELETE", path, &pairs)?;
         Ok(order_view(&value, client_order_id))
@@ -151,7 +216,8 @@ impl VenueClient {
         };
         let pairs = vec![
             ("symbol".to_string(), venue_symbol(symbol)?),
-            ("origClientOrderId".to_string(), client_order_id.to_string()),
+            (if product==Product::Option {"clientOrderId"}else{"origClientOrderId"}.to_string(),
+                client_order_id.to_string()),
         ];
         match self.signed(credentials, "GET", path, &pairs) {
             Ok(value) => Ok(Some(order_view(&value, client_order_id))),
@@ -162,6 +228,32 @@ impl VenueClient {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Exchange-authored fills for one verified order. No signed POST occurs.
+    /// A full page is not considered complete until cursor-based pagination
+    /// exists; unresolved venue history fails closed.
+    pub fn query_order_trades(
+        &self, credentials:&Credentials,product:Product,
+        symbol:&str,order_id:&str,
+    )->Result<Vec<Value>,VenueError>{
+        check_credentials(credentials)?;
+        if product==Product::Option || order_id.is_empty() ||
+            !order_id.bytes().all(|b|b.is_ascii_digit()) {
+            return Err(VenueError::Unconfirmed);
+        }
+        let path=match product{
+            Product::Spot=>"/api/v3/myTrades",
+            Product::FuturesUm=>"/fapi/v1/userTrades",
+            Product::Option=>return Err(VenueError::Unconfirmed),
+        };
+        let canonical=venue_symbol(symbol)?;
+        let value=self.signed(credentials,"GET",path,&[
+            ("symbol".into(),canonical.clone()),
+            ("orderId".into(),order_id.to_owned()),
+            ("limit".into(),"1000".into())
+        ])?;
+        trades::normalize_order_trades(product,&canonical,order_id,&value)
     }
 
     /// Signed account read. The returned JSON keeps balances and positions only.
@@ -190,7 +282,8 @@ impl VenueClient {
         let signature = sign_payload(&credentials.secret, &query);
         query.push_str("&signature=");
         query.push_str(&signature);
-        let url = format!("{}{path}?{query}", self.base);
+        let target=route_gateway(&self.base,path)?;
+        let url = format!("{target}{path}?{query}");
         let response = self
             .http
             .request(method.parse().map_err(|_| VenueError::Unconfirmed)?, url)
@@ -290,16 +383,18 @@ fn snapshot_view(value: &Value) -> Value {
 fn order_view(value: &Value, client_order_id: &str) -> Value {
     json!({
         "client_order_id": value.get("clientOrderId").and_then(Value::as_str).unwrap_or(client_order_id),
-        "order_id": value.get("orderId").map(|item| item.to_string()),
+        "order_id": value.get("orderId").and_then(|item|
+            item.as_str().map(str::to_owned)
+                .or_else(||item.as_u64().map(|n|n.to_string()))),
         "symbol": value.get("symbol").and_then(Value::as_str).unwrap_or(""),
         "side": value.get("side").and_then(Value::as_str).unwrap_or(""),
         "order_type": value.get("type").and_then(Value::as_str).unwrap_or(""),
         "quantity": value.get("origQty").and_then(Value::as_str).unwrap_or(""),
         "filled": value.get("executedQty").and_then(Value::as_str).unwrap_or("0"),
         "price": value.get("price").and_then(Value::as_str),
-        "status": value.get("status").and_then(Value::as_str).unwrap_or("NEW"),
+        "status": value.get("status").and_then(Value::as_str).unwrap_or("UNKNOWN"),
         "reduce_only": value.get("reduceOnly").and_then(Value::as_bool).unwrap_or(false),
-        "open": value.get("status").and_then(Value::as_str).is_none_or(|status| matches!(status, "NEW" | "PARTIALLY_FILLED")),
+        "open": value.get("status").and_then(Value::as_str).is_some_and(|status| matches!(status, "NEW" | "PARTIALLY_FILLED")),
     })
 }
 
@@ -316,6 +411,30 @@ fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_gateway_never_sends_exchange_credentials_to_arbitrary_https(){
+        for invalid in [
+            "https://api.binance.com.evil.example",
+            "https://evil.example",
+            "http://fapi.binance.com",
+            "https://api.binance.com/path",
+            "https://user:password@api.binance.com",
+            "http://localhost",
+        ]{
+            assert!(VenueClient::new(invalid).is_err(),"{invalid}");
+        }
+        let official=VenueClient::new("https://fapi.binance.com").unwrap();
+        assert_eq!(route_gateway(&official.base,"/eapi/v1/order").unwrap(),
+            "https://eapi.binance.com");
+        assert_eq!(route_gateway(&official.base,"/api/v3/order").unwrap(),
+            "https://api.binance.com");
+        assert_eq!(route_gateway(&official.base,"/fapi/v1/order").unwrap(),
+            "https://fapi.binance.com");
+        let testnet=VenueClient::new("https://testnet.binancefuture.com").unwrap();
+        assert!(route_gateway(&testnet.base,"/eapi/v1/order").is_err());
+        assert!(route_gateway("http://127.0.0.1:18767","/eapi/v1/order").is_ok());
+    }
 
     #[test]
     fn signature_matches_python_hmac_sha256() {
@@ -345,6 +464,16 @@ mod tests {
             secret: "same".into(),
         });
         assert_eq!(error, Err(VenueError::Credentials));
+    }
+
+    #[test]
+    fn normalized_exchange_order_id_never_contains_json_string_quotes() {
+        let raw=json!({"orderId":"12345678901234567890",
+            "clientOrderId":"sa-123","symbol":"BTC-271231-90000-C",
+            "status":"NEW"});
+        let view=order_view(&raw,"sa-123");
+        assert_eq!(view["order_id"],"12345678901234567890");
+        assert_eq!(view["open"],true);
     }
 
     #[test]
