@@ -90,7 +90,7 @@ def test_live_demand_overlays_only_existing_configured_symbols(tmp_path, monkeyp
         assert len(rows) == 1 and rows[0]["realtime_enabled"] is True
         assert manager.policy_repository.list("prod")[0]["realtime_enabled"] is False
         with pytest.raises(MarketDataHubError, match="未获准"):
-            bridge.subscribe("prod", "desk", "wrong", (BTC,))
+            bridge.subscribe("prod", "desk", "issued", (BTC,))
         assert bridge.unsubscribe("prod", "desk", "issued") == {}
         assert not manager.subscriptions._effective_policies()[0].realtime_enabled
     finally:
