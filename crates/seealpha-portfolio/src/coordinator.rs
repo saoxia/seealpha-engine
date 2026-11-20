@@ -64,6 +64,10 @@ pub struct Coordinator {
     pub freeze_reason: Option<String>,
     denied_at: Option<u64>,
     seen_fills: BTreeMap<String, (String, Decimal)>,
+    // Keep the pre-registered identity after terminal completion. The field
+    // is optional on old snapshots and omitted when empty for compatibility.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    used_commands: BTreeSet<String>,
     increment: Decimal,
     risk_limit: Decimal,
 }
@@ -83,7 +87,7 @@ impl Coordinator {
         if increment <= Decimal::ZERO || risk_limit <= Decimal::ZERO { return Err(CoordinatorError::Invalid); }
         Ok(Self { members: BTreeMap::new(), orders: BTreeMap::new(), flight: None,
             frozen: false, freeze_reason: None, denied_at: None, seen_fills: BTreeMap::new(),
-            increment, risk_limit })
+            used_commands: BTreeSet::new(), increment, risk_limit })
     }
     pub fn register(&mut self, id: &str) -> Result<(), CoordinatorError> {
         if id.trim().is_empty() { return Err(CoordinatorError::Invalid); }
@@ -265,6 +269,9 @@ impl Coordinator {
         }
         if need == Decimal::ZERO || bar.is_some_and(|b|self.denied_at==Some(b.time)) { return Ok((fills,None)); }
         if command_id.trim().is_empty() { return Err(CoordinatorError::Invalid); }
+        if !self.used_commands.insert(command_id.into()) {
+            return Err(CoordinatorError::Duplicate);
+        }
         self.flight = Some(Flight { id: command_id.into(), signed_requested: need, filled: Decimal::ZERO, cancel_requested: false });
         Ok((fills,Some(Command::Submit { id: command_id.into(), signed_quantity: need })))
     }
@@ -368,7 +375,14 @@ impl Coordinator {
                 return Err(CoordinatorError::Invalid);
             }
         }
-        if self.frozen != self.freeze_reason.is_some() {
+        if self.frozen != self.freeze_reason.is_some() ||
+            self.used_commands.iter().any(|id| id.trim().is_empty()) {
+            return Err(CoordinatorError::Invalid);
+        }
+        // Old snapshots may contain an outstanding flight without the newer
+        // used_commands field; do not interpret its absence as a terminal ACK.
+        if !self.used_commands.is_empty() && self.flight.as_ref().is_some_and(|f|
+            !self.used_commands.contains(&f.id)) {
             return Err(CoordinatorError::Invalid);
         }
         Ok(())
