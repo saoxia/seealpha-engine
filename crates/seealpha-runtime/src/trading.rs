@@ -38,6 +38,16 @@ pub struct OrderCommand {
 
 impl Runtime {
     pub fn execute_order(&self, command: OrderCommand) -> Result<Value, RuntimeError> {
+        // Migration gate: allow synthetic loopback fixtures only. In particular,
+        // production tenant status must never authorize an external REST write.
+        // This check intentionally precedes all intent/order state mutations.
+        if !(command.venue_base.starts_with("http://127.0.0.1:")
+            || command.venue_base.starts_with("http://[::1]:"))
+        {
+            return Err(RuntimeError::Conflict(
+                "Rust 实盘订单发送尚未通过验收，禁止访问外部交易所。".into(),
+            ));
+        }
         let tenant = self.require_active(&command.tenant_id)?;
         if tenant.purpose != "production" {
             return Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into()));
