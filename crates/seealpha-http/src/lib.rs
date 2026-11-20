@@ -786,15 +786,28 @@ fn parse_time_ms(value: &str) -> Option<i64> {
     let mut clock = time.split(':');
     let hour: i64 = clock.next()?.parse().ok()?;
     let minute: i64 = clock.next()?.parse().ok()?;
-    let second: i64 = clock.next()?.split('.').next()?.parse().ok()?;
+    let second_text=clock.next()?;
+    if second_text.contains('.') && !second_text.split('.').nth(1)?
+        .chars().all(|c|c=='0') {return None;}
+    let second: i64 = second_text.split('.').next()?.parse().ok()?;
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second) || clock.next().is_some() {
+        return None;
+    }
     let days = days_from_civil(year, month, day)?;
     Some(((days * 24 + hour) * 60 + minute) * 60 + second).map(|secs| secs * 1000)
 }
 
 fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
+    let leap=year%4==0 && (year%100!=0 || year%400==0);
+    let max_day=match month {
+        1|3|5|7|8|10|12=>31,
+        4|6|9|11=>30,
+        2 if leap=>29,
+        2=>28,
+        _=>return None,
+    };
+    if day<1 || day>max_day {return None;}
     let year = year - i64::from(month <= 2);
     let era = year.div_euclid(400);
     let yoe = year - era * 400;
