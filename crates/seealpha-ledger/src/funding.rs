@@ -44,6 +44,27 @@ impl Ledger {
         Ok(items.len())
     }
 
+    pub fn latest_funding_events(
+        &self,tenant:&str,symbol:&str,limit:i64,
+    )->Result<Vec<Value>,LedgerError>{
+        let conn=self.lock()?;
+        let mut stmt=conn.prepare(
+            "SELECT funding_time_ms,rate_type,funding_rate,mark_price
+             FROM funding_observations WHERE tenant_id=?1 AND symbol=?2
+             ORDER BY funding_time_ms DESC,rate_type DESC LIMIT ?3"
+        ).map_err(error)?;
+        let rows=stmt.query_map(params![tenant,symbol,limit.clamp(1,500)],|r|{
+            Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?))
+        }).map_err(error)?;
+        let mut items=rows.map(|r|{
+            let (time,kind,rate,mark)=r.map_err(error)?;
+            Ok(json!({"symbol":symbol,"funding_time_ms":time,"rate_type":kind,
+                "funding_rate":rate,"mark_price":mark,"settlement":"official_observation"}))
+        }).collect::<Result<Vec<_>,_>>()?;
+        items.reverse();
+        Ok(items)
+    }
+
     pub fn funding_events(
         &self,tenant:&str,symbol:&str,start_ms:i64,end_ms:i64,limit:i64,
     )->Result<Vec<Value>,LedgerError>{
