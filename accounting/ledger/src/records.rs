@@ -11,7 +11,13 @@ impl Ledger {
         let connection = self.lock()?;
         connection
             .query_row(
-                "SELECT body_json FROM order_requests WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+                "SELECT COALESCE(
+                    (SELECT body_json FROM order_request_views
+                     WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3
+                     ORDER BY id DESC LIMIT 1),
+                    body_json)
+                 FROM order_requests
+                 WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
                 params![tenant_id, account_id, request_id],
                 |row| row.get(0),
             )
@@ -52,6 +58,80 @@ impl Ledger {
                 "request is immutable; reconcile instead of replay".into(),
             ));
         }
+        Ok(())
+    }
+
+    /// Append a durable API projection without changing the immutable pre-send
+    /// UNKNOWN request. Only the original request identity may be observed.
+    /// This view is not an execution/fill authorization.
+    pub fn append_order_request_view(
+        &self,
+        tenant_id: &str,
+        account_id: &str,
+        request_id: &str,
+        body: &str,
+    ) -> Result<(), LedgerError> {
+        if tenant_id.is_empty()
+            || account_id.is_empty()
+            || request_id.is_empty()
+            || body.len() > 1024 * 1024
+        {
+            return Err(LedgerError::Conflict("invalid request observation scope".into()));
+        }
+        let next: serde_json::Value = serde_json::from_str(body)
+            .map_err(|_| LedgerError::Conflict("invalid request observation JSON".into()))?;
+        let connection = self.lock()?;
+        let raw: String = connection
+            .query_row(
+                "SELECT body_json FROM order_requests WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+                params![tenant_id, account_id, request_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| LedgerError::Conflict("missing immutable request".into()))?;
+        let original: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|_| LedgerError::Conflict("corrupt immutable request".into()))?;
+        if next.get("replay").is_some()
+            || !matches!(next["response"]["status"].as_str(), Some("unknown" | "completed"))
+            || [
+                "fingerprint",
+                "symbol",
+                "action",
+                "environment",
+                "product",
+                "order_list",
+                "algo_order",
+            ]
+            .iter()
+            .any(|key| next.get(*key) != original.get(*key))
+            || next.pointer("/response/request_id") != original.pointer("/response/request_id")
+            || next.pointer("/response/client_order_id")
+                != original.pointer("/response/client_order_id")
+        {
+            return Err(LedgerError::Conflict(
+                "request observation cannot rewrite immutable identity".into(),
+            ));
+        }
+        let latest: Option<String> = connection
+            .query_row(
+                "SELECT body_json FROM order_request_views
+                 WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3
+                 ORDER BY id DESC LIMIT 1",
+                params![tenant_id, account_id, request_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        if latest.as_deref() == Some(body) {
+            return Ok(());
+        }
+        connection
+            .execute(
+                "INSERT INTO order_request_views
+                 (tenant_id,account_id,request_id,body_json,recorded_at)
+                 VALUES (?1,?2,?3,?4,?5)",
+                params![tenant_id, account_id, request_id, body, now_ms()],
+            )
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         Ok(())
     }
 
@@ -461,6 +541,41 @@ mod safety_tests {
                 .is_err()
         );
         assert_eq!(db.fills("t", "a", "paper").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn request_replay_reads_appended_result_without_mutating_pre_send_unknown() {
+        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let base = serde_json::json!({
+            "fingerprint":"f".repeat(64),
+            "action":"submit","symbol":"ETHUSDT-PERP",
+            "environment":"production","product":"futures_um",
+            "order_list":null,"algo_order":false,
+            "response":{"request_id":"r","client_order_id":"c","status":"unknown"},
+            "ledger_synced":false
+        });
+        db.save_order_request("t", "a", "r", &base.to_string()).unwrap();
+        let mut observed = base.clone();
+        observed["response"]["status"] = serde_json::json!("completed");
+        db.append_order_request_view("t", "a", "r", &observed.to_string())
+            .unwrap();
+        assert_eq!(
+            db.get_order_request("t", "a", "r")
+                .unwrap()
+                .unwrap(),
+            observed.to_string()
+        );
+        assert!(
+            db.save_order_request("t", "a", "r", &observed.to_string())
+                .is_err()
+        );
+        let mut wrong = observed.clone();
+        wrong["fingerprint"] = serde_json::json!("0".repeat(64));
+        assert!(
+            db.append_order_request_view("t", "a", "r", &wrong.to_string())
+                .is_err()
+        );
+        assert!(db.get_order_request("t", "other", "r").unwrap().is_none());
     }
 
     #[test]

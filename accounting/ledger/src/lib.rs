@@ -131,6 +131,20 @@ CREATE TABLE IF NOT EXISTS order_requests (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, request_id)
 );
+-- Immutable request intent stays in order_requests. Confirmed results,
+-- retries and reconciliation are appended as separate scoped projections.
+CREATE TABLE IF NOT EXISTS order_request_views (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    body_json TEXT NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    FOREIGN KEY(tenant_id,account_id,request_id)
+        REFERENCES order_requests(tenant_id,account_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS order_request_views_by_request
+    ON order_request_views(tenant_id,account_id,request_id,id);
 CREATE TABLE IF NOT EXISTS orders (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,

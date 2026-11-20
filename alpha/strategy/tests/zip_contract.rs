@@ -33,11 +33,23 @@ fn legitimate_package_has_stable_digest_and_versioned_entry() {
 fn refuses_missing_entry_and_duplicate_names() {
     let bytes = archive(&[("seealpha-package.json", MANIFEST.as_bytes())]);
     assert!(inspect_archive(&bytes).is_err());
-    let bytes = archive(&[
+    // Newer ZIP writers refuse duplicate names. Craft a valid-format adversarial
+    // archive by renaming the equal-length local and central directory entries.
+    let mut bytes = archive(&[
         ("seealpha-package.json", MANIFEST.as_bytes()),
         ("strategy.py", b"x=1"),
-        ("strategy.py", b"x=2"),
+        ("strategy.px", b"x=2"),
     ]);
+    let from = b"strategy.px";
+    let to = b"strategy.py";
+    let mut replaced = 0;
+    for i in 0..=bytes.len() - from.len() {
+        if &bytes[i..i + from.len()] == from {
+            bytes[i..i + to.len()].copy_from_slice(to);
+            replaced += 1;
+        }
+    }
+    assert_eq!(replaced, 2);
     assert!(inspect_archive(&bytes).is_err());
 }
 

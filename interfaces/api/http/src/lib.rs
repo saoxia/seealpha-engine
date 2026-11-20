@@ -1668,7 +1668,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn carry_and_protected_latest_return_the_saved_result() {
+    async fn historical_carry_and_option_requests_fail_closed_without_required_evidence() {
         let app = router(state());
         let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
         let headers = format!("Bearer {token}");
@@ -1696,9 +1696,13 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(carry["mode"], "native_dual_venue_development_only");
-        assert_eq!(carry["bar_count"], 18);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            carry["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("手续费")
+        );
         let (status, _, latest) = call(
             &app,
             Request::builder()
@@ -1708,8 +1712,8 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(latest, carry);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(latest.get("detail").is_some());
         let protected = r#"{"start":"0","end":"240000","interval":"1m","starting_options_balance":"1000","starting_perpetual_balance":"1000","max_gross_notional":"1000"}"#;
         let (status, _, option) = call(
             &app,
@@ -1722,8 +1726,13 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(option["fills"].as_array().unwrap().len(), 6);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            option["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("期权合约")
+        );
         let (status, _, latest_option) = call(
             &app,
             Request::builder()
@@ -1733,8 +1742,8 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(latest_option, option);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(latest_option.get("detail").is_some());
     }
 
     #[tokio::test]
@@ -1892,7 +1901,8 @@ mod tests {
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // Conflicting historical OHLCV is immutable; never silently overwrite it.
+        assert_eq!(status, StatusCode::CONFLICT);
     }
 
     #[tokio::test]

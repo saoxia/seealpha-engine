@@ -524,6 +524,21 @@ mod tests {
         let mut book = Book::default();
         book.accept_page(&[minute(0, 1), minute(1, 1)], MINUTE_MS)
             .unwrap();
+        assert!(!book.gate.ready);
+        book.confirm_source(SourceProof {
+            latest_closed_open_ms: MINUTE_MS,
+            journal_committed_open_ms: MINUTE_MS,
+            exchange_confirmed_ms: 2 * MINUTE_MS,
+            checked_at_ms: 2 * MINUTE_MS,
+            valid_until_ms: 3 * MINUTE_MS,
+            connected: true,
+            clock_healthy: true,
+            overlap_verified: true,
+            history_contiguous: true,
+            unresolved_gaps: 0,
+            backlog: 0,
+        })
+        .unwrap();
         assert!(book.gate.ready);
         let restarted = book.restart();
         assert!(!restarted.ready);

@@ -134,14 +134,8 @@ impl Runtime {
             "records": [],
             "ledger_synced": false,
         });
-        self.ledger
-            .save_order_request(
-                &command.tenant_id,
-                &command.account_id,
-                &request_id,
-                &body.to_string(),
-            )
-            .map_err(map_ledger)?;
+        // Validate the instrument and record routing before the only pre-send
+        // immutable UNKNOWN insert. Invalid inputs must not leave a send record.
         let product = match command.values.get("product").and_then(Value::as_str) {
             Some("futures_um") => Product::FuturesUm,
             Some("spot") => Product::Spot,
@@ -365,8 +359,10 @@ impl Runtime {
             }
         }
         drop(credentials);
+        // The pre-send request is immutable. Store the confirmed send result as
+        // a separate append-only projection for idempotent GET/replay.
         self.ledger
-            .save_order_request(
+            .append_order_request_view(
                 &command.tenant_id,
                 &command.account_id,
                 &request_id,
@@ -463,19 +459,25 @@ impl Runtime {
                     "已在交易所核对到委托：{}",
                     order["status"].as_str().unwrap_or("")
                 ));
+                // A signed GET may show a later status than the original
+                // immutable ACK. Append evidence; never overwrite that ACK.
                 self.ledger
-                    .upsert_order_row(
+                    .add_event(
                         tenant_id,
                         account_id,
-                        environment,
-                        &client_order_id,
-                        &order.to_string(),
+                        "signed_order_query_observed",
+                        &json!({"request_id":request_id,"client_order_id":client_order_id,
+                            "environment":environment,"source":"signed_exchange_order_query",
+                            "order":order,"fills_verified":false})
+                        .to_string(),
                     )
                     .map_err(map_ledger)?;
             }
-            self.ledger
-                .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
-                .map_err(map_ledger)?;
+            if stored.to_string() != existing {
+                self.ledger
+                    .append_order_request_view(tenant_id, account_id, request_id, &stored.to_string())
+                    .map_err(map_ledger)?;
+            }
         }
         let _ = account_revision;
         Ok(stored)
@@ -543,7 +545,7 @@ impl Runtime {
         }
         stored["ledger_synced"] = json!(true);
         self.ledger
-            .save_order_request(tenant_id, account_id, request_id, &stored.to_string())
+            .append_order_request_view(tenant_id, account_id, request_id, &stored.to_string())
             .map_err(map_ledger)?;
         Ok(stored)
     }

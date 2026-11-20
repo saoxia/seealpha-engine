@@ -870,6 +870,8 @@ mod tests {
         desk.hub.allow(ETH);
         desk.subscribe("prod", "desk", ETH, 1).unwrap();
         desk.hub.accept_closed_bar(ETH, bar(10, 100)).unwrap();
+        // A committed bar alone must never imply READY without source confirmation.
+        prove(&mut desk.hub, ETH);
         assert!(desk.hub.data_ready(ETH));
         desk.hub.invalidate(ETH);
         assert!(!desk.hub.data_ready(ETH));
