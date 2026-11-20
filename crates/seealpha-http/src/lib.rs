@@ -934,6 +934,33 @@ async fn run_protected(
     Path((tenant_id, account_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
+    if body.get("start_ms").is_some() || body.get("start").is_some() {
+        let start=body["start_ms"].as_i64()
+            .or_else(||body["start"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("开始时间无效。"))?;
+        let end=body["end_ms"].as_i64()
+            .or_else(||body["end"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("结束时间无效。"))?;
+        let option_symbol=body["option_symbol"].as_str()
+            .ok_or_else(||AppError::bad_request("期权合约无效。"))?;
+        let perp_symbol=body["perp_symbol"].as_str()
+            .ok_or_else(||AppError::bad_request("永续合约无效。"))?;
+        if body["fee_rate"].as_str().is_none()
+            || body["option_multiplier"].as_str().is_none() {
+            return Err(AppError::bad_request("必须指定模拟手续费及期权合约乘数。"));
+        }
+        return Ok(Json(state.runtime.run_evidence_protected_backtest(
+            &tenant_id,&account_id,option_symbol,perp_symbol,
+            body["interval"].as_str().unwrap_or("1m"),
+            start,end,
+            decimal_field(&body,"option_qty","0")?,
+            decimal_field(&body,"option_multiplier","0")?,
+            decimal_field(&body,"perp_qty","0")?,
+            decimal_field(&body,"starting_balance","10000")?,
+            decimal_field(&body,"max_gross_notional","10000")?,
+            decimal_field(&body,"fee_rate","0")?,
+        ).map_err(AppError::from)?));
+    }
     Ok(Json(
         state
             .runtime
