@@ -153,6 +153,7 @@ fn validated_rows(
     let mut first = None;
     let mut last = None;
     let mut ids = HashSet::new();
+    let mut unique_records = HashSet::new();
     for batch in batches {
         let batch_schema = batch.schema();
         for (field, array) in batch_schema.fields().iter().zip(batch.columns()) {
@@ -217,6 +218,14 @@ fn validated_rows(
                 }
             }
             let value = record_value(batch, row)?;
+            let fingerprint = serde_json::to_vec(&value).map_err(|e|
+                CatalogError::Invalid(format!("记录序列化失败：{e}"))
+            )?;
+            if !unique_records.insert(fingerprint) {
+                return Err(CatalogError::Conflict(
+                    "单批次包含完全相同的重复历史记录。".into(),
+                ));
+            }
             first.get_or_insert(event);
             last = Some(event);
             rows.push(value);
@@ -422,6 +431,17 @@ mod tests {
                 &kind, instrument, &[fixture(&kind, &ts, ids.as_deref())],
             ).is_ok());
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_exact_duplicate_quotes_even_at_same_nanosecond() {
+        let (catalog, root) = catalog();
+        let ts = [1_795_132_800_000_000_001, 1_795_132_800_000_000_001];
+        assert!(catalog.append_record_batches(
+            &RecordKind::Quotes, "ETHUSDT-PERP.BINANCE",
+            &[fixture(&RecordKind::Quotes, &ts, None)],
+        ).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
