@@ -394,6 +394,17 @@ impl Runtime {
         if issuance_id.is_empty()||issuance_id.len()>64 || !(1..=5000).contains(&lookback) {
             return Err(bad("策略行情订阅参数无效。"));
         }
+        // HTTP is not the authorization source of truth. The Runtime API
+        // must independently verify trusted account-issued strategy identity.
+        let purpose = self.require_active(tenant_id)?.purpose;
+        let issued = self.ledger.strategies(tenant_id, account_id).map_err(map_ledger)?;
+        if !issued.iter().any(|item|
+            item.issuance_id == issuance_id && item.grant_purpose == purpose
+        ) {
+            return Err(RuntimeError::Conflict(
+                "策略订阅未绑定有效租户账户发行记录。".into(),
+            ));
+        }
         let items=streams.as_array().ok_or_else(||bad("策略行情数据流无效。"))?;
         if items.is_empty()||items.len()>8 {return Err(bad("策略行情数据流无效。"));}
         let policies=self.ledger.policies(tenant_id).map_err(map_ledger)?;
@@ -447,7 +458,9 @@ impl Runtime {
                 }
             }
         }
-        Ok(json!({"items":readers,"requirements":required,"started_collectors":0}))
+        Ok(json!({"items":readers,"requirements":required,"started_collectors":0,
+            "data_ready":false,"allow_new_risk":false,
+            "readiness_reason":"Feed/Catalog 完整性和恢复证据尚未由可信协调器确认。"}))
     }
 }
 
