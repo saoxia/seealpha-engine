@@ -2,7 +2,7 @@
 //! All target amounts are parsed with exact Decimal; never pass through f64.
 
 use crate::{HostCommand, HostResponse, StrategyBar, StrategyError, StrategyRun};
-use rust_decimal::Decimal;
+use crate::decimal::Decimal;
 use serde_json::Value;
 use std::str::FromStr;
 
