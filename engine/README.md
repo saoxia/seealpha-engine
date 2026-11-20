@@ -119,3 +119,9 @@ uv run python -m engine
 策略在自己的 `on_start()` 中用 `subscribe_market_bundle(symbol=...,products=("spot","futures_um"),data=("closed_bars","funding_rate","account_positions"))` 声明数据需求，在 `on_market_snapshot(snapshot)` 中调用 `publish_basket(targets=[{"product":"spot","symbol":"ETHUSDT","quantity":"0.1"},{"product":"futures_um","symbol":"ETHUSDT","quantity":"-0.1"}],constraints={"atomic_hedge":True,"max_leg_drift":"0.001"})`，同一快照只能提交完整组合，未提交、重复或不满足等额对冲将拒绝回测。引擎将每个已发行实例隔离加载，读取已发布的**策略原生**目标，经现有 `BasketResearchSession` 净额与预算校验后，分别在 NautilusTrader 模拟 Spot CASH、UM MARGIN 场所产生订单与成交，报告中记录逐腿成交和权益曲线。
 
 该接口不开放跨产品实盘下单，`atomic_hedge` 是策略提出的约束而非真实交易所的原子事务。缺失行情、腿间偏差、拒单或不完整成交须终止研究，不可自动盲重发。现阶段**未**开放任意产品对、任意多腿组合的通用单策略回测，也未开放统一 Options 行权/到期实际执行；期权保护 Demo 仍走原有专用模拟入口。生产行为、密钥与账户状态均不变。
+
+## Binance 数据源模块化
+
+Binance 永续、现货和期权的实现归入 `engine/market_data/sources/binance/`；现货与永续共享的批量调度、逐笔日志、标准计算及历史归档逻辑位于 `common/`。各市场分别提供固定产品的采集、计算和历史维护入口，期权仅运行其数据真正支持的计算/修复能力。
+
+现有 `engine.market_data.collection.*`、`engine.market_data.repair.*` 及相应旧 CLI 保留兼容入口，现有数据目录和 HTTP v2 保持不变。详情见 `docs/ENGINE_LAYOUT.md` 和 `docs/MARKET_DATA_ARCHITECTURE.md`。这不授权生产部署。
