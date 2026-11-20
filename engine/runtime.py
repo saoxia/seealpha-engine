@@ -15,6 +15,7 @@ from pathlib import Path
 
 from core.engine_contracts import EngineConflict
 from engine.connectors.binance.queries import QueryError
+from engine.feed.market_data_service import EngineMarketDataService
 from engine.store import Store
 from engine.supervisor import popen
 
@@ -36,6 +37,7 @@ class EngineRuntime:
         self.root.mkdir(parents=True, exist_ok=True)
         self.store = Store(self.root / "book.sqlite")
         self.credentials = {}
+        self.market_subscriptions = EngineMarketDataService()
         self.workers = {}
         self.worker_lock = threading.Lock()
         self.service_lease = None
@@ -48,6 +50,7 @@ class EngineRuntime:
                 with contextlib.suppress(ProcessLookupError, subprocess.TimeoutExpired):
                     os.killpg(process.pid, signal.SIGTERM)
                     process.wait(timeout=3)
+        self.market_subscriptions.close()
         self.store.close()
         if self.service_lease is not None:
             self.service_lease.close()
@@ -825,6 +828,7 @@ class EngineRuntime:
                 starting_spot=starting_spot_balance,
                 starting_perpetual=starting_perpetual_balance,
                 max_gross_notional=max_gross_notional,
+                market_subscriptions=self.market_subscriptions,
             )
         report.update(start=start_at.isoformat(), end=end_at.isoformat(), interval=interval,
                       issuance_ids=issuance_ids)
