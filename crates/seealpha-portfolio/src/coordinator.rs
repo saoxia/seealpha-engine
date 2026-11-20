@@ -116,6 +116,10 @@ impl Coordinator {
             VirtualKind::StopLimit { trigger, price, .. } if *trigger > Decimal::ZERO && *price > Decimal::ZERO => (),
             _ => return Err(CoordinatorError::Invalid),
         }
+        if let VirtualKind::StopLimit { triggered, .. } = &mut order.kind {
+            // Never trust a caller-provided pre-triggered order state.
+            *triggered = false;
+        }
         if !matches!(&order.kind, VirtualKind::Market) { order.armed_at = now; }
         self.orders.insert(order.id.clone(), order); Ok(())
     }
@@ -228,7 +232,10 @@ impl Coordinator {
         -> Result<(Vec<VirtualFill>, Option<Command>), CoordinatorError> {
         self.ensure_active()?;
         if let Some(b) = bar {
-            if b.low <= Decimal::ZERO || b.high < b.low || b.close <= Decimal::ZERO { return Err(CoordinatorError::Invalid); }
+            if b.time == 0 || b.low <= Decimal::ZERO || b.high < b.low ||
+                b.close < b.low || b.close > b.high {
+                return Err(CoordinatorError::Invalid);
+            }
         }
         let mut active = BTreeSet::new();
         for (id, o) in &mut self.orders { if Self::actionable(o, bar) { active.insert(id.clone()); } }
