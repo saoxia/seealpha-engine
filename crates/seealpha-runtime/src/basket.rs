@@ -66,6 +66,11 @@ impl Runtime {
                 ))?;
             positions.insert(leg.clone(), amount);
         }
+        let raw_fills = self.ledger.fills(tenant,account,environment).map_err(map_ledger)?;
+        let verified_fills: Vec<serde_json::Value> = raw_fills.iter().map(|raw|
+            serde_json::from_str(raw).map_err(|_|
+                RuntimeError::Conflict("已保存成交证据损坏，拒绝对账。".into()))
+        ).collect::<Result<_,_>>()?;
         let mut evidence = Vec::with_capacity(manifest.orders.len());
         for bound in &manifest.orders {
             let row = self.ledger.latest_order_observation(
@@ -114,9 +119,7 @@ impl Runtime {
                                 .ok_or_else(|| RuntimeError::Conflict(
                                     "重复或无效的交易所成交 ID。".into()
                                 ))?;
-                            let fills = self.ledger.fills(tenant,account,environment)
-                                .map_err(map_ledger)?;
-                            let fill = fills.iter().find(|fill|
+                            let fill = verified_fills.iter().find(|fill|
                                 fill["trade_id"].as_str() == Some(id)
                                 && fill["venue_order_id"].as_str() == Some(venue_id.as_str())
                                 && fill["source"].as_str()
