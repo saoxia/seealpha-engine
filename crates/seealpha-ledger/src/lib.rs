@@ -5,7 +5,7 @@ mod order_intents;
 mod account_snapshots;
 mod account_events;
 mod tenant_transfer;
-pub use order_intents::IntentStart;
+pub use order_intents::{BasketAdmission, IntentStart};
 pub use account_snapshots::AccountSnapshot;
 mod basket_journal;
 mod coordinator_state;
