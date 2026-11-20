@@ -5,7 +5,7 @@ Phase 1 把行情、连接和订单事实从业务 API 进程里拆出来。本�
 | 路径 | 职责 |
 | --- | --- |
 | `engine/connectors/` | Binance 适配器与只读/手动执行客户端。不依赖 feed、pipeline、api、web。 |
-| `engine/market_data/` | 行情控制 `control/`、实时采集 `collection/`、自动计算 `calculation/`、历史补齐 `repair/`、存储 `storage/`、统一访问 `access/` 和质量 `quality/`。 |
+| `engine/market_data/` | 行情控制 `control/`、Binance 产品源 `sources/binance/{perpetual,spot,options}/` 与公共核心 `shared/`、通用实时采集 `collection/`、计算 `calculation/`、历史补齐 `repair/`、存储 `storage/`、统一访问 `access/` 和质量 `quality/`。 |
 | `engine/backtesting/`、`engine/portfolio/` | 回测、模拟和组合目标管理。 |
 | `engine/trading/`、`engine/research/` | 交易运行事实与独立研究逻辑。 |
 | `engine/api/`、`engine/infrastructure/` | Engine HTTP 入口、任务与进程基础设施。 |
