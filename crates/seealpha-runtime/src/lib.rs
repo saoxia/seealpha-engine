@@ -2,6 +2,7 @@
 mod accounts;
 mod config;
 mod data;
+mod history;
 mod session;
 mod trading;
 pub use trading::OrderCommand;
