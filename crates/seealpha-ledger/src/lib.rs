@@ -2,6 +2,8 @@
 mod records;
 mod legacy;
 mod order_intents;
+mod order_reconciliation_tasks;
+pub use order_reconciliation_tasks::ReconciliationTask;
 mod account_snapshots;
 mod account_events;
 mod tenant_transfer;
@@ -52,6 +54,25 @@ CREATE TABLE IF NOT EXISTS order_intents (
 );
 CREATE INDEX IF NOT EXISTS order_intents_client
     ON order_intents(tenant_id, account_id, environment, client_order_id);
+CREATE TABLE IF NOT EXISTS order_reconciliation_tasks (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    client_order_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','leased','retry','manual')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_due_ms INTEGER NOT NULL DEFAULT 0,
+    lease_owner TEXT,
+    lease_until_ms INTEGER,
+    last_error_code TEXT,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,request_id),
+    FOREIGN KEY(tenant_id,account_id,request_id)
+        REFERENCES order_intents(tenant_id,account_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS order_reconcile_due
+    ON order_reconciliation_tasks(tenant_id,state,next_due_ms);
 CREATE TABLE IF NOT EXISTS order_observations (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
