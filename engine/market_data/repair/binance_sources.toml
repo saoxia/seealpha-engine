@@ -1,0 +1,12 @@
+[dataset]
+market = "futures_um"
+data_type = "trades"
+symbols = ["BTC-USDT", "ETH-USDT", "SOL-USDT"]
+
+[bars]
+intervals = ["1s", "1m", "5m", "15m"]
+
+[paths]
+raw = "data/raw/binance"
+catalog = "data/catalog"
+state = "data/pipeline_state/binance"
