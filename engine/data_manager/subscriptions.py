@@ -28,7 +28,7 @@ class Subscriptions:
         self.closed = False
         self.deleting = set()
         # Runtime demand is transient: never change persisted user policies.
-        self.strategy_requirements = lambda: {}
+        self.strategy_requirements = dict
         self._effective_snapshot = []
 
     def _effective_policies(self, policies=None):
