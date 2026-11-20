@@ -99,6 +99,10 @@ pub fn router(state: AppState) -> Router {
             post(register_connection).delete(forget_connection),
         )
         .route(
+            "/tenants/{tenant_id}/accounts/{account_id}/health",
+            get(account_health),
+        )
+        .route(
             "/tenants/{tenant_id}/accounts/{account_id}/snapshots",
             post(account_snapshot),
         )
@@ -948,6 +952,29 @@ async fn forget_connection(
     ))
 }
 
+/// Legacy account health parity: persisted registrations only, scoped to
+/// the authenticated tenant/account. Neither an exchange connectivity check
+/// nor authorization to trade.
+async fn account_health(
+    State(state): State<AppState>,
+    Path((tenant_id, account_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    state
+        .runtime
+        .require_active(&tenant_id)
+        .map_err(AppError::from)?;
+    let connections = state
+        .runtime
+        .ledger
+        .account_connections(&tenant_id, &account_id)
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    Ok(Json(json!({
+        "status": "ok",
+        "workers": state.runtime.inflight(),
+        "connections": connections
+    })))
+}
+
 async fn account_snapshot(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
@@ -1612,6 +1639,68 @@ mod tests {
         let (status, _, _) = call(&app, request("42")).await;
         assert_eq!(status, StatusCode::OK);
         let (status, _, _) = call(&app, request("99")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn account_health_reads_only_its_own_connection_metadata() {
+        let mut setup = state();
+        Arc::get_mut(&mut setup.config).unwrap().tenant_id = None;
+        setup
+            .runtime
+            .ensure_tenant("42", "development", "active")
+            .unwrap();
+        setup
+            .runtime
+            .ensure_tenant("43", "development", "active")
+            .unwrap();
+        setup
+            .runtime
+            .ledger
+            .upsert_connection("42", "a", "production", "registered")
+            .unwrap();
+        setup
+            .runtime
+            .ledger
+            .upsert_connection("42", "other", "sandbox", "registered")
+            .unwrap();
+        setup
+            .runtime
+            .ledger
+            .upsert_connection("43", "a", "sandbox", "registered")
+            .unwrap();
+        let app = router(setup);
+        let get_health = |tenant: &str, account: &str| {
+            Request::builder()
+                .uri(format!("/tenants/{tenant}/accounts/{account}/health"))
+                .header(
+                    "authorization",
+                    "Bearer ci-engine-token-0123456789abcdef0123456789abcdef",
+                )
+                .body(Body::empty())
+                .unwrap()
+        };
+        let (status, header, response) = call(&app, get_health("42", "a")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(header, "2");
+        assert_eq!(response["status"], "ok");
+        let connections = response["connections"].as_array().unwrap();
+        assert_eq!(connections.len(), 1);
+        assert_eq!(connections[0]["tenant_id"], "42");
+        assert_eq!(connections[0]["account_id"], "a");
+        assert_eq!(connections[0]["environment"], "production");
+        assert_eq!(connections[0]["status"], "registered");
+        assert!(response.to_string().find("api_secret").is_none());
+
+        let (status, _, isolated) = call(&app, get_health("42", "missing")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(isolated["connections"].as_array().unwrap().is_empty());
+
+        let (status, _, other) = call(&app, get_health("43", "a")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(other["connections"][0]["environment"], "sandbox");
+
+        let (status, _, _) = call(&app, get_health("44", "a")).await;
         assert_eq!(status, StatusCode::CONFLICT);
     }
 
