@@ -39,6 +39,23 @@ pub enum HubError {
     StillSubscribed,
 }
 
+/// Producer-authored reconciliation evidence. Receiving one syntactically
+/// valid candle, or observing an empty REST tail, cannot set this state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarketProof {
+    pub last_closed_ns: i64,
+    pub committed_through_ns: i64,
+    pub exchange_clock_ns: i64,
+    pub checked_at_ns: i64,
+    pub valid_until_ns: i64,
+    pub connected: bool,
+    pub clock_healthy: bool,
+    pub overlap_verified: bool,
+    pub history_contiguous: bool,
+    pub unresolved_gaps: u32,
+    pub backlog: u32,
+}
+
 pub struct Hub {
     tenant: String,
     known: BTreeSet<Market>,
@@ -47,7 +64,9 @@ pub struct Hub {
     history: BTreeMap<Market, VecDeque<ClosedBar>>,
     positions: BTreeMap<(String, Market), String>,
     ready: BTreeSet<Market>,
+    proofs: BTreeMap<Market, MarketProof>,
     invalidated: BTreeSet<Market>,
+    replay_history: BTreeMap<Market, VecDeque<ClosedBar>>,
     backtest: Option<String>,
     replay: BTreeMap<Market, u32>,
     max_bars: usize,
@@ -64,7 +83,9 @@ impl Hub {
             history: BTreeMap::new(),
             positions: BTreeMap::new(),
             ready: BTreeSet::new(),
+            proofs: BTreeMap::new(),
             invalidated: BTreeSet::new(),
+            replay_history: BTreeMap::new(),
             backtest: None,
             replay: BTreeMap::new(),
             max_bars,
@@ -124,29 +145,34 @@ impl Hub {
     }
 
     pub fn accept_closed_bar(&mut self, market: Market, bar: ClosedBar) -> Result<bool, HubError> {
-        if bar.high < bar.low
+        if bar.ts_ns <= 0 || bar.high < bar.low
             || bar.high < bar.open
             || bar.high < bar.close
             || bar.low > bar.open
             || bar.low > bar.close
         {
+            self.invalidate(market);
             return Err(HubError::Ohlc);
         }
         if bar.volume.is_sign_negative() {
+            self.invalidate(market);
             return Err(HubError::Evidence);
         }
         if bar.ts_ns > self.now_ns {
+            self.invalidate(market);
             return Err(HubError::Future);
         }
         let series = self.history.entry(market).or_default();
         if let Some(last) = series.back() {
             if bar.ts_ns < last.ts_ns {
+                self.invalidate(market);
                 return Err(HubError::Stale);
             }
             if bar.ts_ns == last.ts_ns {
                 if last == &bar {
                     return Ok(false);
                 }
+                self.invalidate(market);
                 return Err(HubError::Conflict);
             }
         }
@@ -154,17 +180,56 @@ impl Hub {
         while series.len() > self.max_bars {
             series.pop_front();
         }
-        self.ready.insert(market);
-        self.invalidated.remove(&market);
+        self.ready.remove(&market);
+        self.proofs.remove(&market);
+        // Invalidation after a disconnect/conflict remains latched. New bars
+        // can only be re-exposed after an independent source confirmation.
         Ok(true)
     }
 
     pub fn data_ready(&self, market: Market) -> bool {
         self.ready.contains(&market) && !self.invalidated.contains(&market)
+            && self.proofs.get(&market).is_some_and(|proof|
+                proof.checked_at_ns <= self.now_ns && self.now_ns <= proof.valid_until_ns
+                && self.history.get(&market).and_then(|rows| rows.back())
+                    .is_some_and(|last| last.ts_ns == proof.last_closed_ns))
+    }
+
+    /// Called only by the trusted source/reconciliation coordinator, never
+    /// by strategy code or a read-only subscription registration.
+    pub fn confirm_market(&mut self, market: Market, proof: MarketProof) -> Result<(), HubError> {
+        self.ready.remove(&market);
+        self.proofs.remove(&market);
+        if !self.known.contains(&market) || !self.authorized.contains(&market) {
+            return Err(HubError::Unauthorized);
+        }
+        let latest = self.history.get(&market).and_then(|rows| rows.back())
+            .ok_or(HubError::NotReady)?.ts_ns;
+        if !proof.connected || !proof.clock_healthy || !proof.overlap_verified
+            || !proof.history_contiguous || proof.unresolved_gaps != 0
+            || proof.backlog != 0 || latest != proof.last_closed_ns
+            || proof.committed_through_ns < latest || proof.exchange_clock_ns < latest
+            || proof.checked_at_ns > self.now_ns
+            || proof.valid_until_ns <= self.now_ns {
+            self.invalidated.insert(market);
+            return Err(HubError::Evidence);
+        }
+        self.invalidated.remove(&market);
+        self.proofs.insert(market, proof);
+        self.ready.insert(market);
+        Ok(())
+    }
+
+    pub fn advance_time(&mut self, now_ns: i64) -> Result<(), HubError> {
+        if now_ns < self.now_ns { return Err(HubError::Stale); }
+        self.now_ns = now_ns;
+        Ok(())
     }
 
     pub fn invalidate(&mut self, market: Market) {
         self.invalidated.insert(market);
+        self.proofs.remove(&market);
+        self.ready.remove(&market);
     }
 
     pub fn view(&self, strategy: &str) -> Result<View, HubError> {
@@ -211,7 +276,7 @@ impl Hub {
         let mut prices = BTreeMap::new();
         let mut positions = BTreeMap::new();
         for (market, lookback) in markets {
-            if self.invalidated.contains(market) || !self.ready.contains(market) {
+            if !self.data_ready(*market) {
                 return Err(HubError::NotReady);
             }
             let rows = self.history.get(market).ok_or(HubError::NotReady)?;
@@ -246,6 +311,7 @@ impl Hub {
             return Err(HubError::InUse);
         }
         self.backtest = Some(run.to_owned());
+        self.replay_history.clear();
         self.replay = markets.iter().map(|market| (*market, 1)).collect();
         Ok(())
     }
@@ -253,6 +319,44 @@ impl Hub {
     pub fn end_backtest(&mut self) {
         self.backtest = None;
         self.replay.clear();
+        self.replay_history.clear();
+    }
+
+    /// Historical events never enter the live series, prove live readiness,
+    /// or change the live source's journal checkpoint.
+    pub fn accept_replay_closed_bar(
+        &mut self, run: &str, market: Market, bar: ClosedBar,
+    ) -> Result<bool, HubError> {
+        if self.backtest.as_deref() != Some(run) || !self.replay.contains_key(&market) {
+            return Err(HubError::NotSubscribed);
+        }
+        if bar.ts_ns <= 0 || bar.high < bar.low || bar.high < bar.open
+            || bar.high < bar.close || bar.low > bar.open || bar.low > bar.close
+            || bar.volume < Decimal::ZERO {
+            return Err(HubError::Ohlc);
+        }
+        let rows = self.replay_history.entry(market).or_default();
+        if let Some(last) = rows.back() {
+            if bar.ts_ns < last.ts_ns { return Err(HubError::Stale); }
+            if bar.ts_ns == last.ts_ns {
+                return if *last == bar { Ok(false) } else { Err(HubError::Conflict) };
+            }
+        }
+        rows.push_back(bar);
+        while rows.len() > self.max_bars { rows.pop_front(); }
+        Ok(true)
+    }
+
+    pub fn replay_view(&self, run: &str, market: Market) -> Result<View, HubError> {
+        if self.backtest.as_deref() != Some(run) || !self.replay.contains_key(&market) {
+            return Err(HubError::NotSubscribed);
+        }
+        let rows = self.replay_history.get(&market).ok_or(HubError::NotReady)?;
+        let history = [(market_key(market), rows.iter().cloned().collect())].into();
+        let prices = rows.back().map(|bar|
+            [(market_key(market), bar.close.to_string())].into())
+            .unwrap_or_default();
+        Ok(View { history, prices, positions: BTreeMap::new(), allow_new_risk: false })
     }
 
     pub fn backtest_guard<'a>(
@@ -397,6 +501,17 @@ mod tests {
         symbol: "ETHUSDT",
     };
 
+    fn prove(hub: &mut Hub, market: Market) {
+        let last = hub.history.get(&market).unwrap().back().unwrap().ts_ns;
+        hub.confirm_market(market, MarketProof {
+            last_closed_ns: last, committed_through_ns: last,
+            exchange_clock_ns: hub.now_ns,
+            checked_at_ns: hub.now_ns, valid_until_ns: hub.now_ns + 100,
+            connected: true, clock_healthy: true, overlap_verified: true,
+            history_contiguous: true, unresolved_gaps: 0, backlog: 0,
+        }).unwrap();
+    }
+
     fn bar(ts: i64, close: i64) -> ClosedBar {
         ClosedBar {
             ts_ns: ts,
@@ -421,6 +536,8 @@ mod tests {
         );
         hub.accept_closed_bar(BTC, bar(100, 1)).unwrap();
         hub.accept_closed_bar(ETH, bar(100, 2)).unwrap();
+        prove(&mut hub, BTC);
+        prove(&mut hub, ETH);
         hub.set_position("trend", BTC, "1");
         hub.set_position("hedge", BTC, "2");
         let a = hub.view("trend").unwrap();
@@ -499,6 +616,7 @@ mod tests {
             hub.joint("desk", &[BTC, ETH]),
             Err(HubError::Misaligned)
         ));
+        prove(&mut hub, BTC);
         let view = hub.joint("desk", &[BTC]).unwrap();
         assert_eq!(view.history.len(), 1);
         assert!(view.history["spot:BTCUSDT"].last().unwrap().ts_ns < 1_000);
@@ -516,6 +634,7 @@ mod tests {
         for ts in [120, 180, 240] {
             hub.accept_closed_bar(BTC, bar(ts, ts)).unwrap();
         }
+        prove(&mut hub, BTC);
         let view = hub.view("desk").unwrap();
         let stamps: Vec<_> = view.history["spot:BTCUSDT"]
             .iter()
@@ -575,6 +694,7 @@ mod tests {
         hub.allow(BTC);
         hub.subscribe("live", &[(BTC, 1)]).unwrap();
         hub.accept_closed_bar(BTC, bar(100, 110)).unwrap();
+        prove(&mut hub, BTC);
         hub.begin_backtest("run-a", &[BTC]).unwrap();
         assert_eq!(hub.replay_requirements().get(&BTC), Some(&1));
         assert_eq!(hub.begin_backtest("other", &[BTC]), Err(HubError::InUse));
@@ -635,6 +755,7 @@ mod tests {
         desk.hub.allow(ETH);
         desk.subscribe("prod", "desk", ETH, 1).unwrap();
         desk.hub.accept_closed_bar(ETH, bar(10, 100)).unwrap();
+        prove(&mut desk.hub, ETH);
         assert!(desk.hub.data_ready(ETH));
         desk.disable("ETHUSDT");
         assert!(!desk.hub.data_ready(ETH));
@@ -649,6 +770,7 @@ mod tests {
         desk.subscribe("prod", "desk", ETH, 2).unwrap();
         desk.hub.accept_closed_bar(ETH, bar(10, 100)).unwrap();
         desk.hub.accept_closed_bar(ETH, bar(20, 100)).unwrap();
+        prove(&mut desk.hub, ETH);
         let snapshot = desk.hub.view("desk").unwrap();
         assert_eq!(snapshot.prices["futures_um:ETHUSDT"], "100");
         assert_eq!(snapshot.history["futures_um:ETHUSDT"].len(), 2);
@@ -667,6 +789,7 @@ mod tests {
         desk.subscribe("prod", "trend", ETH, 1).unwrap();
         desk.hub.accept_closed_bar(ETH, bar(10, 1)).unwrap();
         desk.hub.accept_closed_bar(ETH, bar(20, 2)).unwrap();
+        prove(&mut desk.hub, ETH);
         desk.subscribe("prod", "hedge", ETH, 2).unwrap();
         assert_eq!(
             desk.hub.view("hedge").unwrap().history["futures_um:ETHUSDT"].len(),
@@ -745,4 +868,60 @@ mod tests {
             .unwrap();
         assert_eq!(hub.replay_requirements().len(), 3);
     }
+
+    #[test]
+    fn test_no_ready_from_one_candle_or_empty_repair_evidence() {
+        let mut hub = Hub::new("tenant", 3, 1_000);
+        hub.allow(BTC);
+        hub.subscribe("desk", &[(BTC, 1)]).unwrap();
+        hub.accept_closed_bar(BTC, bar(100, 1)).unwrap();
+        assert!(!hub.data_ready(BTC));
+        assert!(matches!(hub.view("desk"), Err(HubError::NotReady)));
+        let invalid = MarketProof { last_closed_ns: 100, committed_through_ns: 100,
+            exchange_clock_ns: 1_000, checked_at_ns: 1_000, valid_until_ns: 1_100,
+            connected: true, clock_healthy: true, overlap_verified: false,
+            history_contiguous: true, unresolved_gaps: 0, backlog: 0 };
+        assert_eq!(hub.confirm_market(BTC, invalid), Err(HubError::Evidence));
+        prove(&mut hub, BTC);
+        assert!(hub.data_ready(BTC));
+        hub.advance_time(1_101).unwrap();
+        assert!(!hub.data_ready(BTC));
+        assert!(matches!(hub.view("desk"), Err(HubError::NotReady)));
+    }
+
+    #[test]
+    fn test_replay_cannot_contaminate_live_history_or_ready() {
+        let mut hub = Hub::new("tenant", 3, 1_000);
+        hub.allow(BTC);
+        hub.subscribe("live", &[(BTC, 1)]).unwrap();
+        hub.accept_closed_bar(BTC, bar(100, 10)).unwrap();
+        prove(&mut hub, BTC);
+        hub.begin_backtest("run", &[BTC]).unwrap();
+        hub.accept_replay_closed_bar("run", BTC, bar(200, 99)).unwrap();
+        assert_eq!(hub.replay_view("run", BTC).unwrap().prices["spot:BTCUSDT"], "99");
+        assert!(!hub.replay_view("run", BTC).unwrap().allow_new_risk);
+        assert_eq!(hub.view("live").unwrap().prices["spot:BTCUSDT"], "10");
+        assert_eq!(hub.accept_replay_closed_bar("other", BTC, bar(300, 1)),
+            Err(HubError::NotSubscribed));
+        hub.end_backtest();
+        assert!(matches!(hub.replay_view("run", BTC), Err(HubError::NotSubscribed)));
+        assert!(hub.data_ready(BTC));
+    }
+
+    #[test]
+    fn test_conflicting_live_bar_revokes_previous_proof() {
+        let mut hub = Hub::new("tenant", 2, 1_000);
+        hub.allow(BTC);
+        hub.accept_closed_bar(BTC, bar(100, 1)).unwrap();
+        prove(&mut hub, BTC);
+        assert_eq!(hub.accept_closed_bar(BTC, bar(100, 2)), Err(HubError::Conflict));
+        assert!(!hub.data_ready(BTC));
+        assert_eq!(hub.confirm_market(BTC, MarketProof {
+            last_closed_ns: 99, committed_through_ns: 99,
+            exchange_clock_ns: 1000, checked_at_ns: 1000, valid_until_ns: 1100,
+            connected: true, clock_healthy: true, overlap_verified: true,
+            history_contiguous: true, unresolved_gaps: 0, backlog: 0,
+        }), Err(HubError::Evidence));
+    }
+
 }
