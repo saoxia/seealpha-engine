@@ -869,6 +869,33 @@ async fn run_carry(
         .get("symbol")
         .and_then(Value::as_str)
         .unwrap_or("ETHUSDT");
+    if body.get("start_ms").is_some() || body.get("start").is_some() {
+        let from=body["start_ms"].as_i64()
+            .or_else(||body["start"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("开始时间无效。"))?;
+        let until=body["end_ms"].as_i64()
+            .or_else(||body["end"].as_str().and_then(parse_time_ms))
+            .ok_or_else(||AppError::bad_request("结束时间无效。"))?;
+        let fee=body["fee_rate"].as_str()
+            .ok_or_else(||AppError::bad_request("必须明确设置模拟手续费费率。"))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("手续费费率无效。"))?;
+        let spot=body["spot_qty"].as_str()
+            .ok_or_else(||AppError::bad_request("现货目标数量无效。"))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("现货目标数量无效。"))?;
+        let perp=body["perp_qty"].as_str()
+            .ok_or_else(||AppError::bad_request("永续目标数量无效。"))?
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_|AppError::bad_request("永续目标数量无效。"))?;
+        return Ok(Json(state.runtime.run_evidence_carry_backtest(
+            &tenant_id,&account_id,symbol,
+            body["interval"].as_str().unwrap_or("1m"),
+            from,until,spot,perp,
+            decimal_field(&body,"starting_balance","10000")?,
+            decimal_field(&body,"max_gross_notional","10000")?,fee,
+        ).map_err(AppError::from)?));
+    }
     Ok(Json(
         state
             .runtime
