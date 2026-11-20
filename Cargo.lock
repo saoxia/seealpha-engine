@@ -1654,7 +1654,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-tungstenite",
- "zip",
+ "zip 9.8.1",
 ]
 
 [[package]]
