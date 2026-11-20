@@ -20,14 +20,14 @@ from core.paths import PROJECT_ROOT
 from engine.connectors.binance.pair_data import PairREST
 from engine.connectors.binance.spot import SpotREST
 from engine.market_data.repair.config import load_settings
+from engine.market_data.repair.models import DataRequest
+from engine.market_data.repair.prepare_data import ensure_instruments, prepare_data
 from engine.market_data.sources.binance.common.convert_bars import write_record
 from engine.market_data.sources.binance.common.convert_trades import (
     aggregate_parts_to_bars,
     aggregate_trade_chunk,
     iter_trade_archive,
 )
-from engine.market_data.repair.models import DataRequest
-from engine.market_data.repair.prepare_data import ensure_instruments, prepare_data
 from engine.market_data.sources.binance.common.sync_batch import plan_daily_archives, sync_archives
 from engine.market_data.storage.catalog import ParquetDataCatalog
 
@@ -531,9 +531,13 @@ def main():
                 asyncio.run(serve_options_history(policy, load_settings(), root))
             else:
                 if policy.get("product", "futures_um") == "spot":
-                    from engine.market_data.sources.binance.spot.repair import serve_history as source_history
+                    from engine.market_data.sources.binance.spot.repair import (
+                        serve_history as source_history,
+                    )
                 else:
-                    from engine.market_data.sources.binance.perpetual.repair import serve_history as source_history
+                    from engine.market_data.sources.binance.perpetual.repair import (
+                        serve_history as source_history,
+                    )
                 asyncio.run(source_history(policy, load_settings(), root))
         return
     if policy.get("product", "futures_um") == "spot":
