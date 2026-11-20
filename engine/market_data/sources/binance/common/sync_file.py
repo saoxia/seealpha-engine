@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 BASE_URL = "https://data.binance.vision/"
 ALLOWED_HOST = "data.binance.vision"
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+from core.paths import PROJECT_ROOT
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "binance" / "raw"
 CHUNK_SIZE = 1024 * 1024
 MAX_CHECKSUM_SIZE = 64 * 1024
