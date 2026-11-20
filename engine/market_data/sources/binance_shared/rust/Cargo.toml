@@ -29,6 +29,10 @@ path = "src/native_source.rs"
 name = "binance-native-calculation"
 path = "src/native_calculation.rs"
 
+[[bin]]
+name = "binance-journal-replay"
+path = "src/native_replay.rs"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
