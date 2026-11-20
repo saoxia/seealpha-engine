@@ -40,6 +40,28 @@ pub fn authorize_operation(
     require_op(grant, operation, dataset, strategy)
 }
 
+/// Authorize an existing Catalog dataset and a bounded [start, end) UTC
+/// window before AI10 creates the durable snapshot task. HTTP date parsing
+/// belongs to AI9; call this only with validated epoch nanoseconds.
+pub fn authorize_snapshot_request(
+    grant: &Grant,
+    context: ResearchContext<'_>,
+    dataset: &str,
+    start_ns: i64,
+    end_ns: i64,
+) -> Result<(), ResearchError> {
+    authorize_operation(grant, context, "snapshots:create", Some(dataset), None)?;
+    const THIRTY_ONE_DAYS_NS: i64 = 31 * 24 * 60 * 60 * 1_000_000_000;
+    if !super::identifier(dataset)
+        || !end_ns
+            .checked_sub(start_ns)
+            .is_some_and(|length| length > 0 && length <= THIRTY_ONE_DAYS_NS)
+    {
+        return Err(ResearchError::Scope);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotAccess {
     pub snapshot_id: String,
@@ -217,7 +239,7 @@ mod tests {
         Grant {
             tenant_id: "tenant-a".into(),
             task_id: "task-1".into(),
-            ops: vec!["snapshots:read".into(), "candidates:submit".into()],
+            ops: vec!["snapshots:read".into(), "snapshots:create".into(), "candidates:submit".into()],
             datasets: vec!["spot:ETHUSDT:1m".into()],
             strategies: vec!["account:account1".into()],
             not_before: 100,
@@ -242,6 +264,18 @@ mod tests {
             assert_eq!(authorize_operation(&g, c, "snapshots:read", None, None), Err(ResearchError::Scope));
         }
         assert_eq!(authorize_operation(&g, dev, "candidates:submit", None, Some("account:other")), Err(ResearchError::Scope));
+    }
+
+    #[test]
+    fn snapshot_creation_window_is_bounded_and_scope_checked() {
+        let g = grant();
+        let c = context("tenant-a", "task-1", "development");
+        const MAX: i64 = 31 * 24 * 60 * 60 * 1_000_000_000;
+        authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", 0, MAX).unwrap();
+        assert_eq!(authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", 0, MAX + 1), Err(ResearchError::Scope));
+        assert_eq!(authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", MAX, 0), Err(ResearchError::Scope));
+        assert_eq!(authorize_snapshot_request(&g, c, "spot:BTCUSDT:1m", 0, 1), Err(ResearchError::Scope));
+        assert_eq!(authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", i64::MIN, i64::MAX), Err(ResearchError::Scope));
     }
 
     #[test]
