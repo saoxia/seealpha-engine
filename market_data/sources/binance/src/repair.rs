@@ -1,7 +1,8 @@
 //! Offline repair of durable raw Trade IDs from a checksummed Binance USD-M
 //! daily trades ZIP. Run ONLY while the live writer is stopped. This does not
 //! certify the websocket handover, tail completeness or Catalog readiness.
-use std::{fs::{self,File}, path::Path, time::{SystemTime,UNIX_EPOCH}};
+use std::{fs::{File,OpenOptions}, path::Path, time::{SystemTime,UNIX_EPOCH}};
+use fs2::FileExt;
 use serde_json::{Value,json};
 use zip::ZipArchive;
 use crate::{history::{ArchiveDay,verify_local_archive},store::PairJournal};
@@ -42,6 +43,9 @@ pub fn repair_day(journal:&mut PairJournal,day:&ArchiveDay,archive_root:&Path)
 {
     if journal.symbol()!=day.symbol {return Err("archive/journal symbol mismatch".into());}
     let target=day.local_path(archive_root);
+    let lock_path=target.with_extension("zip.lock");
+    let lock=OpenOptions::new().create(true).write(true).open(&lock_path)?;
+    lock.lock_exclusive()?;
     verify_local_archive(day,archive_root)?;
     let expected_name=format!("{}-trades-{}.csv",day.symbol,day.day);
     let archive=File::open(&target)?;
@@ -50,6 +54,32 @@ pub fn repair_day(journal:&mut PairJournal,day:&ArchiveDay,archive_root:&Path)
     let entry=zip.by_index(0)?;
     let name=entry.name().map_err(|_|"invalid ZIP member name")?;
     if name!=expected_name {return Err("unexpected ZIP CSV name".into());}
+    // Preflight the entire verified CSV before a single journal mutation.
+    // A malformed late row must not leave a half-repaired day.
+    {
+        let archive=File::open(&target)?;
+        let mut zip=ZipArchive::new(archive)?;
+        let csv=zip.by_index(0)?;
+        let mut check=csv::ReaderBuilder::new().has_headers(false).flexible(true)
+            .from_reader(csv);
+        let mut previous=None::<i64>;
+        let mut seen=0u64;
+        for line in check.records(){
+            let row=line?;
+            if seen==0 && row.iter().all(|v|v.trim().is_empty()){continue;}
+            if seen==0 && row.get(0).is_some_and(|v|
+                matches!(v.trim().to_ascii_lowercase().as_str(),"id"|"trade id"|"trade_id")){
+                continue;
+            }
+            let (id,_)=parse_record(&row,day)?;
+            if previous.is_some_and(|last|id<last){
+                return Err("archive Trade IDs are not ordered".into());
+            }
+            previous=Some(id);
+            seen+=1;
+        }
+        if seen==0 {return Err("empty archive CSV".into());}
+    }
     let mut reader=csv::ReaderBuilder::new().has_headers(false).flexible(true).from_reader(entry);
     let mut rows=Vec::<Value>::with_capacity(2048);
     let mut scanned=0u64;
