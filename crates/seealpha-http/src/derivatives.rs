@@ -9,6 +9,7 @@ use serde_json::{json,Value};
 pub(crate) fn routes()->Router<AppState>{
     Router::new()
         .route("/tenants/{tenant_id}/data/funding",post(read_funding))
+        .route("/tenants/{tenant_id}/data/options/exercises",post(read_public_exercises))
         .route("/tenants/{tenant_id}/venue/options/contracts",post(option_contracts))
         .route("/tenants/{tenant_id}/venue/options/klines",post(option_klines))
         .route("/tenants/{tenant_id}/venue/catalog",post(legacy_options_catalog))
@@ -40,6 +41,32 @@ async fn read_funding(
     Ok(Json(json!({"symbol":symbol,"rows":rows,"source":"local_verified_exchange_events",
         "completeness":"not_certified","no_synthetic_funding":true})))
 }
+async fn read_public_exercises(
+    State(state):State<AppState>,Path(tenant):Path<String>,Json(body):Json<Value>,
+)->Result<Json<Value>,AppError>{
+    state.runtime.require_active(&tenant).map_err(AppError::from)?;
+    let start=body["start_ms"].as_i64().or_else(||
+        body["start"].as_str().and_then(parse_time_ms))
+        .ok_or_else(||AppError::bad_request("公开行权事件开始时间无效。"))?;
+    let end=body["end_ms"].as_i64().or_else(||
+        body["end"].as_str().and_then(parse_time_ms))
+        .ok_or_else(||AppError::bad_request("公开行权事件结束时间无效。"))?;
+    if start<0||end<=start||end-start>365*86_400_000 {
+        return Err(AppError::bad_request("公开行权查询范围无效。"));
+    }
+    let symbol=body["symbol"].as_str();
+    if let Some(symbol)=symbol {
+        parse_option_symbol(symbol)
+            .map_err(|_|AppError::bad_request("期权合约标识无效。"))?;
+    }
+    let rows=state.runtime.ledger.public_exercises(&tenant,symbol,start,end)
+        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    Ok(Json(json!({"items":rows,"source":"public_exchange_reference",
+        "account_exercise_confirmed":false,
+        "cash_settlement_applied":false,
+        "completeness":"not_certified"})))
+}
+
 async fn option_contracts(
     State(state):State<AppState>,Path(tenant):Path<String>,
 )->Result<Json<Value>,AppError>{
