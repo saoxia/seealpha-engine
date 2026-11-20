@@ -57,6 +57,22 @@ def find_rust_converter() -> Path | None:
     return path.resolve() if path.is_file() and os.access(path, os.X_OK) else None
 
 
+def require_rust_converter() -> Path:
+    """Fail closed when the native archive writer is unavailable.
+
+    Python historical trade conversion is retired; disabling the binary is
+    not a request to silently rebuild data through a different implementation.
+    """
+    binary = find_rust_converter()
+    if binary is None:
+        raise RustConversionError(
+            "Rust trade converter unavailable; build "
+            "engine/market_data/repair/rust_converter with cargo --release --locked "
+            "or configure NAUTILUS_RUST_CONVERTER"
+        )
+    return binary
+
+
 def _integer(value: object, name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise RustConversionError(f"Rust manifest 的 {name} 无效")

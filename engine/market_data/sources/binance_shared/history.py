@@ -19,13 +19,13 @@ from core.market.instruments import bar_type_for, bar_window, instrument_id_for
 from core.paths import PROJECT_ROOT
 from engine.connectors.binance.pair_data import PairREST
 from engine.connectors.binance.spot import SpotREST
-from engine.market_data.repair.config import load_settings
-from engine.market_data.repair.convert_binance_bars import write_record
-from engine.market_data.repair.convert_binance_trades import (
+from engine.market_data.calculation.feature_source import (
     aggregate_parts_to_bars,
     aggregate_trade_chunk,
     iter_trade_archive,
 )
+from engine.market_data.repair.config import load_settings
+from engine.market_data.repair.convert_binance_bars import write_record
 from engine.market_data.repair.models import DataRequest
 from engine.market_data.repair.prepare_data import ensure_instruments, prepare_data
 from engine.market_data.repair.sync_binance_batch import plan_daily_archives, sync_archives

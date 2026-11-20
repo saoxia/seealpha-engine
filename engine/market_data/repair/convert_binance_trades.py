@@ -2,23 +2,15 @@
 
 from __future__ import annotations
 
-import csv
 import os
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from zipfile import BadZipFile, ZipFile
 
 import pandas as pd
-from nautilus_trader.model import Bar, BarType, CustomData, DataType, TradeTick
+from nautilus_trader.model import Bar, BarType, TradeTick
 
-from engine.market_data.quality.validate_data import (
-    TRADE_COLUMNS,
-    DataValidationError,
-    normalize_trade_frame,
-    validate_normalized_trade_frame,
-)
+from engine.market_data.quality.validate_data import DataValidationError
 from engine.market_data.repair.convert_binance_bars import (
     ConversionError,
     clear_failure_record,
@@ -31,14 +23,12 @@ from engine.market_data.repair.convert_binance_bars import (
 from engine.market_data.repair.models import SyncedArchive, bar_type_for, interval_delta
 from engine.market_data.repair.rust_trade_converter import (
     RustConversionError,
-    find_rust_converter,
+    require_rust_converter,
     run_rust_trade_converter,
 )
 from engine.market_data.storage.catalog import (
     BarDataWrangler,
     ParquetDataCatalog,
-    TradeQuote,
-    TradeTickDataWrangler,
     _timestamps_to_filename,
     urisafe_identifier,
 )
@@ -47,60 +37,6 @@ from nautilus_support import Instrument
 TRADE_CONVERTER_VERSION = 4
 CSV_CHUNK_ROWS = 250_000
 DEFAULT_BAR_INTERVALS = ("1s", "1m")
-
-
-def iter_trade_archive(path: Path, chunk_rows: int = CSV_CHUNK_ROWS, *, market="futures_um",
-                       microseconds=False) -> Iterator[pd.DataFrame]:
-    """逐块读取 trades CSV；重复 Trade ID 保留源文件中靠后的记录。"""
-    try:
-        with ZipFile(path) as archive:
-            csv_members = [name for name in archive.namelist() if name.lower().endswith(".csv")]
-            if len(csv_members) != 1:
-                raise DataValidationError(
-                    f"归档应包含且只包含一个 CSV，实际为 {len(csv_members)} 个",
-                )
-            with archive.open(csv_members[0]) as file:
-                # 先识别表头，避免首块的几十万行因混入表头而退回字符串解析。
-                header_reader = csv.reader(line.decode("utf-8-sig") for line in file)
-                first_row = next(header_reader, [])
-                while not first_row or (len(first_row) == 1 and not first_row[0].strip()):
-                    first_row = next(header_reader, None)
-                    if first_row is None:
-                        break
-                has_header = bool(first_row) and first_row[0].strip().lower() in {
-                    "id",
-                    "trade id",
-                    "trade_id",
-                }
-                skiprows = header_reader.line_num if has_header else 0
-                file.seek(0)
-                chunks = pd.read_csv(
-                    file,
-                    header=None,
-                    names=(*TRADE_COLUMNS, "is_best_match") if market == "spot" else TRADE_COLUMNS,
-                    # 让 CSV 解析器直接生成数值列，避免先创建逐行字符串再解析。
-                    # 混合内容的块仍由下方规范化函数严格校验。
-                    # pandas 3.1 起各 float_precision 模式共用同一转换器，再传该参数只会告警。
-                    low_memory=False,
-                    skiprows=skiprows,
-                    chunksize=chunk_rows,
-                )
-                pending = None
-                for chunk in chunks:
-                    if chunk.empty:
-                        continue
-                    combined = normalize_trade_frame(chunk, microseconds=microseconds)
-                    if pending is not None:
-                        combined = pd.concat([pending, combined], ignore_index=True)
-                    combined = validate_normalized_trade_frame(combined)
-                    ready = combined.iloc[:-1]
-                    pending = combined.iloc[-1:].copy()
-                    if not ready.empty:
-                        yield ready
-                if pending is not None:
-                    yield pending
-    except (BadZipFile, OSError) as exc:
-        raise DataValidationError(f"无法读取 Trade ZIP 归档：{path}") from exc
 
 
 def catalog_contains_record(
@@ -154,20 +90,6 @@ def catalog_contains_bars(
     return True
 
 
-def aggregate_trade_chunk(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
-    """将一个已校验 Trade 块压缩为中间 OHLCV；跨块桶稍后再次合并。"""
-    interval_ms = int(interval_delta(interval).total_seconds() * 1_000)
-    values = frame[["timestamp", "price", "quantity"]].copy()
-    values["bucket"] = (values["timestamp"] // interval_ms) * interval_ms
-    return values.groupby("bucket", sort=False).agg(
-        open=("price", "first"),
-        high=("price", "max"),
-        low=("price", "min"),
-        close=("price", "last"),
-        volume=("quantity", "sum"),
-    )
-
-
 def aggregate_parts_to_bars(
     parts: list[pd.DataFrame],
     instrument: Instrument,
@@ -194,32 +116,6 @@ def aggregate_parts_to_bars(
     return BarDataWrangler(bar_type=parsed_bar_type, instrument=instrument).process(
         wrangler_frame,
     )
-
-
-def emit_trade_chunk(
-    frame: pd.DataFrame,
-    instrument: Instrument,
-    catalog: ParquetDataCatalog,
-) -> tuple[int, int, int]:
-    """转换并写入一个不会与下一块共享毫秒时间戳的数据块。"""
-    timestamp_index = pd.to_datetime(frame["timestamp"].to_numpy(), unit="ms", utc=True)
-    wrangler_frame = pd.DataFrame(
-        {
-            "price": frame["price"].to_numpy(dtype="float64"),
-            "quantity": frame["quantity"].to_numpy(dtype="float64"),
-            "side": frame["buyer_maker"].map({True: "SELL", False: "BUY"}).to_numpy(),
-            "trade_id": frame["trade_id"].astype(str).to_numpy(),
-        },
-        index=timestamp_index,
-    )
-    ticks = TradeTickDataWrangler(instrument).process(wrangler_frame)
-    catalog.write_data(ticks)
-    quotes = [CustomData(DataType("TradeQuote"), TradeQuote(
-        trade_id=str(row.trade_id), quote_quantity=float(row.quote_quantity),
-        ts_event=int(row.timestamp)*1_000_000, ts_init=int(row.timestamp)*1_000_000,
-    )) for row in frame.itertuples()]
-    catalog.supplement_catalog(str(instrument.id)).write_custom_data(quotes)
-    return len(ticks), ticks[0].ts_init, ticks[-1].ts_init
 
 
 def day_bounds_ns(synced: SyncedArchive) -> tuple[int, int]:
@@ -360,181 +256,25 @@ def _convert_fresh_trade_archive(
     chunk_rows: int = CSV_CHUNK_ROWS,
     bar_intervals: tuple[str, ...] = DEFAULT_BAR_INTERVALS,
 ) -> int:
-    """分块且幂等地将一个 trades 日归档转换为 TradeTick 和多周期 Bar。"""
+    """Convert one UTC trade archive with the Rust binary; never silently run Python."""
     if synced.spec.data_type != "trades":
         raise ConversionError(f"不是 trades 归档：{synced.spec.source_path}")
-    checksum = read_archive_checksum(synced.path)
-    state_path = record_path_for(synced.path, raw_dir, state_dir)
-    instrument_id = str(instrument.id)
-    day_start_ns, day_end_ns = day_bounds_ns(synced)
-
-    rust_binary = find_rust_converter()
-    if rust_binary is not None and catalog.fs_protocol == "file":
-        return convert_trade_archive_with_rust(
-            synced,
-            instrument,
-            catalog,
-            binary=rust_binary,
-            state_path=state_path,
-            source_checksum=checksum,
-            raw_dir=raw_dir,
-            state_dir=state_dir,
-            day_start_ns=day_start_ns,
-            day_end_ns=day_end_ns,
-            chunk_rows=chunk_rows,
-            bar_intervals=bar_intervals,
-        )
-
-    if synced.spec.market == "spot" and synced.spec.day.isoformat() >= "2025-01-01":
-        raise ConversionError("现货微秒成交归档需要完整 Rust 转换器；禁止降级为毫秒 Tick。")
-    pending = pd.DataFrame(columns=TRADE_COLUMNS)
-    intervals: list[list[int]] = []
-    rows = 0
-    previous_time: int | None = None
-    previous_trade_id: int | None = None
-    aggregate_parts: dict[str, list[pd.DataFrame]] = {interval: [] for interval in bar_intervals}
-
-    try:
-        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market,
-                                   microseconds=(synced.spec.market == "spot"
-                                                 and synced.spec.day.isoformat() >= "2025-01-01")):
-            for interval in bar_intervals:
-                aggregate_parts[interval].append(aggregate_trade_chunk(chunk, interval))
-            first_time = int(chunk.iloc[0]["timestamp"])
-            last_time_in_chunk = int(chunk.iloc[-1]["timestamp"])
-            first_trade_id = int(chunk.iloc[0]["trade_id"])
-            if (
-                first_time * 1_000_000 < day_start_ns
-                or last_time_in_chunk * 1_000_000 >= day_end_ns
-            ):
-                raise DataValidationError("Trade timestamp 超出归档标注的 UTC 日期")
-            if previous_time is not None and first_time < previous_time:
-                raise DataValidationError("Trade timestamp 跨数据块倒序")
-            if previous_trade_id is not None and first_trade_id <= previous_trade_id:
-                raise DataValidationError("Trade ID 跨数据块重复或倒序")
-            previous_time = last_time_in_chunk
-            previous_trade_id = int(chunk.iloc[-1]["trade_id"])
-
-            combined = pd.concat([pending, chunk], ignore_index=True)
-            last_time = int(combined.iloc[-1]["timestamp"])
-            ready = combined[combined["timestamp"] < last_time]
-            pending = combined[combined["timestamp"] == last_time].copy()
-            if ready.empty:
-                continue
-            count, first_ts, last_ts = emit_trade_chunk(ready, instrument, catalog)
-            rows += count
-            intervals.append([first_ts, last_ts])
-            write_record(
-                state_path,
-                {
-                    "converter_version": TRADE_CONVERTER_VERSION,
-                    "bar_intervals": list(bar_intervals),
-                    "bars": {},
-                    "first_ts": intervals[0][0],
-                    "instrument_id": instrument_id,
-                    "intervals": intervals,
-                    "last_ts": intervals[-1][1],
-                    "rows": rows,
-                    "source": synced.spec.source_path,
-                    "source_checksum": checksum,
-                    "status": "in_progress",
-                },
-            )
-
-        if pending.empty:
-            raise DataValidationError("Trade 归档没有数据")
-        count, first_ts, last_ts = emit_trade_chunk(pending, instrument, catalog)
-        rows += count
-        intervals.append([first_ts, last_ts])
-        write_record(
-            state_path,
-            {
-                "bar_intervals": list(bar_intervals),
-                "bars": {},
-                "converter_version": TRADE_CONVERTER_VERSION,
-                "first_ts": intervals[0][0],
-                "instrument_id": instrument_id,
-                "intervals": intervals,
-                "last_ts": intervals[-1][1],
-                "rows": rows,
-                "source": synced.spec.source_path,
-                "source_checksum": checksum,
-                "status": "in_progress",
-            },
-        )
-
-        bar_records: dict[str, dict[str, int | str]] = {}
-        for interval in bar_intervals:
-            expected_bar_type = bar_type_for(synced.spec.symbol, interval, synced.spec.market)
-            bars = aggregate_parts_to_bars(
-                aggregate_parts[interval],
-                instrument,
-                interval,
-                expected_bar_type,
-            )
-            if any(
-                start < day_end_ns and end >= day_start_ns
-                for start, end in catalog.get_intervals(Bar, identifier=expected_bar_type)
-            ):
-                raise ConversionError(
-                    f"Catalog 已有未被该 trades 状态记录管理的 Bar：{expected_bar_type}",
-                )
-            catalog.write_data(bars)
-            bar_records[interval] = {
-                "bar_type": expected_bar_type,
-                "first_ts": bars[0].ts_init,
-                "last_ts": bars[-1].ts_init,
-                "rows": len(bars),
-            }
-            write_record(
-                state_path,
-                {
-                    "bar_intervals": list(bar_intervals),
-                    "bars": bar_records,
-                    "converter_version": TRADE_CONVERTER_VERSION,
-                    "first_ts": intervals[0][0],
-                    "instrument_id": instrument_id,
-                    "intervals": intervals,
-                    "last_ts": intervals[-1][1],
-                    "rows": rows,
-                    "source": synced.spec.source_path,
-                    "source_checksum": checksum,
-                    "status": "in_progress",
-                },
-            )
-    except DataValidationError as exc:
-        failure_path = record_validation_failure(
-            synced,
-            exc,
-            raw_dir=raw_dir,
-            state_dir=state_dir,
-            source_checksum=checksum,
-            converter_version=TRADE_CONVERTER_VERSION,
-        )
-        print(f"Trade 归档校验失败，已写入失败记录：{failure_path}")
-        raise
-
-    write_record(
-        state_path,
-        {
-            "bar_intervals": list(bar_intervals),
-            "bars": bar_records,
-            "converter_version": TRADE_CONVERTER_VERSION,
-            "first_ts": intervals[0][0],
-            "instrument_id": instrument_id,
-            "intervals": intervals,
-            "last_ts": intervals[-1][1],
-            "rows": rows,
-            "source": synced.spec.source_path,
-            "source_checksum": checksum,
-            "status": "ready",
-        },
+    if catalog.fs_protocol != "file":
+        raise RustConversionError("Rust 转换器目前只支持本地文件 Catalog")
+    return convert_trade_archive_with_rust(
+        synced,
+        instrument,
+        catalog,
+        binary=require_rust_converter(),
+        state_path=record_path_for(synced.path, raw_dir, state_dir),
+        source_checksum=read_archive_checksum(synced.path),
+        raw_dir=raw_dir,
+        state_dir=state_dir,
+        day_start_ns=day_bounds_ns(synced)[0],
+        day_end_ns=day_bounds_ns(synced)[1],
+        chunk_rows=chunk_rows,
+        bar_intervals=bar_intervals,
     )
-    clear_failure_record(synced.path, raw_dir, state_dir)
-    print(f"已写入 {rows} 条 TradeTick：{instrument_id}")
-    for interval, item in bar_records.items():
-        print(f"已写入 {item['rows']} 根 {interval} Bar：{item['bar_type']}")
-    return rows
 
 
 def stage_missing_bars(
@@ -599,42 +339,47 @@ def stage_missing_bars(
             "rows": len(bars),
         }
     if raw_intervals:
-        parts = {interval: [] for interval in raw_intervals}
+        # The native converter validates every source row and generates only the
+        # missing bars. Its TradeTick/quote outputs remain private to staging.
+        binary = require_rust_converter()
+        staging_root = Path(staged_catalog.path).resolve()
+        staging_root.mkdir(parents=True, exist_ok=True)
         day_start, day_end = day_bounds_ns(synced)
-        previous_time = previous_id = None
-        for chunk in iter_trade_archive(synced.path, chunk_rows, market=synced.spec.market,
-                                   microseconds=(synced.spec.market == "spot"
-                                                 and synced.spec.day.isoformat() >= "2025-01-01")):
-            first_time, last_time = (
-                int(chunk.iloc[0]["timestamp"]),
-                int(chunk.iloc[-1]["timestamp"]),
+        expected_bars = {
+            interval: bar_type_for(synced.spec.symbol, interval, synced.spec.market)
+            for interval in raw_intervals
+        }
+        with TemporaryDirectory(prefix=".rust-missing-bars-", dir=staging_root) as temporary:
+            manifest = run_rust_trade_converter(
+                binary,
+                synced.path,
+                Path(temporary),
+                instrument_id=str(instrument.id),
+                price_precision=int(instrument.price_precision),
+                size_precision=int(instrument.size_precision),
+                day_start_ns=day_start,
+                day_end_ns=day_end,
+                bar_types=expected_bars,
+                batch_rows=chunk_rows,
+                spot_trades=synced.spec.market == "spot",
+                spot_microseconds=(synced.spec.market == "spot"
+                                   and synced.spec.day.isoformat() >= "2025-01-01"),
             )
-            first_id = int(chunk.iloc[0]["trade_id"])
-            if first_time * 1_000_000 < day_start or last_time * 1_000_000 >= day_end:
-                raise DataValidationError("Trade timestamp 超出归档标注的 UTC 日期")
-            if previous_time is not None and first_time < previous_time:
-                raise DataValidationError("Trade timestamp 跨数据块倒序")
-            if previous_id is not None and first_id <= previous_id:
-                raise DataValidationError("Trade ID 跨数据块重复或倒序")
-            previous_time, previous_id = last_time, int(chunk.iloc[-1]["trade_id"])
-            for interval in raw_intervals:
-                parts[interval].append(aggregate_trade_chunk(chunk, interval))
-        for interval in raw_intervals:
-            if not parts[interval]:
-                raise DataValidationError("Trade 归档没有数据")
-            bars = aggregate_parts_to_bars(
-                parts[interval],
-                instrument,
-                interval,
-                bar_type_for(synced.spec.symbol, interval, synced.spec.market),
-            )
-            staged_catalog.write_data(bars)
-            bars_record[interval] = {
-                "bar_type": str(bars[0].bar_type),
-                "first_ts": bars[0].ts_init,
-                "last_ts": bars[-1].ts_init,
-                "rows": len(bars),
-            }
+            for bar in manifest.bars:
+                target_dir = (
+                    staging_root / "data" / "bars" / urisafe_identifier(bar.bar_type)
+                )
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target = target_dir / _timestamps_to_filename(bar.first_ts, bar.last_ts)
+                if target.exists():
+                    raise ConversionError(f"Rust Bar 目标文件已存在：{target}")
+                os.replace(bar.path, target)
+                bars_record[bar.interval] = {
+                    "bar_type": bar.bar_type,
+                    "first_ts": bar.first_ts,
+                    "last_ts": bar.last_ts,
+                    "rows": bar.rows,
+                }
     return {**record, "bars": bars_record, "bar_intervals": list(intervals)}
 
 

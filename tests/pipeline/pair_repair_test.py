@@ -237,12 +237,11 @@ def test_three_day_week_and_month_close_only_with_their_complete_utc_windows(dat
 
 
 @pytest.mark.parametrize("wide", [False, True])
-def test_tick_repair_merges_same_millisecond_shards_and_preserves_quotes(tmp_path, monkeypatch, wide):
+def test_tick_repair_merges_same_millisecond_shards_and_preserves_quotes(tmp_path, wide):
     from engine.market_data.repair.convert_binance_trades import convert_trade_archive
     from engine.market_data.repair.models import SyncedArchive
     from tests.pipeline.convert_binance_trades_test import trade_row, write_trade_archive
 
-    monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", "off")
     instrument = TestInstrumentProvider.ethusdt_perp_binance()
     rows = [trade_row(1, LEFT, price="10.00", quantity="1.000"),
             trade_row(100, LEFT, price="11.00", quantity="1.000")]

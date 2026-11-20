@@ -15,10 +15,9 @@ from engine.market_data.quality.validate_data import (
 )
 from engine.market_data.repair.convert_binance_trades import (
     convert_trade_archive,
-    iter_trade_archive,
 )
 from engine.market_data.repair.models import ArchiveSpec, SyncedArchive
-from engine.market_data.repair.rust_trade_converter import find_rust_converter
+from engine.market_data.repair.rust_trade_converter import RustConversionError, find_rust_converter
 from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import TestInstrumentProvider
 
@@ -149,65 +148,27 @@ def test_trade_conversion_is_chunked_and_idempotent(tmp_path: Path) -> None:
     assert record["status"] == "ready"
     assert record["bar_intervals"] == ["1s", "1m", "15m"]
     assert record["bars"]["1s"]["rows"] == 2
-    if find_rust_converter() is not None:
-        assert record["backend"] == "rust-arrow"
+    assert record["backend"] == "rust-arrow"
 
 
-def test_rust_output_matches_python_fallback(
+def test_missing_rust_binary_fails_closed_and_keeps_catalog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    binary = find_rust_converter()
-    if binary is None:
-        pytest.skip("Rust converter has not been built")
     raw_dir = tmp_path / "raw"
+    state_dir = tmp_path / "state"
     start_ms = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
-    rows = [
-        trade_row(1, start_ms, price="3000.10", quantity="0.025"),
-        trade_row(2, start_ms, buyer_maker="true", price="2998.00", quantity="0.010"),
-        trade_row(2, start_ms + 1, buyer_maker="false", price="3001.00", quantity="0.050"),
-        trade_row(3, start_ms + 1, price="2999.00", quantity="0.075"),
-        trade_row(4, start_ms + 1_000, price="3002.00", quantity="0.100"),
-    ]
-    spec, path = write_trade_archive(raw_dir, rows, with_header=True)
-    synced = SyncedArchive(spec=spec, path=path)
-    instrument = TestInstrumentProvider.ethusdt_perp_binance()
-    rust_catalog = ParquetDataCatalog(str(tmp_path / "rust_catalog"))
-    python_catalog = ParquetDataCatalog(str(tmp_path / "python_catalog"))
-
-    monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", str(binary))
-    convert_trade_archive(
-        synced,
-        instrument,
-        rust_catalog,
-        raw_dir=raw_dir,
-        state_dir=tmp_path / "rust_state",
-        chunk_rows=2,
-        bar_intervals=("1s", "1m", "15m"),
-    )
+    spec, path = write_trade_archive(raw_dir, [trade_row(1, start_ms)])
+    catalog = ParquetDataCatalog(str(tmp_path / "catalog"))
     monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", "off")
-    convert_trade_archive(
-        synced,
-        instrument,
-        python_catalog,
-        raw_dir=raw_dir,
-        state_dir=tmp_path / "python_state",
-        chunk_rows=2,
-        bar_intervals=("1s", "1m", "15m"),
-    )
-
-    instrument_id = "ETHUSDT-PERP.BINANCE"
-    rust_ticks = rust_catalog.trade_ticks(instrument_ids=[instrument_id])
-    python_ticks = python_catalog.trade_ticks(instrument_ids=[instrument_id])
-    assert [str(value) for value in rust_ticks] == [str(value) for value in python_ticks]
-    bar_types = (
-        f"{instrument_id}-1-SECOND-LAST-EXTERNAL",
-        f"{instrument_id}-1-MINUTE-LAST-EXTERNAL",
-        f"{instrument_id}-15-MINUTE-LAST-EXTERNAL",
-    )
-    for bar_type in bar_types:
-        rust_bars = rust_catalog.bars(bar_types=[bar_type])
-        python_bars = python_catalog.bars(bar_types=[bar_type])
-        assert [str(value) for value in rust_bars] == [str(value) for value in python_bars]
+    with pytest.raises(RustConversionError, match="Rust trade converter unavailable"):
+        convert_trade_archive(
+            SyncedArchive(spec, path),
+            TestInstrumentProvider.ethusdt_perp_binance(),
+            catalog,
+            raw_dir=raw_dir,
+            state_dir=state_dir,
+        )
+    assert not list(Path(catalog.path).rglob("*.parquet"))
 
 
 def test_trade_validation_failure_writes_manifest_without_copying_archive(
@@ -245,47 +206,57 @@ def test_trade_validation_failure_writes_manifest_without_copying_archive(
     assert list(tmp_path.rglob("*.zip")) == [path]
 
 
-def test_trade_archive_keeps_last_duplicate_id_across_chunks(tmp_path: Path) -> None:
+def convert_fixture_with_native(
+    tmp_path: Path,
+    rows: list[list[str]],
+    *,
+    chunk_rows: int = 1,
+    with_header: bool = False,
+) -> ParquetDataCatalog:
     raw_dir = tmp_path / "raw"
-    start_ms = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
-    _, path = write_trade_archive(
-        raw_dir,
-        [
-            trade_row(1, start_ms, price="3000.00"),
-            trade_row(1, start_ms + 1, price="3001.00"),
-            trade_row(2, start_ms + 2, price="3002.00"),
-        ],
+    spec, path = write_trade_archive(raw_dir, rows, with_header=with_header)
+    catalog = ParquetDataCatalog(str(tmp_path / "catalog"))
+    convert_trade_archive(
+        SyncedArchive(spec, path),
+        TestInstrumentProvider.ethusdt_perp_binance(),
+        catalog,
+        raw_dir=raw_dir,
+        state_dir=tmp_path / "state",
+        chunk_rows=chunk_rows,
+        bar_intervals=("1s", "1m"),
     )
+    return catalog
 
-    rows = pd.concat(iter_trade_archive(path, chunk_rows=1), ignore_index=True)
 
-    assert rows["trade_id"].tolist() == [1, 2]
-    assert rows["timestamp"].tolist() == [start_ms + 1, start_ms + 2]
-    assert rows["price"].tolist() == [3001.0, 3002.0]
+def test_trade_archive_keeps_last_duplicate_id_across_chunks(tmp_path: Path) -> None:
+    start_ms = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
+    catalog = convert_fixture_with_native(tmp_path, [
+        trade_row(1, start_ms, price="3000.00"),
+        trade_row(1, start_ms + 1, price="3001.00"),
+        trade_row(2, start_ms + 2, price="3002.00"),
+    ])
+    ticks = catalog.trade_ticks(instrument_ids=["ETHUSDT-PERP.BINANCE"])
+    assert [str(tick.trade_id) for tick in ticks] == ["1", "2"]
+    assert [tick.ts_event for tick in ticks] == [
+        (start_ms + 1) * 1_000_000, (start_ms + 2) * 1_000_000
+    ]
+    assert [str(tick.price) for tick in ticks] == ["3001.00", "3002.00"]
 
 
 def test_trade_archive_rejects_descending_ids(tmp_path: Path) -> None:
-    raw_dir = tmp_path / "raw"
     start_ms = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
-    _, path = write_trade_archive(
-        raw_dir,
-        [trade_row(2, start_ms), trade_row(1, start_ms + 1)],
-    )
-
     with pytest.raises(DataValidationError, match="Trade ID"):
-        list(iter_trade_archive(path, chunk_rows=1))
+        convert_fixture_with_native(tmp_path, [
+            trade_row(2, start_ms), trade_row(1, start_ms + 1)
+        ])
 
 
 def test_trade_archive_rejects_invalid_maker_flag(tmp_path: Path) -> None:
-    raw_dir = tmp_path / "raw"
     start_ms = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
-    _, path = write_trade_archive(
-        raw_dir,
-        [trade_row(1, start_ms, buyer_maker="unknown")],
-    )
-
     with pytest.raises(DataValidationError, match="isBuyerMaker"):
-        list(iter_trade_archive(path))
+        convert_fixture_with_native(
+            tmp_path, [trade_row(1, start_ms, buyer_maker="unknown")]
+        )
 
 
 @pytest.mark.parametrize("chunk_rows", [1, 2, 10])
@@ -296,14 +267,20 @@ def test_trade_archive_validates_discarded_duplicates_and_normalizes_flags(tmp_p
         trade_row(1, start_ms + 1, buyer_maker=" False "),
         trade_row(2, start_ms + 2, buyer_maker="true"),
     ]
-    _, path = write_trade_archive(tmp_path, rows, with_header=True)
-    frame = pd.concat(iter_trade_archive(path, chunk_rows=chunk_rows), ignore_index=True)
-    assert frame.trade_id.tolist() == [1, 2]
-    assert frame.buyer_maker.tolist() == [False, True]
+    catalog = convert_fixture_with_native(
+        tmp_path, rows, chunk_rows=chunk_rows, with_header=True
+    )
+    ticks = catalog.trade_ticks(instrument_ids=["ETHUSDT-PERP.BINANCE"])
+    assert [str(tick.trade_id) for tick in ticks] == ["1", "2"]
+    assert [tick.aggressor_side for tick in ticks] == [
+        AggressorSide.BUY, AggressorSide.SELL
+    ]
     rows[0][-1] = "invalid"
-    _, path = write_trade_archive(tmp_path, rows, with_header=True)
+    invalid_dir = tmp_path / "invalid"
     with pytest.raises(DataValidationError, match="isBuyerMaker"):
-        list(iter_trade_archive(path, chunk_rows=chunk_rows))
+        convert_fixture_with_native(
+            invalid_dir, rows, chunk_rows=chunk_rows, with_header=True
+        )
 
 
 def test_mixed_boolean_and_numeric_maker_is_not_silently_accepted():
@@ -315,14 +292,29 @@ def test_mixed_boolean_and_numeric_maker_is_not_silently_accepted():
 
 
 def test_trade_header_detection_skips_leading_blank_lines(tmp_path):
-    _, path = write_trade_archive(tmp_path, [trade_row(1, 1)], with_header=True)
+    start_ms = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
+    raw_dir = tmp_path / "raw"
+    spec, path = write_trade_archive(raw_dir, [trade_row(1, start_ms)], with_header=True)
     with ZipFile(path) as archive:
         name = archive.namelist()[0]
         content = archive.read(name)
     with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr(name, b"\n  \n" + content)
-    frames = list(iter_trade_archive(path, chunk_rows=1))
-    assert pd.concat(frames).trade_id.tolist() == [1]
+    checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+    Path(f"{path}.CHECKSUM").write_text(
+        f"{checksum}  {path.name}\n", encoding="utf-8"
+    )
+    catalog = ParquetDataCatalog(str(tmp_path / "catalog"))
+    convert_trade_archive(
+        SyncedArchive(spec, path),
+        TestInstrumentProvider.ethusdt_perp_binance(),
+        catalog,
+        raw_dir=raw_dir,
+        state_dir=tmp_path / "state",
+    )
+    assert [str(tick.trade_id) for tick in catalog.trade_ticks(
+        instrument_ids=["ETHUSDT-PERP.BINANCE"]
+    )] == ["1"]
 
 
 def parquet_snapshot(root: Path) -> dict:
@@ -335,15 +327,12 @@ def parquet_snapshot(root: Path) -> dict:
     }
 
 
-@pytest.fixture(params=["python", "rust"])
-def incremental_dataset(tmp_path, monkeypatch, request):
-    if request.param == "rust":
-        binary = find_rust_converter()
-        if binary is None:
-            pytest.skip("Rust converter has not been built")
-        monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", str(binary))
-    else:
-        monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", "off")
+@pytest.fixture
+def incremental_dataset(tmp_path, monkeypatch):
+    binary = find_rust_converter()
+    if binary is None:
+        pytest.skip("Rust converter has not been built")
+    monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", str(binary))
     raw, state = tmp_path / "raw", tmp_path / "state"
     start = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
     rows = [trade_row(i + 1, start + i * 60_000, price=str(3000 + i)) for i in range(5)]
@@ -386,7 +375,7 @@ def test_new_period_aggregates_existing_bars_without_rewriting_ticks(
     def unexpected(*args, **kwargs):
         raise AssertionError("已有低周期数据时不应重新解析 trades 或生成 ticks")
 
-    monkeypatch.setattr(converter, "iter_trade_archive", unexpected)
+    monkeypatch.setattr(converter, "run_rust_trade_converter", unexpected)
     monkeypatch.setattr(converter, "_convert_fresh_trade_archive", unexpected)
     convert_trade_archive(synced, instrument, catalog, bar_intervals=("5m", "1m"), **kwargs)
     after = parquet_snapshot(root)
