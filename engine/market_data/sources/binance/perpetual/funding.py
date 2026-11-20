@@ -17,7 +17,7 @@ from websockets.exceptions import WebSocketException
 from core.market.instruments import instrument_id_for, normalize_symbol
 from core.market.models import DataError
 from engine.connectors.binance.transport import PublicREST
-from engine.market_data.repair.funding_data import fetch_history
+from engine.market_data.sources.binance.perpetual.funding_repair import fetch_history
 
 DAY_MS = 86_400_000
 RETRY_SECONDS = 30
