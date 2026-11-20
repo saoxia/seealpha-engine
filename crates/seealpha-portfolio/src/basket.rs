@@ -68,6 +68,16 @@ fn change_phase(name:&str, rows:impl IntoIterator<Item=(LegId,Decimal)>)->Option
 pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
     evidence:&BTreeMap<LegId,Evidence>,now_ns:u64,max_age_ns:u64,
     max_gross:Decimal,policy:Policy,emergency_unwind:bool)->Result<Plan,BasketError>{
+    plan_with_constraints(targets,positions,evidence,now_ns,max_age_ns,max_gross,policy,
+        Decimal::ZERO,&[],emergency_unwind)
+}
+pub fn plan_with_constraints(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
+    evidence:&BTreeMap<LegId,Evidence>,now_ns:u64,max_age_ns:u64,
+    max_gross:Decimal,policy:Policy,max_leg_drift:Decimal,
+    hedge_pairs:&[(LegId,LegId)],emergency_unwind:bool)->Result<Plan,BasketError>{
+    if max_leg_drift<Decimal::ZERO||(policy!=Policy::Generic&&!hedge_pairs.is_empty()){
+        return Err(BasketError::Risk);
+    }
     if targets.is_empty()||targets.len()>64||now_ns==0||max_age_ns==0||max_gross<=Decimal::ZERO{return Err(BasketError::Evidence);}
     let mut net=BTreeMap::<LegId,Decimal>::new();
     let mut unique=BTreeSet::new();
@@ -96,11 +106,20 @@ pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
     }
     let futures:Vec<_>=net.keys().filter(|l|l.product==Product::FuturesUm).cloned().collect();
     if policy!=Policy::Generic&&futures.len()!=1{return Err(BasketError::Risk);}
+    let mut hedged=BTreeSet::new();
+    for (spot,perpetual) in hedge_pairs {
+        if spot.product!=Product::Spot||perpetual.product!=Product::FuturesUm||
+           spot.symbol!=perpetual.symbol||!net.contains_key(spot)||!net.contains_key(perpetual)||
+           !hedged.insert(spot.clone())||!hedged.insert(perpetual.clone())||
+           net[spot]+net[perpetual]!=Decimal::ZERO||positions[perpetual]>Decimal::ZERO {
+            return Err(BasketError::Risk);
+        }
+    }
     let mut phases=Vec::<Phase>::new();
     match policy {
         Policy::Generic=>{
             let mut reduce=Vec::new();let mut increase=Vec::new();
-            for (l,desired) in &net {
+            for (l,desired) in net.iter().filter(|(l,_)|!hedged.contains(*l)) {
                 let old=positions[l];
                 if old!=Decimal::ZERO&&(old* *desired<=Decimal::ZERO||desired.abs()<old.abs()){
                     let to=if old* *desired<=Decimal::ZERO{Decimal::ZERO}else{*desired};
@@ -112,6 +131,32 @@ pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
                 }
             }
             if let Some(p)=change_phase("reduce_existing_exposure",reduce){phases.push(p);}
+            let mut reduce_perp=Vec::new();
+            let mut reduce_spot=Vec::new();
+            let mut acquire_spot=Vec::new();
+            let mut increase_perp=Vec::new();
+            for (spot,perpetual) in hedge_pairs {
+                if net[perpetual]>positions[perpetual] {
+                    reduce_perp.push((perpetual.clone(),net[perpetual]-positions[perpetual]));
+                }
+                if net[spot]<positions[spot] {
+                    reduce_spot.push((spot.clone(),net[spot]-positions[spot]));
+                }
+                if net[spot]>positions[spot] {
+                    acquire_spot.push((spot.clone(),net[spot]-positions[spot]));
+                }
+                if net[perpetual]<positions[perpetual] {
+                    increase_perp.push((perpetual.clone(),net[perpetual]-positions[perpetual]));
+                }
+            }
+            for (name,rows) in [
+                ("reduce_hedge_perpetual",reduce_perp),
+                ("reduce_hedge_spot",reduce_spot),
+                ("acquire_hedge_spot",acquire_spot),
+                ("increase_hedged_perpetual",increase_perp),
+            ] {
+                if let Some(p)=change_phase(name,rows){phases.push(p);}
+            }
             if let Some(p)=change_phase("increase_new_exposure",increase){phases.push(p);}
         }
         Policy::FundingCarry=>{
@@ -120,6 +165,10 @@ pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
             let spot=net.keys().find(|l|l.product==Product::Spot).ok_or(BasketError::Risk)?;
             if perp.symbol!=spot.symbol||net[spot]<Decimal::ZERO||net[perp]>Decimal::ZERO||
               net[spot]+net[perp]!=Decimal::ZERO {return Err(BasketError::Risk);}
+            if !emergency_unwind &&
+               (positions[spot]+positions[perp]).abs()>max_leg_drift {
+                return Err(BasketError::Risk);
+            }
             if let Some(p)=change_phase(if emergency_unwind{"emergency_coordinated_unwind"}else{"coordinated_spot_perpetual_required"},
                 net.iter().map(|(l,q)|(l.clone(),*q-positions[l]))){phases.push(p);}
         }
