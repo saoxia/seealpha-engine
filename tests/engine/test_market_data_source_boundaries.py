@@ -5,9 +5,9 @@ import importlib
 
 import pytest
 
-from engine.market_data.sources.binance.options import collection as options
-from engine.market_data.sources.binance.perpetual import collection as perpetual
-from engine.market_data.sources.binance.spot import collection as spot
+from engine.market_data.sources.binance_options import collection as options
+from engine.market_data.sources.binance_perpetual import collection as perpetual
+from engine.market_data.sources.binance_spot import collection as spot
 
 
 @pytest.mark.parametrize(
@@ -15,7 +15,7 @@ from engine.market_data.sources.binance.spot import collection as spot
     [(perpetual, "futures_um"), (spot, "spot")],
 )
 def test_batch_source_dispatches_with_fixed_product(monkeypatch, source, expected_product):
-    from engine.market_data.sources.binance.shared import batch
+    from engine.market_data.sources.binance_shared import batch
 
     calls = []
 
@@ -30,7 +30,7 @@ def test_batch_source_dispatches_with_fixed_product(monkeypatch, source, expecte
 
 
 def test_options_batch_uses_source_owned_implementation(monkeypatch):
-    from engine.market_data.sources.binance.options import implementation
+    from engine.market_data.sources.binance_options import implementation
 
     calls = []
 
@@ -47,14 +47,14 @@ def test_options_batch_uses_source_owned_implementation(monkeypatch):
 @pytest.mark.parametrize(
     ("legacy", "canonical"),
     [
-        ("engine.market_data.collection.futures_service", "engine.market_data.sources.binance.shared.batch"),
-        ("engine.market_data.collection.pair_service", "engine.market_data.sources.binance.shared.trades"),
-        ("engine.market_data.collection.options_service", "engine.market_data.sources.binance.options.implementation"),
-        ("engine.market_data.collection.funding_service", "engine.market_data.sources.binance.perpetual.funding"),
-        ("engine.market_data.calculation.pair_calculation", "engine.market_data.sources.binance.shared.calculation"),
-        ("engine.market_data.repair.pair_data", "engine.market_data.sources.binance.shared.history"),
-        ("engine.market_data.repair.options_data", "engine.market_data.sources.binance.options.repair"),
-        ("engine.market_data.repair.funding_data", "engine.market_data.sources.binance.perpetual.funding_history"),
+        ("engine.market_data.collection.futures_service", "engine.market_data.sources.binance_shared.batch"),
+        ("engine.market_data.collection.pair_service", "engine.market_data.sources.binance_shared.trades"),
+        ("engine.market_data.collection.options_service", "engine.market_data.sources.binance_options.implementation"),
+        ("engine.market_data.collection.funding_service", "engine.market_data.sources.binance_perpetual.funding"),
+        ("engine.market_data.calculation.pair_calculation", "engine.market_data.sources.binance_shared.calculation"),
+        ("engine.market_data.repair.pair_data", "engine.market_data.sources.binance_shared.history"),
+        ("engine.market_data.repair.options_data", "engine.market_data.sources.binance_options.repair"),
+        ("engine.market_data.repair.funding_data", "engine.market_data.sources.binance_perpetual.funding_history"),
     ],
 )
 def test_legacy_import_resolves_same_implementation(legacy, canonical):
@@ -63,8 +63,8 @@ def test_legacy_import_resolves_same_implementation(legacy, canonical):
 
 @pytest.mark.parametrize("product", ["spot", "futures_um"])
 def test_product_calculation_does_not_accept_another_market(product):
-    from engine.market_data.sources.binance.perpetual import calculation as perp_calculation
-    from engine.market_data.sources.binance.spot import calculation as spot_calculation
+    from engine.market_data.sources.binance_perpetual import calculation as perp_calculation
+    from engine.market_data.sources.binance_spot import calculation as spot_calculation
 
     module = spot_calculation if product == "futures_um" else perp_calculation
     with pytest.raises(ValueError, match="Expected Binance"):
@@ -73,8 +73,8 @@ def test_product_calculation_does_not_accept_another_market(product):
 
 @pytest.mark.parametrize("product", ["spot", "futures_um"])
 def test_product_history_does_not_accept_another_market(product):
-    from engine.market_data.sources.binance.perpetual import repair as perp_repair
-    from engine.market_data.sources.binance.spot import repair as spot_repair
+    from engine.market_data.sources.binance_perpetual import repair as perp_repair
+    from engine.market_data.sources.binance_spot import repair as spot_repair
 
     module = spot_repair if product == "futures_um" else perp_repair
     with pytest.raises(ValueError, match="Expected Binance"):
