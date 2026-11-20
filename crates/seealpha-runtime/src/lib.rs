@@ -66,16 +66,22 @@ impl Runtime {
         match Self::open_book(config, &config.book_path()) {
             Ok(runtime) => Ok(runtime),
             Err(error) => {
-                // The Platform handshake bind-mounts a 0700 directory and drops
-                // every capability, so uid 0 cannot create the book there.
-                let fallback =
-                    std::env::temp_dir().join(format!("seealpha-engine-{}", std::process::id()));
+                // An implicit /tmp book loses request-idempotency, exchange
+                // reconciliation and verified fills on restart. It is never
+                // a safe replacement for a production account ledger.
+                let explicitly_ephemeral=std::env::var("ENGINE_ALLOW_EPHEMERAL_STATE")
+                    .is_ok_and(|value|value=="1");
+                if !explicitly_ephemeral || config.tenant_purpose.as_deref()==Some("production")
+                    || config.venue_base.is_some() {
+                    return Err(error);
+                }
+                let fallback=
+                    std::env::temp_dir().join(format!("seealpha-ephemeral-{}",std::process::id()));
                 eprintln!(
-                    "state database {} is not writable ({error}); using {}",
-                    config.book_path().display(),
-                    fallback.display()
+                    "explicit development-only ephemeral state for {}: {}; using {}",
+                    config.book_path().display(),error,fallback.display()
                 );
-                Self::open_book(config, &fallback.join("book.sqlite"))
+                Self::open_book(config,&fallback.join("book.sqlite"))
             }
         }
     }
