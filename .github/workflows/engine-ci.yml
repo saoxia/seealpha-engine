@@ -87,7 +87,13 @@ jobs:
       - name: Rust-native market-data quality tests (offline only)
         run: cargo test --locked --release --manifest-path engine/market_data/quality/rust/Cargo.toml
       - name: Rust-native Binance source manifest parity unit tests (offline only)
-        run: cargo test --locked --release --manifest-path engine/market_data/sources/binance_shared/rust/Cargo.toml
+        run: |
+          cargo generate-lockfile --manifest-path engine/market_data/sources/binance_shared/rust/Cargo.toml
+          cargo test --release --manifest-path engine/market_data/sources/binance_shared/rust/Cargo.toml
+          echo 'BEGIN_NATIVE_LOCK_B64'
+          base64 -w0 engine/market_data/sources/binance_shared/rust/Cargo.lock
+          echo
+          echo 'END_NATIVE_LOCK_B64'
       - name: Python lint
         run: uv run ruff check .
       - name: Engine regression tests (offline fixtures only)
