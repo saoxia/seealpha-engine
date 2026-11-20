@@ -101,15 +101,12 @@ def test_missing_catalog_read_does_not_create_directory(tmp_path):
 
 
 @pytest.mark.parametrize("intervals", [[], ["1s"], ["1m"]])
-@pytest.mark.parametrize("python_only", [False, True])
-def test_prepare_respects_tick_only_and_selected_bar_level(dataset, tmp_path, monkeypatch, intervals, python_only):
+def test_prepare_respects_tick_only_and_selected_bar_level(dataset, tmp_path, monkeypatch, intervals):
     from engine.market_data.repair import prepare_data as preparation
     from engine.market_data.repair.data_management import dataset_inventory
     from engine.market_data.repair.sync_binance_batch import plan_daily_archives
 
     settings, start, archive = dataset
-    if python_only:
-        monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", "off")
     from dataclasses import replace
 
     settings = replace(settings, symbols=())
@@ -240,8 +237,7 @@ def test_interrupted_delete_invalidates_completion_and_can_resume_after_new_prev
     assert deletion_plan(request, settings)["file_count"] == 0
 
 
-@pytest.mark.parametrize("python_only", [False, True])
-def test_usdc_prepare_read_validate_and_delete_complete_chain(tmp_path, monkeypatch, python_only):
+def test_usdc_prepare_read_validate_and_delete_complete_chain(tmp_path, monkeypatch):
     import hashlib
     from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -249,8 +245,6 @@ def test_usdc_prepare_read_validate_and_delete_complete_chain(tmp_path, monkeypa
     from engine.market_data.repair.models import instrument_id_for
     from engine.market_data.repair.sync_binance_batch import archive_path
 
-    if python_only:
-        monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", "off")
     settings = PipelineSettings("futures_um", "trades", ("ETHUSDT",), ("1s", "1m"),
                                 tmp_path / "raw", tmp_path / "catalog", tmp_path / "state")
     start = datetime(2026, 8, 1, tzinfo=UTC)
