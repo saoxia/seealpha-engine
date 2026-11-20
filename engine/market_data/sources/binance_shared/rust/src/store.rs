@@ -76,6 +76,7 @@ pub struct PairJournal {
     journal_lock:File,
     root:PathBuf,
     symbol:String,
+    base_level:String,
 }
 impl PairJournal {
     pub fn open(root:&Path, symbol:&str, base_level:&str)->Result<Self> {
@@ -132,7 +133,7 @@ impl PairJournal {
         "#)?;
         Ok(Self {
             db, writer_lock, journal_lock, root:root.to_path_buf(),
-            symbol:symbol.to_owned()
+            symbol:symbol.to_owned(), base_level:base_level.to_owned()
         })
     }
     pub fn conflicted(&self)->Result<bool> {
@@ -150,6 +151,12 @@ impl PairJournal {
             if !trade.price.is_zero() && !trade.quantity.is_zero() {return Ok(true);}
         }
         Ok(false)
+    }
+    pub fn calculate(&mut self, retained:&std::collections::BTreeSet<String>, confirmed_ms:i64)->Result<usize> {
+        self.journal_lock.lock_exclusive()?;
+        let result=crate::calc::process_pending(&mut self.db,retained,confirmed_ms,&self.base_level);
+        FileExt::unlock(&self.journal_lock)?;
+        result
     }
     pub fn pending_count(&self)->Result<i64> {
         Ok(self.db.query_row("SELECT count(*) FROM pending_updates",[],|r|r.get(0))?)
