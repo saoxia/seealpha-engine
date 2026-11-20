@@ -341,6 +341,34 @@ mod tests {
     }
 
     #[test]
+    fn partial_and_complete_orders_require_exact_verified_decimal_sum() {
+        let book=Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        book.ensure_tenant("t","production","active").unwrap();
+        let intent=json!({"action":"NEW","environment":"production","client_order_id":"c3",
+            "symbol":"ETHUSDT","side":"BUY","quantity":"0.3"});
+        book.preregister_order_intent("t","a","production","req3","c3",
+            &"d".repeat(64),&intent).unwrap();
+        let t1=json!({"trade_id":"binance:futures_um:ETHUSDT:301","venue_order_id":"100",
+            "quantity":"0.1","price":"100","source":"signed_exchange_user_trades"});
+        let t2=json!({"trade_id":"binance:futures_um:ETHUSDT:302","venue_order_id":"100",
+            "quantity":"0.2","price":"100","source":"signed_exchange_user_trades"});
+        book.import_verified_fills("t","a","production","100",&[t1,t2]).unwrap();
+        let mut observed=json!({"environment":"production","client_order_id":"c3",
+            "status":"PARTIALLY_FILLED","source":"signed_exchange_order_query",
+            "observed_at_ns":1,"venue_order_id":"100",
+            "trade_ids":["binance:futures_um:ETHUSDT:301"]});
+        book.append_order_observation("t","a","production","c3","partial",&observed).unwrap();
+        observed["status"]=json!("FILLED");
+        observed["observed_at_ns"]=json!(2);
+        assert!(book.append_order_observation("t","a","production","c3","early",&observed).is_err());
+        observed["trade_ids"]=json!(["binance:futures_um:ETHUSDT:301",
+            "binance:futures_um:ETHUSDT:302"]);
+        book.append_order_observation("t","a","production","c3","complete",&observed).unwrap();
+        assert_eq!(book.latest_order_observation("t","a","production","c3")
+            .unwrap().unwrap()["status"],"FILLED");
+    }
+
+    #[test]
     fn ack_unknown_cannot_be_rewritten_into_a_fill() {
         let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
         ledger.ensure_tenant("t","production","active").unwrap();
