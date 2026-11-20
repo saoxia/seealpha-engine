@@ -111,6 +111,7 @@ class ManagedJournalBridge:
         self._lock = RLock()
         self._ready = set()
         self._latest = {}
+        self._tails = {}
         self._warmed_bars = {}
         self._errors = {}
 
@@ -131,6 +132,8 @@ class ManagedJournalBridge:
         if not keys or len(keys) > 8 or len(set(keys)) != len(keys):
             raise MarketDataHubError("策略行情需求必须是唯一的有效市场集合")
         allowed = _package_symbols(load["parameters"])
+        if str(tenant_id) != str(self.manager.bound_tenant_id()):
+            raise MarketDataHubError("策略订阅租户与 Engine 行情配置租户不匹配")
         with self._lock, self.manager.lock:
             policies = {
                 (p.product, p.symbol): p for p in self.manager._read(refresh=True)
@@ -164,6 +167,8 @@ class ManagedJournalBridge:
             return needed
 
     def unsubscribe(self, tenant_id, account_id, issuance_id):
+        if str(tenant_id) != str(self.manager.bound_tenant_id()):
+            raise MarketDataHubError("不能释放其他租户的行情订阅")
         with self._lock:
             needed = self.service.unsubscribe_live(
                 str(tenant_id), self.consumer_id(account_id, issuance_id),
@@ -175,6 +180,7 @@ class ManagedJournalBridge:
         self.service.invalidate_live_stream(stream)
         self._ready.discard(stream)
         self._latest.pop(stream, None)
+        self._tails.pop(stream, None)
         self._warmed_bars.pop(stream, None)
         self._errors[stream] = reason
 
@@ -221,8 +227,12 @@ class ManagedJournalBridge:
                         # previously cached one-bar feed; replay the entire tail.
                         self._reset(stream, "expanding warmup")
                         latest = None
-                    if latest is not None and any(
-                        bar.ts_ns == latest.ts_ns and bar != latest for bar in tail
+                    delivered = {
+                        bar.ts_ns: bar for bar in self._tails.get(stream, ())
+                    }
+                    if any(
+                        bar.ts_ns in delivered and bar != delivered[bar.ts_ns]
+                        for bar in tail
                     ):
                         raise MarketDataHubError("采集器修订了已交付K线，必须重新预热")
                     for bar in tail:
@@ -239,6 +249,7 @@ class ManagedJournalBridge:
                             self.service.accept_live_closed_bar(stream, bar)
                             latest = bar
                     self._latest[stream] = latest
+                    self._tails[stream] = tuple(tail)
                     self._warmed_bars[stream] = lookback
                     self._ready.add(stream)
                     self._errors.pop(stream, None)
@@ -247,6 +258,15 @@ class ManagedJournalBridge:
 
     def view(self, tenant_id, account_id, issuance_id, *, now_ns, positions, max_age_ns):
         """Read-only strategy snapshot: data readiness is NOT execution permission."""
+        if str(tenant_id) != str(self.manager.bound_tenant_id()):
+            raise MarketDataHubError("请求租户与 Engine 行情配置租户不匹配")
+        tenant = self.runtime.store.tenant(tenant_id)
+        load = self.runtime.store.strategy_load(tenant_id, account_id, issuance_id)
+        if (
+            tenant is None or tenant["status"] != "active" or load is None
+            or load["grant_purpose"] != tenant["purpose"]
+        ):
+            raise MarketDataHubError("策略不再具有有效的行情访问授权")
         with self._lock:
             self.poll()
             consumer = self.consumer_id(account_id, issuance_id)
