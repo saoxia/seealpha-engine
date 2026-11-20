@@ -16,10 +16,10 @@ from engine.market_data.calculation.bar_features import (
     prepare_bar_features,
     read_bar_features,
 )
-from engine.market_data.storage.catalog import ParquetDataCatalog
 from engine.market_data.repair.convert_binance_bars import ConversionError
 from engine.market_data.repair.convert_binance_trades import convert_trade_archive
 from engine.market_data.repair.models import SyncedArchive, bar_type_for
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import TestInstrumentProvider
 from tests.pipeline.convert_binance_trades_test import (
     parquet_snapshot,

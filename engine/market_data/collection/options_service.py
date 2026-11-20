@@ -7,9 +7,8 @@ import time
 
 from engine.connectors.binance.options_client import market_events
 from engine.connectors.binance.queries import QueryError
-
-from engine.market_data.storage.history import CatalogHistory
 from engine.market_data.collection.service import write_status
+from engine.market_data.storage.history import CatalogHistory
 
 
 async def serve_options(policy, root, catalog, *, stream_factory=None, definition=None, repair_limiter=None):

@@ -8,7 +8,6 @@ from nautilus_trader.model import AggressorSide, InstrumentId, Price, Quantity, 
 
 from core.market.instruments import instrument_id_for, normalize_symbol
 from engine.connectors.binance import options
-from engine.market_data.storage.catalog import ParquetDataCatalog
 from engine.market_data.repair.data_management import (
     checked_request,
     dataset_inventory,
@@ -18,6 +17,7 @@ from engine.market_data.repair.data_management import (
 )
 from engine.market_data.repair.models import DataRequest, PipelineSettings
 from engine.market_data.repair.options_data import prepare, validate
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from tests.connectors.binance.options_queries_test import definition
 
 

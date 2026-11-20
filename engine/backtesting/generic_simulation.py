@@ -22,16 +22,7 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
-from engine.market_data.access.market_data_service import EngineMarketDataService
-from engine.market_data.access.subscription_hub import (
-    ClosedBar,
-    MarketDataHubError,
-    MarketStream,
-)
-from engine.trading.runtime import EngineConflict
 from engine.backtesting.backtest_engine import backtest_engine_config
-from engine.research.basket_research_session import BasketResearchSession
-from engine.portfolio.basket_targets import BasketPlanError, LegEvidence
 from engine.backtesting.carry_simulation import (
     _balance,
     _decimal,
@@ -41,8 +32,17 @@ from engine.backtesting.carry_simulation import (
     _sim_bar,
     _sim_instrument,
 )
+from engine.market_data.access.market_data_service import EngineMarketDataService
+from engine.market_data.access.subscription_hub import (
+    ClosedBar,
+    MarketDataHubError,
+    MarketStream,
+)
+from engine.portfolio.basket_targets import BasketPlanError, LegEvidence
+from engine.research.basket_research_session import BasketResearchSession
 from engine.research.issued_basket import issued_basket_members
 from engine.strategies.strategy_config import StrategyConfig
+from engine.trading.runtime import EngineConflict
 from nautilus_support import instrument_fee_model
 
 _VENUES = {"spot": Venue("SIM_SPOT"), "futures_um": Venue("SIM_UM")}

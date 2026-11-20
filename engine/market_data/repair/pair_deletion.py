@@ -20,7 +20,6 @@ from core.market.instruments import (
     normalize_symbol,
 )
 from core.paths import PROJECT_ROOT
-
 from engine.market_data.repair.data_management import delete_planned_files, verify_planned_file
 
 

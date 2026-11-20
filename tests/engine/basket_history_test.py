@@ -7,8 +7,8 @@ import pytest
 from nautilus_trader.model import FundingRateUpdate, InstrumentId
 
 from engine.market_data.storage.catalog import ParquetDataCatalog
-from engine.trading.runtime import EngineConflict, EngineRuntime
 from engine.portfolio.basket_history import align_carry_bars
+from engine.trading.runtime import EngineConflict, EngineRuntime
 from tests.engine.backtest_test import CLOSES, write_crossover_catalog
 from tests.engine.spot_backtest_test import spot_catalog, spot_instrument
 

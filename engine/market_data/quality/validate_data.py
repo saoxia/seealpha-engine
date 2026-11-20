@@ -8,8 +8,8 @@ from datetime import datetime
 import pandas as pd
 from nautilus_trader.model import Bar
 
-from engine.market_data.storage.catalog import ParquetDataCatalog
 from engine.market_data.repair.models import as_utc, interval_delta
+from engine.market_data.storage.catalog import ParquetDataCatalog
 
 KLINE_COLUMNS = (
     "open_time",

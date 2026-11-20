@@ -18,13 +18,13 @@ from types import SimpleNamespace
 from nautilus_trader.model import BarType, InstrumentId, Money, OrderSide, PositionId, TimeInForce
 from nautilus_trader.trading import Strategy
 
-from engine.strategies.strategy_config import StrategyConfig
 from engine.portfolio.target_netting import (
     MemberTarget,
     execution_delta,
     net_signed_quantity,
     quantize_toward_zero,
 )
+from engine.strategies.strategy_config import StrategyConfig
 from nautilus_support import instrument_fee_rates, make_strategy_price
 
 

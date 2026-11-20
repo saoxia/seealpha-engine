@@ -8,11 +8,18 @@ import pandas as pd
 import pytest
 from nautilus_trader.model import AggressorSide
 
-from engine.market_data.storage.catalog import ParquetDataCatalog
-from engine.market_data.repair.convert_binance_trades import convert_trade_archive, iter_trade_archive
+from engine.market_data.quality.validate_data import (
+    TRADE_COLUMNS,
+    DataValidationError,
+    normalize_trade_frame,
+)
+from engine.market_data.repair.convert_binance_trades import (
+    convert_trade_archive,
+    iter_trade_archive,
+)
 from engine.market_data.repair.models import ArchiveSpec, SyncedArchive
 from engine.market_data.repair.rust_trade_converter import find_rust_converter
-from engine.market_data.quality.validate_data import TRADE_COLUMNS, DataValidationError, normalize_trade_frame
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import TestInstrumentProvider
 
 
@@ -467,9 +474,9 @@ def test_missing_ticks_do_not_rebuild_existing_bars(incremental_dataset):
 def test_prepare_only_materializes_requested_period(incremental_dataset, monkeypatch):
     from dataclasses import replace
 
-    from engine.pipeline import prepare_data as preparation
     from engine.market_data.repair.config import load_settings
     from engine.market_data.repair.models import DataRequest
+    from engine.pipeline import prepare_data as preparation
 
     synced, instrument, catalog, kwargs, _ = incremental_dataset
     settings = replace(

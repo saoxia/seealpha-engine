@@ -7,10 +7,10 @@ import pytest
 from nautilus_trader.model import Bar, BarType, QuoteTick
 
 from core.market.instruments import bar_type_for
+from engine.backtesting.option_history import read_option_protection_evidence
 from engine.connectors.binance.options import instrument as option_contract
 from engine.market_data.storage.catalog import ParquetDataCatalog
 from engine.trading.runtime import EngineConflict
-from engine.backtesting.option_history import read_option_protection_evidence
 from nautilus_support import TestInstrumentProvider
 from tests.engine.backtest_test import write_crossover_catalog
 

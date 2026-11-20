@@ -4,10 +4,10 @@ from decimal import Decimal
 
 import pytest
 
-from engine.market_data.collection.clock import ServerClock
 from engine.market_data.access.feed import Feed
-from engine.market_data.models import DAY, MINUTE, DataError, MinuteBar, State, parse_message
+from engine.market_data.collection.clock import ServerClock
 from engine.market_data.collection.service import Coordinator
+from engine.market_data.models import DAY, MINUTE, DataError, MinuteBar, State, parse_message
 from engine.market_data.storage.store import Store
 
 BASE = 1_800_000_000_000 // DAY * DAY
@@ -320,8 +320,8 @@ def test_nautilus_conversion_matches_historical_timestamp():
 
 
 def test_existing_catalog_history_and_rest_bridge(tmp_path):
-    from engine.market_data.storage.history import CatalogHistory
     from engine.market_data.storage.catalog import ParquetDataCatalog
+    from engine.market_data.storage.history import CatalogHistory
     from nautilus_support import TestInstrumentProvider
 
     symbol = "ETHUSDT"

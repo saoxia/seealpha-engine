@@ -11,7 +11,6 @@ from tempfile import TemporaryDirectory
 from types import MethodType
 from uuid import uuid4
 
-from engine.trading.runtime import EngineConflict
 from engine.strategies.package import (
     PackageError,
     build_strategy,
@@ -21,6 +20,7 @@ from engine.strategies.package import (
     prepare_parameters,
     release_namespace,
 )
+from engine.trading.runtime import EngineConflict
 
 
 class IssuedBasketMember:

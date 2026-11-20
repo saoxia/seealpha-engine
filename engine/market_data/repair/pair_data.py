@@ -19,7 +19,6 @@ from core.market.instruments import bar_type_for, bar_window, instrument_id_for
 from core.paths import PROJECT_ROOT
 from engine.connectors.binance.pair_data import PairREST
 from engine.connectors.binance.spot import SpotREST
-from engine.market_data.storage.catalog import ParquetDataCatalog
 from engine.market_data.repair.config import load_settings
 from engine.market_data.repair.convert_binance_bars import write_record
 from engine.market_data.repair.convert_binance_trades import (
@@ -30,6 +29,7 @@ from engine.market_data.repair.convert_binance_trades import (
 from engine.market_data.repair.models import DataRequest
 from engine.market_data.repair.prepare_data import ensure_instruments, prepare_data
 from engine.market_data.repair.sync_binance_batch import plan_daily_archives, sync_archives
+from engine.market_data.storage.catalog import ParquetDataCatalog
 
 
 def history_bounds(policy, catalog, now, *, retained_start_ns=None):
@@ -525,7 +525,9 @@ def main():
         with (root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if policy.get("product", "futures_um") == "options":
-                from engine.market_data.repair.options_data import serve_history as serve_options_history
+                from engine.market_data.repair.options_data import (
+                    serve_history as serve_options_history,
+                )
                 asyncio.run(serve_options_history(policy, load_settings(), root))
             else:
                 asyncio.run(serve_history(policy, load_settings(), root))

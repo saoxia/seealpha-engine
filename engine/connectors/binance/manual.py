@@ -26,7 +26,11 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
-from engine.connectors.binance.operations import cached_order_observations, enum_text, normalize_event
+from engine.connectors.binance.operations import (
+    cached_order_observations,
+    enum_text,
+    normalize_event,
+)
 from engine.connectors.binance.queries import QueryError, _clear_exception_frames, account_node
 
 

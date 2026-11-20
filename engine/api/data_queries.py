@@ -20,7 +20,6 @@ from pydantic import BaseModel, Field
 
 from core.market.instruments import INTERVALS, bar_type_for, bar_window, normalize_symbol
 from engine.market_data.collection.funding_service import read_funding
-from engine.market_data.storage.pair_store import journal_chart, journal_inventory, journal_page
 from engine.market_data.repair.config import load_settings
 from engine.market_data.repair.data_management import (
     checked_request,
@@ -32,6 +31,7 @@ from engine.market_data.repair.data_management import (
 )
 from engine.market_data.repair.models import DataRequest
 from engine.market_data.repair.sync_binance_batch import plan_daily_archives
+from engine.market_data.storage.pair_store import journal_chart, journal_inventory, journal_page
 
 router = APIRouter(prefix="/tenants/{tenant_id}/data", tags=["engine-market-data"])
 _LEVELS = ("tick", *INTERVALS)

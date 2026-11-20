@@ -86,8 +86,8 @@ def test_api_and_engine_share_a_single_volume_access_lease(tmp_path):
     import pytest
     from fastapi import HTTPException
 
-    from engine.market_data.control.service import DataService
     from engine.api.data_queries import read_lease
+    from engine.market_data.control.service import DataService
 
     (tmp_path / "data").mkdir()
     service = DataService("42", project=tmp_path, state_root=tmp_path / "state")

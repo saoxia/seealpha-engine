@@ -284,10 +284,10 @@ class Subscriptions:
                 if old is not None and old.history_mode == "start" and old.history_start is not None:
                     start = old.history_start - timedelta(days=policy.history_days)
                 else:
-                    from engine.market_data.storage.pair_store import journal_inventory
-                    from engine.market_data.storage.catalog import ParquetDataCatalog
                     from engine.market_data.repair.config import load_settings
                     from engine.market_data.repair.pair_data import history_bounds
+                    from engine.market_data.storage.catalog import ParquetDataCatalog
+                    from engine.market_data.storage.pair_store import journal_inventory
                     settings = load_settings()
                     catalog = ParquetDataCatalog(settings.catalog_dir) if settings.catalog_dir.is_dir() else None
                     starts = [int(item["event_ranges_ns"][0][0])

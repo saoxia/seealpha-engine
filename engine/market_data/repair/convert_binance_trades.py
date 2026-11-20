@@ -13,13 +13,11 @@ from zipfile import BadZipFile, ZipFile
 import pandas as pd
 from nautilus_trader.model import Bar, BarType, CustomData, DataType, TradeTick
 
-from engine.market_data.storage.catalog import (
-    BarDataWrangler,
-    ParquetDataCatalog,
-    TradeQuote,
-    TradeTickDataWrangler,
-    _timestamps_to_filename,
-    urisafe_identifier,
+from engine.market_data.quality.validate_data import (
+    TRADE_COLUMNS,
+    DataValidationError,
+    normalize_trade_frame,
+    validate_normalized_trade_frame,
 )
 from engine.market_data.repair.convert_binance_bars import (
     ConversionError,
@@ -36,11 +34,13 @@ from engine.market_data.repair.rust_trade_converter import (
     find_rust_converter,
     run_rust_trade_converter,
 )
-from engine.market_data.quality.validate_data import (
-    TRADE_COLUMNS,
-    DataValidationError,
-    normalize_trade_frame,
-    validate_normalized_trade_frame,
+from engine.market_data.storage.catalog import (
+    BarDataWrangler,
+    ParquetDataCatalog,
+    TradeQuote,
+    TradeTickDataWrangler,
+    _timestamps_to_filename,
+    urisafe_identifier,
 )
 from nautilus_support import Instrument
 

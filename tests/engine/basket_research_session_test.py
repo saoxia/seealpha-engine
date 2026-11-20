@@ -12,8 +12,8 @@ from engine.portfolio.basket_reconciliation import (
     record_cumulative_fill,
     restore_checkpoint,
 )
-from engine.research.basket_research_session import BasketResearchSession
 from engine.portfolio.basket_targets import BasketPlanError, LegEvidence, LegId
+from engine.research.basket_research_session import BasketResearchSession
 
 _NOW = 1_000_000_000_000
 

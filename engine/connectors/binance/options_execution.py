@@ -34,7 +34,6 @@ from nautilus_trader.model import (
 )
 
 from core.market.instruments import instrument_id_for, normalize_symbol
-
 from engine.connectors.binance import options
 from engine.connectors.binance.options_orders import BinanceOptionsOrderTransport, OptionsOrderError
 from engine.connectors.binance.options_parsing import number, stamp

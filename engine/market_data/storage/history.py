@@ -4,7 +4,6 @@ from decimal import Decimal
 from pathlib import Path
 
 from core.market.instruments import bar_type_for
-
 from engine.market_data.models import DAY, MINUTE, DataError, MinuteBar
 
 

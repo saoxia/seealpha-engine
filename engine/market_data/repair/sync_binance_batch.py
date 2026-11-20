@@ -8,7 +8,12 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from engine.market_data.repair.config import DEFAULT_CONFIG_PATH, load_settings
-from engine.market_data.repair.models import ArchiveSpec, DataRequest, PipelineConfigError, SyncedArchive
+from engine.market_data.repair.models import (
+    ArchiveSpec,
+    DataRequest,
+    PipelineConfigError,
+    SyncedArchive,
+)
 from engine.market_data.repair.sync_binance_file import (
     SyncError,
     destination_for,

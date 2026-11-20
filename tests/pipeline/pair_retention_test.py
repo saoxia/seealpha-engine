@@ -20,10 +20,10 @@ from nautilus_trader.model import (
 )
 
 from core.market.instruments import bar_type_for
-from engine.market_data.storage.pair_store import PairStore
-from engine.market_data.storage.catalog import ParquetDataCatalog, TradeQuote
 from engine.market_data.repair.models import PipelineSettings
 from engine.market_data.repair.pair_deletion import history_trim_plan, trim_pair_history
+from engine.market_data.storage.catalog import ParquetDataCatalog, TradeQuote
+from engine.market_data.storage.pair_store import PairStore
 from nautilus_support import TestInstrumentProvider
 
 START = datetime(2026, 8, 15, tzinfo=UTC)

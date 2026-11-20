@@ -8,7 +8,6 @@ import signal
 from pathlib import Path
 
 from core.market.instruments import normalize_symbol
-
 from engine.market_data.calculation.aggregation import PERIODS
 from engine.market_data.collection.service import serve, write_status
 

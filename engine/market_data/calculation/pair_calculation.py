@@ -7,10 +7,9 @@ import time
 
 from core.market.models import DataError
 from core.paths import PROJECT_ROOT
-
+from engine.market_data.collection.service import write_status
 from engine.market_data.storage.history import CatalogHistory
 from engine.market_data.storage.pair_store import PairStore, journal_access
-from engine.market_data.collection.service import write_status
 
 
 async def serve_calculation(policy, root, catalog):

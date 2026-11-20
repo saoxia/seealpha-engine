@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from engine.api.task_routes import BacktestParameters
 from engine.research.auth import (
     ENGINE_HEADER,
     ENGINE_VERSION,
@@ -23,11 +24,10 @@ from engine.research.auth import (
     require_op,
     verify_research_grant,
 )
-from engine.research.snapshots import SnapshotService
-from engine.trading.runtime import EngineConflict
 from engine.research.candidate_package import decode_candidate_archive
 from engine.research.python_candidate import inspect_python_candidate
-from engine.api.task_routes import BacktestParameters
+from engine.research.snapshots import SnapshotService
+from engine.trading.runtime import EngineConflict
 
 _ACCOUNT = re.compile(r"^account:([A-Za-z0-9._-]{1,40})$")
 _STATUS = {

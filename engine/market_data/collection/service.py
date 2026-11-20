@@ -13,12 +13,11 @@ from pathlib import Path
 from core.market.instruments import normalize_symbol
 from core.paths import PROJECT_ROOT
 from engine.connectors.binance.transport import KlineSocket, PublicREST
-
-from engine.market_data.collection.clock import ServerClock
 from engine.market_data.access.feed import Feed
+from engine.market_data.collection.clock import ServerClock
 from engine.market_data.collection.funding_service import collect_funding
-from engine.market_data.storage.history import CatalogHistory
 from engine.market_data.models import DAY, MINUTE, DataError, State, parse_message
+from engine.market_data.storage.history import CatalogHistory
 from engine.market_data.storage.store import Store
 
 DEFAULT_ROOT = PROJECT_ROOT / "data/market_data/binance_um_1m"

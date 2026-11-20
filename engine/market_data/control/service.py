@@ -17,11 +17,10 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from core.paths import PROJECT_ROOT
+from engine.market_data.control.repository import OperationFiles, PolicyRepository
 from engine.market_data.repair.config import load_settings
 from engine.market_data.repair.data_management import checked_request, coverage, deletion_plan
 from engine.market_data.repair.sync_binance_batch import plan_daily_archives
-
-from engine.market_data.control.repository import OperationFiles, PolicyRepository
 
 PREFIX = "tick_data:"
 
@@ -165,9 +164,9 @@ class DataService:
                     from dataclasses import replace
 
                     from core.market.instruments import INTERVALS, bar_window
-                    from engine.market_data.storage.pair_store import journal_inventory
                     from engine.market_data.repair.data_management import dataset_inventory
                     from engine.market_data.repair.pair_deletion import pair_deletion_plan
+                    from engine.market_data.storage.pair_store import journal_inventory
                     self.require_storage(write=True)
                     settings = load_settings()
                     items = dataset_inventory(replace(settings, intervals=tuple(INTERVALS)), all_levels=True) if settings.catalog_dir.is_dir() else []
@@ -413,8 +412,8 @@ class DataService:
                 parameters = payload.model_dump(mode="json", exclude={"action"}, exclude_none=True)
                 if payload.action == "backfill":
                     if resolved_history is None:
-                        from engine.market_data.storage.catalog import ParquetDataCatalog
                         from engine.market_data.repair.pair_data import history_bounds
+                        from engine.market_data.storage.catalog import ParquetDataCatalog
                         settings = load_settings()
                         catalog = ParquetDataCatalog(settings.catalog_dir) if settings.catalog_dir.is_dir() else None
                         from engine.market_data.storage.pair_store import journal_inventory

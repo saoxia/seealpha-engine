@@ -7,10 +7,10 @@ from decimal import Decimal
 
 import pytest
 
-from engine.market_data.control.contracts import DataPolicy
-from engine.market_data.control.service import DataService
 from engine.market_data.access.strategy_live import ManagedJournalBridge
 from engine.market_data.access.subscription_hub import MarketDataHubError, MarketStream
+from engine.market_data.control.contracts import DataPolicy
+from engine.market_data.control.service import DataService
 from engine.trading.runtime import EngineRuntime
 
 ETH = MarketStream("BINANCE", "futures_um", "ETHUSDT", "1m")

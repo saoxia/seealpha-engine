@@ -24,16 +24,16 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
-from engine.trading.runtime import EngineConflict
 from engine.backtesting.backtest_engine import backtest_engine_config
-from engine.research.basket_research_session import BasketResearchSession
 from engine.portfolio.basket_targets import (
     BasketPlanError,
     LegEvidence,
     LegId,
 )
+from engine.research.basket_research_session import BasketResearchSession
 from engine.research.issued_basket import issued_basket_members
 from engine.strategies.strategy_config import StrategyConfig
+from engine.trading.runtime import EngineConflict
 from nautilus_support import instrument_fee_model
 
 _SPOT_VENUE = Venue("SIM_SPOT")

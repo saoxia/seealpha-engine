@@ -6,9 +6,9 @@ from itertools import pairwise
 
 from nautilus_trader.model import Bar
 
-from engine.market_data.storage.catalog import ParquetDataCatalog
 from engine.market_data.repair.models import PipelineSettings
 from engine.market_data.repair.pair_data import backfill, history_bounds
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import TestInstrumentProvider
 
 

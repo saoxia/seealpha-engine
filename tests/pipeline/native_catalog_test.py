@@ -6,7 +6,11 @@ import pandas as pd
 import pytest
 from nautilus_trader.model import Bar, BarType, Price, Quantity
 
-from engine.market_data.storage.catalog import BarDataWrangler, ParquetDataCatalog, TradeTickDataWrangler
+from engine.market_data.storage.catalog import (
+    BarDataWrangler,
+    ParquetDataCatalog,
+    TradeTickDataWrangler,
+)
 from nautilus_support import TestInstrumentProvider
 
 

@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.trading.runtime import EngineConflict, EngineRuntime
 from engine.strategies.package import archive_directory, parse_metadata
+from engine.trading.runtime import EngineConflict, EngineRuntime
 from tests.engine.option_history_test import CALL, PUT, _catalog
 
 

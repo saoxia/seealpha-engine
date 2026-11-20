@@ -21,13 +21,12 @@ import pyarrow as pa
 from nautilus_trader.model import Bar, CryptoOption, NautilusDataType, TradeTick
 
 from core.paths import PROJECT_ROOT
-from engine.market_data.storage.catalog import (
-    ParquetDataCatalog,
-    TradeTickDataWrangler,
-    _parse_filename_timestamps,
-)
 from engine.market_data.repair.config import load_settings
-from engine.market_data.repair.convert_binance_bars import read_archive_checksum, read_record, record_path_for
+from engine.market_data.repair.convert_binance_bars import (
+    read_archive_checksum,
+    read_record,
+    record_path_for,
+)
 from engine.market_data.repair.convert_binance_trades import (
     catalog_contains_record,
     convert_trade_archives,
@@ -42,6 +41,11 @@ from engine.market_data.repair.models import (
 )
 from engine.market_data.repair.prepare_data import prepare_data, validate_request_against_settings
 from engine.market_data.repair.sync_binance_batch import plan_daily_archives
+from engine.market_data.storage.catalog import (
+    ParquetDataCatalog,
+    TradeTickDataWrangler,
+    _parse_filename_timestamps,
+)
 
 
 def checked_request(symbol, start, end, intervals, settings, *, market="futures_um"):

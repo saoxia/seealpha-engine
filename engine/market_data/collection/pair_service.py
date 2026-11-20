@@ -6,11 +6,10 @@ import time
 from core.market.models import DataError
 from engine.connectors.binance.pair_data import PairREST, PairTradeSocket
 from engine.connectors.binance.spot import SpotREST, SpotTradeSocket
-
 from engine.market_data.collection.clock import ServerClock
 from engine.market_data.collection.funding_service import collect_funding, funding_start_ms
-from engine.market_data.storage.pair_store import PairStore, journal_access
 from engine.market_data.collection.service import write_status
+from engine.market_data.storage.pair_store import PairStore, journal_access
 
 
 async def serve_pair(policy, root, catalog, *, calculate=True, trade_socket=None, funding_socket=None):

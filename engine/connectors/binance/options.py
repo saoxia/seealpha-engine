@@ -24,7 +24,6 @@ from nautilus_trader.model import (
 )
 
 from core.market.instruments import normalize_symbol
-
 from engine.connectors.binance.queries import QueryError
 
 REST_URL = "https://eapi.binance.com/eapi/v1/"

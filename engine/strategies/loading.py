@@ -18,8 +18,10 @@ from uuid import uuid4
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.model import AccountType, Bar, BarType, FundingRateUpdate, Money, OmsType
 
-from engine.trading.runtime import EngineConflict
 from engine.backtesting.backtest_engine import backtest_engine_config
+from engine.portfolio.portfolio_coordinator import PortfolioCoordinator, PortfolioCoordinatorConfig
+from engine.portfolio.target_netting import MemberTarget, net_signed_quantity
+from engine.portfolio.targets import signed_quantity
 from engine.strategies.package import (
     PackageError,
     build_strategy,
@@ -30,9 +32,7 @@ from engine.strategies.package import (
     prepare_parameters,
     release_namespace,
 )
-from engine.portfolio.portfolio_coordinator import PortfolioCoordinator, PortfolioCoordinatorConfig
-from engine.portfolio.target_netting import MemberTarget, net_signed_quantity
-from engine.portfolio.targets import signed_quantity
+from engine.trading.runtime import EngineConflict
 from nautilus_support import TestInstrumentProvider, instrument_fee_model
 
 

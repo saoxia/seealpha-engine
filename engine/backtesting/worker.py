@@ -9,8 +9,8 @@ import argparse
 import logging
 from pathlib import Path
 
-from engine.trading.runtime import EngineRuntime
 from engine.infrastructure.task_queue import TaskJournal, _validate_id, _validate_tenant
+from engine.trading.runtime import EngineRuntime
 
 _LOG = logging.getLogger(__name__)
 

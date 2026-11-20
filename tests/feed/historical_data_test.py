@@ -2,8 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
-from engine.market_data.access.market_data_service import EngineMarketDataService
 from engine.backtesting.backtest import read_history, read_history_batches
+from engine.market_data.access.market_data_service import EngineMarketDataService
 from tests.engine.backtest_test import write_crossover_catalog
 
 

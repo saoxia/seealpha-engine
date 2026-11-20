@@ -23,11 +23,7 @@ from nautilus_trader.model import (
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.persistence import ParquetDataCatalog as NativeCatalog
 
-from engine.market_data.storage.catalog import (
-    ParquetDataCatalog,
-    _parse_filename_timestamps,
-    _timestamps_to_filename,
-)
+from engine.market_data.quality.validate_data import DataValidationError
 from engine.market_data.repair.convert_binance_bars import (
     ConversionError,
     read_archive_checksum,
@@ -42,7 +38,11 @@ from engine.market_data.repair.models import (
     interval_delta,
     normalize_symbol,
 )
-from engine.market_data.quality.validate_data import DataValidationError
+from engine.market_data.storage.catalog import (
+    ParquetDataCatalog,
+    _parse_filename_timestamps,
+    _timestamps_to_filename,
+)
 
 FEATURE_VERSION = 2
 DAY_NS = 86_400_000_000_000

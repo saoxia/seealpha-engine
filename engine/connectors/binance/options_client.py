@@ -18,7 +18,6 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from core.market.instruments import bar_type_for, interval_delta, normalize_symbol
-
 from engine.connectors.binance import options
 from engine.connectors.binance import options_parsing as parsing
 from engine.connectors.binance.queries import QueryError

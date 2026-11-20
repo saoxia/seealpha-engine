@@ -7,10 +7,10 @@ import pytest
 from nautilus_trader.model import Bar, BarType, Price, Quantity
 
 from core.market.instruments import BINANCE_KLINE_INTERVALS, bar_type_for, bar_window
-from engine.market_data.storage.catalog import ParquetDataCatalog
 from engine.market_data.repair.models import PipelineSettings
 from engine.market_data.repair.pair_data import calculate_history_change
 from engine.market_data.repair.pair_repair import install_tick_slice, reconcile_day, remote_klines
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import TestInstrumentProvider
 
 DAY = datetime(2026, 8, 1, tzinfo=UTC)
@@ -308,8 +308,8 @@ def test_repaired_day_is_completed_only_after_saved_bars_are_generated_and_reche
     from types import SimpleNamespace
 
     import engine.market_data.repair.pair_data as module
-    from engine.market_data.storage.history import CatalogHistory
     from engine.market_data.repair.convert_binance_bars import write_record
+    from engine.market_data.storage.history import CatalogHistory
 
     settings, catalog = dataset
     catalog.write_data([TestInstrumentProvider.ethusdt_perp_binance()])

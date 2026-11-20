@@ -5,10 +5,10 @@ from decimal import Decimal
 
 import pytest
 
-from engine.market_data.storage.catalog import ParquetDataCatalog
-from engine.trading.runtime import EngineConflict
 from engine.backtesting.option_history import read_option_protection_evidence
 from engine.backtesting.protected_simulation import run_native_protected
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.trading.runtime import EngineConflict
 from tests.engine.option_history_test import CALL, PUT, _catalog
 
 

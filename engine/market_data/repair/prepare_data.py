@@ -16,7 +16,7 @@ from nautilus_trader.adapters.binance import (
 )
 
 from engine.market_data.calculation.bar_features import prepare_bar_features
-from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.market_data.quality.validate_data import DataValidationError
 from engine.market_data.repair.config import DEFAULT_CONFIG_PATH, load_settings
 from engine.market_data.repair.convert_binance_bars import ConversionError
 from engine.market_data.repair.convert_binance_trades import (
@@ -37,7 +37,7 @@ from engine.market_data.repair.sync_binance_batch import (
     plan_daily_archives,
     sync_archives,
 )
-from engine.market_data.quality.validate_data import DataValidationError
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import Instrument
 
 

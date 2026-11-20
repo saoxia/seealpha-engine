@@ -11,7 +11,6 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from core.market.instruments import normalize_symbol
-
 from engine.connectors.binance.transport import PublicREST
 
 

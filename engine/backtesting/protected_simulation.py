@@ -25,14 +25,7 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
-from engine.trading.runtime import EngineConflict
 from engine.backtesting.backtest_engine import backtest_engine_config
-from engine.research.basket_research_session import BasketResearchSession
-from engine.portfolio.basket_targets import (
-    BasketPlanError,
-    LegEvidence,
-    LegId,
-)
 from engine.backtesting.carry_simulation import (
     _balance,
     _decimal,
@@ -41,6 +34,12 @@ from engine.backtesting.carry_simulation import (
     _position,
     _sim_bar,
 )
+from engine.portfolio.basket_targets import (
+    BasketPlanError,
+    LegEvidence,
+    LegId,
+)
+from engine.research.basket_research_session import BasketResearchSession
 from engine.strategies.package import (
     PackageError,
     extract,
@@ -50,6 +49,7 @@ from engine.strategies.package import (
     release_namespace,
 )
 from engine.strategies.strategy_config import StrategyConfig
+from engine.trading.runtime import EngineConflict
 from nautilus_support import instrument_fee_model
 
 _PERP_VENUE = Venue("SIM_UM")

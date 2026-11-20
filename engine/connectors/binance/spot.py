@@ -16,7 +16,6 @@ from websockets.exceptions import WebSocketException
 
 from core.market.instruments import INTERVALS, normalize_symbol
 from core.market.models import DataError
-
 from engine.connectors.binance.transport import PublicREST
 
 

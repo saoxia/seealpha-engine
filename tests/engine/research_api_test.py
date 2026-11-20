@@ -11,8 +11,8 @@ import pyarrow.parquet as pq
 import pytest
 from fastapi.testclient import TestClient
 
-from engine.config import EngineConfig
 from engine.api.research_api import create_research_app
+from engine.config import EngineConfig
 from engine.research.auth import (
     ENGINE_HEADER,
     RESEARCH_HEADER,

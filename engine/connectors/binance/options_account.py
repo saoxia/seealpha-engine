@@ -16,7 +16,6 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from core.market.instruments import normalize_symbol
-
 from engine.connectors.binance import options
 from engine.connectors.binance.queries import QueryError
 

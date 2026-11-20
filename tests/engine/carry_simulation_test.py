@@ -11,11 +11,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from engine.api.app import create_app
+from engine.backtesting.carry_simulation import run_native_carry
 from engine.config import EngineConfig
 from engine.market_data.storage.catalog import ParquetDataCatalog
-from engine.trading.runtime import EngineConflict, EngineRuntime
-from engine.backtesting.carry_simulation import run_native_carry
 from engine.strategies.package import archive_directory, parse_metadata
+from engine.trading.runtime import EngineConflict, EngineRuntime
 from nautilus_support import TestInstrumentProvider
 from tests.engine.basket_history_test import _dataset, _range
 from tests.engine.spot_backtest_test import spot_instrument

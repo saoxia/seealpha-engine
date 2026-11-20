@@ -7,10 +7,10 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pandas as pd
 import pytest
 
-from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.market_data.quality.validate_data import DataValidationError, validate_catalog
 from engine.market_data.repair.convert_binance_bars import convert_archive, load_kline_archive
 from engine.market_data.repair.models import ArchiveSpec, SyncedArchive
-from engine.market_data.quality.validate_data import DataValidationError, validate_catalog
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import TestInstrumentProvider
 
 
