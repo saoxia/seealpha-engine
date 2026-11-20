@@ -1,0 +1,73 @@
+# 原生多标的组合回测（开发环境，v1）
+
+## 为什么采用一个 Nautilus BacktestEngine
+
+NautilusTrader 2.0.0rc9 原生允许同一 BacktestEngine 注册多个 Instrument、Venue、Strategy，并按事件时间归并数据流，内部负责撮合、订单生命周期和分 Venue 账户核算。SeeAlpha 不再需要对每个标的独立运行回测然后人为相加，也不需要重复写一个撮合内核。
+
+本实现保留原 Engine 已有的 `LegId(tenant,account,product,symbol)`、`MemberLegTarget`、`BasketPlan`、`BasketResearchSession`、`issued_basket_members`，增加通用 `policy=generic`。不同产品或不同合约永不直接净数量；多个策略仅在同一腿求和。通用计划先减少旧风险、然后增加新风险；按合约价格和乘数保守检查每个阶段的毛名义金额。它不声称跨市场执行具备原子性，也不把风险计划转换为生产委托。
+
+## 开发 HTTP API
+
+`POST /tenants/{tenant_id}/accounts/{account_id}/generic-portfolio-backtests`
+
+示例请求：
+
+```json
+{
+  "issuance_ids": ["my-multi-strategy-1"],
+  "legs": [
+    {"product": "spot", "symbol": "ETHUSDT"},
+    {"product": "futures_um", "symbol": "BTCUSDT"}
+  ],
+  "start": "2026-11-01T00:00:00+00:00",
+  "end": "2026-11-01T06:00:00+00:00",
+  "interval": "1m",
+  "starting_spot_balance": "1000",
+  "starting_perpetual_balance": "1000",
+  "max_gross_notional": "1000"
+}
+```
+
+所有腿必须位于同一个开发租户/虚拟账户，具有独立历史订阅及已验证原生合约。仅接收 1–16 个本账户已下发的开发策略和至多 8 条 Spot/UM 腿。保持历史闭合K线精确对齐，拒绝任意开头、中间或尾部缺口。历史最多 20000 个同步时间点；不注入真实交易密钥，不接入正式订单。
+
+策略包需实现以下纯目标协议，不直接发送订单：
+
+```python
+def on_start(self):
+    self.subscribe_market_bundle(
+        legs=(
+            {"product": "spot", "symbol": "ETHUSDT"},
+            {"product": "futures_um", "symbol": "BTCUSDT"},
+        ),
+        data=("closed_bars", "account_positions"),
+    )
+
+def on_market_snapshot(self, snapshot):
+    # snapshot["markets"]["spot:ETHUSDT"] gives PREVIOUS closed-bar price
+    # snapshot["positions"] gives current native simulated position quantities
+    self.publish_basket(targets=[
+        {"product": "spot", "symbol": "ETHUSDT", "quantity": "0.1"},
+        {"product": "futures_um", "symbol": "BTCUSDT", "quantity": "-0.1"},
+    ])
+```
+
+每个策略只需声明自己使用的市场腿，并完整发布这些订阅腿的目标（允许数量 0）；组合全部腿必须至少由一个成员覆盖。这样单标的策略与多标的策略都能在同一次原生模拟中参与净额与共享账户预算。每次快照使用上一根已闭合 K 线形成目标；随后交给同一个原生回测引擎接收新的模拟行情和订单回报。报告分别返回策略目标、原生委托、原生成交、各腿实际仓位、按产品账户权益与总权益。前一个阶段未确认时，不允许悄悄执行新的目标。研究计划和实际成交仍必须分开展示。
+
+## 严格限制
+
+- **本阶段绝不授予实盘下单权**；真实交易所的多腿成交不保证同时成功，实际委托未知状态和补偿仍独立设计、验收。
+- 通用接口暂只验证 USDT 现货与 USD-M 永续；期权专用报价验证、双翼保护、到期核算继续走已有的保护组合研究入口。**不得把简单的通用毛名义预算当作期权保护策略充分风控**。
+- 为免虚构历史结算，本次通用回测结果明确给出 `funding_accounting=NOT_INCLUDED...`。因此总权益轨迹不是已通过真实资金费结算核验的可投资收益，不能用于宣称套利净盈利。
+- 使用 Bars 原生模拟撮合而非历史 L2/Tick 的真实成交；订单簿冲击、排队、复杂部分成交和流动性压力模型不包含在本阶段。
+- 同一产品下的多个标的共享原生模拟账户与现金；Spot CASH 和 UM MARGIN 仍是两个独立账户。跨币种计价尚未验收。
+- 当前入口是 Engine 自身的受保护开发 API。Platform 业务授权、用户可操作页面、长期运行验证和 AI 自动研究仍需跨仓库接线与完整验收。
+- 运行用户策略 Python 仍需要可信开发执行沙箱；该通用入口没有降低现有信任边界。
+
+## 回归
+
+```bash
+uv run pytest -q tests/engine/generic_portfolio_targets_test.py tests/engine/basket_research_session_test.py tests/engine/generic_simulation_test.py
+uv run ruff check engine/strategies tests/engine/generic_portfolio_targets_test.py tests/engine/generic_simulation_test.py
+```
+
+设计依据：https://nautilustrader.io/docs/latest/concepts/backtesting/apis-and-runs/ 及 https://nautilustrader.io/docs/latest/concepts/execution/
