@@ -508,7 +508,7 @@ def main():
         root.mkdir(parents=True, exist_ok=True)
         with (root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            from engine.market_data.repair.options_data import serve_history_batch
+            from engine.market_data.sources.binance.options.repair import serve_history_batch
             asyncio.run(serve_history_batch(args.options_config, load_settings(), args.root.parent))
         return
     if not args.request:
@@ -525,14 +525,22 @@ def main():
         with (root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if policy.get("product", "futures_um") == "options":
-                from engine.market_data.repair.options_data import (
+                from engine.market_data.sources.binance.options.repair import (
                     serve_history as serve_options_history,
                 )
                 asyncio.run(serve_options_history(policy, load_settings(), root))
             else:
-                asyncio.run(serve_history(policy, load_settings(), root))
+                if policy.get("product", "futures_um") == "spot":
+                    from engine.market_data.sources.binance.spot.repair import serve_history as serve_product_history
+                else:
+                    from engine.market_data.sources.binance.perpetual.repair import serve_history as serve_product_history
+                asyncio.run(serve_product_history(policy, load_settings(), root))
         return
-    result = asyncio.run(backfill(policy, load_settings()))
+    if policy.get("product", "futures_um") == "spot":
+        from engine.market_data.sources.binance.spot.repair import backfill as backfill_product
+    else:
+        from engine.market_data.sources.binance.perpetual.repair import backfill as backfill_product
+    result = asyncio.run(backfill_product(policy, load_settings()))
     target = Path(os.environ.get(
         "ENGINE_DATA_JOBS", str(PROJECT_ROOT / ".local/state/api/data_jobs"),
     )) / f"{args.job_id}.json"
