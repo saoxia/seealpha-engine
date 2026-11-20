@@ -28,7 +28,7 @@ pub struct NativePortfolioResult {
 }
 fn scope(tenant:&str,account:&str,instrument:&str)->Result<String,RuntimeError>{
     if [tenant,account,instrument].iter().any(|s|s.is_empty()||s.len()>40||
-        !s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')) {
+        !s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-'||b==b'.'||b==b'@'||b==b'/'||b==b':')) {
         return Err(RuntimeError::Conflict("invalid native portfolio scope".into()));
     }
     Ok(format!("{tenant}:{account}:{instrument}"))
