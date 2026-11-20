@@ -2,6 +2,7 @@
 use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_venue::{Credentials, OrderIntent, Product, VenueClient, VenueError};
 use seealpha_venue::conditional::{UmConditionalIntent,validated_algo_view};
+use seealpha_venue::spot_oco::SpotOcoIntent;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -154,6 +155,9 @@ impl Runtime {
             (command.values.get("algo_order").and_then(Value::as_bool)==Some(true)
                 || matches!(order_type.as_str(),"STOP"|"STOP_MARKET"|"TAKE_PROFIT"
                     |"TAKE_PROFIT_MARKET"|"TRAILING_STOP_MARKET"));
+        let spot_oco=product==Product::Spot &&
+            command.values.get("order_list").and_then(Value::as_str)==Some("oco");
+        body["order_list"]=if spot_oco {json!("oco")}else{Value::Null};
         body["algo_order"]=json!(conditional);
         // Persist the recovery routing BEFORE the first network write.
         self.ledger.save_order_request(
@@ -165,7 +169,24 @@ impl Runtime {
             api_key: command.api_key,
             secret: command.secret,
         };
-        let outcome = if conditional && command.action=="cancel" {
+        let outcome = if spot_oco && command.action=="cancel" {
+            venue.cancel_spot_oco(&credentials,&symbol,&client_order_id)
+        } else if spot_oco {
+            venue.place_spot_oco(&credentials,&SpotOcoIntent {
+                symbol:symbol.clone(),
+                side:command.values["side"].as_str().unwrap_or("").to_ascii_uppercase(),
+                quantity:command.values["quantity"].as_str().unwrap_or("").into(),
+                list_client_order_id:client_order_id.clone(),
+                above_type:command.values["above_type"].as_str().unwrap_or("").to_ascii_uppercase(),
+                below_type:command.values["below_type"].as_str().unwrap_or("").to_ascii_uppercase(),
+                above_price:command.values["above_price"].as_str().map(str::to_owned),
+                above_stop_price:command.values["above_stop_price"].as_str().map(str::to_owned),
+                below_price:command.values["below_price"].as_str().map(str::to_owned),
+                below_stop_price:command.values["below_stop_price"].as_str().map(str::to_owned),
+                above_time_in_force:command.values["above_time_in_force"].as_str().map(str::to_owned),
+                below_time_in_force:command.values["below_time_in_force"].as_str().map(str::to_owned),
+            })
+        } else if conditional && command.action=="cancel" {
             venue.cancel_um_conditional(&credentials,&symbol,&client_order_id)
         } else if conditional {
             venue.place_um_conditional(&credentials,&UmConditionalIntent {
@@ -331,7 +352,11 @@ impl Runtime {
                 _=>Product::Spot,
             };
             if let Ok(client) = VenueClient::new(venue_base)
-                && let Ok(Some(order)) = (if stored["algo_order"]==true {
+                && let Ok(Some(order)) = (if stored["order_list"]=="oco" {
+                    client.query_spot_oco(&Credentials {
+                        api_key:api_key.into(),secret:secret.into(),
+                    },&symbol,&client_order_id).map(Some)
+                } else if stored["algo_order"]==true {
                     client.query_um_conditional(&Credentials {
                         api_key:api_key.into(),secret:secret.into(),
                     },&symbol,&client_order_id)
