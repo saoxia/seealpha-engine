@@ -396,8 +396,10 @@ fn option_requires_real_settlement_event_and_uses_multiplier_cash_payoff() {
     assert_eq!(r.settlements.len(), 1);
     assert_eq!(r.settlements[0].gross, d(20));
     assert_eq!(r.settlements[0].fee, Decimal::new(2, 1));
-    assert_eq!(r.cash, d(108));
-    assert_eq!(r.equity, d(108));
+    // Cash: 100 starting - 5 premium * 2 multiplier + 20 exercise - 0.2 settlement fee.
+    let expected_cash = d(100) - d(10) + d(20) - Decimal::new(2, 1);
+    assert_eq!(r.cash, expected_cash);
+    assert_eq!(r.equity, expected_cash);
     assert!(r.positions.is_empty());
 
     let mut s = starts(vec![order("buy", "CALL", Side::Buy, 1, OrderType::Market)]);
