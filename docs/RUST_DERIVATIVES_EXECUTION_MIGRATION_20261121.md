@@ -42,8 +42,8 @@ Binance 公共 REST API 已核对：
     "product": "options",
     "symbol": "BTC-271231-90000-P",
     "interval": "1m",
-    "start_ms": 1810000000000,
-    "end_ms": 1810000060000
+    "start_ms": 1810000020000,
+    "end_ms": 1810000080000
   }
 }
 ```
