@@ -36,3 +36,47 @@ decommission the Python history management on the basis of this slice.
 
 The repository's Rust build/tests, network download, and live Nautilus Parquet
 interop still require execution in a Rust-enabled CI environment.
+
+## Offline durable Trade-ID gap repair
+
+The Rust native source already collects public websocket trades into
+\`<source-root>/<symbol>/<base-level>/collection.sqlite\`, and its
+\`gaps\` table contains durable missing Trade ID intervals.
+
+After stopping the live \`binance-native-source\` for the pair, use a
+**completed UTC day** whose Binance trades ZIP has already passed SHA256
+verification via \`binance-um-history\`:
+
+\`\`\`bash
+cargo run --locked -p seealpha-binance-market-data-source \
+  --bin binance-um-gap-repair -- \
+  ETHUSDT 2026-11-18 \
+  data/sources/futures_um/ETHUSDT/tick \
+  data/binance/raw tick
+\`\`\`
+
+The repairer requires exclusive writer ownership, matches symbol/day,
+rechecks the official local checksum before opening the archive,
+validates the complete CSV before committing rows, and calls the existing
+journal ingest logic for trade IDs within recorded missing ranges.
+Conflicting data are never silently overwritten. It reports the number
+of remaining missing-ID ranges but **never marks the source READY**.
+
+The repairer is intentionally **offline/manual**. The running source
+supervisor has not yet scheduled archive repair on reconnection, and
+today's intraday trade holes cannot be recovered from an incomplete
+daily ZIP. Automatic REST/WS handover, live catch-up, raw tick Parquet
+publication, and real Nautilus compatibility remain unverified.
+Do not run the repair binary concurrently with the live writer.
+
+Validation still required in a Rust toolchain:
+
+\`\`\`bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --workspace --locked --release
+\`\`\`
+
+The scripts and regression fixtures have been committed but **these
+commands have not been executed in this session**.
