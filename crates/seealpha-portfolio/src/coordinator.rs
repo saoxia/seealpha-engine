@@ -62,7 +62,7 @@ pub struct Coordinator {
     pub frozen: bool,
     pub freeze_reason: Option<String>,
     denied_at: Option<u64>,
-    seen_fills: BTreeSet<String>,
+    seen_fills: BTreeMap<String, (String, Decimal)>,
     increment: Decimal,
     risk_limit: Decimal,
 }
@@ -81,7 +81,7 @@ impl Coordinator {
     pub fn new(increment: Decimal, risk_limit: Decimal) -> Result<Self, CoordinatorError> {
         if increment <= Decimal::ZERO || risk_limit <= Decimal::ZERO { return Err(CoordinatorError::Invalid); }
         Ok(Self { members: BTreeMap::new(), orders: BTreeMap::new(), flight: None,
-            frozen: false, freeze_reason: None, denied_at: None, seen_fills: BTreeSet::new(),
+            frozen: false, freeze_reason: None, denied_at: None, seen_fills: BTreeMap::new(),
             increment, risk_limit })
     }
     pub fn register(&mut self, id: &str) -> Result<(), CoordinatorError> {
@@ -104,9 +104,11 @@ impl Coordinator {
         }
         if self.orders.values().any(|o| o.id == order.id) { return Err(CoordinatorError::Duplicate); }
         match &order.kind {
-            VirtualKind::Limit { price } | VirtualKind::StopLimit { price, .. } if *price <= Decimal::ZERO => return Err(CoordinatorError::Invalid),
-            VirtualKind::StopMarket { trigger } | VirtualKind::StopLimit { trigger, .. } if *trigger <= Decimal::ZERO => return Err(CoordinatorError::Invalid),
-            _ => (),
+            VirtualKind::Market => (),
+            VirtualKind::Limit { price } if *price > Decimal::ZERO => (),
+            VirtualKind::StopMarket { trigger } if *trigger > Decimal::ZERO => (),
+            VirtualKind::StopLimit { trigger, price, .. } if *trigger > Decimal::ZERO && *price > Decimal::ZERO => (),
+            _ => return Err(CoordinatorError::Invalid),
         }
         if !matches!(order.kind, VirtualKind::Market) { order.armed_at = now; }
         self.orders.insert(order.id.clone(), order); Ok(())
@@ -118,7 +120,16 @@ impl Coordinator {
             if q < order.filled || q <= Decimal::ZERO { return Err(CoordinatorError::Invalid); }
             order.quantity = q;
         }
-        if let Some(k) = kind { order.kind = k; }
+        if let Some(k) = kind {
+            let valid = match &k {
+                VirtualKind::Market => true,
+                VirtualKind::Limit { price } => *price > Decimal::ZERO,
+                VirtualKind::StopMarket { trigger } => *trigger > Decimal::ZERO,
+                VirtualKind::StopLimit { trigger, price, .. } => *trigger > Decimal::ZERO && *price > Decimal::ZERO,
+            };
+            if !valid { return Err(CoordinatorError::Invalid); }
+            order.kind = k;
+        }
         Ok(())
     }
     pub fn cancel(&mut self, id: &str) -> Result<(), CoordinatorError> {
@@ -229,7 +240,11 @@ impl Coordinator {
         price: Decimal, bar: Option<Bar>) -> Result<Vec<VirtualFill>, CoordinatorError> {
         self.ensure_active()?;
         if event_id.is_empty() || price <= Decimal::ZERO || cumulative < Decimal::ZERO { return Err(CoordinatorError::Invalid); }
-        if self.seen_fills.contains(event_id) { return Ok(vec![]); }
+        if let Some((old_order, old_cumulative)) = self.seen_fills.get(event_id) {
+            if old_order == order_id && *old_cumulative == cumulative { return Ok(vec![]); }
+            self.freeze("conflicting duplicate venue fill");
+            return Err(CoordinatorError::Evidence);
+        }
         let flight = self.flight.as_ref().ok_or(CoordinatorError::Evidence)?;
         if flight.id != order_id || cumulative < flight.filled || cumulative > flight.signed_requested.abs() {
             self.freeze("venue fill evidence mismatch");
@@ -242,7 +257,7 @@ impl Coordinator {
             if Self::actionable(o,bar) { active.insert(id.clone()); }
         }
         let fills = self.allocate(side, delta, price, &active)?;
-        self.seen_fills.insert(event_id.into());
+        self.seen_fills.insert(event_id.into(), (order_id.into(), cumulative));
         if let Some(f) = &mut self.flight { f.filled = cumulative; }
         if cumulative == self.flight.as_ref().expect("flight").signed_requested.abs() { self.flight = None; }
         Ok(fills)
