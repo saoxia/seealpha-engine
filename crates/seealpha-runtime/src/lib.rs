@@ -4,6 +4,7 @@ mod basket;
 mod portfolio;
 pub use portfolio::{NativePortfolioState,NativePortfolioResult,NativePortfolioEvent};
 mod config;
+mod catalog;
 mod data;
 mod evidence;
 mod fills;

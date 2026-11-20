@@ -12,7 +12,7 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 - `core/`：与 Platform 共享的契约模块。
 - `docs/ARCHITECTURE.md`：运行路径和已退役的实盘行为。
 
-行情读取不会启动采集器。模拟会话把公开行情送进流水线，再交给策略宿主；差额记在 `venue=paper`。实盘下单、连接登记和账户快照返回 409，不保存密钥，也不调用带签名的交易所接口。
+行情读取不会隐式启动采集器。模拟会话把公开行情送进流水线，再交给策略宿主；差额记在 `venue=paper`。仓库包含部分实盘订单与账户签名查询实现，但 Rust 功能等价和交易所端到端验收尚未完成，不能据此启用实盘部署。
 
 ## 尚未迁移完成的 Python 功能
 
@@ -25,6 +25,12 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 本轮已在 Rust 原生 Engine 中补齐一批账户状态、持久化行情配置/任务、策略读侧订阅、严格历史 K 线读取和已发行策略的本地回测路径，并接入独立 Binance 产品源的显式试验性管理。新数据源在完成 REST 衔接/时钟/历史证据前始终返回 `data_ready=false`，**不会**向策略提供已就绪的实盘行情保证。
 
 Python Engine 仍作为独立兼容运行时保留。详细实现边界、未迁移功能和最终验收清单见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)。GitHub Actions 仍暂停，不应把当前 Rust 分支直接用于实盘。
+
+## Rust 数据底座：对齐 Python Nautilus v2 Catalog
+
+已增加 `crates/seealpha-catalog`，以原 Python `core/market/instruments.py`、`engine/market_data/storage/catalog.py`、`HistoricalMarketData` 的语义，直接从现有 Nautilus v2 Parquet 读取多类型历史数据；历史回测、K 线覆盖率与分页入口优先使用该目录，不再要求把已有历史数据复制到 Engine SQLite。
+
+Rust 新增了 Parquet Bar 原子写入、源进程独立的交易所时钟、计算 Journal→Parquet 显式发布任务及全日删除预览。**现阶段数据源仍不宣称 READY**；Tick/L2/Greeks 的完整写入、交易所历史重叠修复、与 Nautilus 真实文件的互操作验收仍在迁移。如何调用、目录和质量约束详见 [Rust 数据底座迁移记录](docs/RUST_DATA_FOUNDATION_20261121.md)。
 
 ## 本地开发
 

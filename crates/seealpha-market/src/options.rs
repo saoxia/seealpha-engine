@@ -4,7 +4,7 @@
 use crate::{Bar, MarketError, interval_ms, parse_binance_klines, validate_bars};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 const KLINES: &str = "https://eapi.binance.com/eapi/v1/klines";
 const EXCHANGE_INFO: &str = "https://eapi.binance.com/eapi/v1/exchangeInfo";
@@ -52,40 +52,6 @@ pub fn parse_option_symbol(raw:&str)->Result<OptionIdentity,MarketError>{
     Ok(OptionIdentity{symbol:raw.to_owned(),underlying:underlying.to_owned(),
         expiry:items[1].to_owned(),strike,right})
 }
-fn now_ms()->Result<i64,MarketError>{
-    SystemTime::now().duration_since(UNIX_EPOCH).ok()
-        .and_then(|d|i64::try_from(d.as_millis()).ok()).ok_or(MarketError::Time)
-}
-/// Binance's current REST schema represents options klines as 12-element
-/// arrays. Some legacy options responses are named-field objects. Parse both,
-/// but never silently accept a mixed page or incomplete OHLCV evidence.
-pub fn parse_options_klines(value:&Value,step:i64)->Result<Vec<Bar>,MarketError>{
-    let rows=value.as_array().ok_or(MarketError::Payload)?;
-    if rows.is_empty(){return Err(MarketError::Empty);}
-    let all_tuples=rows.iter().all(Value::is_array);
-    let all_objects=rows.iter().all(Value::is_object);
-    if all_tuples {return parse_binance_klines(value,step);}
-    if !all_objects {return Err(MarketError::Payload);}
-    let mut bars=Vec::with_capacity(rows.len());
-    for row in rows {
-        let timestamp=row["openTime"].as_i64().ok_or(MarketError::Time)?;
-        let closing=row["closeTime"].as_i64().ok_or(MarketError::Time)?;
-        let decimal=|name:&str|->Result<Decimal,MarketError>{
-            let text=row[name].as_str().ok_or(MarketError::Decimal)?;
-            text.parse::<Decimal>().map_err(|_|MarketError::Decimal)
-        };
-        bars.push(Bar{
-            open_time_ms:timestamp,
-            close_time_ms:closing,
-            open:decimal("open")?,high:decimal("high")?,
-            low:decimal("low")?,close:decimal("close")?,
-            volume:decimal("volume")?,
-        });
-    }
-    validate_bars(&bars,step)?;
-    Ok(bars)
-}
-
 #[derive(Clone)]
 pub struct OptionsSource { client:reqwest::Client }
 impl OptionsSource {
@@ -137,7 +103,12 @@ impl OptionsSource {
         if !matches!(interval,"1m"|"5m"|"15m") {return Err(MarketError::Interval);}
         let step=interval_ms(interval)?;
         if start<0 || end<=start || start%step!=0 || end%step!=0 ||
-            end>now_ms()? || (end-start)/step>5000 {
+            (end-start)/step>5000 {
+            return Err(MarketError::Time);
+        }
+        let mut clock=crate::clock::ServerClock::new();
+        clock.sync(&self.client,"options").await?;
+        if end>clock.confirmed_ms()? {
             return Err(MarketError::Time);
         }
         let mut out=Vec::new();

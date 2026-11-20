@@ -31,9 +31,9 @@ impl Runtime {
         if count<=0 || count>5000 {
             return Err(invalid("回测窗口超过 5000 根 K 线的原生策略宿主上限。"));
         }
-        let rows=self.ledger.catalog_bars(
+        let rows=self.read_contiguous_market_bars(
             tenant,product,symbol,interval,start_ms,end_ms,count+1
-        ).map_err(map_ledger)?;
+        )?;
         if rows.len()!=count as usize {
             return Err(invalid("历史 K 线缺失，禁止自动填补或从公开行情临时订阅。"));
         }

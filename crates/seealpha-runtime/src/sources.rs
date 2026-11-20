@@ -22,7 +22,7 @@ fn explicit_enable()->bool {
     std::env::var("ENGINE_EXPERIMENTAL_SOURCE")
         .is_ok_and(|value|matches!(value.as_str(),"1"|"true"|"TRUE"))
 }
-fn source_root(project:&std::path::Path,product:&str)->Result<PathBuf,RuntimeError>{
+pub(crate) fn source_root(project:&std::path::Path,product:&str)->Result<PathBuf,RuntimeError>{
     let root=std::env::var("ENGINE_SOURCE_ROOT").map(PathBuf::from)
         .unwrap_or_else(|_|project.join("data").join("sources"));
     root.join(product).canonicalize().map_err(|_|bad("原生产品源根目录尚未创建，拒绝隐式创建新数据卷。"))
@@ -99,6 +99,78 @@ impl Runtime {
             "status":"experimental_degraded","data_ready":false,
             "exchange_orders":0,"root":root,"manifest":manifest_path,
             "message":"源仍处于 DEGRADED，未完成历史衔接与数据质量验收。"}))
+    }
+
+    /// A separate calculation process consumes the native source journal.
+    /// Starting it never turns source status into READY or opens an order API.
+    pub fn start_native_calculation(
+        &self,tenant:&str,product:&str,symbol:&str,
+    )->Result<Value,RuntimeError>{
+        self.require_active(tenant)?;
+        if !explicit_enable(){
+            return Err(bad("原生行情计算尚未验收，必须显式启用实验开关。"));
+        }
+        source_product(product)?;
+        seealpha_market::check_symbol(symbol).map_err(|_|bad("行情品种无效。"))?;
+        let policies=self.ledger.policies(tenant).map_err(map_ledger)?;
+        let policy=policies.iter().find(|item|
+            item["product"]==product && item["symbol"]==symbol &&
+            item["realtime_enabled"]==true
+        ).ok_or_else(||bad("行情未得到持久化源授权。"))?;
+        let base=match policy["base_level"].as_str().unwrap_or("1m") {
+            "auto"=>"1m",value=>value,
+        };
+        let retained=policy["intervals"].as_array()
+            .map(|rows|rows.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .unwrap_or_else(||vec!["1m"]);
+        for interval in &retained{
+            if *interval!="1M" && seealpha_market::interval_ms(interval).is_err(){
+                return Err(bad("行情生成周期无效。"));
+            }
+        }
+        let root=source_root(&self.project,product)?;
+        let pair=root.join(symbol).join(base).canonicalize()
+            .map_err(|_|bad("源行情子目录尚未创建。"))?;
+        if !pair.starts_with(&root)||!pair.join("collection.sqlite").is_file(){
+            return Err(bad("行情原始成交数据卷尚未确认可读取。"));
+        }
+        let key=format!("{tenant}:{product}:calc:{symbol}");
+        let mut processes=self.source_processes.lock()
+            .map_err(|_|bad("计算进程状态锁不可用。"))?;
+        if let Some(existing)=processes.get_mut(&key) {
+            if existing.try_wait().map_err(|_|bad("计算进程状态未知。"))?.is_none(){
+                return Err(bad("计算进程已运行。"));
+            }
+        }
+        processes.remove(&key);
+        let binary=std::env::var("ENGINE_CALC_BIN")
+            .unwrap_or_else(|_|"binance-native-calculation".into());
+        let child=Command::new(binary)
+            .arg(product).arg(symbol).arg(base)
+            .arg(&pair).arg(retained.join(","))
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().map_err(|_|bad("独立 Rust 计算进程启动失败。"))?;
+        let pid=child.id();
+        processes.insert(key,child);
+        Ok(json!({"tenant_id":tenant,"product":product,"symbol":symbol,
+            "pid":pid,"status":"experimental_degraded","data_ready":false,
+            "message":"计算产物尚须经过完整历史修复与 Catalog 检查才能用于实盘。"}))
+    }
+    pub fn stop_native_calculation(
+        &self,tenant:&str,product:&str,symbol:&str
+    )->Result<Value,RuntimeError>{
+        self.require_active(tenant)?;
+        source_product(product)?;
+        seealpha_market::check_symbol(symbol).map_err(|_|bad("品种无效。"))?;
+        let key=format!("{tenant}:{product}:calc:{symbol}");
+        let mut processes=self.source_processes.lock()
+            .map_err(|_|bad("计算进程状态锁不可用。"))?;
+        let mut child=processes.remove(&key)
+            .ok_or_else(||bad("该 Rust 计算进程未由本 Engine 管理。"))?;
+        child.kill().map_err(|_|bad("无法终止计算进程。"))?;
+        child.wait().map_err(|_|bad("计算进程停止状态未知。"))?;
+        Ok(json!({"tenant_id":tenant,"product":product,"symbol":symbol,
+            "status":"stopped","data_ready":false}))
     }
 
     pub fn stop_native_source(&self,tenant:&str,product:&str)->Result<Value,RuntimeError>{

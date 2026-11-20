@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/quality",
     "crates/data-converter",
+    "crates/seealpha-catalog",
     "crates/binance-source",
     "crates/seealpha-market",
     "crates/seealpha-feed",

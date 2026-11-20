@@ -15,6 +15,7 @@ WORKDIR /app
 COPY --from=build /src/target/release/seealpha-engine /usr/local/bin/seealpha-engine
 COPY --from=build /src/target/release/binance-native-source /usr/local/bin/binance-native-source
 COPY --from=build /src/target/release/binance-native-calculation /usr/local/bin/binance-native-calculation
+COPY --from=build /src/target/release/binance-native-catalog-publish /usr/local/bin/binance-native-catalog-publish
 COPY python/strategy_host ./python/strategy_host
 COPY packages ./packages
 COPY core/engine_contracts.py core/trading_contracts.py ./core/

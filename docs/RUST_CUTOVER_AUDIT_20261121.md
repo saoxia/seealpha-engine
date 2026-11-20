@@ -23,6 +23,14 @@
 
 详细 API、限制、验收标准见 [Rust 期权与成交迁移](RUST_DERIVATIVES_EXECUTION_MIGRATION_20261121.md)。CI 仍保持停用，未宣称新代码编译或功能验收通过。
 
+## Rust 原生数据底座：Nautilus v2 Parquet 接入（2026-11-21）
+
+本批按原 Python `core/market/instruments.py`、`engine/market_data/storage/catalog.py`、`HistoricalMarketData` 和 `ServerClock` 迁移 Rust 数据底座。原生 `seealpha-catalog` 支持按原 Nautilus v2 目录读取 Bar、TradeTick、QuoteTick、Depth、Greeks 等 Arrow/Parquet 数据；Bar 原子写入、已有目录清点、完整 UTC 日删除预览、历史回测优先直接读旧 Catalog；独立 Rust 源进程的确认时钟传递、已计算闭合 K 线与官方 REST 逐项核对后发布，并将发布任务接入数据队列。
+
+**该新增链路尚未 Cargo 编译或端到端验证，不代表数据底座 100% Rust 完成。** 真实时间同步的历史衔接、统一跨语言写锁、期权实时源、多类型 Parquet 写入和完整 Tick/L2 修复仍未通过验收；`data_ready=false` 继续有效。原 Python 完整保留。
+
+具体 API、环境变量、运行命令、未完成对照见 [Rust 数据底座迁移记录](RUST_DATA_FOUNDATION_20261121.md)。
+
 ## 新的操作边界
 
 - Rust 主入口仍是 `cargo run --locked --release -p seealpha-engine`，默认容器仍使用 Rust 二进制。

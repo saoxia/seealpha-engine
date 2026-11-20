@@ -7,6 +7,7 @@ license = "Apache-2.0"
 
 [dependencies]
 seealpha-ledger = { path = "../seealpha-ledger" }
+seealpha-catalog = { path = "../seealpha-catalog" }
 seealpha-binance-market-data-source = { path = "../binance-source" }
 seealpha-market = { path = "../seealpha-market" }
 seealpha-portfolio = { path = "../seealpha-portfolio" }
@@ -18,6 +19,7 @@ serde_json = "1"
 sha2 = "0.10"
 rust_decimal = "1"
 thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 axum = "0.8"
