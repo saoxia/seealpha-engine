@@ -108,6 +108,19 @@ impl Runtime {
         // acknowledgements. Preserve those rows in an audit quarantine,
         // never treat them as real exchange-executed trades.
         ledger.quarantine_synthetic_fills().map_err(map_ledger)?;
+        // Restart discovery is read-only. Without authenticated exchange
+        // evidence, pending orders MUST remain unresolved; no submit/retry.
+        // Query at most one page per tenant on startup; the paginated API
+        // below exposes the entire durable queue without loading it at boot.
+        for tenant in ledger.active_tenant_ids().map_err(map_ledger)? {
+            let page = ledger.order_recovery_page(&tenant, 0, 500).map_err(map_ledger)?;
+            if !page.is_empty() {
+                eprintln!(
+                    "order recovery: tenant={tenant} pending_reconciliation_at_least={}{}; no automatic resend",
+                    page.len(), if page.len() == 500 { " (more pages possible)" } else { "" }
+                );
+            }
+        }
         Ok(Self {
             ledger,
             project: config.project.clone(),
@@ -117,6 +130,16 @@ impl Runtime {
             inflight: AtomicUsize::new(0),
             source_processes: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Read-only, paginated recovery inventory. This is a list of work
+    /// requiring signed exchange queries and account reconciliation, not an
+    /// authorization to resend or synthesize fills.
+    pub fn order_recovery_page(
+        &self, tenant: &str, offset: usize, limit: usize,
+    ) -> Result<Vec<seealpha_ledger::OrderRecoveryItem>, RuntimeError> {
+        self.require_active(tenant)?;
+        self.ledger.order_recovery_page(tenant, offset, limit).map_err(map_ledger)
     }
 
     pub fn inflight(&self) -> usize {
