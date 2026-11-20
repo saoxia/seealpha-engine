@@ -26,3 +26,12 @@
 **兼容与验收**：`python -m engine` 不变。旧 `python -m engine.feed.managed`、`python -m engine.feed.service`、`python -m engine.pipeline.pair_data` 和 `python -m engine.pipeline.data_management`、`python -m engine.pipeline.prepare_data`、`python -m engine.pipeline.sync_binance_batch` 和 `python -m engine.pipeline.sync_binance_file` CLI 保留薄入口；新代码应使用 `engine.market_data` 目录。历史说明保留于 `docs/implementation/`。自动化回归测试必须运行，长时间实盘/真实行情运行验收另行安排。
 
 **数据源迁移第一步（2026-11-20）**：`sources/binance/{perpetual,spot,options}/collection.py` 提供产品固定的共享采集入口；`collection/managed.py` 已改为调用它们。旧 `futures_service.py`、`pair_service.py`、`options_service.py` 保留实际实现，后续才分阶段迁移内部逻辑。此阶段不创建单独部署服务、不迁移存储、不改变任务控制权限。
+## Binance 源码归属（完整迁移阶段）
+
+- `engine/market_data/sources/binance/perpetual/`：`collection.py`、`calculation.py`、`repair.py`、`funding.py`、`funding_repair.py`
+- `engine/market_data/sources/binance/spot/`：`collection.py`、`calculation.py`、`repair.py`
+- `engine/market_data/sources/binance/options/`：`collection.py`、`repair.py`
+- `engine/market_data/sources/binance/common/`：`batch.py`、`pair_collection.py`、`calculation.py`、`history.py`、`reconcile.py`、`convert_bars.py`、`convert_trades.py`、`sync_batch.py`、`sync_file.py`
+
+旧导入路径保留为同一 Python 模块对象的别名，必要 CLI 保留原入口，避免部署配置、测试 monkeypatch 或上下游调用即时断裂。通用管理、存储、访问和质量模块不因来源拆分而复制。此次没有拆分成三个独立服务部署。
+
