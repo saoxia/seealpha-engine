@@ -136,10 +136,11 @@ class ManagedJournalBridge:
                 (p.product, p.symbol): p for p in self.manager._read(refresh=True)
             }
             for stream in keys:
+                if not isinstance(stream, MarketStream):
+                    raise MarketDataHubError("策略市场流身份无效")
                 policy = policies.get((stream.product, stream.symbol))
                 if (
-                    not isinstance(stream, MarketStream)
-                    or stream.source != "BINANCE"
+                    stream.source != "BINANCE"
                     or stream.product not in _SUPPORTED_PRODUCTS
                     or stream.kind != "closed_bars"
                     or stream.interval not in _SUPPORTED_INTERVALS
@@ -219,6 +220,15 @@ class ManagedJournalBridge:
                     ):
                         raise MarketDataHubError("采集器修订了已交付K线，必须重新预热")
                     for bar in tail:
+                        if latest is not None and bar.ts_ns > latest.ts_ns:
+                            from core.market.instruments import bar_window
+
+                            previous_end_ms = latest.ts_ns // 1_000_000 + 1
+                            _, expected_end_ms = bar_window(
+                                stream.interval, previous_end_ms,
+                            )
+                            if bar.ts_ns // 1_000_000 + 1 != expected_end_ms:
+                                raise MarketDataHubError("采集器闭合K线存在缺口")
                         if latest is None or bar.ts_ns > latest.ts_ns:
                             self.service.accept_live_closed_bar(stream, bar)
                             latest = bar
@@ -233,8 +243,10 @@ class ManagedJournalBridge:
         with self._lock:
             self.poll()
             consumer = self.consumer_id(account_id, issuance_id)
-            market = self.service.live_requirements
-            if not market or set(market) - self._ready:
+            required = self.service.live_consumer_streams(
+                str(tenant_id), consumer,
+            )
+            if set(required) - self._ready:
                 raise MarketDataHubError("策略有市场流尚未完成预热或正在降级")
             snapshot = self.service.live_view(
                 str(tenant_id), consumer, now_ns=now_ns,
