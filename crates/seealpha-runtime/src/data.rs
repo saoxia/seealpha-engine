@@ -249,8 +249,8 @@ impl Runtime {
     )->Result<Value,RuntimeError>{
         self.require_active(tenant_id)?;
         if !valid_symbol(product,symbol)||role.len()>48||role.is_empty()
-            || !matches!(state,"running"|"stopped"|"error"|"unknown"|"ready"|"disabled") {
-            return Err(bad("行情订阅状态无效。"));
+            || !matches!(state,"running"|"stopped"|"error"|"unknown"|"disabled") {
+            return Err(bad("行情订阅状态无效：未经数据质量证明的 READY 不得由外部上报。"));
         }
         let result=self.ledger.record_subscription(
             tenant_id,account_id,product,symbol,role,state,progress
