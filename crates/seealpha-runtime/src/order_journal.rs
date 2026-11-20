@@ -28,6 +28,24 @@ impl<'a> LedgerIntentJournal<'a> {
         Self { ledger, tenant, account, environment, immutable_intent }
     }
 
+    fn wire_matches_intent(&self, record: &IntentRecord) -> bool {
+        let field = |name: &str| record.parameters.iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str());
+        // Values in the immutable authorization envelope must describe the
+        // actual outgoing command, not merely copy an arbitrary parameter list.
+        // Conservative string equality also refuses silent precision changes.
+        field("side") == self.immutable_intent["side"].as_str()
+            && field("side").is_some_and(|v| matches!(v, "BUY" | "SELL"))
+            && field("quantity") == self.immutable_intent["quantity"].as_str()
+            && field("quantity").is_some()
+            && field("price") == self.immutable_intent.get("price").and_then(Value::as_str)
+            && match self.immutable_intent.get("order_type") {
+                Some(value) => field("type") == value.as_str(),
+                None => field("type").is_none(),
+            }
+    }
+
     fn valid_identity(&self, record: &IntentRecord) -> bool {
         let scope = format!("{}:{}:{}", self.tenant, self.account, self.environment);
         record.account_scope == scope
@@ -37,6 +55,7 @@ impl<'a> LedgerIntentJournal<'a> {
             && self.immutable_intent["environment"] == self.environment
             && self.immutable_intent["client_order_id"] == record.client_order_id
             && self.immutable_intent["symbol"] == record.symbol
+            && self.wire_matches_intent(record)
             // Bind the COMPLETE prepared wire payload, not merely the client ID.
             // Otherwise a different side, quantity, or price could be signed
             // under an otherwise valid ledger intent. JSON arrays preserve
@@ -148,6 +167,41 @@ mod tests {
     }
 
     #[test]
+    fn internally_inconsistent_authorization_envelope_is_rejected() {
+        let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        ledger.ensure_tenant("tenant1", "production", "active").unwrap();
+        let intent = json!({
+            "environment":"production", "action":"NEW",
+            "client_order_id":"client1", "symbol":"ETHUSDT", "product":"spot",
+            "side":"BUY", "quantity":"0.01", "price":"2000",
+            "wire_parameters":[
+                ["symbol", "ETHUSDT"], ["newClientOrderId", "client1"],
+                ["side", "SELL"], ["quantity", "0.01"], ["price", "2000"]
+            ]
+        });
+        // All wire fields equal the envelope's copied parameter list,
+        // but the authoritative direction disagrees. Never register/send.
+        let mut write = PreparedWrite::new(
+            "tenant1:account1:production", "request2", Product::Spot,
+            WriteAction::NewOrder, "ETHUSDT", "client1",
+            vec![
+                ("symbol".into(), "ETHUSDT".into()),
+                ("newClientOrderId".into(), "client1".into()),
+                ("side".into(), "SELL".into()),
+                ("quantity".into(), "0.01".into()),
+                ("price".into(), "2000".into()),
+            ],
+        ).unwrap();
+        let mut journal = LedgerIntentJournal::new(
+            &ledger, "tenant1", "account1", "production", intent,
+        );
+        let mut wire = Wire { attempts: 0 };
+        assert!(write.dispatch(&mut journal, &mut wire).is_err());
+        assert_eq!(wire.attempts, 0);
+        assert!(ledger.request("tenant1", "account1", "request2").unwrap().is_none());
+    }
+
+    #[test]
     fn restart_is_reconciliation_only_and_never_sends_twice() {
         let path = std::env::temp_dir().join(format!(
             "seealpha-intent-adapter-{}-{:?}.sqlite",
@@ -161,7 +215,8 @@ mod tests {
             "client_order_id":"client1", "symbol":"ETHUSDT", "product":"spot",
             "side":"BUY", "quantity":"0.01", "price":"2000",
             "wire_parameters": [
-                ["symbol", "ETHUSDT"], ["newClientOrderId", "client1"]
+                ["symbol", "ETHUSDT"], ["newClientOrderId", "client1"],
+                ["side", "BUY"], ["quantity", "0.01"], ["price", "2000"]
             ],
         });
         let make = || PreparedWrite::new(
@@ -170,6 +225,9 @@ mod tests {
             vec![
                 ("symbol".into(),"ETHUSDT".into()),
                 ("newClientOrderId".into(),"client1".into()),
+                ("side".into(),"BUY".into()),
+                ("quantity".into(),"0.01".into()),
+                ("price".into(),"2000".into()),
             ],
         ).unwrap();
         let mut wire = Wire { attempts: 0 };
