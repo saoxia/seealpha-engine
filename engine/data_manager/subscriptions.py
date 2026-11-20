@@ -490,6 +490,11 @@ class Subscriptions:
 
     def pause_for_deletion(self, symbol, product):
         with self.lock:
+            if any(
+                stream.product == product and stream.symbol == symbol
+                for stream in self.strategy_requirements()
+            ):
+                raise HTTPException(409, "策略仍在订阅该行情，必须先停止策略订阅")
             self._claim()
             policies = self._read(refresh=True)
             if product == "options" and "-" not in symbol:
@@ -534,6 +539,11 @@ class Subscriptions:
 
     def remove(self, symbol, product):
         with self.lock:
+            if any(
+                stream.product == product and stream.symbol == symbol
+                for stream in self.strategy_requirements()
+            ):
+                raise HTTPException(409, "策略仍在订阅该行情，必须先停止策略订阅")
             self._claim()
             policies = self._read()
             group = product == "options" and "-" not in symbol
