@@ -92,7 +92,7 @@ pub fn merge_funding(
     let mut cursor = 0;
     for row in bars {
         let ts = match &row {
-            CarryEvent::Bars { ts_ns, .. } => *ts,
+            CarryEvent::Bars { ts_ns, .. } => *ts_ns,
             CarryEvent::Funding(_) => return Err(BasketError::Evidence),
         };
         while cursor < funding.len() && funding[cursor].ts_ns < ts {
