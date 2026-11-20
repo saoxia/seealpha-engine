@@ -1,5 +1,12 @@
 //! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
 mod records;
+mod legacy;
+mod order_intents;
+mod account_snapshots;
+mod account_events;
+mod tenant_transfer;
+pub use order_intents::IntentStart;
+pub use account_snapshots::AccountSnapshot;
 mod basket_journal;
 mod coordinator_state;
 pub use coordinator_state::StoredCoordinatorState;
@@ -31,6 +38,56 @@ CREATE TABLE IF NOT EXISTS basket_journals (
  revision TEXT NOT NULL,
  body_json TEXT NOT NULL,
  PRIMARY KEY (tenant_id, account_id, basket_id)
+);
+CREATE TABLE IF NOT EXISTS order_intents (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    client_order_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    intent_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, account_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS order_intents_client
+    ON order_intents(tenant_id, account_id, environment, client_order_id);
+CREATE TABLE IF NOT EXISTS order_observations (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    client_order_id TEXT NOT NULL,
+    observation_id TEXT NOT NULL,
+    observed_at_ns INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,environment,client_order_id,observation_id)
+);
+CREATE INDEX IF NOT EXISTS order_observations_by_time
+    ON order_observations(tenant_id,account_id,environment,client_order_id,observed_at_ns);
+CREATE TABLE IF NOT EXISTS account_evidence_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL,
+    UNIQUE(tenant_id,account_id,environment,kind,evidence_id)
+);
+CREATE INDEX IF NOT EXISTS account_evidence_events_page
+    ON account_evidence_events(tenant_id,account_id,environment,id);
+CREATE TABLE IF NOT EXISTS account_snapshots (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    evidence_id TEXT NOT NULL,
+    observed_at_ms INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    balances_json TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,environment)
 );
 CREATE TABLE IF NOT EXISTS tenants (
     tenant_id TEXT PRIMARY KEY,
@@ -308,20 +365,18 @@ pub struct Ledger {
 
 impl Ledger {
     pub fn open(path: &Path) -> Result<Self, LedgerError> {
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
                 .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         }
-        let connection =
+        let mut connection =
             Connection::open(path).map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(
                 "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;",
             )
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        connection
-            .execute_batch(SCHEMA)
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        legacy::initialize(&mut connection)?;
         Ok(Self {
             connection: std::sync::Mutex::new(connection),
         })
