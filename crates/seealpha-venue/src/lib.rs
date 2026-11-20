@@ -379,17 +379,19 @@ impl VenueClient {
             .send()
             .map_err(|_| VenueError::Unconfirmed)?;
         let status = response.status();
-        let body = response.text().map_err(|_| VenueError::Unconfirmed)?;
-        // A legitimate 1000-trade Binance page can exceed 128 KiB.
-        // Keep a bounded larger allowance only for signed trade-history GETs.
+        // 1000-trade pages exceed 128 KiB; other endpoints stay on a
+        // smaller limit. Bound the actual socket read, not just the string.
         let maximum=if method=="GET" && matches!(path,
             "/api/v3/myTrades"|"/fapi/v1/userTrades"|"/eapi/v1/userTrades") {
             2*1024*1024
         }else{128*1024};
-        if body.len()>maximum {
-            return Err(VenueError::Unconfirmed);
-        }
-        let value: Value = serde_json::from_str(&body).unwrap_or(json!({ "raw": "unparsed" }));
+        use std::io::Read;
+        let mut bytes=Vec::new();
+        response.take((maximum+1) as u64)
+            .read_to_end(&mut bytes).map_err(|_|VenueError::Unconfirmed)?;
+        if bytes.len()>maximum {return Err(VenueError::Unconfirmed);}
+        let body=std::str::from_utf8(&bytes).map_err(|_|VenueError::Unconfirmed)?;
+        let value: Value = serde_json::from_str(body).unwrap_or(json!({ "raw": "unparsed" }));
         if !status.is_success() {
             let code = value
                 .get("code")
