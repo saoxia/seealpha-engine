@@ -112,10 +112,10 @@ pub fn audit_trade_ids(trades: &[PublicTrade]) -> Result<TradeIdAudit, MarketErr
             input_out_of_order = true;
         }
         last_time_id = Some(key);
-        if let Some(previous) = seen.insert(trade.id, *trade) {
-            if previous != *trade {
-                return Err(MarketError::Trade);
-            }
+        if let Some(previous) = seen.insert(trade.id, *trade)
+            && previous != *trade
+        {
+            return Err(MarketError::Trade);
         }
     }
     let ids: Vec<_> = seen.keys().copied().collect();
