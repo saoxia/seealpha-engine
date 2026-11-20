@@ -27,6 +27,36 @@ class Subscriptions:
         self.lease = None
         self.closed = False
         self.deleting = set()
+        # Runtime demand is transient: never change persisted user policies.
+        self.strategy_requirements = dict
+        self._effective_snapshot = []
+
+    def _effective_policies(self, policies=None):
+        """Merge authorized strategy demand into the managed WebSocket manifest.
+
+        Explicit policy ownership stays with DataService. The strategy overlay
+        only turns on existing configured markets while they have consumers.
+        """
+        if policies is None:
+            policies = self.policies or []
+        requirements = self.strategy_requirements()
+        allowed = {(p.product, p.symbol): p for p in policies}
+        required = set()
+        for stream in requirements:
+            key = (stream.product, stream.symbol)
+            policy = allowed.get(key)
+            if (stream.source != "BINANCE" or stream.kind != "closed_bars"
+                    or policy is None or stream.interval not in policy.intervals
+                    and stream.interval != policy.base_level
+                    or stream.product not in {"futures_um", "spot"}
+                    or policy.base_level == "auto"):
+                raise HTTPException(409, "策略请求的市场流没有对应的可采集配置")
+            required.add(key)
+        return [
+            p.model_copy(update={"realtime_enabled": True})
+            if (p.product, p.symbol) in required and not p.realtime_enabled else p
+            for p in policies
+        ]
 
     def bound_tenant_id(self):
         return self.manager.tenant_id
@@ -141,9 +171,10 @@ class Subscriptions:
         from .repository import StorageUnavailable
         with self.lock:
             try:
-                previous = self.policies or []
+                previous = self._effective_snapshot
                 policies = self._read(refresh=True)
-                if any(p.product == "options" for p in [*previous, *policies]):
+                effective = self._effective_policies(policies)
+                if any(p.product == "options" for p in [*previous, *effective]):
                     self._claim()
                     self._publish_options()
                     self._start_options()
@@ -156,7 +187,7 @@ class Subscriptions:
                     if (key[0] in {"futures_um", "spot"} and key[1] != "ALL"
                             and any(p.product == key[0] and p.symbol == key[1]
                                     and p.base_level != "auto"
-                                    for p in [*previous, *policies])):
+                                    for p in [*previous, *effective])):
                         self.manager._stop(self.processes.pop(key))
                 self._start_futures()
                 self._start_spot()
@@ -166,18 +197,19 @@ class Subscriptions:
                         if old.product == "options":
                             continue
                         key = (old.product, old.symbol)
-                        new = next((p for p in policies if (p.product, p.symbol) == key), None)
+                        new = next((p for p in effective if (p.product, p.symbol) == key), None)
                         if new != old:
                             same_collection = (new is not None and old.realtime_enabled and new.realtime_enabled
                                                and old.base_level == new.base_level and set(old.intervals) == set(new.intervals))
                             self._stop_pair(key, collection=not same_collection)
-                if not any(p.realtime_enabled or p.history_enabled for p in policies):
+                if not any(p.realtime_enabled or p.history_enabled for p in effective):
+                    self._effective_snapshot = effective
                     self.last_error = None
                     return
                 self.manager.require_storage(write=True)
                 self._claim()
                 errors = []
-                for policy in policies:
+                for policy in effective:
                     if policy.product == "options":
                         continue
                     if policy.realtime_enabled or policy.history_enabled:
@@ -185,6 +217,7 @@ class Subscriptions:
                             self._start(policy)
                         except (HTTPException, OSError) as exc:
                             errors.append(f"{policy.symbol}: {exc}")
+                self._effective_snapshot = effective
                 self.last_error = "；".join(errors) or None
             except (HTTPException, StorageUnavailable, OSError) as exc:
                 self.last_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
@@ -367,7 +400,7 @@ class Subscriptions:
 
         path = self.manager.directory / "futures-runtime.json"
         records = [
-            p.model_dump(mode="json") for p in self.policies or []
+            p.model_dump(mode="json") for p in self._effective_policies()
             if p.product == "futures_um" and p.base_level != "auto"
         ]
         write_record(path, {"version": 1, "policies": records})
@@ -378,14 +411,14 @@ class Subscriptions:
         from engine.pipeline.convert_binance_bars import write_record
 
         path = self.manager.directory / "spot-runtime.json"
-        records = [p.model_dump(mode="json") for p in self.policies or []
+        records = [p.model_dump(mode="json") for p in self._effective_policies()
                    if p.product == "spot" and p.base_level != "auto"]
         write_record(path, {"version": 1, "policies": records})
         return path
 
     def _start_spot(self):
         enabled = any(p.product == "spot" and p.base_level != "auto" and p.realtime_enabled
-                      for p in self.policies or [])
+                      for p in self._effective_policies())
         key = ("spot", "ALL")
         existing = self.processes.get(key)
         if not enabled:
@@ -409,7 +442,7 @@ class Subscriptions:
         """One shared collector process, internally sharded by stream capacity."""
         enabled = any(
             p.product == "futures_um" and p.base_level != "auto" and p.realtime_enabled
-            for p in self.policies or []
+            for p in self._effective_policies()
         )
         key = ("futures_um", "ALL")
         existing = self.processes.get(key)
@@ -457,6 +490,11 @@ class Subscriptions:
 
     def pause_for_deletion(self, symbol, product):
         with self.lock:
+            if any(
+                stream.product == product and stream.symbol == symbol
+                for stream in self.strategy_requirements()
+            ):
+                raise HTTPException(409, "策略仍在订阅该行情，必须先停止策略订阅")
             self._claim()
             policies = self._read(refresh=True)
             if product == "options" and "-" not in symbol:
@@ -501,6 +539,11 @@ class Subscriptions:
 
     def remove(self, symbol, product):
         with self.lock:
+            if any(
+                stream.product == product and stream.symbol == symbol
+                for stream in self.strategy_requirements()
+            ):
+                raise HTTPException(409, "策略仍在订阅该行情，必须先停止策略订阅")
             self._claim()
             policies = self._read()
             group = product == "options" and "-" not in symbol

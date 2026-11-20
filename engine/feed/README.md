@@ -286,3 +286,42 @@ Python 内存；其历史回放保持任务独立，并继续直接使用 Engine
 注册表、`live_requirements` 到 Binance WebSocket 生命周期的自动协调，
 以及旧回测路径统一迁移。不能将这次读侧接口与单任务回测整合视为
 正式策略已可实时交易。实时风险资格仍由既有就绪门禁决定。
+
+
+## Engine 统一策略行情订阅（新增）
+
+**作用域是 Engine 实例，不是用户或策略。** 同一 Engine 下的已授权正式策略
+通过 `EngineMarketDataService` 共享唯一的
+`(source, product, symbol, interval, kind)` 行情需求；两个 Engine 实例拥有独立
+的消费者、行情缓存、采集器进程和 WebSocket 连接，不能跨 Engine 复用内存数据。
+
+独立 Engine 的 HTTP 控制接口：
+
+- `POST /tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions`，
+  请求包含 `issuance_id`、`streams`（例如 `BINANCE/futures_um/ETHUSDT/1m/closed_bars`）
+  和 `lookback_bars`，注册策略行情需求；不会启动真实交易或重新签发策略包。
+- `DELETE /tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions/{issuance_id}`
+  释放消费者。多策略共享同一流，最后一个消费者释放后只移除策略额外的订阅；
+  管理员显式启用的行情配置仍保持运行。
+- `GET /market/strategy-subscriptions` 可检查去重后的 Engine 内需求及数据就绪情况；
+  `allow_new_risk` 永远为 `false`，不能据此授权下单。
+
+只有 **本租户、本账户已下发策略包** 中声明的品种、Engine 已记录的
+`intent` 和本 Engine 已配置的 `DataPolicy` 同时存在，才可以注册正式行情。
+未配置的市场、交易产品或粒度明确返回错误，不会擅自创建行情政策或替换交易所来源。
+对于已有但 `realtime_enabled=false` 的市场，策略活跃期间会暂时启用采集需求，
+**不会修改持久化的政策文件**。采集器每秒检查 manifest，自动合并 Binance
+Spot/UM 的逐笔 WebSocket 订阅，支持增减/重连；行情下游只读取已闭合并由
+`calculation` 核验的 SQLite K 线，绝不把原始逐笔伪装成可交易闭合线。
+
+`ManagedJournalBridge.poll()` 将真实采集器写入的完整闭合 K 线送入共享
+`EngineMarketDataService`；采集状态过期、断线、计算积压、K 线缺口/修订等情况
+立即清空相应流的缓存并拒绝提供新视图。正式策略读取
+`ManagedJournalBridge.view(...)` 必须另外传入可信的当前持仓证据；
+即便数据就绪，返回值也不提供执行授权。**当前工程尚无自动启动实盘策略/
+下单执行循环，不能把数据订阅成功解释为正式策略已经开始交易。**
+
+传统单标的、Spot/UM 资金费组合和期权保护回测的 OHLCV 已与通用组合回测一样
+进入独立的 `EngineMarketDataService.backtest` 回放作用域。原生 Nautilus
+回测与资金费事件、期权真实 BBO 报价的专业校验保留原状；后两类非 OHLCV
+证据不被映射为虚假的价格 K 线。回测仍不打开实时 WebSocket。
