@@ -19,6 +19,7 @@ pub struct Delivery {
     pub retry_after_ms: Option<i64>,
     ready_until_ms: i64,
     source_verified: bool,
+    verified_close_ms: Option<i64>,
 }
 
 impl Delivery {
@@ -33,16 +34,22 @@ impl Delivery {
             retry_after_ms: None,
             ready_until_ms: now_ms,
             source_verified: false,
+            verified_close_ms: None,
         }
     }
 
     pub fn deliver(&mut self, stamps: &[i64], live: bool) -> Vec<i64> {
-        let fresh: Vec<i64> = stamps
-            .iter()
-            .copied()
+        let mut ordered = stamps.to_vec();
+        ordered.sort_unstable();
+        let fresh: Vec<i64> = ordered
+            .into_iter()
             .filter(|stamp| self.emitted.insert(*stamp))
             .collect();
-        self.allow_new_risk = live && self.source_verified
+        // A replay overlap or mixed catch-up batch is never a fresh trading
+        // candidate, even if its producer is now healthy.
+        self.allow_new_risk = live && fresh.len() == 1
+            && self.verified_close_ms == fresh.first().copied()
+            && self.source_verified
             && self.clock_ms <= self.ready_until_ms
             && !self.degraded && !self.repair_required && self.clock_healthy;
         fresh
@@ -50,6 +57,7 @@ impl Delivery {
 
     pub fn degrade(&mut self) {
         self.source_verified = false;
+        self.verified_close_ms = None;
         self.degraded = true;
         self.repair_required = true;
         self.allow_new_risk = false;
@@ -58,6 +66,11 @@ impl Delivery {
     pub fn heartbeat(&mut self, now_ms: i64) {
         if now_ms >= self.clock_ms {
             self.clock_ms = now_ms;
+            if now_ms > self.ready_until_ms {
+                self.source_verified = false;
+                self.verified_close_ms = None;
+                self.allow_new_risk = false;
+            }
         }
     }
 
@@ -71,6 +84,7 @@ impl Delivery {
 
     pub fn fail_clock_sync(&mut self) {
         self.source_verified = false;
+        self.verified_close_ms = None;
         self.clock_healthy = false;
         self.allow_new_risk = false;
         self.degraded = true;
@@ -79,6 +93,11 @@ impl Delivery {
     pub fn advance_clock(&mut self, now_ms: i64) {
         if now_ms > self.clock_ms {
             self.clock_ms = now_ms;
+            if now_ms > self.ready_until_ms {
+                self.source_verified = false;
+                self.verified_close_ms = None;
+                self.allow_new_risk = false;
+            }
         }
     }
 
@@ -102,6 +121,7 @@ impl Delivery {
     /// overlap and gap checks. Receiving live packets alone cannot open risk.
     pub fn certify_from_book(&mut self, book: &crate::Book, now_ms: i64) -> bool {
         self.source_verified = false;
+        self.verified_close_ms = None;
         self.allow_new_risk = false;
         if !book.verified_ready(now_ms) || self.degraded || self.repair_required
             || !self.clock_healthy || now_ms < self.clock_ms {
@@ -111,6 +131,7 @@ impl Delivery {
         self.clock_ms = now_ms;
         self.ready_until_ms = until_ms;
         self.source_verified = true;
+        self.verified_close_ms = Some(book.gate.confirmed_ms);
         true
     }
 
@@ -234,6 +255,15 @@ mod tests {
         delivery.degrade();
         assert!(!delivery.allow_new_risk);
         assert!(!delivery.certify_from_book(&book, 61_000));
+    }
+
+
+    #[test]
+    fn test_timestamp_order_and_old_replay_batch_are_not_live_signal() {
+        let mut delivery = Delivery::new(100);
+        assert_eq!(delivery.deliver(&[9, 7, 8, 7], false), vec![7, 8, 9]);
+        assert!(delivery.duplicate_page(&[8, 9]).is_empty());
+        assert!(!delivery.allow_new_risk);
     }
 
 }
