@@ -1761,4 +1761,67 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CONFLICT, "{again}");
     }
+    #[tokio::test]
+    async fn native_control_and_reader_routes_do_not_start_collectors() {
+        let app=router(state());
+        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make=|path:&str,method:&str,body:&str|{
+            Request::builder().uri(path).method(method)
+                .header("authorization",format!("Bearer {token}"))
+                .header("content-type","application/json")
+                .body(Body::from(body.to_owned())).unwrap()
+        };
+        let (status,_,_)=call(&app,make("/tenants/42","PUT",
+            r#"{"purpose":"development","status":"active"}"#)).await;
+        assert_eq!(status,StatusCode::OK);
+        let (status,_,policy)=call(&app,make(
+            "/tenants/42/data/control/sync","POST",
+            r#"{"policies":[{"product":"spot","symbol":"ETHUSDT","realtime_enabled":true,"base_level":"1m"}]}"#
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(policy["synced"],1);
+        let (status,_,subscription)=call(&app,make(
+            "/tenants/42/data/control/subscriptions","POST","{}"
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(subscription["items"].as_array().unwrap().len(),1);
+        let (status,_,service)=call(&app,make(
+            "/tenants/42/data/control/services","POST","{}"
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(service["active_collectors"],0);
+        let (status,_,_)=call(&app,make(
+            "/tenants/42/accounts/a/strategy-market/subscriptions","POST",
+            r#"{"issuance_id":"unissued","streams":[{"product":"spot","symbol":"ETHUSDT","interval":"1m"}]}"#
+        )).await;
+        assert_eq!(status,StatusCode::CONFLICT);
+        let (status,_,rows)=call(&app,make(
+            "/tenants/42/accounts/a/positions?environment=paper","GET",""
+        )).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(rows["positions"].as_array().unwrap().len(),0);
+    }
+
+    #[tokio::test]
+    async fn native_backtest_denies_missing_history_without_fetching_or_synthesizing() {
+        let app=router(state());
+        let token="ci-engine-token-0123456789abcdef0123456789abcdef";
+        let make=|path:&str,method:&str,body:&str|{
+            Request::builder().uri(path).method(method)
+                .header("authorization",format!("Bearer {token}"))
+                .header("content-type","application/json")
+                .body(Body::from(body.to_owned())).unwrap()
+        };
+        let _=call(&app,make("/tenants/42","PUT",
+            r#"{"purpose":"development","status":"active"}"#)).await;
+        let (status,_,response)=call(&app,make(
+            "/tenants/42/accounts/a/backtests","POST",
+            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "start":"2026-11-20T00:00:00Z","end":"2026-11-20T00:02:00Z",
+                "starting_balance":"1000","quote_currency":"USDT"}"#
+        )).await;
+        assert_eq!(status,StatusCode::CONFLICT);
+        assert!(response["detail"].as_str().unwrap_or("").contains("历史 K 线"));
+    }
+
 }
