@@ -1,5 +1,8 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
 mod accounts;
+mod basket;
+mod portfolio;
+pub use portfolio::{NativePortfolioState,NativePortfolioResult,NativePortfolioEvent};
 mod config;
 mod data;
 mod evidence;

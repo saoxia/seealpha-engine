@@ -4,10 +4,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use rust_decimal::Decimal;
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Product { Spot, FuturesUm, Option }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LegId { pub tenant: String, pub account: String, pub product: Product, pub symbol: String }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegTarget { pub member_id: String, pub leg: LegId, pub signed_quantity: Decimal }
@@ -59,6 +60,10 @@ fn gross(p:&BTreeMap<LegId,Decimal>,e:&BTreeMap<LegId,Evidence>)->Result<Decimal
         add(sum,mul(mul(q.abs(),x.price)?,x.multiplier)?)
     })
 }
+fn valid_event_id(id:&str)->bool {
+    !id.is_empty()&&id.len()<=128&&id.bytes().all(|b|
+        b.is_ascii_alphanumeric()||b==b'_'||b==b'-'||b==b'.'||b==b':')
+}
 fn change_phase(name:&str, rows:impl IntoIterator<Item=(LegId,Decimal)>)->Option<Phase>{
     let changes:BTreeMap<_,_>=rows.into_iter().filter(|(_,q)|!q.is_zero()).collect();
     if changes.is_empty(){None}else{Some(Phase{name:name.into(),changes})}
@@ -67,6 +72,16 @@ fn change_phase(name:&str, rows:impl IntoIterator<Item=(LegId,Decimal)>)->Option
 pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
     evidence:&BTreeMap<LegId,Evidence>,now_ns:u64,max_age_ns:u64,
     max_gross:Decimal,policy:Policy,emergency_unwind:bool)->Result<Plan,BasketError>{
+    plan_with_constraints(targets,positions,evidence,now_ns,max_age_ns,max_gross,policy,
+        Decimal::ZERO,&[],emergency_unwind)
+}
+pub fn plan_with_constraints(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
+    evidence:&BTreeMap<LegId,Evidence>,now_ns:u64,max_age_ns:u64,
+    max_gross:Decimal,policy:Policy,max_leg_drift:Decimal,
+    hedge_pairs:&[(LegId,LegId)],emergency_unwind:bool)->Result<Plan,BasketError>{
+    if max_leg_drift<Decimal::ZERO||(policy!=Policy::Generic&&!hedge_pairs.is_empty()){
+        return Err(BasketError::Risk);
+    }
     if targets.is_empty()||targets.len()>64||now_ns==0||max_age_ns==0||max_gross<=Decimal::ZERO{return Err(BasketError::Evidence);}
     let mut net=BTreeMap::<LegId,Decimal>::new();
     let mut unique=BTreeSet::new();
@@ -95,22 +110,57 @@ pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
     }
     let futures:Vec<_>=net.keys().filter(|l|l.product==Product::FuturesUm).cloned().collect();
     if policy!=Policy::Generic&&futures.len()!=1{return Err(BasketError::Risk);}
+    let mut hedged=BTreeSet::new();
+    for (spot,perpetual) in hedge_pairs {
+        if spot.product!=Product::Spot||perpetual.product!=Product::FuturesUm||
+           spot.symbol!=perpetual.symbol||!net.contains_key(spot)||!net.contains_key(perpetual)||
+           !hedged.insert(spot.clone())||!hedged.insert(perpetual.clone())||
+           add(net[spot],net[perpetual])?!=Decimal::ZERO||positions[perpetual]>Decimal::ZERO {
+            return Err(BasketError::Risk);
+        }
+    }
     let mut phases=Vec::<Phase>::new();
     match policy {
         Policy::Generic=>{
             let mut reduce=Vec::new();let mut increase=Vec::new();
-            for (l,desired) in &net {
+            for (l,desired) in net.iter().filter(|(l,_)|!hedged.contains(*l)) {
                 let old=positions[l];
-                if old!=Decimal::ZERO&&(old* *desired<=Decimal::ZERO||desired.abs()<old.abs()){
-                    let to=if old* *desired<=Decimal::ZERO{Decimal::ZERO}else{*desired};
+                if old!=Decimal::ZERO&&((old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero())||desired.abs()<old.abs()){
+                    let to=if (old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero()){Decimal::ZERO}else{*desired};
                     reduce.push((l.clone(),to-old));
                 }
-                if *desired!=Decimal::ZERO&&(old* *desired<=Decimal::ZERO||desired.abs()>old.abs()){
-                    let from=if old* *desired<=Decimal::ZERO{Decimal::ZERO}else{old};
+                if *desired!=Decimal::ZERO&&((old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero())||desired.abs()>old.abs()){
+                    let from=if (old.is_sign_negative()!=desired.is_sign_negative() || desired.is_zero()){Decimal::ZERO}else{old};
                     increase.push((l.clone(),*desired-from));
                 }
             }
             if let Some(p)=change_phase("reduce_existing_exposure",reduce){phases.push(p);}
+            let mut reduce_perp=Vec::new();
+            let mut reduce_spot=Vec::new();
+            let mut acquire_spot=Vec::new();
+            let mut increase_perp=Vec::new();
+            for (spot,perpetual) in hedge_pairs {
+                if net[perpetual]>positions[perpetual] {
+                    reduce_perp.push((perpetual.clone(),net[perpetual]-positions[perpetual]));
+                }
+                if net[spot]<positions[spot] {
+                    reduce_spot.push((spot.clone(),net[spot]-positions[spot]));
+                }
+                if net[spot]>positions[spot] {
+                    acquire_spot.push((spot.clone(),net[spot]-positions[spot]));
+                }
+                if net[perpetual]<positions[perpetual] {
+                    increase_perp.push((perpetual.clone(),net[perpetual]-positions[perpetual]));
+                }
+            }
+            for (name,rows) in [
+                ("reduce_hedge_perpetual",reduce_perp),
+                ("reduce_hedge_spot",reduce_spot),
+                ("acquire_hedge_spot",acquire_spot),
+                ("increase_hedged_perpetual",increase_perp),
+            ] {
+                if let Some(p)=change_phase(name,rows){phases.push(p);}
+            }
             if let Some(p)=change_phase("increase_new_exposure",increase){phases.push(p);}
         }
         Policy::FundingCarry=>{
@@ -118,7 +168,11 @@ pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
             let perp=&futures[0];
             let spot=net.keys().find(|l|l.product==Product::Spot).ok_or(BasketError::Risk)?;
             if perp.symbol!=spot.symbol||net[spot]<Decimal::ZERO||net[perp]>Decimal::ZERO||
-              net[spot]+net[perp]!=Decimal::ZERO {return Err(BasketError::Risk);}
+              add(net[spot],net[perp])?!=Decimal::ZERO {return Err(BasketError::Risk);}
+            if !emergency_unwind &&
+               add(positions[spot],positions[perp])?.abs()>max_leg_drift {
+                return Err(BasketError::Risk);
+            }
             if let Some(p)=change_phase(if emergency_unwind{"emergency_coordinated_unwind"}else{"coordinated_spot_perpetual_required"},
                 net.iter().map(|(l,q)|(l.clone(),*q-positions[l]))){phases.push(p);}
         }
@@ -143,20 +197,20 @@ pub fn plan(targets:&[LegTarget],positions:&BTreeMap<LegId,Decimal>,
             }
             if suffixes.len()!=2{return Err(BasketError::Risk);}
             let old=positions[perp];let new=net[perp];
-            let reduce=if old!=Decimal::ZERO&&(old*new<=Decimal::ZERO||new.abs()<old.abs()){
-                Some((perp.clone(),if old*new<=Decimal::ZERO{-old}else{new-old}))
+            let reduce=if old!=Decimal::ZERO&&((old.is_sign_negative()!=new.is_sign_negative() || new.is_zero())||new.abs()<old.abs()){
+                Some((perp.clone(),if (old.is_sign_negative()!=new.is_sign_negative() || new.is_zero()){-old}else{new-old}))
             }else{None};
-            let increase=if new!=Decimal::ZERO&&(old*new<=Decimal::ZERO||new.abs()>old.abs()){
-                Some((perp.clone(),if old*new<=Decimal::ZERO{new}else{new-old}))
+            let increase=if new!=Decimal::ZERO&&((old.is_sign_negative()!=new.is_sign_negative() || new.is_zero())||new.abs()>old.abs()){
+                Some((perp.clone(),if (old.is_sign_negative()!=new.is_sign_negative() || new.is_zero()){new}else{new-old}))
             }else{None};
             let prefix=if emergency_unwind{"emergency_"}else{""};
             for (name,rows) in [
-                ("reduce_directional_risk",reduce.into_iter().collect()),
+                ("reduce_directional_risk",reduce.into_iter().collect::<Vec<_>>()),
                 ("acquire_and_confirm_protection",options.iter().filter_map(|l|{
-                    let q=net[l]-positions[l];(q>Decimal::ZERO).then(||(l.clone(),q))}).collect()),
-                ("increase_directional_risk_after_protection",increase.into_iter().collect()),
+                    let q=net[l]-positions[l];(q>Decimal::ZERO).then(||(l.clone(),q))}).collect::<Vec<_>>()),
+                ("increase_directional_risk_after_protection",increase.into_iter().collect::<Vec<_>>()),
                 ("release_protection_after_risk_reduction",options.iter().filter_map(|l|{
-                    let q=net[l]-positions[l];(q<Decimal::ZERO).then(||(l.clone(),q))}).collect()),
+                    let q=net[l]-positions[l];(q<Decimal::ZERO).then(||(l.clone(),q))}).collect::<Vec<_>>()),
             ]{
                 if let Some(p)=change_phase(&format!("{prefix}{name}"),rows){phases.push(p);}
             }
@@ -199,12 +253,12 @@ impl Checkpoint {
     }
     pub fn begin(&mut self,id:&str)->Result<(),BasketError>{
         if self.state==State::AwaitingConfirmation&&self.request_id.as_deref()==Some(id){return Ok(());}
-        if self.state!=State::Ready||id.is_empty()||id.len()>128||self.used_requests.contains(id){return Err(BasketError::State);}
+        if self.state!=State::Ready||!valid_event_id(id)||self.used_requests.contains(id)||self.events.len()>=4096{return Err(BasketError::State);}
         self.used_requests.insert(id.into());self.request_id=Some(id.into());self.fills.clear();
         self.state=State::AwaitingConfirmation;self.events.push(JournalEvent::Begin{request_id:id.into()});Ok(())
     }
     pub fn fill(&mut self,request:&str,event:&str,leg:&LegId,cumulative:Decimal)->Result<(),BasketError>{
-        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request)||event.is_empty(){return Err(BasketError::State);}
+        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request)||!valid_event_id(event)||self.events.len()>=4096{return Err(BasketError::State);}
         if let Some(previous)=self.seen_events.get(event){
             if previous==&(request.to_owned(),leg.clone(),cumulative){return Ok(());}
             return Err(BasketError::Fill);
@@ -212,7 +266,7 @@ impl Checkpoint {
         let phase=&self.plan.phases[self.phase_index];
         let expected=*phase.changes.get(leg).ok_or(BasketError::Fill)?;
         let old=self.fills.get(leg).copied().unwrap_or_default();
-        if expected.is_zero()||cumulative*expected<Decimal::ZERO||cumulative.abs()>expected.abs()||
+        if expected.is_zero()||(!cumulative.is_zero() && cumulative.is_sign_negative()!=expected.is_sign_negative())||cumulative.abs()>expected.abs()||
            cumulative.abs()<old.abs(){return Err(BasketError::Fill);}
         self.fills.insert(leg.clone(),cumulative);
         self.seen_events.insert(event.into(),(request.into(),leg.clone(),cumulative));
@@ -220,7 +274,7 @@ impl Checkpoint {
     }
     pub fn confirm(&mut self,request:&str,terminal:&BTreeMap<LegId,bool>,
         observed:BTreeMap<LegId,Decimal>)->Result<(),BasketError>{
-        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request){return Err(BasketError::State);}
+        if self.state!=State::AwaitingConfirmation||self.request_id.as_deref()!=Some(request)||self.events.len()>=4096{return Err(BasketError::State);}
         let phase=&self.plan.phases[self.phase_index];
         if terminal.keys().ne(phase.changes.keys())||terminal.values().any(|filled|!*filled)||
            phase.changes.iter().any(|(leg,q)|self.fills.get(leg)!=Some(q)){return Err(BasketError::Fill);}
@@ -235,7 +289,7 @@ impl Checkpoint {
         self.events.push(JournalEvent::Confirm{request_id:request.into(),positions:observed});Ok(())
     }
     pub fn freeze(&mut self,reason:&str)->Result<(),BasketError>{
-        if self.state==State::Completed||reason.is_empty()||reason.len()>512{return Err(BasketError::State);}
+        if self.state==State::Completed||reason.is_empty()||reason.len()>512||self.events.len()>=4096{return Err(BasketError::State);}
         if self.state==State::Frozen{return Ok(());}
         self.state=State::Frozen;self.reason=Some(reason.into());
         self.events.push(JournalEvent::Freeze{reason:reason.into()});Ok(())
@@ -284,6 +338,24 @@ mod tests{
         assert_eq!(c.state,State::Completed);
         let recovered=Checkpoint::replay(p,positions,&c.events).unwrap();
         assert_eq!(recovered,c);
+    }
+    #[test] fn declared_hedge_acquires_spot_before_increasing_perpetual(){
+        let s=leg(Product::Spot,"ETHUSDT");
+        let f=leg(Product::FuturesUm,"ETHUSDT");
+        let targets=vec![
+            LegTarget{member_id:"spot".into(),leg:s.clone(),signed_quantity:d(1)},
+            LegTarget{member_id:"perp".into(),leg:f.clone(),signed_quantity:d(-1)},
+        ];
+        let start=[(s.clone(),d(0)),(f.clone(),d(0))].into();
+        let e=[(s.clone(),Evidence{price:d(100),increment:d(1),
+            multiplier:d(1),timestamp_ns:10}),
+            (f.clone(),Evidence{price:d(100),increment:d(1),
+            multiplier:d(1),timestamp_ns:10})].into();
+        let plan=plan_with_constraints(&targets,&start,&e,11,5,d(200),
+            Policy::Generic,d(0),&[(s,f)],false).unwrap();
+        assert_eq!(plan.phases.len(),2);
+        assert_eq!(plan.phases[0].name,"acquire_hedge_spot");
+        assert_eq!(plan.phases[1].name,"increase_hedged_perpetual");
     }
     #[test] fn incomplete_fill_does_not_advance(){
         let s=leg(Product::Spot,"ETHUSDT");

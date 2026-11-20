@@ -4,7 +4,13 @@
 //! aggregate to a risk limit, and sizes the remaining delta toward zero so a
 //! paper fill cannot overshoot the target. It does not submit exchange orders.
 pub mod basket;
+pub mod risk;
+pub mod order_evidence;
+pub mod journal;
+pub mod settlement;
+pub mod history;
 pub mod coordinator;
+pub mod coordinator_snapshot;
 
 use rust_decimal::Decimal;
 use thiserror::Error;

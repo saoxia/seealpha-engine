@@ -1,5 +1,9 @@
 //! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
 mod records;
+mod basket_journal;
+mod coordinator_state;
+pub use coordinator_state::StoredCoordinatorState;
+pub use basket_journal::StoredBasketJournal;
 mod parity;
 mod funding;
 mod verified_fills;
@@ -12,6 +16,22 @@ use std::path::Path;
 use thiserror::Error;
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS portfolio_coordinator_states (
+ tenant_id TEXT NOT NULL,
+ account_id TEXT NOT NULL,
+ instrument TEXT NOT NULL,
+ revision TEXT NOT NULL,
+ body_json TEXT NOT NULL,
+ PRIMARY KEY (tenant_id,account_id,instrument)
+);
+CREATE TABLE IF NOT EXISTS basket_journals (
+ tenant_id TEXT NOT NULL,
+ account_id TEXT NOT NULL,
+ basket_id TEXT NOT NULL,
+ revision TEXT NOT NULL,
+ body_json TEXT NOT NULL,
+ PRIMARY KEY (tenant_id, account_id, basket_id)
+);
 CREATE TABLE IF NOT EXISTS tenants (
     tenant_id TEXT PRIMARY KEY,
     purpose TEXT NOT NULL,
@@ -296,7 +316,7 @@ impl Ledger {
             Connection::open(path).map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(
-                "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;",
+                "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;",
             )
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
