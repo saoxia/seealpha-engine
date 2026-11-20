@@ -302,7 +302,7 @@ impl Ledger {
             Connection::open(path).map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(
-                "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;",
+                "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;",
             )
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
