@@ -263,6 +263,22 @@ impl Coordinator {
         if cumulative == self.flight.as_ref().expect("flight").signed_requested.abs() { self.flight = None; }
         Ok(fills)
     }
+    /// A rejected cancel leaves the original order in flight. Never replace it
+    /// on the same bar or infer that it reached a terminal state.
+    pub fn cancel_denied(&mut self, id:&str, at:Option<u64>)->Result<(),CoordinatorError>{
+        self.ensure_active()?;
+        match self.flight.as_mut() {
+            Some(f) if f.id==id=>{
+                f.cancel_requested=false;
+                self.denied_at=at;
+                Ok(())
+            }
+            _=>{
+                self.freeze("cancel denial for unrecognized venue order");
+                Err(CoordinatorError::Evidence)
+            }
+        }
+    }
     pub fn confirm_terminal(&mut self, id: &str, canceled: bool, denied_at: Option<u64>) -> Result<(), CoordinatorError> {
         self.ensure_active()?;
         if self.flight.as_ref().is_none_or(|f| f.id != id) { self.freeze("unexpected terminal order"); return Err(CoordinatorError::Evidence); }
