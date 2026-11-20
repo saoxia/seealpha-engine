@@ -7,6 +7,7 @@ use seealpha_ledger::CatalogBar;
 use seealpha_market::{BinanceSource, Product, check_symbol, interval_ms};
 use seealpha_market::options::{OptionsSource,parse_option_symbol};
 use seealpha_market::funding::FundingSource;
+use seealpha_market::exercise::{ExerciseSource,as_evidence};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -138,9 +139,13 @@ impl Runtime {
         let product=payload.get("product").and_then(Value::as_str).unwrap_or("futures_um");
         let symbol=field(payload,"symbol")?;
         let kind=payload.get("data_kind").and_then(Value::as_str).unwrap_or("bars");
-        if !valid_symbol(product,symbol) || !matches!(kind,"bars"|"funding")
-            || (product=="options" && parse_option_symbol(symbol).is_err())
-            || (kind=="funding" && product!="futures_um") {
+        let exercise=kind=="exercise";
+        if !matches!(kind,"bars"|"funding"|"exercise") ||
+            (exercise && (product!="options" ||
+                !(symbol.ends_with("USDT")&&check_symbol(symbol).is_ok()))) ||
+            (!exercise && !valid_symbol(product,symbol)) ||
+            (!exercise && product=="options" && parse_option_symbol(symbol).is_err()) ||
+            (kind=="funding" && product!="futures_um") {
             return Err(bad("行情产品、合约或历史数据类型不支持。"));
         }
         let start=payload.get("start_ms").and_then(Value::as_i64).ok_or_else(||bad("开始时间无效。"))?;
@@ -150,6 +155,10 @@ impl Runtime {
         if kind=="funding" {
             if end.saturating_sub(start)>365*86_400_000 {
                 return Err(bad("单次资金费读取超过一年。"));
+            }
+        } else if exercise {
+            if end.saturating_sub(start)>90*86_400_000 {
+                return Err(bad("单次公开行权事件读取超过 90 天。"));
             }
         } else {
             let step=interval_ms(interval).map_err(|_|bad("K 线周期无效。"))?;
@@ -206,6 +215,19 @@ impl Runtime {
         let begin=payload["start_ms"].as_i64().ok_or_else(||bad("开始时间无效。"))?;
         let end=payload["end_ms"].as_i64().ok_or_else(||bad("结束时间无效。"))?;
         let kind=payload.get("data_kind").and_then(Value::as_str).unwrap_or("bars");
+        if kind=="exercise" {
+            let source=ExerciseSource::new()
+                .map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+            let events=source.history(symbol,begin,end).await
+                .map_err(|e|RuntimeError::Conflict(format!("期权公开行权记录获取失败：{e}")))?;
+            let rows=events.iter().map(as_evidence).collect::<Vec<_>>();
+            self.ledger.import_public_exercises(tenant_id,&rows).map_err(map_ledger)?;
+            return Ok(json!({"action":"backfill","data_kind":"exercise",
+                "product":"options","underlying":symbol,
+                "start_ms":begin,"end_ms":end,"observations":rows.len(),
+                "account_exercise_confirmed":false,"exchange_orders":0,
+                "completeness":"single_public_page_only"}));
+        }
         if kind=="funding" {
             let source=FundingSource::new()
                 .map_err(|e|RuntimeError::Conflict(e.to_string()))?;
