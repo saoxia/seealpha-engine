@@ -285,6 +285,23 @@ impl PairJournal {
         let count: i64 = self.db.query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
         Ok(u64::try_from(count)?)
     }
+    /// Snapshot durable missing trade-ID intervals. The journal must be opened
+    /// with its exclusive writer lock; never make a second live writer.
+    pub fn missing_trade_ids(&self) -> Result<Vec<(i64, i64)>> {
+        let mut stmt=self.db.prepare(
+            "SELECT first_id,last_id FROM gaps ORDER BY first_id,last_id"
+        )?;
+        let rows=stmt.query_map([], |row| Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?)))?;
+        let mut result=Vec::new();
+        for row in rows {
+            let (first,last)=row?;
+            if first<0 || first>last {return Err("invalid persisted trade-ID gap".into());}
+            result.push((first,last));
+            if result.len()>100_000 {return Err("too many trade-ID gaps".into());}
+        }
+        Ok(result)
+    }
+
     /// Validate a page before any insert. A conflicting id inside the page
     /// latches the journal and leaves the trade table unchanged.
     pub fn ingest_page(&mut self, rows: &[Value], now_ms: i64) -> Result<usize> {
