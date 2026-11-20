@@ -249,3 +249,30 @@ fn partial_fill_with_unchanged_account_snapshot_is_not_accepted() {
     assert_eq!(frozen.state, State::Frozen);
     assert!(frozen.reason.as_deref().unwrap().contains("positions disagree"));
 }
+
+#[test]
+fn completed_order_id_is_never_reused_after_snapshot_restore() {
+    let mut c = Coordinator::new(d(1), d(10)).unwrap();
+    c.register("buyer").unwrap();
+    c.accept_order(virtual_order("virtual", "buyer", Side::Buy, 1), None).unwrap();
+    c.reconcile(Some(bar(10)), d(0), "request-once").unwrap();
+    let fills = c.apply_venue_fill(
+        "request-once", "execution-1", d(1), d(100), Some(bar(11)),
+    ).unwrap();
+    assert_eq!(fills.len(), 1);
+    assert!(c.flight.is_none());
+    c.report_target("buyer", d(2), false).unwrap();
+    let raw = encode_coordinator("tenant:account:ETHUSDT", &c).unwrap();
+    let (mut restored, _) = decode_coordinator("tenant:account:ETHUSDT", &raw.json).unwrap();
+    assert_eq!(
+        restored.reconcile(Some(bar(12)), d(1), "request-once").unwrap_err(),
+        CoordinatorError::Duplicate,
+    );
+    assert!(restored.flight.is_none());
+    assert_eq!(
+        restored.reconcile(Some(bar(12)), d(1), "request-two").unwrap().1,
+        Some(Command::Submit {
+            id: "request-two".into(), signed_quantity: d(1),
+        }),
+    );
+}
