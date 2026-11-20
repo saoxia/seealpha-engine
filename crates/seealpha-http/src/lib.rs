@@ -43,6 +43,10 @@ pub fn router(state: AppState) -> Router {
             get(worker_settings).put(update_worker_settings),
         )
         .route(
+            "/tenants/{tenant_id}/strategy-packages/inspect",
+            post(inspect_strategy),
+        )
+        .route(
             "/tenants/{tenant_id}/strategy-loads",
             post(strategy_load).get(list_strategies),
         )
@@ -249,6 +253,21 @@ async fn update_worker_settings(
     let timeout=body["timeout_seconds"].as_i64().ok_or_else(||AppError::bad_request("Worker 超时无效。"))?;
     Ok(Json(state.runtime.ledger.update_worker_settings(workers,timeout)
         .map_err(|e|AppError::bad_request(e.to_string()))?))
+}
+
+async fn inspect_strategy(
+    State(state):State<AppState>,Path(tenant_id):Path<String>,
+    Json(body):Json<Value>,
+)->Result<Json<Value>,AppError>{
+    let encoded=body["archive"].as_str()
+        .ok_or_else(||AppError::bad_request("策略包无效。"))?;
+    if encoded.len()>400_000 {return Err(AppError::bad_request("策略包超出范围。"));}
+    let archive=base64::engine::general_purpose::STANDARD.decode(encoded)
+        .map_err(|_|AppError::bad_request("策略包无效。"))?;
+    let params=body.get("parameters").cloned().unwrap_or_else(||json!({}));
+    Ok(Json(state.runtime.inspect_strategy_package(
+        &tenant_id,&archive,&params
+    ).map_err(AppError::from)?))
 }
 
 async fn strategy_load(
