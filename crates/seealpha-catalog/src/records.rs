@@ -154,7 +154,8 @@ fn validated_rows(
     let mut last = None;
     let mut ids = HashSet::new();
     for batch in batches {
-        for (field, array) in batch.schema().fields().iter().zip(batch.columns()) {
+        let batch_schema = batch.schema();
+        for (field, array) in batch_schema.fields().iter().zip(batch.columns()) {
             if !field.is_nullable() && array.null_count() > 0 {
                 return Err(CatalogError::Invalid(format!(
                     "Nautilus 非空字段 {} 含有 null。", field.name(),
