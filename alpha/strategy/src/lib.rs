@@ -123,7 +123,9 @@ fn verify_central_directory_names(bytes: &[u8]) -> Result<(), StrategyError> {
     }
     let directory_size = uint32(bytes, eocd + 12).ok_or_else(invalid_archive)?;
     let declared_offset = uint32(bytes, eocd + 16).ok_or_else(invalid_archive)?;
-    let mut cursor = eocd.checked_sub(directory_size).ok_or_else(invalid_archive)?;
+    let mut cursor = eocd
+        .checked_sub(directory_size)
+        .ok_or_else(invalid_archive)?;
     // A valid self-extracting prefix is permitted; the central directory
     // must still occupy exactly the declared length and contain each name.
     if cursor < declared_offset {
@@ -138,8 +140,12 @@ fn verify_central_directory_names(bytes: &[u8]) -> Result<(), StrategyError> {
         let extra_size = uint16(bytes, cursor + 30).ok_or_else(invalid_archive)?;
         let comment_size = uint16(bytes, cursor + 32).ok_or_else(invalid_archive)?;
         let name_start = cursor.checked_add(46).ok_or_else(invalid_archive)?;
-        let name_end = name_start.checked_add(name_size).ok_or_else(invalid_archive)?;
-        let name = bytes.get(name_start..name_end).ok_or_else(invalid_archive)?;
+        let name_end = name_start
+            .checked_add(name_size)
+            .ok_or_else(invalid_archive)?;
+        let name = bytes
+            .get(name_start..name_end)
+            .ok_or_else(invalid_archive)?;
         if !seen.insert(name.to_vec()) {
             return Err(StrategyError::Package("策略包包含重复的路径。".into()));
         }
