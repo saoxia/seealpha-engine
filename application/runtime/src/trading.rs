@@ -475,7 +475,12 @@ impl Runtime {
             }
             if stored.to_string() != existing {
                 self.ledger
-                    .append_order_request_view(tenant_id, account_id, request_id, &stored.to_string())
+                    .append_order_request_view(
+                        tenant_id,
+                        account_id,
+                        request_id,
+                        &stored.to_string(),
+                    )
                     .map_err(map_ledger)?;
             }
         }

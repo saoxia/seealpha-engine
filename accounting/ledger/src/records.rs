@@ -76,7 +76,9 @@ impl Ledger {
             || request_id.is_empty()
             || body.len() > 1024 * 1024
         {
-            return Err(LedgerError::Conflict("invalid request observation scope".into()));
+            return Err(LedgerError::Conflict(
+                "invalid request observation scope".into(),
+            ));
         }
         let next: serde_json::Value = serde_json::from_str(body)
             .map_err(|_| LedgerError::Conflict("invalid request observation JSON".into()))?;
@@ -91,7 +93,10 @@ impl Ledger {
         let original: serde_json::Value = serde_json::from_str(&raw)
             .map_err(|_| LedgerError::Conflict("corrupt immutable request".into()))?;
         if next.get("replay").is_some()
-            || !matches!(next["response"]["status"].as_str(), Some("unknown" | "completed"))
+            || !matches!(
+                next["response"]["status"].as_str(),
+                Some("unknown" | "completed")
+            )
             || [
                 "fingerprint",
                 "symbol",
@@ -554,15 +559,14 @@ mod safety_tests {
             "response":{"request_id":"r","client_order_id":"c","status":"unknown"},
             "ledger_synced":false
         });
-        db.save_order_request("t", "a", "r", &base.to_string()).unwrap();
+        db.save_order_request("t", "a", "r", &base.to_string())
+            .unwrap();
         let mut observed = base.clone();
         observed["response"]["status"] = serde_json::json!("completed");
         db.append_order_request_view("t", "a", "r", &observed.to_string())
             .unwrap();
         assert_eq!(
-            db.get_order_request("t", "a", "r")
-                .unwrap()
-                .unwrap(),
+            db.get_order_request("t", "a", "r").unwrap().unwrap(),
             observed.to_string()
         );
         assert!(

@@ -1697,12 +1697,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
-            carry["detail"]
-                .as_str()
-                .unwrap_or("")
-                .contains("手续费")
-        );
+        assert!(carry["detail"].as_str().unwrap_or("").contains("手续费"));
         let (status, _, latest) = call(
             &app,
             Request::builder()
@@ -1727,12 +1722,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
-            option["detail"]
-                .as_str()
-                .unwrap_or("")
-                .contains("期权合约")
-        );
+        assert!(option["detail"].as_str().unwrap_or("").contains("期权合约"));
         let (status, _, latest_option) = call(
             &app,
             Request::builder()
