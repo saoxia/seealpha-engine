@@ -147,7 +147,7 @@ fn invalid_modify_is_atomic_and_valid_stop_amend_rearms() {
     };
     c.accept_order(stop, Some(10)).unwrap();
     assert!(matches!(
-        c.virtual_order("stop").unwrap().kind,
+        &c.virtual_order("stop").unwrap().kind,
         VirtualKind::StopLimit { triggered: false, .. }
     ));
     assert_eq!(
