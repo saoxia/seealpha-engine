@@ -198,6 +198,9 @@ impl PairJournal {
         retained: &std::collections::BTreeSet<String>,
         confirmed_ms: i64,
     ) -> Result<usize> {
+        if self.unresolved_gap_count()? > 0 || self.conflicted()? {
+            return Err("unresolved raw trade gaps/conflicts prohibit calculation".into());
+        }
         self.journal_lock.lock_exclusive()?;
         let result =
             crate::calc::process_pending(&mut self.db, retained, confirmed_ms, &self.base_level);
@@ -705,6 +708,8 @@ mod tests {
             assert_eq!(journal.last_trade_id().unwrap(), Some(103));
             journal.write_trade(&mk(101), 1700000001000).unwrap();
             assert_eq!(journal.unresolved_gap_count().unwrap(), 1);
+            let retained = ["1s".to_owned()].into_iter().collect();
+            assert!(journal.calculate(&retained, 1700000005000).is_err());
         }
         {
             let mut journal = PairJournal::open(&path, "ETHUSDT", "tick").unwrap();
@@ -712,6 +717,8 @@ mod tests {
             journal.write_trade(&mk(102), 1700000001000).unwrap();
             assert_eq!(journal.unresolved_gap_count().unwrap(), 0);
             assert_eq!(journal.trade_count().unwrap(), 4);
+            let retained = ["1s".to_owned()].into_iter().collect();
+            assert!(journal.calculate(&retained, 1700000005000).is_ok());
             assert_eq!(
                 journal.write_trade(&mk(102), 1700000001000).unwrap(),
                 WriteReceipt::Duplicate
