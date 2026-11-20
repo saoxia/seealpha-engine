@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from core.market.instruments import bar_type_for, instrument_id_for
 from core.trading_contracts import SubmitOrderValues
 from engine.api.app import SpotCancelValues, SpotCommandBody, SpotSubmitValues, SpotTradingStateBody
-from engine.market_data.repair.convert_binance_trades import iter_trade_archive
+from engine.market_data.calculation.feature_source import iter_trade_archive
 from engine.market_data.repair.models import DataRequest
 from engine.market_data.repair.pair_deletion import pair_deletion_roots
 from engine.market_data.repair.sync_binance_batch import archive_path, plan_daily_archives
