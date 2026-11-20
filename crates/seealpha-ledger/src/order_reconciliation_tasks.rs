@@ -217,6 +217,49 @@ mod tests {
         assert!(db.order_recovery_page("t",0,10).unwrap()[0].reconciliation_only);
     }
     #[test]
+    fn retry_schedule_and_manual_state_survive_sqlite_restart() {
+        let path=std::env::temp_dir().join(format!(
+            "seealpha-reconcile-task-{}-{:?}.sqlite",
+            std::process::id(),std::thread::current().id(),
+        ));
+        let _=std::fs::remove_file(&path);
+        {
+            let db=Ledger::open(&path).unwrap();
+            seed(&db);
+            db.enqueue_order_reconciliations("t",100).unwrap();
+            let claimed=db.claim_order_reconciliation(
+                "t","worker1",100,1000).unwrap().unwrap();
+            assert_eq!(claimed.attempts,1);
+            db.finish_order_reconciliation("t","a","request","worker1",
+                200,"retry",Some("GET_TIMEOUT")).unwrap();
+        }
+        {
+            let db=Ledger::open(&path).unwrap();
+            let persisted=db.order_reconciliation_task(
+                "t","a","request").unwrap().unwrap();
+            assert_eq!(persisted.state,"retry");
+            assert_eq!(persisted.last_error_code.as_deref(),Some("GET_TIMEOUT"));
+            assert!(db.claim_order_reconciliation(
+                "t","worker2",201,1000).unwrap().is_none());
+            let next=db.claim_order_reconciliation(
+                "t","worker2",20_201,1000).unwrap().unwrap();
+            assert_eq!(next.attempts,2);
+            db.finish_order_reconciliation("t","a","request","worker2",
+                20_202,"manual",Some("MISMATCH")).unwrap();
+        }
+        {
+            let db=Ledger::open(&path).unwrap();
+            assert_eq!(db.enqueue_order_reconciliations("t",30_000).unwrap(),0);
+            assert!(db.claim_order_reconciliation(
+                "t","worker3",100_000,1000).unwrap().is_none());
+            assert_eq!(db.order_reconciliation_task(
+                "t","a","request").unwrap().unwrap().state,"manual");
+            assert_eq!(db.order_recovery_page("t",0,10).unwrap().len(),1);
+        }
+        let _=std::fs::remove_file(path);
+    }
+
+    #[test]
     fn lease_expiry_is_read_recovery_only_and_manual_stops_claims(){
         let db=Ledger::open(std::path::Path::new(":memory:")).unwrap();
         seed(&db);
