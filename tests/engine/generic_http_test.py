@@ -20,7 +20,9 @@ def test_authorized_multi_asset_http_loads_catalog_and_reconciles_native_fills(t
     bars = _frames(contracts)
     catalog = ParquetDataCatalog(tmp_path / "data" / "catalog")
     catalog.write_data(list(contracts.values()))
-    catalog.write_data([bar for frame in bars for bar in frame.values()])
+    # Native Catalog writes one BarType/InstrumentId per batch.
+    for leg in contracts:
+        catalog.write_data([frame[leg] for frame in bars])
     runtime = EngineRuntime(tmp_path / "state", tmp_path)
     runtime.ensure_tenant("dev", "development")
     for leg in contracts:
