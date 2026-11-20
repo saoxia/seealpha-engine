@@ -109,6 +109,23 @@ impl Ledger {
             }
             return Ok(IntentStart::ReconcileOnly);
         }
+        // A different request ID cannot mint a second first-send permit for
+        // the same NEW client order ID, even with a different fingerprint.
+        if intent["action"] == "NEW" {
+            let mut stmt = tx.prepare(
+                "SELECT intent_json FROM order_intents
+                 WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND client_order_id=?4",
+            ).map_err(sql)?;
+            let rows = stmt.query_map(params![tenant,account,environment,client_order_id],
+                |r|r.get::<_,String>(0)).map_err(sql)?;
+            for row in rows {
+                let stored: Value = serde_json::from_str(&row.map_err(sql)?)
+                    .map_err(|_|conflict("stored order intent is corrupt"))?;
+                if stored["action"] == "NEW" {
+                    return Err(conflict("client order ID already belongs to another NEW intent"));
+                }
+            }
+        }
         // A historical Python request with the same identity cannot be
         // replaced or retroactively certified as a pre-send registration.
         let occupied: bool = tx.query_row(
@@ -169,25 +186,31 @@ impl Ledger {
         }
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let has_new_intent: bool = {
+        let intended_quantity: Option<Decimal> = {
             let mut stmt = tx.prepare(
                 "SELECT intent_json FROM order_intents WHERE tenant_id=?1 AND account_id=?2
                  AND environment=?3 AND client_order_id=?4",
             ).map_err(sql)?;
             let rows = stmt.query_map(params![tenant,account,environment,client_order_id],
                 |row| row.get::<_, String>(0)).map_err(sql)?;
-            let mut found = false;
+            let mut quantity = None;
             for row in rows {
                 let raw = row.map_err(sql)?;
                 let value: Value = serde_json::from_str(&raw)
                     .map_err(|_| conflict("stored order intent is corrupt"))?;
-                if value["action"] == "NEW" { found = true; }
+                if value["action"] == "NEW" {
+                    let next = value["quantity"].as_str()
+                        .and_then(|v|v.parse::<Decimal>().ok())
+                        .ok_or_else(||conflict("stored NEW intent has invalid quantity"))?;
+                    if quantity.replace(next).is_some() {
+                        return Err(conflict("multiple NEW intents bound to one client order ID"));
+                    }
+                }
             }
-            found
+            quantity
         };
-        if !has_new_intent {
-            return Err(conflict("authoritative order observation has no prior NEW intent"));
-        }
+        let intended_quantity = intended_quantity
+            .ok_or_else(||conflict("authoritative order observation has no prior NEW intent"))?;
         let prior: Option<String> = tx.query_row(
             "SELECT evidence_json FROM order_observations WHERE tenant_id=?1 AND account_id=?2
              AND environment=?3 AND client_order_id=?4 AND observation_id=?5",
@@ -220,9 +243,14 @@ impl Ledger {
             let trade_ids = evidence["trade_ids"].as_array()
                 .filter(|ids| !ids.is_empty() && ids.len() < 1000)
                 .ok_or_else(|| conflict("fill status requires verified trade identities"))?;
+            let mut seen = std::collections::HashSet::new();
+            let mut cumulative = Decimal::ZERO;
             for id in trade_ids {
                 let id = id.as_str().filter(|v| identifier(v))
                     .ok_or_else(|| conflict("invalid trade identity"))?;
+                if !seen.insert(id) {
+                    return Err(conflict("duplicate trade identity in order observation"));
+                }
                 let raw: Option<String> = tx.query_row(
                     "SELECT fill_json FROM fills WHERE tenant_id=?1 AND account_id=?2
                      AND environment=?3 AND fill_id=?4",
@@ -235,15 +263,23 @@ impl Ledger {
                 if fill["trade_id"].as_str() != Some(id)
                     || fill["venue_order_id"].as_str() != Some(order_id)
                     || fill["source"] != "signed_exchange_user_trades"
-                    || fill["quantity"].as_str()
-                        .and_then(|v| v.parse::<Decimal>().ok())
-                        .is_none_or(|n| n <= Decimal::ZERO)
                     || fill["price"].as_str()
                         .and_then(|v| v.parse::<Decimal>().ok())
                         .is_none_or(|n| n <= Decimal::ZERO)
                 {
                     return Err(conflict("trade evidence not verified for this order"));
                 }
+                let qty = fill["quantity"].as_str()
+                    .and_then(|v|v.parse::<Decimal>().ok())
+                    .filter(|q|*q > Decimal::ZERO)
+                    .ok_or_else(||conflict("trade has no positive Decimal quantity"))?;
+                cumulative = cumulative.checked_add(qty)
+                    .ok_or_else(||conflict("cumulative fill quantity overflow"))?;
+            }
+            if (status == "FILLED" && cumulative != intended_quantity)
+                || (status == "PARTIALLY_FILLED"
+                    && (cumulative <= Decimal::ZERO || cumulative >= intended_quantity)) {
+                return Err(conflict("order status conflicts with total verified fill quantity"));
             }
         }
         tx.execute(
@@ -296,6 +332,8 @@ mod tests {
         assert!(ledger.request("other","a","req1").unwrap().is_none());
         assert!(ledger.preregister_order_intent(
             "t","a","sandbox","req1","cl1",&"a".repeat(64),&new_intent()).is_err());
+        assert!(ledger.preregister_order_intent(
+            "t","a","production","different-request","cl1",&"c".repeat(64),&new_intent()).is_err());
         let mut imprecise=new_intent();
         imprecise["price"]=json!(1024.00000001);
         assert!(ledger.preregister_order_intent("t","a","production","r2","cl1",
