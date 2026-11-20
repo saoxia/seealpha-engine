@@ -1697,6 +1697,7 @@ version = "0.1.0"
 dependencies = [
  "rusqlite",
  "rust_decimal",
+ "serde_json",
  "thiserror",
 ]
 
@@ -1744,6 +1745,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "rust_decimal",
+ "seealpha-binance-market-data-source",
  "seealpha-backtest",
  "seealpha-ledger",
  "seealpha-market",
