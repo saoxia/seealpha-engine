@@ -29,12 +29,14 @@ pub fn parse_funding_rows(
         let time=row["fundingTime"].as_i64().ok_or(MarketError::Time)?;
         let rate=row["fundingRate"].as_str().ok_or(MarketError::Decimal)?;
         let mark=row["markPrice"].as_str().ok_or(MarketError::Decimal)?;
-        let rate_type=row["rateType"].as_str().unwrap_or("Regular");
+        // Older Binance fundingRate rows may not carry an event class; do not
+        // infer a regular eight-hour settlement from missing metadata.
+        let rate_type=row["rateType"].as_str().unwrap_or("Unknown");
         let rate=rate.parse::<Decimal>().map_err(|_|MarketError::Decimal)?;
         let mark=mark.parse::<Decimal>().map_err(|_|MarketError::Decimal)?;
         if symbol!=requested_symbol || !(start..end).contains(&time) ||
             last.is_some_and(|p|time<=p) ||
-            mark<=Decimal::ZERO || !matches!(rate_type,"Regular"|"Special") {
+            mark<=Decimal::ZERO || !matches!(rate_type,"Regular"|"Special"|"Unknown") {
             return Err(MarketError::Payload);
         }
         result.push(FundingObservation{symbol:symbol.to_owned(),funding_time_ms:time,
@@ -179,6 +181,10 @@ mod tests{
         let rows=parse_funding_rows(&raw,"BTCUSDT",10,30,None).unwrap();
         assert_eq!(rows.len(),2);
         assert_eq!(rows[0].funding_rate,"-0.0002");
+        let no_type = json!([{"symbol":"BTCUSDT","fundingTime":22,
+            "fundingRate":"0.0001","markPrice":"31000"}]);
+        assert_eq!(parse_funding_rows(&no_type,"BTCUSDT",10,30,None)
+            .unwrap()[0].rate_type,"Unknown");
         assert!(parse_funding_rows(&raw,"BTCUSDT",10,30,Some(11)).is_err());
     }
 
