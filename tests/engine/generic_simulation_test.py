@@ -63,7 +63,7 @@ def _load(source=_SOURCE):
 def _perp():
     original = TestInstrumentProvider.ethusdt_perp_binance()
     definition = CryptoPerpetual.to_dict(original)
-    definition["id"] = "BTCUSDT.BINANCE"
+    definition["id"] = "BTCUSDT-PERP.BINANCE"
     definition["raw_symbol"] = "BTCUSDT"
     definition["base_currency"] = "BTC"
     return CryptoPerpetual.from_dict(definition)
