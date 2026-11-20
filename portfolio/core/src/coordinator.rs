@@ -3,8 +3,8 @@
 use crate::{
     MemberTarget, PortfolioError, execution_delta, net_signed_quantity, quantize_toward_zero,
 };
-use rust_decimal::prelude::Signed;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::Signed;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
