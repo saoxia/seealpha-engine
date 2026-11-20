@@ -66,3 +66,26 @@ The existing Python tests, native Rust converter tests and Docker synthetic chec
 ## Next required code
 
 Prioritize a version-pinned NautilusTrader native-API gap audit, shared Python-versus-Rust fixture corpus, and data-source-driven native producer/read-only access integration. Then migrate portfolio, strategy, backtest, trading and API, preserving exact decimal/ledger semantics. Complete the standalone native Docker build and Platform smoke suite before requesting final review.
+
+## Binance source manifest Rust candidate (2026-11-20)
+
+A dependency-pinned native source kernel now lives in
+`engine/market_data/sources/binance_shared/rust/`. It provides **offline**
+manifest-v1 parsing and validation for USD-M perpetual, Spot, and Options;
+canonical symbol rules (including option expiry calendar and positive strikes);
+disabled/duplicate-policy rejection; deterministic cold-start socket capacity
+(128 for perpetual/spot; 64 for options); and a pure start/stop/keep planner.
+It caps input manifests at 5 MiB and has read-only inspection CLI and Rust unit tests.
+
+**Not a cutover.** The live source manager, Binance sockets, queues,
+journals, aggregation, option recovery, history, quality checks, Catalog,
+access and production process supervisor still run through Python.
+The native kernel is intentionally not invoked by the active Engine until
+equivalent fixture/contract tests and storage/recovery acceptance exist.
+No speed, memory or feature-parity claim is made from this candidate alone.
+
+Next: add Python-vs-Rust fixture corpus; move the event transport and
+backpressure/fail-closed mechanics per product into native workers; preserve
+SQLite/Parquet/Arrow, exact timestamps, source integrity, locks and checkpoints;
+then gate the process switch with fault-injection tests, sustained ingestion,
+RSS/CPU comparisons and the full Engine/Platform suite.
