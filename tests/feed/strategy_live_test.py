@@ -106,7 +106,7 @@ def test_collector_journal_to_strategy_view_and_disconnect_invalidates(tmp_path,
         root = manager.subscriptions.root(policy)
         now = _journal(root)
         _write_status(root / "status.json")
-        _write_status(root / "calculation" / "status.json", calculation=True)
+        _write_status(root / "calculation" / "status.json")
         bridge.poll()
         assert bridge.status()["requirements"][0]["data_ready"] is True
         snapshot = bridge.view(
