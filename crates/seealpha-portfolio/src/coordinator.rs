@@ -111,7 +111,7 @@ impl Coordinator {
             VirtualKind::StopLimit { trigger, price, .. } if *trigger > Decimal::ZERO && *price > Decimal::ZERO => (),
             _ => return Err(CoordinatorError::Invalid),
         }
-        if !matches!(order.kind, VirtualKind::Market) { order.armed_at = now; }
+        if !matches!(&order.kind, VirtualKind::Market) { order.armed_at = now; }
         self.orders.insert(order.id.clone(), order); Ok(())
     }
     pub fn modify(&mut self, id: &str, quantity: Option<Decimal>, kind: Option<VirtualKind>) -> Result<(), CoordinatorError> {
@@ -148,7 +148,7 @@ impl Coordinator {
     }
     fn actionable(order: &mut VirtualOrder, bar: Option<Bar>) -> bool {
         if order.leaves() <= Decimal::ZERO { return false; }
-        if matches!(order.kind, VirtualKind::Market) { return true; }
+        if matches!(&order.kind, VirtualKind::Market) { return true; }
         let Some(b) = bar else { return false; };
         let Some(armed) = order.armed_at else { order.armed_at = Some(b.time); return false; };
         if b.time <= armed { return false; }
