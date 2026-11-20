@@ -618,10 +618,27 @@ async fn import_bars(
     }
     seealpha_market::validate_bars(&canonical,step)
         .map_err(|e|AppError::bad_request(e.to_string()))?;
-    let count=state.runtime.ledger.import_verified_catalog_bars(
-        &tenant_id,product,symbol,interval,&evidence
-    ).map_err(|e|AppError::bad_request(e.to_string()))?;
-    Ok(Json(json!({"imported":count,"verified":true,"exchange_orders":0})))
+    // Parquet is the established Python Pipeline storage contract.
+    // A mounted Catalog is authoritative; never silently write a separate
+    // SQLite copy that backtests cannot see.
+    let native=state.runtime.market_data_backend().map_err(AppError::from)?
+        =="nautilus_v2_parquet";
+    // Python derives the precision from authoritative Instrument metadata.
+    // The Rust importer refuses to invent it for a native Parquet publication.
+    if native && (body.get("price_precision").is_none() ||
+        body.get("size_precision").is_none()) {
+        return Err(AppError::bad_request(
+            "写入 Nautilus Parquet 必须传入经 Instrument 验证的精度。"));
+    }
+    let price_precision=body["price_precision"].as_u64()
+        .and_then(|x|u32::try_from(x).ok()).unwrap_or(8);
+    let size_precision=body["size_precision"].as_u64()
+        .and_then(|x|u32::try_from(x).ok()).unwrap_or(8);
+    let imported=state.runtime.commit_market_bars(
+        &tenant_id,product,symbol,interval,&evidence,
+        price_precision,size_precision
+    ).map_err(AppError::from)?;
+    Ok(Json(imported))
 }
 
 async fn run_backtest(

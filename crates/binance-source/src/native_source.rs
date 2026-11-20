@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
+use seealpha_market::clock::ServerClock;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -50,26 +51,30 @@ struct Status {
     trade_connected: bool,
     mark_connected: bool,
     last_trade_ms: Option<i64>,
+    confirmed_ms: Option<i64>,
+    clock_valid_until_ms: i64,
     gap_count: u64,
     last_error: Option<String>,
 }
 fn write_status(journal: &PairJournal, state: &Status, product: Product) -> Result<()> {
     let now = stamp_ms()?;
-    // Native collection is not READY until exchange time verification,
-    // explicit REST snapshot handover and independent integrity gates pass.
+    // The exchange clock may close calculation buckets but cannot certify
+    // live feed READY before REST overlap and Catalog replay reconciliation.
+    let confirmed=if state.trade_connected && now<=state.clock_valid_until_ms
+        && state.gap_count==0 {state.confirmed_ms} else {None};
     atomic_status(
         &journal.status_file(),
         &json!({
             "state":"DEGRADED", "data_ready":false,
             "reason":state.last_error.as_deref().unwrap_or("rust_native_handover_unverified"),
-            "checked_ms":now, "valid_until_ms":now,
+            "checked_ms":now, "valid_until_ms":if confirmed.is_some(){now+10_000}else{now},
             "symbols":{journal.symbol():{
                 "last_websocket_ms":state.last_trade_ms,"last_update_ms":state.last_trade_ms
             }},
             "backlog":0,"gap_count":state.gap_count,
             "last_error":state.last_error,"allow_new_risk":false,
             "scope":"native_public_evidence_no_strategy_readiness",
-            "confirmed_ms":Value::Null,
+            "confirmed_ms":confirmed,
             "product":product.as_str()
         }),
     )?;
@@ -136,12 +141,32 @@ fn writer_loop(
                         state.mark_connected = false;
                     }
                     state.gap_count = state.gap_count.saturating_add(1);
+                    state.confirmed_ms=None;
+                    state.clock_valid_until_ms=0;
                     state.last_error = Some(
                         item.event["error"]
                             .as_str()
                             .unwrap_or("disconnected")
                             .into(),
                     );
+                }
+                Some("clock") => {
+                    let recorded=item.event["checked_ms"].as_i64().ok_or("clock stamp missing")?;
+                    let confirmed=item.event["confirmed_ms"].as_i64()
+                        .ok_or("confirmed exchange clock missing")?;
+                    let received=stamp_ms()?;
+                    if confirmed<=0 || recorded<=0 ||
+                        received.saturating_sub(recorded)>15_000 ||
+                        confirmed>received.saturating_add(10_000) {
+                        return Err("invalid or expired exchange clock evidence".into());
+                    }
+                    state.confirmed_ms=Some(confirmed);
+                    state.clock_valid_until_ms=received+15_000;
+                }
+                Some("clock_failed") => {
+                    state.confirmed_ms=None;
+                    state.clock_valid_until_ms=0;
+                    state.last_error=Some("exchange_clock_unavailable".into());
                 }
                 Some("trade") => {
                     if !state.trade_connected {
@@ -223,6 +248,34 @@ async fn execute() -> Result<()> {
     let persisted = fs::read(&manifest)?;
     let policies = parse_manifest(&persisted, product)?;
     let mut tasks: Vec<JoinHandle<()>> = Vec::new();
+    // Keep exchange-signed endpoint time separate from WebSocket message
+    // receive time. The public timer holds no trading credentials.
+    let symbols=policies.iter().filter(|p|p.realtime_enabled)
+        .map(|p|p.symbol.clone()).collect::<Vec<_>>();
+    let clock_sender=sender.clone();
+    tasks.push(tokio::spawn(async move {
+        let Ok(client)=reqwest::Client::builder().https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(4))
+            .user_agent("seealpha-native-clock/0.1").build()
+        else{return};
+        let mut clock=ServerClock::new();
+        loop {
+            let verified=clock.sync(&client,product.as_str()).await
+                .and_then(|_|clock.confirmed_ms());
+            let checked=stamp_ms().unwrap_or(0);
+            for symbol in &symbols {
+                let event=match &verified {
+                    Ok(ms)=>json!({"kind":"clock","confirmed_ms":ms,"checked_ms":checked}),
+                    Err(_)=>json!({"kind":"clock_failed","checked_ms":checked})
+                };
+                if clock_sender.send(WireEvent{
+                    symbol:symbol.clone(),event
+                }).await.is_err(){return;}
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    }));
     for members in cold_start_shards(&policies, product) {
         let members: Vec<String> = members
             .into_iter()

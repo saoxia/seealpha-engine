@@ -11,6 +11,7 @@ base64 = "0.22"
 http-body-util = "0.1"
 rust_decimal = "1"
 seealpha-backtest = { path = "../seealpha-backtest" }
+seealpha-catalog = { path = "../seealpha-catalog" }
 seealpha-ledger = { path = "../seealpha-ledger" }
 seealpha-market = { path = "../seealpha-market" }
 seealpha-research = { path = "../seealpha-research" }

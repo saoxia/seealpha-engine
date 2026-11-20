@@ -31,10 +31,8 @@ impl Runtime {
             return Err(error("跨市场历史回测必须使用 5000 根以内对齐的闭合 K 线。"));
         }
         let expected=((end_ms-start_ms)/step) as usize;
-        let spot=self.ledger.catalog_bars(tenant,"spot",symbol,interval,start_ms,end_ms,5000)
-            .map_err(map_ledger)?;
-        let perp=self.ledger.catalog_bars(tenant,"futures_um",symbol,interval,start_ms,end_ms,5000)
-            .map_err(map_ledger)?;
+        let spot=self.read_contiguous_market_bars(tenant,"spot",symbol,interval,start_ms,end_ms,5000)?;
+        let perp=self.read_contiguous_market_bars(tenant,"futures_um",symbol,interval,start_ms,end_ms,5000)?;
         if spot.len()!=expected||perp.len()!=expected {
             return Err(error("跨市场历史 K 线缺失，不允许静默填充。"));
         }
@@ -106,12 +104,12 @@ impl Runtime {
             return Err(error("期权历史时间范围无效或超过 5000 根。"));
         }
         let count=((end_ms-start_ms)/step) as usize;
-        let options=self.ledger.catalog_bars(
+        let options=self.read_contiguous_market_bars(
             tenant,"options",option_symbol,interval,start_ms,end_ms,5000
-        ).map_err(map_ledger)?;
-        let perps=self.ledger.catalog_bars(
+        )?;
+        let perps=self.read_contiguous_market_bars(
             tenant,"futures_um",perp_symbol,interval,start_ms,end_ms,5000
-        ).map_err(map_ledger)?;
+        )?;
         if options.len()!=count || perps.len()!=count {
             return Err(error("期权和永续原始证据缺失，禁止回测补造。"));
         }

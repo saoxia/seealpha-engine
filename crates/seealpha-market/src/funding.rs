@@ -6,7 +6,7 @@
 use crate::{MarketError,check_symbol};
 use rust_decimal::Decimal;
 use serde_json::Value;
-use std::time::{Duration,SystemTime,UNIX_EPOCH};
+use std::time::Duration;
 
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub struct FundingObservation {
@@ -59,9 +59,9 @@ impl FundingSource {
         &self,symbol:&str,start:i64,end:i64,
     )->Result<Vec<FundingObservation>,MarketError>{
         check_symbol(symbol)?;
-        let now=SystemTime::now().duration_since(UNIX_EPOCH)
-            .ok().and_then(|d|i64::try_from(d.as_millis()).ok())
-            .ok_or(MarketError::Time)?;
+        let mut clock=crate::clock::ServerClock::new();
+        clock.sync(&self.client,"futures_um").await?;
+        let now=clock.confirmed_ms()?;
         if start<0 || end<=start || end>now || end-start>365*86_400_000 {
             return Err(MarketError::Time);
         }

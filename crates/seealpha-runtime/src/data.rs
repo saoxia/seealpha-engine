@@ -50,6 +50,13 @@ fn valid_policy(policy:&Value)->Result<(String,String),RuntimeError>{
             interval_ms(t).is_err() && !matches!(t,"2h"|"6h"|"8h"|"12h"|"3d"|"1w"|"1M")
         })) {return Err(bad("生成周期无效。"));}
     }
+    for key in ["price_precision","size_precision"] {
+        if let Some(precision)=policy.get(key) {
+            if precision.as_u64().is_none_or(|value|value>16){
+                return Err(bad("Nautilus Instrument 精度必须为 0..16。"));
+            }
+        }
+    }
     if let Some(days)=policy.get("history_days") {
         if days.as_i64().is_none_or(|x|!(1..=36500).contains(&x)) {
             return Err(bad("历史天数无效。"));
@@ -133,8 +140,28 @@ impl Runtime {
         let action=field(payload,"action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
-        if action!="backfill" {
+        if !matches!(action,"backfill"|"publish_catalog") {
             return Err(RuntimeError::Conflict("该历史任务尚未完成 Rust 等价迁移。".into()));
+        }
+        if action=="publish_catalog" {
+            let product=field(payload,"product")?;
+            let symbol=field(payload,"symbol")?;
+            let interval=field(payload,"interval")?;
+            if !matches!(product,"spot"|"futures_um") ||
+                !valid_symbol(product,symbol) ||
+                interval_ms(interval).is_err() {
+                return Err(bad("原生 Catalog 发布参数无效。"));
+            }
+            for precision in ["price_precision","size_precision"]{
+                if payload[precision].as_u64().is_none_or(|n|n>16){
+                    return Err(bad("原生发布必须提供来自 Instrument 的价格/数量精度。"));
+                }
+            }
+            let normalized=payload.clone();
+            let id=hash_job(tenant_id,&normalized);
+            return self.ledger.queue_data_job(
+                tenant_id,&id,action,&normalized
+            ).map_err(map_ledger);
         }
         let product=payload.get("product").and_then(Value::as_str).unwrap_or("futures_um");
         let symbol=field(payload,"symbol")?;
@@ -198,7 +225,11 @@ impl Runtime {
         if !self.ledger.transition_data_job(tenant_id,id,"queued","running",None).map_err(map_ledger)? {
             return Err(RuntimeError::Conflict("任务已领取、取消或需要人工核验。".into()));
         }
-        let result=self.backfill_job(tenant_id,&original["payload"]).await;
+        let result=if original["action"]=="publish_catalog" {
+            self.publish_catalog_job(tenant_id,&original["payload"]).await
+        } else {
+            self.backfill_job(tenant_id,&original["payload"]).await
+        };
         let (status,body)=match result {
             Ok(value)=>("completed",value),
             Err(error)=>("failed",json!({"detail":error.to_string()})),
@@ -206,6 +237,55 @@ impl Runtime {
         self.ledger.transition_data_job(tenant_id,id,"running",status,Some(&body))
             .map_err(map_ledger)?;
         self.data_job(tenant_id,id)
+    }
+
+    async fn publish_catalog_job(
+        &self,tenant:&str,payload:&Value
+    )->Result<Value,RuntimeError>{
+        let product=field(payload,"product")?;
+        let symbol=field(payload,"symbol")?;
+        let interval=field(payload,"interval")?;
+        let base=self.ledger.policies(tenant).map_err(map_ledger)?
+            .into_iter().find(|item|
+                item["product"]==product&&item["symbol"]==symbol
+            ).and_then(|policy|policy["base_level"].as_str()
+                .map(|base|if base=="auto"{"1m"}else{base}.to_owned()))
+            .ok_or_else(||bad("Catalog 发布必须引用已保存的产品源配置。"))?;
+        let source_root=crate::sources::source_root(&self.project,product)?;
+        let pair=source_root.join(symbol).join(&base).canonicalize()
+            .map_err(|_|bad("原始行情数据卷不可用。"))?;
+        if !pair.starts_with(&source_root)||!pair.join("collection.sqlite").is_file(){
+            return Err(bad("没有已验证的原始成交 journal。"));
+        }
+        let catalog=self.native_catalog()?.ok_or_else(||bad(
+            "尚未挂载 Python Nautilus v2 Catalog，禁止隐式创建数据目录。"
+        ))?;
+        let bin=std::env::var("ENGINE_CATALOG_PUBLISH_BIN")
+            .unwrap_or_else(|_|"binance-native-catalog-publish".into());
+        let precision=field(payload,"price_precision")
+            .ok().map(str::to_owned)
+            .or_else(||payload["price_precision"].as_u64().map(|n|n.to_string()))
+            .ok_or_else(||bad("价格精度无效。"))?;
+        let quantity=field(payload,"size_precision")
+            .ok().map(str::to_owned)
+            .or_else(||payload["size_precision"].as_u64().map(|n|n.to_string()))
+            .ok_or_else(||bad("数量精度无效。"))?;
+        let args=vec![product.to_owned(),symbol.to_owned(),pair.to_string_lossy().to_string(),
+            catalog.root().to_string_lossy().to_string(),interval.to_owned(),
+            precision,quantity];
+        let output=tokio::task::spawn_blocking(move||{
+            std::process::Command::new(bin).args(args)
+                .stdin(std::process::Stdio::null())
+                .output()
+        }).await.map_err(|_|bad("Rust Catalog 发布子进程未能返回结果。"))?
+            .map_err(|_|bad("Rust Catalog 发布子进程无法启动。"))?;
+        if !output.status.success(){
+            let details=String::from_utf8_lossy(&output.stderr);
+            return Err(bad(&format!("Rust Catalog 发布失败，未推进检查点：{}",
+                details.chars().take(300).collect::<String>())));
+        }
+        serde_json::from_slice::<Value>(&output.stdout)
+            .map_err(|_|bad("Rust Catalog 发布记录损坏，拒绝推进任务状态。"))
     }
 
     async fn backfill_job(&self,tenant_id:&str,payload:&Value)->Result<Value,RuntimeError> {
@@ -258,12 +338,30 @@ impl Runtime {
             low:bar.low.to_string(),close:bar.close.to_string(),
             volume:bar.volume.to_string(),
         }).collect::<Vec<_>>();
-        self.ledger.import_verified_catalog_bars(tenant_id,product,symbol,interval,&records)
-            .map_err(map_ledger)?;
+        // The Python Pipeline determines precision from authoritative
+        // Instrument definitions. Never hard-code 8 for native Parquet.
+        let policies=self.ledger.policies(tenant_id).map_err(map_ledger)?;
+        let instrument=policies.iter().find(|item|
+            item["product"]==product && item["symbol"]==symbol
+        );
+        let select_precision=|key:&str|->Result<u32,RuntimeError>{
+            let requested=payload.get(key).and_then(Value::as_u64)
+                .or_else(||instrument.and_then(|p|p.get(key)).and_then(Value::as_u64));
+            match requested {
+                Some(value) if value<=16=>Ok(value as u32),
+                None if self.market_data_backend()?=="engine_sqlite_compat"=>Ok(8),
+                _=>Err(bad("原生 Parquet 归档必须使用 Instrument 或明确配置的价格与数量精度。")),
+            }
+        };
+        let price_precision=select_precision("price_precision")?;
+        let size_precision=select_precision("size_precision")?;
+        let published=self.commit_market_bars(
+            tenant_id,product,symbol,interval,&records,price_precision,size_precision
+        )?;
         Ok(json!({"action":"backfill","product":product,"symbol":symbol,
             "interval":interval,"start_ms":begin,"end_ms":end,
             "validated_bars":records.len(),"source":"binance_public",
-            "exchange_orders":0,"status":"completed"}))
+            "publication":published,"exchange_orders":0,"status":"completed"}))
     }
 
     pub fn note_market_subscription(&self,tenant_id:&str,account_id:&str,

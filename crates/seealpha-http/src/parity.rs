@@ -30,6 +30,10 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions/{issuance_id}",
             delete(strategy_unsubscribe))
         .route("/market/strategy-subscriptions",get(strategy_status))
+        .route("/tenants/{tenant_id}/data/control/source/{product}/calculate/{symbol}/start",
+            post(calc_start))
+        .route("/tenants/{tenant_id}/data/control/source/{product}/calculate/{symbol}/stop",
+            post(calc_stop))
         .route("/tenants/{tenant_id}/data/control/source/{product}/start",post(source_start))
         .route("/tenants/{tenant_id}/data/control/source/{product}/stop",post(source_stop))
         .route("/tenants/{tenant_id}/data/control/source/{product}",get(source_status))
@@ -44,13 +48,15 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/data/control/job/cancel",post(data_cancel))
         .route("/tenants/{tenant_id}/data/control/job/retry",post(data_retry))
         .route("/tenants/{tenant_id}/data/control/configuration-plan",post(configuration_plan))
-        .route("/tenants/{tenant_id}/data/control/delete-plan",post(unsupported_delete))
+        .route("/tenants/{tenant_id}/data/control/delete-plan",post(native_delete_preview))
         .route("/tenants/{tenant_id}/data/datasets",post(data_inventory))
         .route("/tenants/{tenant_id}/data/coverage",post(data_coverage))
         .route("/tenants/{tenant_id}/data/prepare-plan",post(data_prepare_plan))
         .route("/tenants/{tenant_id}/data/page",post(data_page))
         .route("/tenants/{tenant_id}/data/chart",post(data_chart))
         .route("/tenants/{tenant_id}/data/latest",post(data_latest))
+        .route("/tenants/{tenant_id}/data/catalog/events",post(native_events))
+        .route("/tenants/{tenant_id}/data/catalog/inventory",post(native_inventory))
         .route("/tenants/{tenant_id}/data/catalog/bars",get(catalog_bars))
 }
 
@@ -151,6 +157,22 @@ async fn strategy_status(
     Ok(Json(state.runtime.strategy_market_status(tenant).map_err(AppError::from)?))
 }
 
+async fn calc_start(
+    State(state):State<AppState>,
+    Path((tenant,product,symbol)):Path<(String,String,String)>,
+)->Result<Json<Value>,AppError>{
+    Ok(Json(state.runtime.start_native_calculation(
+        &tenant,&product,&symbol
+    ).map_err(AppError::from)?))
+}
+async fn calc_stop(
+    State(state):State<AppState>,
+    Path((tenant,product,symbol)):Path<(String,String,String)>,
+)->Result<Json<Value>,AppError>{
+    Ok(Json(state.runtime.stop_native_calculation(
+        &tenant,&product,&symbol
+    ).map_err(AppError::from)?))
+}
 async fn source_start(
     State(state):State<AppState>,Path((tenant,product)):Path<(String,String)>,
 )->Result<Json<Value>,AppError>{
@@ -358,8 +380,24 @@ async fn configuration_plan(
     Ok(Json(json!({"current":old["items"],"proposed":body["policy"],
         "effect":"review_only","will_delete":false})))
 }
-async fn unsupported_delete()->Result<Json<Value>,AppError>{
-    Err(AppError::conflict("历史数据删除尚未通过 Rust 快照与互斥锁验收，已拒绝。"))
+async fn native_delete_preview(
+    State(state):State<AppState>,Path(tenant):Path<String>,Json(body):Json<Value>,
+)->Result<Json<Value>,AppError>{
+    if body["delete_archives"]==true{
+        return Err(AppError::conflict("归档删除依赖独立原始数据目录与跨进程锁，暂不支持。"));
+    }
+    let product=body["product"].as_str().unwrap_or("futures_um");
+    let symbol=body["symbol"].as_str()
+        .ok_or_else(||AppError::bad_request("待删除品种无效。"))?;
+    let from=body["start_ms"].as_i64()
+        .or_else(||body["start"].as_str().and_then(parse_time_ms))
+        .ok_or_else(||AppError::bad_request("删除开始时间无效。"))?;
+    let to=body["end_ms"].as_i64()
+        .or_else(||body["end"].as_str().and_then(parse_time_ms))
+        .ok_or_else(||AppError::bad_request("删除结束时间无效。"))?;
+    Ok(Json(state.runtime.native_delete_plan(
+        &tenant,product,symbol,from,to
+    ).map_err(AppError::from)?))
 }
 
 // Read-side endpoints use ONLY the tenant's existing Rust catalog; no route
@@ -411,6 +449,14 @@ async fn data_inventory(
     state.runtime.require_active(&tenant).map_err(AppError::from)?;
     let symbols=body["symbols"].as_array().cloned().unwrap_or_default();
     if symbols.len()>200 {return Err(AppError::bad_request("查询品种数量超出范围。"));}
+    if let Some(mut native)=state.runtime.native_dataset_inventory(&tenant)
+        .map_err(AppError::from)? {
+        native.retain(|item|{
+            symbols.is_empty()||symbols.contains(&item["symbol"])
+        });
+        return Ok(Json(json!({"items":native,"backend":"nautilus_v2_parquet",
+            "quality":"unverified","data_ready":false})));
+    }
     let policies=state.runtime.ledger.policies(&tenant)
         .map_err(|e|AppError::bad_request(e.to_string()))?;
     let items=policies.into_iter().filter(|policy|{
@@ -418,15 +464,15 @@ async fn data_inventory(
     }).map(|policy|json!({"product":policy["product"],"symbol":policy["symbol"],
         "base_level":policy["base_level"],"data_ready":false,
         "status":"not_verified","catalog_backend":"sqlite"})).collect::<Vec<_>>();
-    Ok(Json(json!({"items":items})))
+    Ok(Json(json!({"items":items,"backend":"engine_sqlite_compat"})))
 }
 async fn data_coverage(
     State(state):State<AppState>,Path(tenant):Path<String>,Json(body):Json<Value>,
 )->Result<Json<Value>,AppError>{
     state.runtime.require_active(&tenant).map_err(AppError::from)?;
     let (product,symbol,interval,start,end,step)=data_query_range(&body)?;
-    let rows=state.runtime.ledger.catalog_bars(&tenant,product,symbol,interval,start,end,5000)
-        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let rows=state.runtime.read_market_bars(&tenant,product,symbol,interval,start,end,5000)
+        .map_err(AppError::from)?;
     let expected=(end-start)/step;
     let mut gaps=Vec::new();
     let mut cursor=start;
@@ -477,9 +523,9 @@ async fn data_page(
     if cursor<start || cursor>end || (cursor-start)%step!=0 {
         return Err(AppError::bad_request("历史数据游标无效。"));
     }
-    let bars=state.runtime.ledger.catalog_bars(
+    let bars=state.runtime.read_market_bars(
         &tenant,product,symbol,interval,cursor,end,limit+1
-    ).map_err(|e|AppError::bad_request(e.to_string()))?;
+    ).map_err(AppError::from)?;
     let more=bars.len()>limit as usize;
     let items=bars.iter().take(limit as usize).map(catalog_bar_json).collect::<Vec<_>>();
     let next=if more {items.last().and_then(|b|b["open_time_ms"].as_i64())
@@ -502,9 +548,9 @@ async fn data_latest(
     let start=end.saturating_sub(5000*step);
     for symbol in body["symbols"].as_array().cloned().unwrap_or_default() {
         let Some(symbol)=symbol.as_str() else {continue;};
-        let rows=state.runtime.ledger.catalog_bars(
+        let rows=state.runtime.read_market_bars(
             &tenant,product,symbol,interval,start,end,5000
-        ).map_err(|e|AppError::bad_request(e.to_string()))?;
+        ).map_err(AppError::from)?;
         result.insert(symbol.to_string(),rows.last()
             .map(|bar|json!((bar.open_time_ms+step-1)*1_000_000))
             .unwrap_or(Value::Null));
@@ -537,9 +583,9 @@ async fn data_chart(
         .ok_or_else(||AppError::bad_request("时钟不可用。"))?;
     let end=(now/step)*step;
     let start=end.saturating_sub(300*step);
-    let bars=state.runtime.ledger.catalog_bars(
+    let bars=state.runtime.read_market_bars(
         &tenant,product,symbol,interval,start,end,300
-    ).map_err(|e|AppError::bad_request(e.to_string()))?;
+    ).map_err(AppError::from)?;
     let candles=bars.iter().map(|b|json!({
         "time":b.open_time_ms/1000,"open":b.open,"high":b.high,
         "low":b.low,"close":b.close,"volume":b.volume,"is_closed":true
@@ -548,6 +594,63 @@ async fn data_chart(
         "checked_at":now,"live":false,"quality":"unverified"})))
 }
 
+/// Exact nanosecond read side for the Python Nautilus v2 Catalog.
+/// Supports TradeTick, QuoteTick, Instrument, funding, Greeks, L2 and custom
+/// types only when the original Arrow schema can be decoded losslessly.
+fn ns_arg(body:&Value,key:&str)->Result<i64,AppError>{
+    body[key].as_i64()
+        .or_else(||body[key].as_str().and_then(|s|s.parse::<i64>().ok()))
+        .ok_or_else(||AppError::bad_request("历史事件纳秒时间参数无效。"))
+}
+fn native_kind(body:&Value)->Result<seealpha_catalog::RecordKind,AppError>{
+    let raw=body["data_type"].as_str().ok_or_else(||
+        AppError::bad_request("历史数据类型缺失。"))?;
+    if matches!(raw,"custom"|"supplement"){
+        let source=body["feature_catalog"].as_str()
+            .ok_or_else(||AppError::bad_request("自定义行情目录无效。"))?;
+        let name=body["class_name"].as_str()
+            .ok_or_else(||AppError::bad_request("自定义行情类型无效。"))?;
+        return Ok(if raw=="custom" {
+            seealpha_catalog::RecordKind::Feature{
+                identifier:source.to_string(),name:name.to_string()
+            }
+        }else{
+            seealpha_catalog::RecordKind::Supplement{
+                identifier:source.to_string(),name:name.to_string()
+            }
+        });
+    }
+    seealpha_catalog::RecordKind::from_name(raw)
+        .map_err(|e|AppError::bad_request(e.to_string()))
+}
+async fn native_events(
+    State(state):State<AppState>,Path(tenant):Path<String>,Json(body):Json<Value>,
+)->Result<Json<Value>,AppError>{
+    let identity=body["identifier"].as_str()
+        .ok_or_else(||AppError::bad_request("行情 InstrumentId/BarType 缺失。"))?;
+    let from=ns_arg(&body,"start_ns")?;
+    let until=ns_arg(&body,"end_ns")?;
+    let limit=body["limit"].as_u64().unwrap_or(1000);
+    if limit==0||limit>50_000 {return Err(AppError::bad_request("最大事件批次不能超过 50,000。"));}
+    let rows=state.runtime.native_market_events(
+        &tenant,&native_kind(&body)?,identity,from,until,limit as usize
+    ).map_err(AppError::from)?;
+    let count=rows.len();
+    Ok(Json(json!({"records":rows,"count":count,
+        "start_ns":from.to_string(),"end_ns":until.to_string(),
+        "backend":"nautilus_v2_parquet","quality":"unverified",
+        "side_effects":false})))
+}
+async fn native_inventory(
+    State(state):State<AppState>,Path(tenant):Path<String>,Json(body):Json<Value>,
+)->Result<Json<Value>,AppError>{
+    let identity=body["identifier"].as_str()
+        .ok_or_else(||AppError::bad_request("行情目录标识缺失。"))?;
+    let entries=state.runtime.native_market_inventory(&tenant,&native_kind(&body)?,identity)
+        .map_err(AppError::from)?;
+    Ok(Json(json!({"items":entries,"backend":"nautilus_v2_parquet",
+        "quality":"unverified","does_not_start_collector":true})))
+}
 async fn catalog_bars(
     State(state):State<AppState>,Path(tenant):Path<String>,
     Query(query):Query<HashMap<String,String>>,
@@ -563,8 +666,8 @@ async fn catalog_bars(
     if start>=end || end-start>90*24*3600*1000 {
         return Err(AppError::bad_request("历史读取区间无效。"));
     }
-    let bars=state.runtime.ledger.catalog_bars(&tenant,product,symbol,interval,start,end,5000)
-        .map_err(|e|AppError::bad_request(e.to_string()))?;
+    let bars=state.runtime.read_market_bars(&tenant,product,symbol,interval,start,end,5000)
+        .map_err(AppError::from)?;
     Ok(Json(json!({"items":bars.iter().map(|bar|json!({
         "open_time_ms":bar.open_time_ms,"open":bar.open,"high":bar.high,
         "low":bar.low,"close":bar.close,"volume":bar.volume,

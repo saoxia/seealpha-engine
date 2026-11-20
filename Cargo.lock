@@ -1642,12 +1642,32 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "futures-util",
+ "reqwest",
  "rusqlite",
  "rust_decimal",
+ "seealpha-catalog",
+ "seealpha-market",
  "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+]
+
+[[package]]
+name = "seealpha-catalog"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "base64 0.22.1",
+ "chrono",
+ "fs2",
+ "parquet",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -1679,6 +1699,7 @@ dependencies = [
  "http-body-util",
  "rust_decimal",
  "seealpha-backtest",
+ "seealpha-catalog",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-research",
@@ -1747,6 +1768,7 @@ dependencies = [
  "rust_decimal",
  "seealpha-backtest",
  "seealpha-binance-market-data-source",
+ "seealpha-catalog",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-portfolio",
