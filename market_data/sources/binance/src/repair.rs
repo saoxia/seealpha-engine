@@ -122,3 +122,28 @@ pub struct RepairReceipt{
     pub restored:usize,
     pub remaining:u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+    fn day()->ArchiveDay {
+        ArchiveDay{symbol:"ETHUSDT".into(),day:NaiveDate::from_ymd_opt(2026,11,18).unwrap()}
+    }
+    #[test]
+    fn accepts_real_usdm_csv_shape_and_rejects_cross_day() {
+        let good=csv::StringRecord::from(vec!["101","2000.25","0.1","200.025",
+            "1794960000000","false"]);
+        let (id,value)=parse_record(&good,&day()).unwrap();
+        assert_eq!(id,101);
+        assert_eq!(value["qty"],"0.1");
+        let wrong=csv::StringRecord::from(vec!["101","2000","0.1","200",
+            "1795046400000","false"]);
+        assert!(parse_record(&wrong,&day()).is_err());
+    }
+    #[test]
+    fn respects_only_persisted_missing_ids() {
+        assert!(in_ranges(102,&[(101,103),(200,205)]));
+        assert!(!in_ranges(104,&[(101,103),(200,205)]));
+    }
+}
