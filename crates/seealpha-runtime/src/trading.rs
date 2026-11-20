@@ -387,12 +387,15 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
-        if stored["response"]["status"]!="completed" ||
-            stored["response"]["order"].is_null() {
+        let order=if stored["algo_order"]==true {
+            &stored["triggered_order"]
+        }else {
+            &stored["response"]["order"]
+        };
+        if stored["response"]["status"]!="completed" || order.is_null() {
             return Err(RuntimeError::Conflict(
                 "订单尚未在交易所核实，不能标记已对账。".into()));
         }
-        let order=&stored["response"]["order"];
         let terminal=matches!(order["status"].as_str(),
             Some("FILLED"|"CANCELED"|"EXPIRED"|"EXPIRED_IN_MATCH"|"REJECTED"));
         if !terminal {
