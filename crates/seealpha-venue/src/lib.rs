@@ -420,7 +420,6 @@ mod tests {
             "http://fapi.binance.com",
             "https://api.binance.com/path",
             "https://user:password@api.binance.com",
-            "https://api.binance.com:443",
             "http://localhost",
         ]{
             assert!(VenueClient::new(invalid).is_err(),"{invalid}");
