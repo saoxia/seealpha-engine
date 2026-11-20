@@ -2,6 +2,8 @@
 //! Market bars are processed in timestamp order. Pending orders match at the
 //! NEXT bar open; callbacks see the current bar close and cannot fill retroactively.
 //! Funding is applied only from explicit historical events.
+pub mod verified;
+
 use std::collections::{BTreeMap, BTreeSet};
 use rust_decimal::Decimal;
 use crate::matching::{match_bar, Ohlc, Side, WorkingOrder};
