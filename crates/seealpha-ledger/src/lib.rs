@@ -13,6 +13,14 @@ use std::path::Path;
 use thiserror::Error;
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS basket_journals (
+ tenant_id TEXT NOT NULL,
+ account_id TEXT NOT NULL,
+ basket_id TEXT NOT NULL,
+ revision TEXT NOT NULL,
+ body_json TEXT NOT NULL,
+ PRIMARY KEY (tenant_id, account_id, basket_id)
+);
 CREATE TABLE IF NOT EXISTS tenants (
     tenant_id TEXT PRIMARY KEY,
     purpose TEXT NOT NULL,
