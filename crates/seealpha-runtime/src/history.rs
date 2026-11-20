@@ -62,6 +62,7 @@ impl Runtime {
             history.push(HistoryBar{open_time_ms:bar.open_time_ms,close});
         }
         let strategies=self.stored_strategies(tenant,account)?;
+        let strategy_count=strategies.len();
         let mut publications=Vec::new();
         let mut risk:Option<Decimal>=None;
         for strategy in strategies {
@@ -103,7 +104,7 @@ impl Runtime {
         body["interval"]=json!(interval);
         body["start_ms"]=json!(start_ms);
         body["end_ms"]=json!(end_ms);
-        body["strategy_count"]=json!(risk.to_string()); // overwritten below with actual published members
+        body["strategy_count"]=json!(strategy_count);
         body["strategy_members"]=json!(publications.iter().map(|p|p.member_id.as_str())
             .collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>());
         body["risk_limit"]=json!(risk.to_string());
