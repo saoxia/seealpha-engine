@@ -1,7 +1,7 @@
 //! Isolated public Binance options market-data adapter.
 //! Unlike USD-M or Spot, an option symbol includes expiry, strike and side.
 //! This module never owns credentials or places orders.
-use crate::{Bar, MarketError, interval_ms, parse_binance_klines};
+use crate::{Bar, MarketError, interval_ms, parse_binance_klines, validate_bars};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -56,6 +56,36 @@ fn now_ms()->Result<i64,MarketError>{
     SystemTime::now().duration_since(UNIX_EPOCH).ok()
         .and_then(|d|i64::try_from(d.as_millis()).ok()).ok_or(MarketError::Time)
 }
+/// Binance's current REST schema represents options klines as 12-element
+/// arrays. Some legacy options responses are named-field objects. Parse both,
+/// but never silently accept a mixed page or incomplete OHLCV evidence.
+pub fn parse_options_klines(value:&Value,step:i64)->Result<Vec<Bar>,MarketError>{
+    let rows=value.as_array().ok_or(MarketError::Payload)?;
+    if rows.is_empty(){return Err(MarketError::Empty);}
+    let all_tuples=rows.iter().all(Value::is_array);
+    let all_objects=rows.iter().all(Value::is_object);
+    if all_tuples {return parse_binance_klines(value,step);}
+    if !all_objects {return Err(MarketError::Payload);}
+    let mut bars=Vec::with_capacity(rows.len());
+    for row in rows {
+        let timestamp=row["openTime"].as_i64().ok_or(MarketError::Time)?;
+        let closing=row["closeTime"].as_i64().ok_or(MarketError::Time)?;
+        let decimal=|name:&str|->Result<Decimal,MarketError>{
+            let text=row[name].as_str().ok_or(MarketError::Decimal)?;
+            text.parse::<Decimal>().map_err(|_|MarketError::Decimal)
+        };
+        bars.push(Bar{
+            open_time_ms:timestamp,
+            close_time_ms:closing,
+            open:decimal("open")?,high:decimal("high")?,
+            low:decimal("low")?,close:decimal("close")?,
+            volume:decimal("volume")?,
+        });
+    }
+    validate_bars(&bars,step)?;
+    Ok(bars)
+}
+
 #[derive(Clone)]
 pub struct OptionsSource { client:reqwest::Client }
 impl OptionsSource {
@@ -121,7 +151,7 @@ impl OptionsSource {
                 ("endTime",(end-1).to_string()),
                 ("limit",chunk.to_string()),
             ]).await?;
-            let bars=parse_binance_klines(&payload,step)?;
+            let bars=parse_options_klines(&payload,step)?;
             for bar in bars {
                 if bar.open_time_ms!=cursor || bar.close_time_ms>=end {
                     return Err(MarketError::Time);
@@ -129,7 +159,8 @@ impl OptionsSource {
                 cursor=cursor.checked_add(step).ok_or(MarketError::Overflow)?;
                 out.push(bar);
             }
-            if out.is_empty() || cursor<end && chunk>0 && payload.as_array().is_some_and(Vec::is_empty) {
+            if out.is_empty() || cursor==start ||
+                (cursor<end && payload.as_array().is_some_and(Vec::is_empty)) {
                 return Err(MarketError::Empty);
             }
         }
@@ -139,6 +170,20 @@ impl OptionsSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn options_kline_supports_official_tuple_and_legacy_object_shapes(){
+        let tuple=json!([[0,"50","60","40","55","4",59999,"0",1,"0","0","0"]]);
+        let object=json!([{"openTime":0,"closeTime":59999,"open":"50",
+            "high":"60","low":"40","close":"55","volume":"4"}]);
+        let tuple_bars=parse_options_klines(&tuple,60_000).unwrap();
+        let object_bars=parse_options_klines(&object,60_000).unwrap();
+        assert_eq!(tuple_bars,object_bars);
+        let wrong=json!([{"openTime":0,"closeTime":60_000,
+            "open":"50","high":"60","low":"40","close":"55","volume":"4"}]);
+        assert!(parse_options_klines(&wrong,60_000).is_err());
+        assert!(parse_options_klines(&json!([tuple[0],object[0]]),60_000).is_err());
+    }
+
     #[test]
     fn option_contract_identity_is_not_a_generic_spot_symbol(){
         let id=parse_option_symbol("BTC-271231-90000-C").unwrap();
