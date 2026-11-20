@@ -21,6 +21,8 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/jobs/{identity}/retry",post(task_retry))
         .route("/tenants/{tenant_id}/accounts/{account_id}/positions",get(positions))
         .route("/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}",get(request))
+        .route("/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/fills/sync",
+            post(sync_verified_fills))
         .route("/tenants/{tenant_id}/accounts/{account_id}/market/subscriptions",
             get(subscriptions).post(subscription_put))
         .route("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions",
@@ -75,6 +77,24 @@ async fn request(
         .map_err(|e|AppError::bad_request(e.to_string()))?
         .ok_or_else(||AppError::not_found("服务器没有该请求记录，请在交易所核对后处理。"))?;
     Ok(Json(value))
+}
+
+async fn sync_verified_fills(
+    State(state):State<AppState>,
+    Path((tenant,account,request_id)):Path<(String,String,String)>,
+    Json(body):Json<Value>,
+)->Result<Json<Value>,AppError>{
+    let environment=body["environment"].as_str()
+        .ok_or_else(||AppError::bad_request("账户环境缺失。"))?;
+    let api_key=body["api_key"].as_str()
+        .ok_or_else(||AppError::bad_request("交易所凭据缺失。"))?;
+    let secret=body["secret"].as_str()
+        .ok_or_else(||AppError::bad_request("交易所凭据缺失。"))?;
+    let venue=state.config.venue_base.as_deref()
+        .ok_or_else(||AppError::conflict("交易网关未配置，拒绝读取账户。"))?;
+    Ok(Json(state.runtime.sync_verified_order_fills(
+        &tenant,&account,environment,&request_id,api_key,secret,venue
+    ).map_err(AppError::from)?))
 }
 
 async fn subscriptions(
