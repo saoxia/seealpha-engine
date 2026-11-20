@@ -3,6 +3,7 @@ mod accounts;
 mod config;
 mod data;
 mod history;
+mod sources;
 mod session;
 mod trading;
 pub use trading::OrderCommand;
@@ -15,6 +16,9 @@ use seealpha_strategy::{self, HostCommand, inspect_archive};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::collections::HashMap;
+use std::process::Child;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -49,6 +53,7 @@ pub struct Runtime {
     pub python: PathBuf,
     pub host: PathBuf,
     inflight: AtomicUsize,
+    source_processes: Mutex<HashMap<String,Child>>,
 }
 
 impl Runtime {
@@ -84,6 +89,7 @@ impl Runtime {
             python: config.python.clone(),
             host: config.host_script(),
             inflight: AtomicUsize::new(0),
+            source_processes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -287,6 +293,19 @@ impl Runtime {
 
     pub(crate) fn track_end(&self) {
         self.inflight.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        // A running Rust Engine must never orphan its child producer processes
+        // on normal shutdown. Crash recovery stays fail-closed via writer.lock.
+        if let Ok(mut sources)=self.source_processes.lock() {
+            for (_,mut child) in sources.drain() {
+                let _=child.kill();
+                let _=child.wait();
+            }
+        }
     }
 }
 
