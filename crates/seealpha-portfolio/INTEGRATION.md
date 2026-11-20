@@ -22,9 +22,10 @@ bars, prices, funding rates, or target publications.
   `cumulative` input means **cumulative quantity for the particular working
   venue order**, not last-fill quantity. It is not an ACK. Callers authenticate
   its order, execution identity, freshness, and account before passing it in.
-- Partial fills keep `flight` in place. Unattributable venue quantity,
-  conflicting event IDs, an unknown order, and cancellation denial freeze the
-  coordinator; they do not create a replacement order.
+- Partial fills keep `flight` in place. Completed request IDs are retained
+  across snapshots and cannot be reused for later intents. Unattributable
+  venue quantity, conflicting event IDs, an unknown order, and cancellation
+  denial freeze the coordinator; they do not create a replacement order.
 - Persist with `coordinator_snapshot::encode_coordinator`. Decode only
   same-scope records; `flight` and freeze survive restart. A decoded state is
   not permission to resubmit its outstanding order.
