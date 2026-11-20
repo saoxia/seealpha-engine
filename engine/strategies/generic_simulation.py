@@ -5,6 +5,7 @@ and order events. SeeAlpha only aggregates authorized member targets and checks
 whole-portfolio risk. It neither connects to a live execution client nor treats
 orders across venues as atomic.
 """
+from collections import deque
 from contextlib import ExitStack
 from decimal import Decimal
 
@@ -23,7 +24,10 @@ from nautilus_trader.trading import Strategy
 
 from engine.runtime import EngineConflict
 from engine.strategies.backtest_engine import backtest_engine_config
-from engine.strategies.basket_research_session import BasketResearchSession
+from engine.strategies.basket_research_session import (
+    MAX_HISTORY_BARS,
+    BasketResearchSession,
+)
 from engine.strategies.basket_targets import BasketPlanError, LegEvidence
 from engine.strategies.carry_simulation import (
     _balance,
@@ -217,6 +221,8 @@ def run_native_generic_portfolio(
     previous = None
     previous_stamp = None
     curve, targets, count = [], [], 0
+    # Only previously replayed and verified closed bars enter each leg's history.
+    history = {leg: deque(maxlen=MAX_HISTORY_BARS) for leg in legs}
     declared_hedges = None
     hedge_transition_since = None
     try:
@@ -291,6 +297,10 @@ def run_native_generic_portfolio(
                             f"{leg.product}:{leg.symbol}": format(positions[leg], "f")
                             for leg in sorted(legs)
                         },
+                        "history": {
+                            f"{leg.product}:{leg.symbol}": tuple(history[leg])
+                            for leg in sorted(legs)
+                        },
                     }
                     for load in loads:
                         member_id = str(load["issuance_id"])
@@ -347,6 +357,16 @@ def run_native_generic_portfolio(
                     for leg in sorted(legs)
                 ],
             })
+            for leg in legs:
+                bar = frame[leg]
+                history[leg].append({
+                    "ts_ns": stamp,
+                    "open": format(bar.open.as_decimal(), "f"),
+                    "high": format(bar.high.as_decimal(), "f"),
+                    "low": format(bar.low.as_decimal(), "f"),
+                    "close": format(bar.close.as_decimal(), "f"),
+                    "volume": format(bar.volume.as_decimal(), "f"),
+                })
             previous, previous_stamp = frame, stamp
             count += 1
             if count > 20_000:

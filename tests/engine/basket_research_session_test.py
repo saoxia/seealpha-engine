@@ -385,3 +385,28 @@ def test_generic_declared_hedge_requires_member_scope_and_aggregate_balance():
     )
     with pytest.raises(BasketPlanError, match="等量"):
         other._session.plan()
+
+
+@pytest.mark.parametrize("lookback", [0, -1, 257, True, "20", 1.5])
+def test_generic_bounded_history_rejects_invalid_window(lookback):
+    eth = LegId("development", "virtual", "spot", "ETHUSDT")
+    session = BasketResearchSession(
+        tenant_id="development", account_id="virtual", policy="generic",
+        positions={eth: Decimal(0)},
+        evidence={eth: LegEvidence(Decimal(10), Decimal("0.1"), Decimal(1), _NOW)},
+        now_ns=_NOW, max_age_ns=1000, max_gross_notional=Decimal(100),
+    )
+    member = session.member("study")
+    with pytest.raises(BasketPlanError, match="回看"):
+        member.subscribe_market_bundle(
+            legs=({"product": "spot", "symbol": "ETHUSDT"},),
+            data=("closed_bars", "account_positions"), lookback_bars=lookback,
+        )
+    member.subscribe_market_bundle(
+        legs=({"product": "spot", "symbol": "ETHUSDT"},),
+        data=("closed_bars", "account_positions"), lookback_bars=256,
+    )
+    member.publish_basket(
+        targets=[{"product": "spot", "symbol": "ETHUSDT", "quantity": "0"}],
+    )
+    assert session.plan().plan.phases == ()

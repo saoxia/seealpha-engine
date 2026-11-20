@@ -32,13 +32,14 @@ class IssuedBasketMember:
 
         def subscribe(
             _strategy, *, symbol=None, products=(), data=(),
-            option_symbols=(), legs=(),
+            option_symbols=(), legs=(), lookback_bars=1,
         ):
             if self.subscription is not None:
                 raise EngineConflict("同一策略不能重复订阅组合市场。")
             self.subscription = {
                 "symbol": symbol, "products": products, "data": data,
                 "option_symbols": option_symbols, "legs": legs,
+                "lookback_bars": lookback_bars,
             }
 
         def publish(_strategy, *, targets, constraints=None, request_id=None):
@@ -66,6 +67,26 @@ class IssuedBasketMember:
 
     def propose(self, publisher, snapshot):
         publisher.subscribe_market_bundle(**self.subscription)
+        # Strategies receive only their explicitly subscribed market legs;
+        # keep both target execution and research history member-scoped.
+        subscribed = self.subscription["legs"]
+        if subscribed:
+            keys = [f'{leg["product"]}:{leg["symbol"]}' for leg in subscribed]
+            lookback = self.subscription["lookback_bars"]
+            if any(
+                key not in snapshot["markets"] or key not in snapshot["positions"]
+                or key not in snapshot["history"] for key in keys
+            ):
+                raise EngineConflict("策略订阅的历史行情或仓位不存在。")
+            snapshot = {
+                "now_ns": snapshot["now_ns"],
+                "markets": {key: dict(snapshot["markets"][key]) for key in keys},
+                "positions": {key: snapshot["positions"][key] for key in keys},
+                "history": {
+                    key: [dict(row) for row in snapshot["history"][key][-lookback:]]
+                    for key in keys
+                },
+            }
         self.publisher = publisher
         self.published = False
         try:
