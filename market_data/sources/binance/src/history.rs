@@ -85,6 +85,34 @@ pub fn parse_checksum(bytes: &[u8], expected_filename: &str) -> Result<[u8; 32],
     Ok(bytes)
 }
 
+/// Revalidate an existing archive and its official checksum, with no network.
+pub fn verify_local_archive(entry:&ArchiveDay,root:&Path)->Result<(),String>{
+    let path=entry.local_path(root);
+    let checksum=PathBuf::from(format!("{}.CHECKSUM",path.display()));
+    let relative=path.parent().ok_or("archive parent missing")?;
+    // Do not follow unexpected symlinks in the archive path.
+    let mut cursor=root.to_path_buf();
+    if fs::symlink_metadata(&cursor).map_err(|e|e.to_string())?.file_type().is_symlink(){
+        return Err("archive root symlink".into());
+    }
+    for component in relative.strip_prefix(root).map_err(|_|"archive escaped root")?.components(){
+        cursor.push(component);
+        if !fs::symlink_metadata(&cursor).map_err(|e|e.to_string())?.is_dir(){
+            return Err("archive path contains non-directory".into());
+        }
+    }
+    for item in [&path,&checksum]{
+        if !fs::symlink_metadata(item).map_err(|e|e.to_string())?.file_type().is_file(){
+            return Err("archive file is not ordinary".into());
+        }
+    }
+    let bytes=fs::read(&checksum).map_err(|e|e.to_string())?;
+    let name=path.file_name().and_then(|v|v.to_str()).ok_or("invalid archive filename")?;
+    let expected=parse_checksum(&bytes,name)?;
+    if file_hash(&path)?!=expected{return Err("local archive SHA256 mismatch".into());}
+    Ok(())
+}
+
 fn file_hash(path: &Path) -> Result<[u8;32], String> {
     let mut file=File::open(path).map_err(|e|e.to_string())?;
     let mut sha=Sha256::new();
