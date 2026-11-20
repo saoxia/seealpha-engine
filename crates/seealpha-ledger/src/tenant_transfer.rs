@@ -260,5 +260,11 @@ mod tests {
         assert!(target.import_tenant_new("new","production",&poisoned).is_err());
         assert!(target.tenant("new").unwrap().is_none());
         assert_eq!(target.fills("restored","acct","paper").unwrap().len(),1);
+        let live_intent=json!({"action":"NEW","environment":"production",
+            "client_order_id":"c1","symbol":"ETHUSDT","side":"BUY","quantity":"1"});
+        from.preregister_order_intent("source","acct","production","new","c1",
+            &"a".repeat(64),&live_intent).unwrap();
+        // A Python v1 export must never pretend to include new Rust intent evidence.
+        assert!(from.export_tenant("source").is_err());
     }
 }
