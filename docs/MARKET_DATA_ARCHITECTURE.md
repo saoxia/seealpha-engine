@@ -19,11 +19,15 @@
 - **隔离与兼容**：新来源应不修改 Engine 核心、HTTP v2 契约、已持久化数据路径、租户授权及订单安全语义；并发写入仍遵守现有锁、幂等、检查点与质量门禁。市场模块失败不得隐式扩大到别的市场。
 - **可验证的插件边界**：添加新交易所/产品应以新模块与明确注册/路由为主，而非在核心散布交易所分支；对每个模块分别验证配置、连通性、断线恢复、重启、历史缺口、数据质量和回滚。
 
-### 当前迁移进度
+### 本次 Binance 数据源实现迁移
 
-- 已建立 `engine/market_data/sources/binance/{perpetual,spot,options}/collection.py` 独立入口，并让共享批量采集 CLI 路由至相应入口。调用仍委托给旧 `collection/futures_service.py` 与 `collection/options_service.py`，现有数据路径、传输、持久化和恢复语义不变。
-- **尚未完成实现独立化**：`futures_service.py` 仍同时承载永续与现货的共享传输；`pair_service.py` 仍包含两种产品的采集逻辑。现货和期权完整计算/修复/测试隔离、数据源注册、独立部署与长时运行验收均是后续阶段，不得将当前入口拆分等同于完成隔离。
-- 下一步先在 Binance 永续中按采集→计算→修复迁移专有实现，保留旧 CLI 薄兼容入口和测试注入点；再分别迁移现货与期权。任何数据目录、锁或对外契约变更都须另行评审。
+- `sources/binance/perpetual/`：独立采集、计算、历史核验/补齐入口，以及 USD-M 专有资金费率采集与历史观测。
+- `sources/binance/spot/`：独立采集、计算、历史核验/补齐入口。
+- `sources/binance/options/`：期权实时采集实现与历史报价、成交、盘口证据维护实现。
+- `sources/binance/shared/`：市场间复用的共享 WebSocket 批处理、逐笔持久化、计算和历史修复算法；它不负责决定某市场是否启动。各产品入口验证产品身份，复用公共核心以免复制错误敏感的处理逻辑。
+- 旧 `collection/{futures_service,pair_service,options_service,funding_service}.py`、`calculation/pair_calculation.py` 和 `repair/{pair_data,options_data,funding_data}.py` 仍作为兼容导入。旧 `python -m engine.market_data.repair.pair_data` CLI 保留并委托新实现。
+- 当前改动是**源码归属与调用入口迁移**；不是交易所网络行为重写、独立容器部署或生产运行验收。对现有存储目录、质量门禁、锁及 HTTP 契约不做更改。共享实现仍含少量产品分支，未来扩展新的 venue 时优先通过显式 source 路由而非复制核心。
+
 
 ## 1. 两个独立业务模块
 
