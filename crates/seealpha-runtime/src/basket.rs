@@ -108,7 +108,8 @@ impl Runtime {
                     if let Some(ids) = ids {
                         if ids.is_empty() || ids.len() >= 1000
                             || !matches!(status, VenueOrderStatus::Filled
-                                | VenueOrderStatus::PartiallyFilled) {
+                                | VenueOrderStatus::PartiallyFilled
+                                | VenueOrderStatus::Canceled | VenueOrderStatus::Expired) {
                             return Err(RuntimeError::Conflict(
                                 "订单状态和成交 ID 证据不一致。".into()
                             ));
