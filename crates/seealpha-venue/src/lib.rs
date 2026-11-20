@@ -241,6 +241,33 @@ impl VenueClient {
         }
     }
 
+    /// Resolve a triggered USD-M child order by the exchange order ID,
+    /// never by the parent conditional clientAlgoId.
+    pub fn query_um_order_by_id(
+        &self,credentials:&Credentials,symbol:&str,order_id:&str,
+    )->Result<Value,VenueError>{
+        check_credentials(credentials)?;
+        if order_id.is_empty() ||
+            !order_id.bytes().all(|b|b.is_ascii_digit()){
+            return Err(VenueError::Unconfirmed);
+        }
+        let symbol=venue_symbol(symbol)?;
+        let value=self.signed(credentials,"GET","/fapi/v1/order",&[
+            ("symbol".into(),symbol.clone()),
+            ("orderId".into(),order_id.into()),
+        ])?;
+        let matched=value.get("orderId").and_then(|v|v.as_u64().map(|n|n.to_string())
+            .or_else(||v.as_str().map(str::to_owned)));
+        if matched.as_deref()!=Some(order_id)
+            || value.get("symbol").and_then(Value::as_str)!=Some(symbol.as_str())
+            || value.get("clientOrderId").and_then(Value::as_str)
+                .is_none_or(str::is_empty) {
+            return Err(VenueError::Unconfirmed);
+        }
+        Ok(order_view(&value,value["clientOrderId"].as_str()
+            .ok_or(VenueError::Unconfirmed)?))
+    }
+
     /// Exchange-authored fills for one verified order. No signed POST occurs.
     /// A full page is not considered complete until cursor-based pagination
     /// exists; unresolved venue history fails closed.
