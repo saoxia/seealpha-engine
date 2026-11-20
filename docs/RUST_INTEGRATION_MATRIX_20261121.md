@@ -70,3 +70,8 @@ Then run synthetic scenarios for restart after write timeout; duplicate request 
 3. Materialize a trusted immutable dataset evidence bundle for the verified replay worker. Existing HTTP backtests are still OHLC-mode.
 4. Complete signed account reconciliation and order-by-order verified fills before mutating authoritative portfolio state; restore unresolved external orders explicitly.
 5. Run Rust toolchain verification, test failures and fault scenarios on this integrated code before marking parity or merging as completed migration.
+
+## Catalog coverage bridge (this iteration)
+- `Runtime::inspect_catalog_coverage` calls the authoritative Nautilus v2 Parquet `Catalog::bar_gaps` for a caller-scoped closed UTC window. It surfaces missing ranges and never infers market readiness from a successful history read. `source_checkpoint_verified=false`, `feed_ready=false` and `allow_new_risk=false` are deliberate until a separate persisted source proof exists.
+- **Cross-module test pending:** the read-only Catalog check is not itself a source journal reconciliation or a Feed `MarketProof`. The source coordinator must verify raw journal completeness, clock, TTL, gap repair, durable publication and exact stream identity before confirming READY.
+- Toolchain still unavailable; no Cargo compilation evidence exists. This audit must not be treated as release acceptance.
