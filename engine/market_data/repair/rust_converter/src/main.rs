@@ -530,6 +530,9 @@ fn run(args: Args) -> Result<Manifest> {
         .map_err(|error| invalid(format!("无法读取 Trade ZIP 归档：{error}")))?;
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
+        // Leading whitespace-only records can have one field before a six/seven
+        // column header. Manually validate all non-skipped records below.
+        .flexible(true)
         .from_reader(entry);
 
     let trade_path = args.output_dir.join("trade-tick.parquet");
