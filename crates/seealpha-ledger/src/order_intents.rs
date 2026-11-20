@@ -305,19 +305,45 @@ impl Ledger {
             if old == body { return Ok(()); }
             return Err(conflict("conflicting immutable order observation"));
         }
-        let latest: Option<(String,i64)> = tx.query_row(
-            "SELECT status,observed_at_ns FROM order_observations
+        let latest: Option<(String,i64,String)> = tx.query_row(
+            "SELECT status,observed_at_ns,evidence_json FROM order_observations
              WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND client_order_id=?4
              ORDER BY observed_at_ns DESC,observation_id DESC LIMIT 1",
             params![tenant,account,environment,client_order_id],
-            |row| Ok((row.get(0)?,row.get(1)?)),
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
         ).optional().map_err(sql)?;
-        if let Some((old_status, last_time)) = latest {
-            if observed_at < last_time
+        let mut previous_fills = std::collections::HashSet::new();
+        if let Some((old_status, last_time, prior_json)) = &latest {
+            if observed_at < *last_time
                 || (matches!(old_status.as_str(), "FILLED" | "CANCELED" | "REJECTED" | "EXPIRED")
                     && status != old_status)
             {
                 return Err(conflict("stale or conflicting terminal order state"));
+            }
+            let previous: Value = serde_json::from_str(prior_json)
+                .map_err(|_| conflict("stored order observation is corrupt"))?;
+            if let Some(ids) = previous["trade_ids"].as_array() {
+                for id in ids {
+                    let id = id.as_str().filter(|v| identifier(v))
+                        .ok_or_else(|| conflict("stored trade identity is corrupt"))?;
+                    if !previous_fills.insert(id.to_owned()) {
+                        return Err(conflict("stored order observation repeats a trade identity"));
+                    }
+                }
+            }
+            if old_status == "PARTIALLY_FILLED" && status == "NEW" {
+                return Err(conflict("order status cannot return to NEW after verified fills"));
+            }
+        }
+        // Every subsequent observation must retain the previously verified
+        // trade identities. An empty/non-fill status cannot erase executions.
+        if !previous_fills.is_empty() {
+            let next_ids = evidence["trade_ids"].as_array()
+                .ok_or_else(|| conflict("observed order omitted previously verified trades"))?;
+            let next = next_ids.iter().filter_map(Value::as_str)
+                .collect::<std::collections::HashSet<_>>();
+            if !previous_fills.iter().all(|id| next.contains(id.as_str())) {
+                return Err(conflict("verified cumulative trade identities regressed"));
             }
         }
         if matches!(status, "FILLED" | "PARTIALLY_FILLED") {
@@ -488,6 +514,41 @@ mod tests {
         book.append_order_observation("t","a","production","c3","complete",&observed).unwrap();
         assert_eq!(book.latest_order_observation("t","a","production","c3")
             .unwrap().unwrap()["status"],"FILLED");
+    }
+
+    #[test]
+    fn observed_partial_fills_cannot_disappear_on_later_snapshots() {
+        let book=Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        book.ensure_tenant("t","production","active").unwrap();
+        let intent=json!({"action":"NEW","environment":"production","client_order_id":"client",
+            "symbol":"ETHUSDT","side":"BUY","quantity":"0.3"});
+        book.preregister_order_intent("t","a","production","request","client",
+            &"a".repeat(64),&intent).unwrap();
+        let t1=json!({"trade_id":"binance:futures_um:ETHUSDT:501","venue_order_id":"42",
+            "quantity":"0.1","price":"100","source":"signed_exchange_user_trades"});
+        let t2=json!({"trade_id":"binance:futures_um:ETHUSDT:502","venue_order_id":"42",
+            "quantity":"0.2","price":"100","source":"signed_exchange_user_trades"});
+        book.import_verified_fills("t","a","production","42",&[t1,t2]).unwrap();
+        let base=json!({"environment":"production","client_order_id":"client",
+            "status":"PARTIALLY_FILLED","source":"signed_exchange_order_query",
+            "observed_at_ns":100,"venue_order_id":"42",
+            "trade_ids":["binance:futures_um:ETHUSDT:501"]});
+        book.append_order_observation("t","a","production","client","obs1",&base).unwrap();
+        let mut rollback=base.clone();
+        rollback["observed_at_ns"]=json!(101);
+        rollback["status"]=json!("NEW");
+        assert!(book.append_order_observation(
+            "t","a","production","client","obs2",&rollback).is_err());
+        rollback["status"]=json!("FILLED");
+        rollback["trade_ids"]=json!(["binance:futures_um:ETHUSDT:502"]);
+        assert!(book.append_order_observation(
+            "t","a","production","client","obs3",&rollback).is_err());
+        rollback["trade_ids"]=json!([
+            "binance:futures_um:ETHUSDT:501","binance:futures_um:ETHUSDT:502"]);
+        book.append_order_observation(
+            "t","a","production","client","obs4",&rollback).unwrap();
+        assert_eq!(book.latest_order_observation(
+            "t","a","production","client").unwrap().unwrap()["status"],"FILLED");
     }
 
     #[test]
