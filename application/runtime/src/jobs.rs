@@ -22,6 +22,17 @@ fn hash(tenant:&str,text:&str)->String {
     out
 }
 
+fn validate_backtest_window(parameters: &Value) -> Result<(), RuntimeError> {
+    let start = parameters["start_ms"].as_i64()
+        .ok_or_else(|| fail("回测时间范围无效。"))?;
+    let end = parameters["end_ms"].as_i64()
+        .ok_or_else(|| fail("回测时间范围无效。"))?;
+    if start < 0 || end <= start {
+        return Err(fail("回测时间范围无效。"));
+    }
+    Ok(())
+}
+
 impl Runtime {
     pub fn schedule_backtest_job(
         &self,tenant:&str,parameters:&Value,idempotency_key:Option<&str>,
@@ -32,11 +43,10 @@ impl Runtime {
             .filter(|value|!value.is_empty()&&value.len()<=40)
             .ok_or_else(||fail("回测账户编号无效。"))?;
         let _=account;
-        for field in ["start_ms","end_ms"] {
-            if parameters[field].as_i64().is_none() {
-                return Err(fail("回测时间范围无效。"));
-            }
-        }
+        // Validate the interval before queuing persistent work. Previously an
+        // inverted/negative interval was accepted and failed only in the
+        // asynchronous worker, leaving a misleading queued job behind.
+        validate_backtest_window(parameters)?;
         let quote=parameters["quote_currency"].as_str().unwrap_or("");
         if !(3..=8).contains(&quote.len())||!quote.bytes().all(|v|v.is_ascii_uppercase()) {
             return Err(fail("回测结算币种无效。"));
@@ -113,6 +123,22 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejects_invalid_backtest_windows_before_persisting() {
+        for payload in [
+            json!({}),
+            json!({"start_ms": -1, "end_ms": 1000}),
+            json!({"start_ms": 2000, "end_ms": 1000}),
+            json!({"start_ms": 1000, "end_ms": 1000}),
+            json!({"start_ms": 0, "end_ms": "1000"}),
+        ] {
+            assert!(validate_backtest_window(&payload).is_err(), "{payload}");
+        }
+        assert!(validate_backtest_window(
+            &json!({"start_ms": 0, "end_ms": 1000})
+        ).is_ok());
+    }
+
     #[test]
     fn task_idempotency_is_tenant_scoped_and_stable() {
         assert_eq!(hash("t","id"),hash("t","id"));
