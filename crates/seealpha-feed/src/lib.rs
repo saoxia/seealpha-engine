@@ -191,6 +191,11 @@ impl Book {
         Ok(())
     }
 
+    pub fn verified_until_ms(&self) -> Option<i64> {
+        if self.gate.ready { self.proof.as_ref().map(|proof| proof.valid_until_ms) }
+        else { None }
+    }
+
     /// Verify expiry at the caller's current exchange-checked time.
     pub fn verified_ready(&self, now_ms: i64) -> bool {
         self.gate.ready && !self.gate.repair_required && !self.gate.conflict_latched
