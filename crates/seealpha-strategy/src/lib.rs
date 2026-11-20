@@ -184,7 +184,11 @@ pub fn digest_dir(root: &Path) -> Result<String, StrategyError> {
     let mut hasher = Sha256::new();
     let mut total = 0_u64;
     for (relative, path) in files {
-        reject_member(&relative)?;
+        // Directory packages can contain an inert LICENSE file (the bundled
+        // ema_crossover sample does); preserve the historical digest bytes.
+        if relative != "LICENSE" {
+            reject_member(&relative)?;
+        }
         let bytes = std::fs::read(path).map_err(|_| invalid_archive())?;
         total = total.checked_add(bytes.len() as u64).ok_or_else(invalid_archive)?;
         if total > MAX_ARCHIVE_BYTES {
@@ -326,13 +330,16 @@ fn reject_member(name: &str) -> Result<(), StrategyError> {
         }
     }
     if name.ends_with('/') {
+        if name.split('/').any(|part| part == "__pycache__" || part.starts_with("strategy_python")) {
+            return Err(StrategyError::Package("策略包包含不支持的目录。".into()));
+        }
         return Ok(());
     }
     let path = Path::new(name);
     let suffix = path.extension().and_then(|value| value.to_str())
         .unwrap_or("").to_ascii_lowercase();
     if !matches!(suffix.as_str(), "py" | "json" | "md" | "txt")
-        || path.components().any(|p| p.as_os_str() == "__pycache__")
+        || path.components().any(|p| p.as_os_str().to_string_lossy() == "__pycache__")
     {
         return Err(StrategyError::Package("策略包包含不支持的文件。".into()));
     }
@@ -437,7 +444,10 @@ mod tests {
 
     #[test]
     fn rejects_a_path_that_escapes_the_archive() {
-        assert!(reject_member("../strategy.py").is_err());
+        for name in ["../strategy.py", "some/../strategy.py", "C:/strategy.py", "a\\\\b.py", "a//b.py", "strategy_python/", "link/../../"] {
+            assert!(reject_member(name).is_err(), "accepted {name}");
+        }
         assert!(reject_member("strategy.py").is_ok());
+        assert!(reject_member("src/").is_ok());
     }
 }
