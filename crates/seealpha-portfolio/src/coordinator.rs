@@ -2,21 +2,22 @@
 //! Orders are intents: callers must durably pre-register any external command.
 use std::collections::{BTreeMap, BTreeSet};
 use rust_decimal::Decimal;
+use serde::{Serialize, Deserialize};
 use crate::{execution_delta, net_signed_quantity, quantize_toward_zero, MemberTarget, PortfolioError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq), Serialize, Deserialize]
 pub enum Side { Buy, Sell }
 impl Side {
     fn sign(self) -> Decimal { match self { Self::Buy => Decimal::ONE, Self::Sell => -Decimal::ONE } }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
 pub enum VirtualKind {
     Market,
     Limit { price: Decimal },
     StopMarket { trigger: Decimal },
     StopLimit { trigger: Decimal, price: Decimal, triggered: bool },
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
 pub struct VirtualOrder {
     pub id: String,
     pub member_id: String,
@@ -30,9 +31,9 @@ pub struct VirtualOrder {
 impl VirtualOrder {
     pub fn leaves(&self) -> Decimal { self.quantity - self.filled }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Bar { pub time: u64, pub low: Decimal, pub high: Decimal, pub close: Decimal }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
 pub struct VirtualFill {
     pub order_id: String,
     pub member_id: String,
@@ -40,21 +41,21 @@ pub struct VirtualFill {
     pub quantity: Decimal,
     pub price: Decimal,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
 pub enum Command {
     Submit { id: String, signed_quantity: Decimal },
     Cancel { id: String },
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq), Serialize, Deserialize]
 pub struct Flight {
     pub id: String,
     pub signed_requested: Decimal,
     pub filled: Decimal,
     pub cancel_requested: bool,
 }
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct MemberBook { position: Decimal, explicit: Option<Decimal>, risk_exit: bool }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone), Serialize, Deserialize]
 pub struct Coordinator {
     members: BTreeMap<String, MemberBook>,
     orders: BTreeMap<String, VirtualOrder>,
@@ -271,6 +272,29 @@ impl Coordinator {
         self.flight = None; self.denied_at = denied_at; Ok(())
     }
     pub fn freeze(&mut self, reason: &str) { self.frozen = true; self.freeze_reason = Some(reason.into()); }
+    /// Recovered state must be validated and cannot produce automatic retransmission.
+    pub fn validate_restored(&self) -> Result<(), CoordinatorError> {
+        if self.increment <= Decimal::ZERO || self.risk_limit <= Decimal::ZERO {
+            return Err(CoordinatorError::Invalid);
+        }
+        for (key, order) in &self.orders {
+            if key != &order.id || !self.members.contains_key(&order.member_id) ||
+                order.quantity <= Decimal::ZERO || order.filled < Decimal::ZERO ||
+                order.filled >= order.quantity {
+                return Err(CoordinatorError::Invalid);
+            }
+        }
+        if let Some(flight) = &self.flight {
+            if flight.id.is_empty() || flight.signed_requested == Decimal::ZERO ||
+                flight.filled < Decimal::ZERO || flight.filled > flight.signed_requested.abs() {
+                return Err(CoordinatorError::Invalid);
+            }
+        }
+        if self.frozen != self.freeze_reason.is_some() {
+            return Err(CoordinatorError::Invalid);
+        }
+        Ok(())
+    }
     /// Restores state without submitting; unresolved in-flight commands remain in flight.
     pub fn restore(snapshot: Self) -> Self { snapshot }
     pub fn virtual_order(&self, id: &str) -> Option<&VirtualOrder> { self.orders.get(id) }
