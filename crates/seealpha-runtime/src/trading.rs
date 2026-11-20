@@ -412,6 +412,15 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
+        if stored["order_list"]=="oco" {
+            if stored["fills_complete"]!=true || stored["ledger_synced"]!=true
+                || stored["order_children"].as_array().is_none_or(|c|c.len()!=2)
+                || stored["response"]["order"]["list_status"]!="ALL_DONE" {
+                return Err(RuntimeError::Conflict(
+                    "OCO 列表及两条子订单成交尚未全部核实，不能标记完成。".into()));
+            }
+            return Ok(stored);
+        }
         let order=if stored["algo_order"]==true {
             &stored["triggered_order"]
         }else {
