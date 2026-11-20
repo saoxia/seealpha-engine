@@ -51,7 +51,7 @@ impl Runtime {
         }
         let (leg, delta) = phase.changes.iter().next()
             .ok_or_else(|| RuntimeError::Conflict("缺少待执行的篮子腿。".into()))?;
-        let product = match leg.product {
+        let product = match &leg.product {
             Product::Spot => "spot",
             Product::FuturesUm => "futures_um",
             Product::Option => "options",
