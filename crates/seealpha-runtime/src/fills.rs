@@ -45,9 +45,6 @@ impl Runtime {
         let client_id=record["response"]["client_order_id"].as_str()
             .ok_or_else(||error("订单客户端编号缺失。"))?.to_owned();
         let product=market_product(&record,&symbol)?;
-        if product==Product::Option {
-            return Err(error("期权真实成交列表尚未通过鉴权与分页验收。"));
-        }
         let client=VenueClient::new(venue_base)
             .map_err(|_|error("交易网关配置无效。"))?;
         let credentials=Credentials{api_key:api_key.to_owned(),secret:secret.to_owned()};

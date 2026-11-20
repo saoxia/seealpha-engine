@@ -8,6 +8,7 @@ pub mod trades;
 pub mod reconciliation;
 pub mod lifecycle;
 pub mod settlement;
+pub mod option_trades;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -241,7 +242,10 @@ impl VenueClient {
         symbol:&str,order_id:&str,
     )->Result<Vec<Value>,VenueError>{
         check_credentials(credentials)?;
-        if product==Product::Option || order_id.is_empty() ||
+        if product==Product::Option {
+            return self.option_order_trades(credentials,symbol,order_id);
+        }
+        if order_id.is_empty() ||
             !order_id.bytes().all(|b|b.is_ascii_digit()) {
             return Err(VenueError::Unconfirmed);
         }
@@ -392,12 +396,12 @@ fn order_view(value: &Value, client_order_id: &str) -> Value {
         "symbol": value.get("symbol").and_then(Value::as_str).unwrap_or(""),
         "side": value.get("side").and_then(Value::as_str).unwrap_or(""),
         "order_type": value.get("type").and_then(Value::as_str).unwrap_or(""),
-        "quantity": value.get("origQty").and_then(Value::as_str).unwrap_or(""),
+        "quantity": value.get("origQty").or_else(||value.get("quantity")).and_then(Value::as_str).unwrap_or(""),
         "filled": value.get("executedQty").and_then(Value::as_str).unwrap_or("0"),
         "price": value.get("price").and_then(Value::as_str),
         "status": value.get("status").and_then(Value::as_str).unwrap_or("UNKNOWN"),
         "reduce_only": value.get("reduceOnly").and_then(Value::as_bool).unwrap_or(false),
-        "open": value.get("status").and_then(Value::as_str).is_some_and(|status| matches!(status, "NEW" | "PARTIALLY_FILLED")),
+        "open": value.get("status").and_then(Value::as_str).is_some_and(|status| matches!(status, "NEW" | "ACCEPTED" | "PARTIALLY_FILLED")),
     })
 }
 

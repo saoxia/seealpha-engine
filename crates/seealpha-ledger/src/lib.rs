@@ -4,6 +4,7 @@ mod parity;
 mod funding;
 mod verified_fills;
 mod exercises;
+mod settlements;
 pub use records::CatalogBar;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
@@ -141,6 +142,19 @@ CREATE TABLE IF NOT EXISTS option_exercise_observations (
 );
 CREATE INDEX IF NOT EXISTS option_exercise_scope
     ON option_exercise_observations(tenant_id,expiry_time_ms);
+CREATE TABLE IF NOT EXISTS account_settlements (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    product TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,environment,product,event_kind,event_id)
+);
+CREATE INDEX IF NOT EXISTS account_settlement_symbol
+    ON account_settlements(tenant_id,account_id,environment,product,symbol);
 CREATE TABLE IF NOT EXISTS funding_observations (
     tenant_id TEXT NOT NULL,
     symbol TEXT NOT NULL,

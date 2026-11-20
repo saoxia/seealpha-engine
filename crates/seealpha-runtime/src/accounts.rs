@@ -232,6 +232,43 @@ impl Runtime {
         Ok(report)
     }
 
+    /// Import only exchange-authored settlement records. Public rate observations
+    /// and theoretical exercise payoffs are never posted as account cash.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sync_registered_settlements(
+        &self,tenant:&str,account:&str,environment:&str,
+        product:Product,symbol:&str,start_ms:i64,end_ms:i64,
+        venue_base:&str,
+    )->Result<Value,RuntimeError>{
+        let active=self.require_active(tenant)?;
+        if active.purpose!="production" ||
+            !matches!(environment,"production"|"sandbox"){
+            return Err(RuntimeError::Conflict("结算核对要求正式租户与有效账户环境。".into()));
+        }
+        let credentials=secrets().lock()
+            .map_err(|_|RuntimeError::Conflict("凭据状态锁不可用。".into()))?
+            .get(&key(tenant,account,environment)).cloned()
+            .ok_or_else(||RuntimeError::Conflict("尚未登记账户凭据。".into()))?;
+        validate_secret(&credentials.api_key,&credentials.secret)?;
+        let client=VenueClient::new(venue_base)
+            .map_err(|e|map_venue(e,&credentials.api_key,&credentials.secret))?;
+        let (product_name,rows)=match product {
+            Product::FuturesUm=>("futures_um",client.um_funding_income(
+                &credentials,symbol,start_ms,end_ms)),
+            Product::Option=>("options",client.option_exercise_records(
+                &credentials,symbol,start_ms,end_ms)),
+            Product::Spot=>return Err(RuntimeError::Unprocessable(
+                "现货不使用资金费或期权行权结算入口。".into())),
+        };
+        let rows=rows.map_err(|e|map_venue(e,&credentials.api_key,&credentials.secret))?;
+        self.ledger.import_account_settlements(
+            tenant,account,environment,product_name,&rows
+        ).map_err(map_ledger)?;
+        Ok(json!({"tenant_id":tenant,"account_id":account,
+            "environment":environment,"product":product_name,"symbol":symbol,
+            "records":rows,"verified_source":true,"automatic_cash_posting":false}))
+    }
+
 }
 
 fn validate_secret(api_key: &str, secret: &str) -> Result<(), RuntimeError> {
