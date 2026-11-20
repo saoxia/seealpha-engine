@@ -1,6 +1,10 @@
 //! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
 mod records;
 mod legacy;
+mod order_intents;
+mod account_snapshots;
+pub use order_intents::IntentStart;
+pub use account_snapshots::AccountSnapshot;
 mod basket_journal;
 mod coordinator_state;
 pub use coordinator_state::StoredCoordinatorState;
@@ -32,6 +36,43 @@ CREATE TABLE IF NOT EXISTS basket_journals (
  revision TEXT NOT NULL,
  body_json TEXT NOT NULL,
  PRIMARY KEY (tenant_id, account_id, basket_id)
+);
+CREATE TABLE IF NOT EXISTS order_intents (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    client_order_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    intent_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, account_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS order_intents_client
+    ON order_intents(tenant_id, account_id, environment, client_order_id);
+CREATE TABLE IF NOT EXISTS order_observations (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    client_order_id TEXT NOT NULL,
+    observation_id TEXT NOT NULL,
+    observed_at_ns INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,environment,client_order_id,observation_id)
+);
+CREATE INDEX IF NOT EXISTS order_observations_by_time
+    ON order_observations(tenant_id,account_id,environment,client_order_id,observed_at_ns);
+CREATE TABLE IF NOT EXISTS account_snapshots (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    evidence_id TEXT NOT NULL,
+    observed_at_ms INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    balances_json TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,environment)
 );
 CREATE TABLE IF NOT EXISTS tenants (
     tenant_id TEXT PRIMARY KEY,
