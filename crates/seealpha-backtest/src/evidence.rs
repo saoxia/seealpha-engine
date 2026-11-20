@@ -259,6 +259,22 @@ mod tests{
         assert_eq!(report["funding_events"].as_array().unwrap().len(),1);
     }
     #[test]
+    fn put_mark_offsets_perp_loss_without_fabricating_exercise(){
+        let bars=[
+            OptionHedgeMark{mark_time_ms:0,option_close:Decimal::from(10),perp_close:Decimal::from(100)},
+            OptionHedgeMark{mark_time_ms:60_000,option_close:Decimal::from(25),perp_close:Decimal::from(90)}
+        ];
+        let position=ProtectedPosition{
+            option_qty:Decimal::ONE,option_multiplier:Decimal::ONE,
+            perp_qty:Decimal::ONE,starting_balance:Decimal::from(1000),
+            fee_rate:Decimal::ZERO,max_gross_notional:Decimal::from(200)
+        };
+        let report=run_evidence_protection(&bars,&[],position).unwrap();
+        assert_eq!(report["ending_balance"],"1005");
+        assert_eq!(report["exercise_settlement"],"not_modeled");
+        assert_eq!(report["exchange_orders"],0);
+    }
+    #[test]
     fn rejects_time_travel_and_exposure_overflow(){
         let bars=[MarkBar{mark_time_ms:0,spot:Decimal::from(100),perp:Decimal::from(100)}];
         let pos=CarryPosition{spot_qty:Decimal::ONE,perp_qty:-Decimal::ONE,
