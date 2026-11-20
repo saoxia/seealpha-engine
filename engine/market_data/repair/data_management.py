@@ -15,9 +15,11 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from itertools import islice, zip_longest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 from nautilus_trader.model import Bar, CryptoOption, NautilusDataType, TradeTick
 
 from core.paths import PROJECT_ROOT
@@ -30,7 +32,6 @@ from engine.market_data.repair.convert_binance_bars import (
 from engine.market_data.repair.convert_binance_trades import (
     catalog_contains_record,
     convert_trade_archives,
-    iter_trade_archive,
 )
 from engine.market_data.repair.models import (
     INTERVALS,
@@ -43,7 +44,6 @@ from engine.market_data.repair.prepare_data import prepare_data, validate_reques
 from engine.market_data.repair.sync_binance_batch import plan_daily_archives
 from engine.market_data.storage.catalog import (
     ParquetDataCatalog,
-    TradeTickDataWrangler,
     _parse_filename_timestamps,
 )
 
@@ -358,40 +358,68 @@ def validate(request, settings):
             before = fingerprint(settings, str(instrument.id), "trades")
 
             def expected_rows(path=path, begin=begin, finish=finish, spec=spec):
-                previous_time = previous_id = None
-                wrangler = TradeTickDataWrangler(instrument)
-                micros = spec.market == "spot" and spec.day.isoformat() >= "2025-01-01"
-                for frame in iter_trade_archive(path, market=spec.market, microseconds=micros):
-                    if (previous_time is not None and int(frame.iloc[0].timestamp) < previous_time
-                            or previous_id is not None and int(frame.iloc[0].trade_id) <= previous_id):
-                        raise ValueError("原始成交跨块倒序或重复")
-                    previous_time = int(frame.iloc[-1].timestamp)
-                    previous_id = int(frame.iloc[-1].trade_id)
-                    normalized = pd.DataFrame({
-                        "price": frame.price.to_numpy(), "quantity": frame.quantity.to_numpy(),
-                        "side": frame.buyer_maker.map({True: "SELL", False: "BUY"}).to_numpy(),
-                        "trade_id": frame.trade_id.astype(str).to_numpy(),
-                    }, index=pd.to_datetime(frame.timestamp.to_numpy(), unit="us" if micros else "ms", utc=True))
-                    for tick in wrangler.process(normalized):
-                        if not pd.Timestamp(begin).value <= tick.ts_event < pd.Timestamp(finish).value:
-                            raise ValueError("原始成交超出归档日期")
-                        yield {"ts_event_ns": str(tick.ts_event), "price": str(tick.price),
-                               "size": str(tick.size), "trade_id": str(tick.trade_id),
-                               "aggressor_side": tick.aggressor_side.name}
+                # Reuse the native writer's canonicalization instead of keeping
+                # a second Python CSV->Tick implementation in the validator.
+                from engine.market_data.repair.rust_trade_converter import (
+                    require_rust_converter,
+                    run_rust_trade_converter,
+                )
+
+                with TemporaryDirectory(prefix=".rust-trade-validate-") as temporary:
+                    manifest = run_rust_trade_converter(
+                        require_rust_converter(),
+                        path,
+                        Path(temporary),
+                        instrument_id=str(instrument.id),
+                        price_precision=int(instrument.price_precision),
+                        size_precision=int(instrument.size_precision),
+                        day_start_ns=int(begin.timestamp()) * 1_000_000_000,
+                        day_end_ns=int(finish.timestamp()) * 1_000_000_000,
+                        bar_types={},
+                        batch_rows=50_000,
+                        spot_trades=spec.market == "spot",
+                        spot_microseconds=(spec.market == "spot"
+                                           and spec.day.isoformat() >= "2025-01-01"),
+                    )
+                    for batch in pq.ParquetFile(manifest.trade.path).iter_batches(
+                        batch_size=50_000,
+                        columns=["price", "size", "aggressor_side", "trade_id", "ts_event"],
+                    ):
+                        columns = {name: batch.column(i) for i, name in enumerate(
+                            ("price", "size", "aggressor_side", "trade_id", "ts_event")
+                        )}
+                        stamps = columns["ts_event"].cast(pa.int64()).to_pylist()
+                        for stamp, price, size, side, trade_id in zip(
+                            stamps,
+                            columns["price"].to_pylist(),
+                            columns["size"].to_pylist(),
+                            columns["aggressor_side"].to_pylist(),
+                            columns["trade_id"].to_pylist(),
+                            strict=True,
+                        ):
+                            yield {
+                                "ts_event_ns": str(stamp),
+                                "price": str(price),
+                                "size": str(size),
+                                "trade_id": str(trade_id),
+                                "aggressor_side": side,
+                            }
 
             count = 0
             actual = rows(settings, spec.symbol, begin, finish, market=spec.market)
+            expected = expected_rows()
             try:
-                for expected, observed in zip_longest(expected_rows(), actual):
+                for expected_row, observed in zip_longest(expected, actual):
                     # Decimal string formatting may differ between Arrow and the model.
-                    if expected is None or observed is None:
+                    if expected_row is None or observed is None:
                         raise ValueError("原始归档与 Catalog 成交数量不一致")
                     from decimal import Decimal
-                    if any((Decimal(expected[k]) != Decimal(observed[k]) if k in {"price", "size"}
-                            else expected[k] != observed[k]) for k in expected):
+                    if any((Decimal(expected_row[k]) != Decimal(observed[k]) if k in {"price", "size"}
+                            else expected_row[k] != observed[k]) for k in expected_row):
                         raise ValueError("原始归档与 Catalog 存在成交差异")
                     count += 1
             finally:
+                expected.close()
                 actual.close()
             if not count:
                 raise ValueError("归档无成交")
