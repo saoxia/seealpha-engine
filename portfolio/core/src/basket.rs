@@ -139,6 +139,8 @@ fn change_phase(name: &str, rows: impl IntoIterator<Item = (LegId, Decimal)>) ->
     }
 }
 /// Explicitly conservative phase planning; never inferred venue atomicity.
+// Keep explicit risk-policy parameters stable for existing Rust callers during parity migration.
+#[allow(clippy::too_many_arguments)]
 pub fn plan(
     targets: &[LegTarget],
     positions: &BTreeMap<LegId, Decimal>,
@@ -162,6 +164,8 @@ pub fn plan(
         emergency_unwind,
     )
 }
+// Avoid a breaking signature change before Python/Rust basket parity is validated.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_with_constraints(
     targets: &[LegTarget],
     positions: &BTreeMap<LegId, Decimal>,
