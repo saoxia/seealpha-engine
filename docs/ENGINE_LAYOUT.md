@@ -6,7 +6,8 @@
 | --- | --- |
 | `engine/api/` | HTTP 路由、独立研究 API、接口输入校验 |
 | `engine/market_data/control/` | 持久化 DataPolicy、运行任务协调、访问租约 |
-| `engine/market_data/collection/` | 实时 WebSocket、REST 来源采集及独立进程入口 |
+| `engine/market_data/sources/<venue>/<product>/` | 按交易所与产品隔离的数据源入口；分阶段迁入专有采集/计算/修复实现 |
+| `engine/market_data/collection/` | 当前共享采集实现和兼容入口，迁移期间继续承载旧实现 |
 | `engine/market_data/calculation/` | K 线及衍生特征计算；消费持久化来源 |
 | `engine/market_data/repair/` | 历史自动扫描、归档下载、核验与补齐、Rust 转换 |
 | `engine/market_data/storage/` | 原始证据日志、分钟库、Nautilus Catalog 存储适配 |
@@ -23,3 +24,5 @@
 **控制不变量**：只有经授权的持久化行情配置决定采集、计算与历史修复任务；策略、回测、交易均为只读消费者，不能通过订阅或退订改变采集开关。
 
 **兼容与验收**：`python -m engine` 不变。旧 `python -m engine.feed.managed`、`python -m engine.feed.service`、`python -m engine.pipeline.pair_data` 和 `python -m engine.pipeline.data_management`、`python -m engine.pipeline.prepare_data`、`python -m engine.pipeline.sync_binance_batch` 和 `python -m engine.pipeline.sync_binance_file` CLI 保留薄入口；新代码应使用 `engine.market_data` 目录。历史说明保留于 `docs/implementation/`。自动化回归测试必须运行，长时间实盘/真实行情运行验收另行安排。
+
+**数据源迁移第一步（2026-11-20）**：`sources/binance/{perpetual,spot,options}/collection.py` 提供产品固定的共享采集入口；`collection/managed.py` 已改为调用它们。旧 `futures_service.py`、`pair_service.py`、`options_service.py` 保留实际实现，后续才分阶段迁移内部逻辑。此阶段不创建单独部署服务、不迁移存储、不改变任务控制权限。
