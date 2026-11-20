@@ -63,7 +63,7 @@ pub struct StoredCheckpoint {
     pub basket_id: String,
 }
 fn id_valid(id: &str) -> bool {
-    id.len() > 0
+    !id.is_empty()
         && id.len() <= 64
         && id
             .bytes()
