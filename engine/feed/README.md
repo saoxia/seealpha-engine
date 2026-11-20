@@ -13,6 +13,15 @@
 `python -m engine.feed.service`。已有持久化数据仍使用
 `data/market_data/binance_um_1m/`，无需迁移或重新预热。
 
+## 统一行情架构目标（2026-11-20）
+
+[统一行情数据架构设计决策](../../docs/MARKET_DATA_ARCHITECTURE.md) 是后续重构的目标约束：
+**行情配置决定采集和维护任务是否运行，策略/回测的读侧订阅不决定采集启停**。
+实时获取、自动计算、历史扫描补齐应独立持续运行并能自动恢复；所有消费者经统一数据访问层读取已维护的数据。
+下面大部分段落记录不同阶段的**现有实现**，不能据此判断目标已全部落地。
+
+特别是目前 `engine.data_manager.subscriptions.Subscriptions._effective_policies()` 仍会因策略需求临时打开某些已配置但禁用实时采集的市场。这是**明确需要修改的旧行为**；本次仅更新文档，不改变现有运行结果。
+
 ## 模块边界
 
 Binance 接入已迁至 [`connectors/binance/`](../connectors/README.md)，复用 Nautilus 原生
@@ -309,8 +318,8 @@ Python 内存；其历史回放保持任务独立，并继续直接使用 Engine
 只有 **本租户、本账户已下发策略包** 中声明的品种、Engine 已记录的
 `intent` 和本 Engine 已配置的 `DataPolicy` 同时存在，才可以注册正式行情。
 未配置的市场、交易产品或粒度明确返回错误，不会擅自创建行情政策或替换交易所来源。
-对于已有但 `realtime_enabled=false` 的市场，策略活跃期间会暂时启用采集需求，
-**不会修改持久化的政策文件**。采集器每秒检查 manifest，自动合并 Binance
+对于已有但 `realtime_enabled=false` 的市场，**当前代码**在策略活跃期间会暂时启用采集需求，
+**不会修改持久化的政策文件**。**该行为不符合已确定的“采集只由配置决定”目标，后续重构时必须移除；在代码改变前不要把目标误认为现状。**采集器每秒检查 manifest，自动合并 Binance
 Spot/UM 的逐笔 WebSocket 订阅，支持增减/重连；行情下游只读取已闭合并由
 `calculation` 核验的 SQLite K 线，绝不把原始逐笔伪装成可交易闭合线。
 
