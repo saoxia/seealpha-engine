@@ -62,6 +62,8 @@ impl Runtime {
     /// Catalog coverage is authoritative for recorded closed bars only.
     /// It must NEVER be promoted into a live Feed READY permission without
     /// independently verified Source journal gaps and committed checkpoints.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn inspect_catalog_coverage(
         &self,
         tenant: &str,
@@ -114,6 +116,8 @@ impl Runtime {
     /// Joint public-data evidence view from the sole native Source journal
     /// and the authoritative Parquet Catalog. This is an inspection gate,
     /// not an issuer of Feed READY or venue permission.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn inspect_source_catalog_window(
         &self,
         tenant: &str,
@@ -189,6 +193,8 @@ impl Runtime {
     }
     /// Read [start,end) UTC, matching HistoricalMarketData.bars() exactly:
     /// Parquet event timestamp is candle close minus 1 millisecond.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn read_market_bars(
         &self,
         tenant: &str,
@@ -233,6 +239,8 @@ impl Runtime {
     }
     /// The strict backtest variant refuses missing Parquet files, partial
     /// coverage, out-of-order clocks, fabricated bars and cross-product data.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn read_contiguous_market_bars(
         &self,
         tenant: &str,
@@ -289,6 +297,8 @@ impl Runtime {
     }
     /// Store historical evidence in the Python-owned Parquet layout when that
     /// directory is mounted. Never rewrite old Parquet into SQLite.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn commit_market_bars(
         &self,
         tenant: &str,

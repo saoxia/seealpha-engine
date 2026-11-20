@@ -186,6 +186,8 @@ impl Runtime {
     }
     /// Caller supplies authoritative net position; persisted flight is a prerequisite
     /// for interpreting Submit as a request eligible for subsequent risk checks.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn reconcile_native_portfolio(
         &self,
         tenant: &str,
@@ -219,6 +221,8 @@ impl Runtime {
             command,
         })
     }
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_native_portfolio_fill(
         &self,
         tenant: &str,

@@ -20,6 +20,8 @@ pub struct VerifiedHistoryWindow<'a> {
 impl Runtime {
     /// Offline-only evidence replay. Does not authorize any exchange operation.
     /// The bar-only HTTP worker intentionally remains a separate model.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_verified_history<S: Strategy>(
         &self,
         tenant: &str,

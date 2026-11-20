@@ -189,14 +189,13 @@ impl Runtime {
             .source_processes
             .lock()
             .map_err(|_| bad("计算进程状态锁不可用。"))?;
-        if let Some(existing) = processes.get_mut(&key) {
-            if existing
+        if let Some(existing) = processes.get_mut(&key)
+            && existing
                 .try_wait()
                 .map_err(|_| bad("计算进程状态未知。"))?
                 .is_none()
-            {
-                return Err(bad("计算进程已运行。"));
-            }
+        {
+            return Err(bad("计算进程已运行。"));
         }
         processes.remove(&key);
         let binary = std::env::var("ENGINE_CALC_BIN")

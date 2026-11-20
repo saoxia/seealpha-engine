@@ -11,15 +11,7 @@ use seealpha_market::{BinanceSource, Product, check_symbol, interval_ms};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| i64::try_from(d.as_millis()).ok())
-        .unwrap_or(0)
-}
 fn bad(message: &str) -> RuntimeError {
     RuntimeError::Unprocessable(message.into())
 }
@@ -78,16 +70,16 @@ fn valid_policy(policy: &Value) -> Result<(String, String), RuntimeError> {
         }
     }
     for key in ["price_precision", "size_precision"] {
-        if let Some(precision) = policy.get(key) {
-            if precision.as_u64().is_none_or(|value| value > 16) {
-                return Err(bad("Nautilus Instrument 精度必须为 0..16。"));
-            }
+        if let Some(precision) = policy.get(key)
+            && precision.as_u64().is_none_or(|value| value > 16)
+        {
+            return Err(bad("Nautilus Instrument 精度必须为 0..16。"));
         }
     }
-    if let Some(days) = policy.get("history_days") {
-        if days.as_i64().is_none_or(|x| !(1..=36500).contains(&x)) {
-            return Err(bad("历史天数无效。"));
-        }
+    if let Some(days) = policy.get("history_days")
+        && days.as_i64().is_none_or(|x| !(1..=36500).contains(&x))
+    {
+        return Err(bad("历史天数无效。"));
     }
     Ok((product.to_owned(), symbol.to_owned()))
 }
@@ -130,16 +122,15 @@ impl Runtime {
                 .map_err(|_| RuntimeError::Conflict("数据源状态锁不可用。".into()))?;
             for product in ["spot", "futures_um"] {
                 let key = format!("{tenant_id}:{product}");
-                if let Some(child) = processes.get_mut(&key) {
-                    if child
+                if let Some(child) = processes.get_mut(&key)
+                    && child
                         .try_wait()
                         .map_err(|_| RuntimeError::Conflict("数据源状态未知。".into()))?
                         .is_none()
-                    {
-                        return Err(RuntimeError::Conflict(
-                            "原生数据源正在运行，请先停止后再修改持久化采集配置。".into(),
-                        ));
-                    }
+                {
+                    return Err(RuntimeError::Conflict(
+                        "原生数据源正在运行，请先停止后再修改持久化采集配置。".into(),
+                    ));
                 }
             }
         }
@@ -524,6 +515,8 @@ impl Runtime {
         )
     }
 
+    // Preserve the explicit legacy subscription envelope until v2 parity cutover.
+    #[allow(clippy::too_many_arguments)]
     pub fn note_market_subscription(
         &self,
         tenant_id: &str,

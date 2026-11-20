@@ -190,12 +190,12 @@ async fn execute() -> Result<Value> {
         {
             break;
         }
-        if let Some(next) = expected {
-            if current.start_ms != next {
-                return Err(
-                    "calculation journal has a history gap or duplicate; no publication".into(),
-                );
-            }
+        if let Some(next) = expected
+            && current.start_ms != next
+        {
+            return Err(
+                "calculation journal has a history gap or duplicate; no publication".into(),
+            );
         }
         let bar = parse_bar(&current, interval, product)?;
         let day = bar.open_time_ms.div_euclid(86_400_000);
@@ -285,6 +285,20 @@ async fn execute() -> Result<Value> {
         "backend":"nautilus_v2_parquet","data_ready":false,
         "exchange_orders":0,"status":"published_unverified"}))
 }
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    match execute().await {
+        Ok(result) => {
+            println!("{}", result);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("Native Catalog publisher failed closed: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,18 +335,5 @@ mod tests {
         let reopened = publication_lease(&root).unwrap();
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
-    }
-}
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
-    match execute().await {
-        Ok(result) => {
-            println!("{}", result);
-            std::process::ExitCode::SUCCESS
-        }
-        Err(error) => {
-            eprintln!("Native Catalog publisher failed closed: {error}");
-            std::process::ExitCode::FAILURE
-        }
     }
 }

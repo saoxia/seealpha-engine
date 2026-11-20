@@ -69,15 +69,14 @@ impl Runtime {
         if balance <= Decimal::ZERO {
             return Err(fail("虚拟账户资金无效。"));
         }
-        if let Some(key) = idempotency_key {
-            if key.is_empty()
+        if let Some(key) = idempotency_key
+            && (key.is_empty()
                 || key.len() > 128
                 || !key
                     .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
-            {
-                return Err(fail("幂等键无效。"));
-            }
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-')))
+        {
+            return Err(fail("幂等键无效。"));
         }
         let key = idempotency_key
             .map(str::to_owned)

@@ -372,6 +372,17 @@ async fn execute() -> Result<()> {
     Ok(())
 }
 
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    match execute().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Binance native public source failed closed: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,13 +482,3 @@ mod tests {
     }
 }
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
-    match execute().await {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("Binance native public source failed closed: {error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}

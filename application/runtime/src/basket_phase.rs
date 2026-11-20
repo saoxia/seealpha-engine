@@ -27,10 +27,10 @@ impl Runtime {
         environment: &str,
         basket_id: &str,
         expected_basket_revision: &str,
-        expected_account_revision: i64,
+        _expected_account_revision: i64,
         request_id: &str,
         client_order_id: &str,
-        fingerprint: &str,
+        _fingerprint: &str,
         intent: &Value,
     ) -> Result<(), RuntimeError> {
         self.require_active(tenant)?;
@@ -100,6 +100,8 @@ impl Runtime {
         Ok(())
     }
 
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn preregister_reserved_basket_leg(
         &self,
         tenant: &str,
@@ -200,6 +202,8 @@ impl Runtime {
 
     /// Read the trusted, replay-verified basket checkpoint, validate all legs,
     /// then CAS-persist AwaitingConfirmation; no VENUE permission is returned.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn reserve_basket_phase(
         &self,
         tenant: &str,

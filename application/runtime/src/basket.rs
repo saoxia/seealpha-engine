@@ -326,6 +326,8 @@ impl Runtime {
         )
     }
     /// Apply only source-verified order evidence; unknown statuses freeze.
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn reconcile_basket_evidence(
         &self,
         tenant: &str,
@@ -357,6 +359,8 @@ impl Runtime {
         .map_err(basket_error)?;
         self.save_basket_checkpoint(tenant, account, basket, &updated, Some(expected_revision))
     }
+    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
+    #[allow(clippy::too_many_arguments)]
     pub fn monitor_basket_risk(
         &self,
         tenant: &str,
