@@ -20,6 +20,12 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 
 恢复步骤、风险隔离、启动方式及逐功能替换标准见 [Python Engine 恢复与迁移规则](docs/LEGACY_PYTHON_RECOVERY.md)。完整 Rust 功能等价尚未通过验收，不应删除仍承担旧功能的 Python 模块。
 
+## Rust 集中迁移（功能等价尚未完成）
+
+本轮已在 Rust 原生 Engine 中补齐一批账户状态、持久化行情配置/任务、策略读侧订阅、严格历史 K 线读取和已发行策略的本地回测路径，并接入独立 Binance 产品源的显式试验性管理。新数据源在完成 REST 衔接/时钟/历史证据前始终返回 `data_ready=false`，**不会**向策略提供已就绪的实盘行情保证。
+
+Python Engine 仍作为独立兼容运行时保留。详细实现边界、未迁移功能和最终验收清单见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)。GitHub Actions 仍暂停，不应把当前 Rust 分支直接用于实盘。
+
 ## 本地开发
 
 ```bash
