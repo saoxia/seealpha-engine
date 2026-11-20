@@ -778,4 +778,108 @@ mod tests {
                 "idempotency_key":"id-1"}"#).await;
         assert_eq!(status,StatusCode::UNPROCESSABLE_ENTITY);
     }
+    #[tokio::test]
+    async fn research_grant_cannot_access_admin_and_admin_token_cannot_access_research() {
+        let st = state();
+        let admin = st.config.token.clone();
+        let grant = signed_grant(&["datasets:read"], &["spot:ETHUSDT:1m"], "task-isolation");
+        let app = router(st);
+
+        let (status, headers, _) =
+            request(&app, "/health", "GET", Some(&grant), None, None, "").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(headers[CONTRACT_HEADER], "2");
+
+        let (status, _, _) = request(
+            &app, "/research/v1/datasets", "GET", Some(&admin), Some("2"), Some("1"), "",
+        ).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, _, _) = request(
+            &app, "/tenants/other/jobs", "GET", Some(&admin), None, None, "",
+        ).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn research_body_errors_never_override_authentication_or_contract_version() {
+        let app = router(state());
+        let grant = signed_grant(
+            &["backtests:submit"], &["spot:ETHUSDT:1m"], "task-malformed",
+        );
+        let path = "/research/v1/backtests";
+        let (status, _, _) = request(
+            &app, path, "POST", None, Some("2"), Some("1"), "{invalid-json",
+        ).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, _, _) = request(
+            &app, path, "POST", Some(&grant), Some("3"), Some("1"), "{invalid-json",
+        ).await;
+        assert_eq!(status, StatusCode::UPGRADE_REQUIRED);
+
+        let (status, headers, _) = request(
+            &app, path, "POST", Some(&grant), Some("2"), Some("1"), "{invalid-json",
+        ).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(headers[CONTRACT_HEADER], "2");
+        assert_eq!(headers[RESEARCH_HEADER], "1");
+    }
+
+    #[tokio::test]
+    async fn running_research_job_cannot_be_falsely_cancelled() {
+        let st = state();
+        let grant = signed_grant(
+            &["backtests:read", "backtests:cancel"],
+            &["spot:ETHUSDT:1m"],
+            "task-running",
+        );
+        let params = json!({
+            "account_id":"a", "product":"spot", "symbol":"ETHUSDT", "interval":"1m",
+            "start_ms":0, "end_ms":60000, "starting_balance":"1000",
+            "quote_currency":"USDT",
+            "_research":{
+                "task_id":"task-running", "dataset_id":"spot:ETHUSDT:1m",
+                "strategy_ref":"account:a"
+            }
+        });
+        let queued = st.runtime.schedule_backtest_job(
+            "42", &params, Some("research.running.id"),
+        ).unwrap();
+        let id = queued["id"].as_str().unwrap();
+        assert!(st.runtime.ledger.transition_data_job(
+            "42", id, "queued", "running", None,
+        ).unwrap());
+        let app = router(st);
+        let path = format!("/research/v1/backtests/{id}/cancel");
+        let (status, _, body) = request(
+            &app, &path, "POST", Some(&grant), Some("2"), Some("1"), "{}",
+        ).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_ne!(body["status"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_browser_origin_and_bad_protocol() {
+        let app = router(state());
+        let grant = signed_grant(&["datasets:read"], &[], "task-mcp-protocol");
+        let path = "/research/mcp";
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let mk = |origin: bool, version: &str| {
+            let mut builder = axum::http::Request::builder()
+                .method("POST").uri(path)
+                .header(header::AUTHORIZATION, format!("Bearer {grant}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("mcp-protocol-version", version);
+            if origin {
+                builder = builder.header("origin", "null");
+            }
+            builder.body(Body::from(body)).unwrap()
+        };
+        let app_forbidden = app.clone().oneshot(mk(true, MCP_VERSION)).await.unwrap();
+        assert_eq!(app_forbidden.status(), StatusCode::FORBIDDEN);
+        let app_bad_protocol = app.oneshot(mk(false, "2099-01-01")).await.unwrap();
+        assert_eq!(app_bad_protocol.status(), StatusCode::BAD_REQUEST);
+    }
+
 }
