@@ -46,6 +46,38 @@ impl Runtime{
             Err(e)=>Err(RuntimeError::Conflict(format!("Catalog 数据目录不可用：{e}"))),
         }
     }
+    /// Catalog coverage is authoritative for recorded closed bars only.
+    /// It must NEVER be promoted into a live Feed READY permission without
+    /// independently verified Source journal gaps and committed checkpoints.
+    pub fn inspect_catalog_coverage(
+        &self, tenant: &str, product_name: &str, symbol: &str,
+        interval: &str, start_ms: i64, end_ms: i64, limit: usize,
+    ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant)?;
+        if limit == 0 || limit > 50_000 || end_ms <= start_ms || start_ms < 0 {
+            return Err(RuntimeError::Unprocessable("历史覆盖率查询范围无效。".into()));
+        }
+        let catalog = self.native_catalog()?.ok_or_else(|| {
+            RuntimeError::Conflict("原生 Catalog 尚不存在，不能声明数据就绪。".into())
+        })?;
+        let gaps = catalog.bar_gaps(
+            symbol, product(product_name)?, interval, start_ms, end_ms, limit,
+        ).map_err(error)?;
+        let ranges = gaps.iter().map(|gap| json!({
+            "start_ms": gap.start_ms, "end_ms": gap.end_ms
+        })).collect::<Vec<_>>();
+        Ok(json!({
+            "product": product_name, "symbol": symbol, "interval": interval,
+            "start_ms": start_ms, "end_ms": end_ms,
+            "catalog_contiguous": ranges.is_empty(),
+            "missing_ranges": ranges,
+            "source_checkpoint_verified": false,
+            "feed_ready": false,
+            "allow_new_risk": false,
+            "source": "nautilus_v2_parquet",
+        }))
+    }
+
     pub fn market_data_backend(&self)->Result<&'static str,RuntimeError>{
         Ok(if self.native_catalog()?.is_some(){"nautilus_v2_parquet"}
             else {"engine_sqlite_compat"})
