@@ -553,12 +553,18 @@ fn run(args: Args) -> Result<Manifest> {
     let mut previous_timestamp_ms = None;
     let mut pending_trade: Option<ParsedTrade> = None;
 
+    let mut started = false;
     for (record_index, result) in reader.records().enumerate() {
         let record = result
             .map_err(|error| invalid(format!("CSV 第 {} 行无法解析：{error}", record_index + 1)))?;
-        if record_index == 0 && is_header(&record) {
+        if !started && record.iter().all(|field| field.trim().is_empty()) {
+            continue; // Match the historical parser's leading blank-line tolerance.
+        }
+        if !started && is_header(&record) {
+            started = true;
             continue;
         }
+        started = true;
         let expected_fields = if args.spot_trades { 7 } else { 6 };
         if record.len() != expected_fields {
             return Err(invalid(format!(
