@@ -11,7 +11,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use rust_decimal::Decimal;
 use seealpha_research::{Grant, require_op, verify_research_grant};
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -141,9 +141,10 @@ struct SnapshotRequest {
 async fn snapshot_unavailable(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<SnapshotRequest>,
+    body: Bytes,
 ) -> Result<Response, AppError> {
     let grant = authorize(&state, &headers, true)?;
+    let body: SnapshotRequest = decode_body(&body)?;
     scope(&grant, "snapshots:create", Some(&body.dataset_id), None)?;
     if body.format != "parquet"
         || parse_time_ms(&body.start).is_none()
@@ -186,6 +187,11 @@ struct ResearchBacktestRequest {
 
 fn empty_parameters() -> Value {
     json!({})
+}
+
+fn decode_body<T: DeserializeOwned>(body: &Bytes) -> Result<T, AppError> {
+    serde_json::from_slice(body)
+        .map_err(|_| AppError::unprocessable("Invalid Research request body"))
 }
 
 fn valid_idempotency(value: &str) -> bool {
@@ -347,9 +353,10 @@ fn submit_job(
 async fn submit_backtest(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ResearchBacktestRequest>,
+    body: Bytes,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let grant = authorize(&state, &headers, true)?;
+    let body: ResearchBacktestRequest = decode_body(&body)?;
     Ok((StatusCode::ACCEPTED, Json(submit_job(&state, &grant, &body)?)))
 }
 
@@ -416,9 +423,10 @@ async fn cancel_backtest(
 async fn candidate_unavailable(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    body: Bytes,
 ) -> Result<Response, AppError> {
     let grant = authorize(&state, &headers, true)?;
+    let body: Value = decode_body(&body)?;
     let strategy = body["strategy_ref"]
         .as_str()
         .ok_or_else(|| AppError::unprocessable("Missing candidate strategy_ref"))?;
