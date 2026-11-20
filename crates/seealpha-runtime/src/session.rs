@@ -152,7 +152,7 @@ impl Runtime {
                     .map_err(|_| RuntimeError::Conflict(
                         "已下发策略参数记录损坏。".into(),
                     ))?;
-                if load.archive != *bytes || stored_parameters != strategy.parameters {
+                if load.archive.as_slice() != bytes.as_slice() || stored_parameters != strategy.parameters {
                     return Err(RuntimeError::Conflict(
                         "模拟策略包或参数与可信下发记录不一致。".into(),
                     ));
@@ -162,6 +162,11 @@ impl Runtime {
                 None
             };
             let tenant = self.require_active(&request.tenant_id)?;
+            if issued.is_none() && tenant.purpose != "development" {
+                return Err(RuntimeError::Conflict(
+                    "正式租户不允许执行未下发的目录策略。".into(),
+                ));
+            }
             self.track_start();
             let outcome = if let Some(load) = &issued {
                 run_issued_host(
@@ -184,11 +189,6 @@ impl Runtime {
                 )
             } else {
                 // Development sample directory path; never permitted to send orders.
-                if tenant.purpose != "development" {
-                    return Err(RuntimeError::Conflict(
-                        "正式租户不允许执行未下发的目录策略。".into(),
-                    ));
-                }
                 run_host(&host_command)
             };
             self.track_end();
