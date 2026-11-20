@@ -6,9 +6,9 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request
 
-from . import options
-from .options_account import READ_PARAMS, BinanceOptionsAccountClient, signed_request
-from .queries import QueryError
+from engine.connectors.binance import options
+from engine.connectors.binance.options_account import READ_PARAMS, BinanceOptionsAccountClient, signed_request
+from engine.connectors.binance.queries import QueryError
 
 
 class OptionsOrderError(QueryError):

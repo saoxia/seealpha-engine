@@ -12,8 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from engine.config import EngineConfig
-from engine.research_api import create_research_app
-from engine.research_auth import (
+from engine.api.research_api import create_research_app
+from engine.research.auth import (
     ENGINE_HEADER,
     RESEARCH_HEADER,
     sign_research_grant,
@@ -120,11 +120,11 @@ def headers(**kwargs):
 def service(tmp_path, monkeypatch):
     runtime, tasks = FakeRuntime(tmp_path), FakeTasks()
     monkeypatch.setattr(
-        "engine.research_snapshots.load_settings",
+        "engine.research.snapshots.load_settings",
         lambda: FakePipelineSettings(tmp_path / "data" / "catalog"),
     )
     monkeypatch.setattr(
-        "engine.research_snapshots.dataset_inventory",
+        "engine.research.snapshots.dataset_inventory",
         lambda _settings, all_levels: [{
             "symbol": "ETHUSDT", "product": "futures_um",
             "level": "1m", "quality": "unverified",
@@ -141,7 +141,7 @@ def service(tmp_path, monkeypatch):
                 "close": "2005.00", "volume": "100.0",
             }
 
-    monkeypatch.setattr("engine.research_snapshots.rows", mock_rows)
+    monkeypatch.setattr("engine.research.snapshots.rows", mock_rows)
     config = EngineConfig(
         state_dir=runtime.root, token=ADMIN, project=tmp_path,
         tenant_id="dev", tenant_purpose="development",
@@ -281,12 +281,12 @@ def test_weak_or_shared_secret_refused(tmp_path):
 
 def test_research_mount_does_not_share_admin_credentials(tmp_path, monkeypatch):
     """The main Engine's global admin dependency must not guard/bypass Research."""
-    from engine.app import create_app
-    from engine.runtime import EngineRuntime
+    from engine.api.app import create_app
+    from engine.trading.runtime import EngineRuntime
 
     (tmp_path / "data" / "catalog").mkdir(parents=True)
     monkeypatch.setattr(
-        "engine.research_snapshots.dataset_inventory",
+        "engine.research.snapshots.dataset_inventory",
         lambda _settings, all_levels: [],
     )
     runtime = EngineRuntime(tmp_path / "state", tmp_path)
@@ -380,7 +380,7 @@ def test_candidate_backtest_uses_trusted_recipe_and_scoped_task(service):
 
 
 def test_candidate_rejects_executable_source_and_invalid_hash(service):
-    from engine.strategies.candidate_package import parse_candidate_archive
+    from engine.research.candidate_package import parse_candidate_archive
 
     client, _, _, _tasks = service
     raw, digest = _candidate_archive("import os\nCANDIDATE = {}")
@@ -406,8 +406,8 @@ def test_candidate_rejects_executable_source_and_invalid_hash(service):
 
 
 def test_candidate_ast_validation_rejects_network_and_wrong_shape():
-    from engine.strategies.candidate_package import parse_candidate_archive
-    from engine.strategies.candidate_template import validate_candidate
+    from engine.research.candidate_package import parse_candidate_archive
+    from engine.research.candidate_template import validate_candidate
 
     for source in (
         "__import__('os').system('id')",
@@ -526,7 +526,7 @@ def test_python_candidate_opt_in_and_hmac_isolation(service):
 def test_python_candidate_package_is_never_imported_by_api():
     import base64
 
-    from engine.strategies.python_candidate import inspect_python_candidate
+    from engine.research.python_candidate import inspect_python_candidate
 
     # Static inspection may accept Python imports; it must not execute them.
     raw, digest = _python_strategy_archive(
@@ -553,7 +553,7 @@ def test_python_candidate_rejects_archive_path_escape_and_secret_parameters():
     import json
     import zipfile
 
-    from engine.strategies.python_candidate import inspect_python_candidate
+    from engine.research.python_candidate import inspect_python_candidate
 
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as z:
@@ -577,7 +577,7 @@ def test_python_candidate_rejects_archive_path_escape_and_secret_parameters():
 
 
 def test_engine_job_views_do_not_return_python_archive_to_clients():
-    from engine.task_queue import TaskCoordinator
+    from engine.infrastructure.task_queue import TaskCoordinator
 
     job = {
         "id": "a" * 32, "fingerprint": "private", "idempotency_key": "private",
@@ -803,7 +803,7 @@ def test_mcp_auth_transport_errors_and_no_mutating_notifications(service):
 
 
 def test_mcp_configuration_fails_closed_without_development_research_key(tmp_path):
-    from engine.app import create_app
+    from engine.api.app import create_app
 
     for config in (
         EngineConfig(state_dir=tmp_path / "one", research_mcp_enabled=True),

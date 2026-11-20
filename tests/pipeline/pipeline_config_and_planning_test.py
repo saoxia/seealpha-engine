@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from engine.pipeline import sync_binance_batch
-from engine.pipeline.config import load_settings
-from engine.pipeline.models import (
+from engine.market_data.repair.config import load_settings
+from engine.market_data.repair.models import (
     ArchiveSpec,
     DataRequest,
     PipelineConfigError,
@@ -13,7 +13,7 @@ from engine.pipeline.models import (
     instrument_id_for,
     normalize_symbol,
 )
-from engine.pipeline.sync_binance_batch import archive_path, plan_daily_archives
+from engine.market_data.repair.sync_binance_batch import archive_path, plan_daily_archives
 
 
 def test_default_settings_define_three_trade_level_usdt_perpetuals() -> None:

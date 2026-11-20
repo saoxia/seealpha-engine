@@ -6,8 +6,8 @@ import os
 import pytest
 
 from core.market.instruments import bar_type_for, instrument_id_for
-from engine.pipeline.models import PipelineSettings
-from engine.pipeline.pair_deletion import delete_pair_data, pair_deletion_plan
+from engine.market_data.repair.models import PipelineSettings
+from engine.market_data.repair.pair_deletion import delete_pair_data, pair_deletion_plan
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def test_option_underlying_deletion_groups_expiries_and_preserves_other_products
 
     settings, root = storage
     symbols = ("BTC-261225-85000-C", "BTC-270129-90000-P")
-    monkeypatch.setattr("engine.pipeline.catalog.ParquetDataCatalog.instruments", lambda self: [
+    monkeypatch.setattr("engine.market_data.storage.catalog.ParquetDataCatalog.instruments", lambda self: [
         SimpleNamespace(id=instrument_id_for(symbol, "options"), info={"binance_options": {"underlying": "BTCUSDT"}})
         for symbol in symbols])
     paths = [settings.raw_dir / "options" / symbols[0] / "source.json",
@@ -135,7 +135,7 @@ def test_option_underlying_deletion_uses_venue_settlement_metadata(storage, monk
 
     settings, root = storage
     symbols = {"BTC-261225-85000-C": "BTCUSDT", "BTC-270129-90000-P": "BTCUSDC"}
-    monkeypatch.setattr("engine.pipeline.catalog.ParquetDataCatalog.instruments", lambda self: [
+    monkeypatch.setattr("engine.market_data.storage.catalog.ParquetDataCatalog.instruments", lambda self: [
         SimpleNamespace(id=instrument_id_for(symbol, "options"), info={"binance_options": {"underlying": pair}})
         for symbol, pair in symbols.items()])
     settings.catalog_dir.mkdir(parents=True)

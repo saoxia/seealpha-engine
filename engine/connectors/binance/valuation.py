@@ -22,8 +22,8 @@ from nautilus_trader.common import Environment, LoggerConfig, LogLevel, SocketSt
 from nautilus_trader.live import LiveNode
 from nautilus_trader.model import InstrumentId, TraderId
 
-from .assets import asset_account
-from .queries import QueryError, SnapshotReady, _clear_exception_frames, environment
+from engine.connectors.binance.assets import asset_account
+from engine.connectors.binance.queries import QueryError, SnapshotReady, _clear_exception_frames, environment
 
 
 class ValuationObserver(SnapshotReady):

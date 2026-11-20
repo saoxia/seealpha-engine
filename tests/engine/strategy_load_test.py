@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.runtime import EngineConflict, EngineRuntime
+from engine.trading.runtime import EngineConflict, EngineRuntime
 from engine.strategies.loading import clip_member_targets
 from engine.strategies.package import (
     PackageError,
@@ -24,8 +24,8 @@ from engine.strategies.package import (
     parse_metadata,
     release_namespace,
 )
-from engine.strategies.target_netting import MemberTarget, execution_delta
-from engine.strategies.targets import TargetHolding, signed_quantity
+from engine.portfolio.target_netting import MemberTarget, execution_delta
+from engine.portfolio.targets import TargetHolding, signed_quantity
 
 PROJECT = Path(__file__).resolve().parents[2]
 EXAMPLE = PROJECT / "packages" / "ema_crossover"

@@ -7,10 +7,13 @@ SeeAlpha 的独立量化数据、行情、回测、模拟与交易执行内核�
 ## 职责与目录
 
 - `engine/connectors/`：交易所协议和 NautilusTrader 适配器。
-- `engine/feed/`：实时行情、连续性、重放与风险准入门禁。
-- `engine/pipeline/`：历史数据、归档校验、Catalog、Rust 转换器。
-- `engine/strategies/`：策略包加载、回测、组合目标协调。
-- `engine/runtime.py`、`engine/store.py`：引擎运行事实、订单请求、幂等与恢复。
+- `engine/market_data/`：按持久化配置独立采集、计算、历史核验补齐、存储和统一访问。
+- `engine/strategies/`：策略包检查与加载。
+- `engine/backtesting/`：回测与离线模拟。
+- `engine/portfolio/`：组合目标、篮子管理与净额协调。
+- `engine/trading/`：账户/订单运行事实、幂等和恢复。
+- `engine/research/`：研究候选、研究证据和只读快照。
+- `engine/api/`、`engine/infrastructure/`：HTTP 边界、任务协调及进程基础设施。
 - `core/`：目前仍需要的轻量共享领域模型和 Engine HTTP 契约。
 - `packages/`：仅用于演示和离线测试的策略包示例。
 - `tests/`：从原仓库迁入的 Engine 相关测试；不包含 Platform 源码。
@@ -21,7 +24,7 @@ SeeAlpha 的独立量化数据、行情、回测、模拟与交易执行内核�
 
 行情的运行由**持久化行情配置**决定，不随回测或策略订阅启停；按永续合约现有思路拆分**实时获取、自动计算、历史扫描/补齐**三个可独立恢复的维护任务。现已取消策略订阅对实时采集启停的隐式覆盖，并为回测增加统一历史数据读取入口；交易估值等其他数据路径仍待逐步迁移。
 
-详见 [统一行情数据架构设计决策](docs/MARKET_DATA_ARCHITECTURE.md)。
+目录归属见 [Engine 代码布局](docs/ENGINE_LAYOUT.md)，运行不变量见 [统一行情数据架构设计决策](docs/MARKET_DATA_ARCHITECTURE.md)。
 
 ## RC9 原生能力适配
 
@@ -37,13 +40,13 @@ SeeAlpha 的独立量化数据、行情、回测、模拟与交易执行内核�
 uv sync --locked
 uv run ruff check .
 uv run pytest -q tests/engine tests/connectors tests/feed tests/pipeline tests/core
-cargo test --locked --release --manifest-path engine/pipeline/rust_converter/Cargo.toml
+cargo test --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
 ```
 
 部分转换/数据管道测试需要先构建 Rust 转换器：
 
 ```bash
-cargo build --locked --release --manifest-path engine/pipeline/rust_converter/Cargo.toml
+cargo build --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
 ```
 
 本仓库已独立命名为 `seealpha-engine`，运行依赖只声明 NautilusTrader、FastAPI/Uvicorn、Pydantic、WebSocket 和数据处理库；开发依赖仅包括 HTTPX、pytest、Ruff。原 Platform 的 `api`/`research` 依赖组不再纳入 Engine 项目。当前锁文件保留部分先前已解析但可能未使用的包记录，等待重新生成锁文件时进一步清理；实际运行安装以根依赖图为准。
@@ -70,7 +73,7 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 
 下列情况会额外执行完整 Docker 构建、镜像源码范围检查、匿名令牌拒绝及租户权限 HTTP 冒烟测试：
 
-- 修改 `docker/`、`.dockerignore`、`pyproject.toml`、`uv.lock`、`.python-version`、`rust-toolchain.toml`、`engine/pipeline/rust_converter/` 或 Engine CI 工作流；
+- 修改 `docker/`、`.dockerignore`、`pyproject.toml`、`uv.lock`、`.python-version`、`rust-toolchain.toml`、`engine/market_data/repair/rust_converter/` 或 Engine CI 工作流；
 - 推送 `v*` 版本标签（用于发布前验收，不自动推送镜像到镜像仓库）；
 - 在 GitHub Actions 中手动运行 **Engine standalone CI → Run workflow**，需要复查完整镜像时使用。
 

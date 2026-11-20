@@ -20,10 +20,10 @@ from nautilus_trader.model import (
 )
 
 from core.market.instruments import bar_type_for
-from engine.feed.pair_store import PairStore
-from engine.pipeline.catalog import ParquetDataCatalog, TradeQuote
-from engine.pipeline.models import PipelineSettings
-from engine.pipeline.pair_deletion import history_trim_plan, trim_pair_history
+from engine.market_data.storage.pair_store import PairStore
+from engine.market_data.storage.catalog import ParquetDataCatalog, TradeQuote
+from engine.market_data.repair.models import PipelineSettings
+from engine.market_data.repair.pair_deletion import history_trim_plan, trim_pair_history
 from nautilus_support import TestInstrumentProvider
 
 START = datetime(2026, 8, 15, tzinfo=UTC)
@@ -137,7 +137,7 @@ def test_interrupted_cross_boundary_write_preserves_original_data(retained, monk
     plan = history_trim_plan("ETHUSDT", "futures_um", START, settings, project=project)
     def interrupted(*args):
         raise OSError("interrupted")
-    monkeypatch.setattr("engine.pipeline.pair_deletion.os.replace", interrupted)
+    monkeypatch.setattr("engine.market_data.repair.pair_deletion.os.replace", interrupted)
     with pytest.raises(OSError, match="interrupted"):
         trim_pair_history("ETHUSDT", "futures_um", START, settings, expected_snapshot=plan["snapshot"], project=project)
     assert len(catalog.trade_ticks()) == 3
@@ -145,7 +145,7 @@ def test_interrupted_cross_boundary_write_preserves_original_data(retained, monk
 
 def test_legacy_minute_journal_advances_its_stored_start_and_keeps_unknown_evidence(retained):
     from core.market.models import MinuteBar
-    from engine.feed.store import Store
+    from engine.market_data.storage.store import Store
 
     settings, project, _catalog, _source, _monthly, _feature, root, _other = retained
     path = root.parent / "minutes.sqlite"
@@ -184,7 +184,7 @@ def test_configured_parent_folder_names_do_not_change_trim_scope(retained, folde
 
 
 def test_file_name_cannot_hide_retained_rows_during_deletion(retained):
-    from engine.pipeline.catalog import _timestamps_to_filename
+    from engine.market_data.storage.catalog import _timestamps_to_filename
 
     settings, project, catalog, *_ = retained
     source = next((settings.catalog_dir / "data/trades").rglob("*.parquet"))
@@ -215,7 +215,7 @@ def test_rows_without_event_times_are_preserved_instead_of_assumed_old(retained)
 
 
 def test_funding_settlement_retention_follows_pair_start_without_discarding_current(retained):
-    from engine.feed.funding_service import FundingStore, read_funding
+    from engine.market_data.collection.funding_service import FundingStore, read_funding
 
     settings, project, *_rest = retained
     path = project / "data/market_data/binance_um_1m/managed/ETHUSDT/funding.sqlite"

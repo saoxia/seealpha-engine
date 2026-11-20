@@ -203,7 +203,7 @@ async def _account_snapshot(
     node.add_strategy(observer)
     ledger_observer = None
     if operation_records is not None:
-        from .operations import LedgerObserver
+        from engine.connectors.binance.operations import LedgerObserver
 
         ledger_observer = LedgerObserver(account)
         node.add_strategy(ledger_observer)

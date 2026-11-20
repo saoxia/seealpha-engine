@@ -4,13 +4,13 @@ from decimal import Decimal
 
 import pytest
 
-from engine.strategies.basket_settlement import (
+from engine.portfolio.basket_settlement import (
     BasketSettlementError,
     ExpiringOptionContract,
     VerifiedOptionSettlement,
     reconcile_verified_option_expiry,
 )
-from engine.strategies.basket_targets import LegId
+from engine.portfolio.basket_targets import LegId
 
 NOW = 1_800_000_000_000_000_000
 EXPIRY = NOW - 1_000_000_000

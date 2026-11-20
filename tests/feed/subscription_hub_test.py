@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from engine.feed.subscription_hub import (
+from engine.market_data.access.subscription_hub import (
     ClosedBar,
     MarketDataHubError,
     MarketStream,

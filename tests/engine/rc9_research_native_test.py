@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from nautilus_trader.model import InstrumentId, OptionGreeks
 
-from engine.strategies.research_native import greeks_exposures, protective_bracket
+from engine.research.research_native import greeks_exposures, protective_bracket
 
 
 def test_native_greeks_are_contract_adjusted_and_grouped_per_underlying():

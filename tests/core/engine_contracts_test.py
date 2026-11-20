@@ -13,7 +13,7 @@ from core.engine_contracts import (
 )
 from engine.connectors.binance.queries import AccountSnapshot as EngineAccountSnapshot
 from engine.connectors.binance.queries import QueryError as EngineQueryError
-from engine.runtime import EngineConflict as RuntimeEngineConflict
+from engine.trading.runtime import EngineConflict as RuntimeEngineConflict
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -45,7 +45,7 @@ def test_shared_transport_contract_is_importable_without_engine_runtime():
         "import sys; from pathlib import Path; "
         "sys.path.insert(0, str(Path(sys.argv[1]))); "
         "import core.engine_contracts; "
-        "assert 'engine.runtime' not in sys.modules; "
+        "assert 'engine.trading.runtime' not in sys.modules; "
         "assert 'nautilus_trader' not in sys.modules"
     )
     result = subprocess.run(

@@ -14,9 +14,9 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .manual import ManualValidationError, exact
-from .manual import execute as native_execute
-from .queries import QueryError
+from engine.connectors.binance.manual import ManualValidationError, exact
+from engine.connectors.binance.manual import execute as native_execute
+from engine.connectors.binance.queries import QueryError
 
 BASES = {"production": "https://fapi.binance.com", "sandbox": "https://testnet.binancefuture.com"}
 CLOSED_STATUSES = {"CANCELED", "CANCELLED", "EXPIRED", "REJECTED", "FINISHED", "TRIGGERED", "FILLED"}

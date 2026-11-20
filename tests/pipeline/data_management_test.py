@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from engine.pipeline.catalog import ParquetDataCatalog, _timestamps_to_filename
-from engine.pipeline.convert_binance_trades import convert_trade_archive
-from engine.pipeline.data_management import (
+from engine.market_data.storage.catalog import ParquetDataCatalog, _timestamps_to_filename
+from engine.market_data.repair.convert_binance_trades import convert_trade_archive
+from engine.market_data.repair.data_management import (
     checked_request,
     coverage,
     deletion_plan,
@@ -15,7 +15,7 @@ from engine.pipeline.data_management import (
     preview,
     validate,
 )
-from engine.pipeline.models import PipelineSettings, SyncedArchive, bar_type_for
+from engine.market_data.repair.models import PipelineSettings, SyncedArchive, bar_type_for
 from nautilus_support import TestInstrumentProvider
 from tests.pipeline.convert_binance_trades_test import trade_row, write_trade_archive
 
@@ -56,7 +56,7 @@ def test_preview_preserves_same_timestamp_ticks_and_exclusive_end(dataset):
 
 
 def test_inventory_reports_each_existing_level_without_implying_continuity(dataset):
-    from engine.pipeline.data_management import dataset_inventory
+    from engine.market_data.repair.data_management import dataset_inventory
     settings, _start, _archive = dataset
     from dataclasses import replace
 
@@ -91,7 +91,7 @@ def test_export_is_exact_and_checksum_failure_is_not_verified(dataset, tmp_path)
 
 
 def test_missing_catalog_read_does_not_create_directory(tmp_path):
-    from engine.pipeline.data_management import dataset_inventory, open_catalog
+    from engine.market_data.repair.data_management import dataset_inventory, open_catalog
     settings = PipelineSettings("futures_um", "trades", ("ETHUSDT",), ("1m",),
                                 tmp_path / "raw", tmp_path / "missing", tmp_path / "state")
     assert dataset_inventory(settings) == []
@@ -104,8 +104,8 @@ def test_missing_catalog_read_does_not_create_directory(tmp_path):
 @pytest.mark.parametrize("python_only", [False, True])
 def test_prepare_respects_tick_only_and_selected_bar_level(dataset, tmp_path, monkeypatch, intervals, python_only):
     from engine.pipeline import prepare_data as preparation
-    from engine.pipeline.data_management import dataset_inventory
-    from engine.pipeline.sync_binance_batch import plan_daily_archives
+    from engine.market_data.repair.data_management import dataset_inventory
+    from engine.market_data.repair.sync_binance_batch import plan_daily_archives
 
     settings, start, archive = dataset
     if python_only:
@@ -245,9 +245,9 @@ def test_usdc_prepare_read_validate_and_delete_complete_chain(tmp_path, monkeypa
     import hashlib
     from zipfile import ZIP_DEFLATED, ZipFile
 
-    from engine.pipeline.data_management import dataset_inventory
-    from engine.pipeline.models import instrument_id_for
-    from engine.pipeline.sync_binance_batch import archive_path
+    from engine.market_data.repair.data_management import dataset_inventory
+    from engine.market_data.repair.models import instrument_id_for
+    from engine.market_data.repair.sync_binance_batch import archive_path
 
     if python_only:
         monkeypatch.setenv("NAUTILUS_RUST_CONVERTER", "off")
@@ -285,7 +285,7 @@ def test_usdc_prepare_read_validate_and_delete_complete_chain(tmp_path, monkeypa
 
 
 def test_managed_gap_bridge_reads_canonical_raw_ids_without_aggregate_substitution(dataset):
-    from engine.feed.history import CatalogHistory
+    from engine.market_data.storage.history import CatalogHistory
 
     settings, start, _path = dataset
     left = int(start.timestamp() * 1000)
@@ -296,8 +296,8 @@ def test_managed_gap_bridge_reads_canonical_raw_ids_without_aggregate_substituti
 
 
 def test_pair_deletion_removes_real_catalog_inventory_and_all_sources(dataset):
-    from engine.pipeline.data_management import dataset_inventory
-    from engine.pipeline.pair_deletion import delete_pair_data, pair_deletion_plan
+    from engine.market_data.repair.data_management import dataset_inventory
+    from engine.market_data.repair.pair_deletion import delete_pair_data, pair_deletion_plan
     settings, _start, archive = dataset
     assert dataset_inventory(settings, all_levels=True)
     plan = pair_deletion_plan("ETHUSDT", "futures_um", settings, project=settings.raw_dir.parent)

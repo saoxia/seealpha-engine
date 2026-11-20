@@ -5,9 +5,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.runtime import numeric_id
+from engine.trading.runtime import numeric_id
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
@@ -78,7 +78,7 @@ def test_engine_keeps_per_account_orders_gaps_and_no_secrets(tmp_path, monkeypat
         assert client.get("/tenants/8/accounts/11/gaps", headers=headers).json()["gaps"] == []
         assert client.get("/tenants/7/accounts/11/gaps", headers=headers).json()["gaps"][0]["symbol"] == "ETHUSDT"
         noted = client.post("/tenants/7/accounts/11/market/workers/note", headers=headers, json={
-            "command": [".venv/bin/python", "-m", "engine.feed.managed", "--symbol", "ETHUSDT", "--role", "collection"],
+            "command": [".venv/bin/python", "-m", "engine.market_data.collection.managed", "--symbol", "ETHUSDT", "--role", "collection"],
         })
         assert noted.json()["account_id"] == "11"
         assert noted.json()["tenant_id"] == "7"

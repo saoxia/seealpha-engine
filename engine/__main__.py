@@ -2,7 +2,7 @@
 
 import uvicorn
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
 
 

@@ -6,7 +6,7 @@ import json
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
-from engine.feed.futures_service import (
+from engine.market_data.collection.futures_service import (
     MAX_FUTURES_SYMBOLS_PER_SOCKET,
     FuturesCombinedSocket,
     QueueSocket,
@@ -42,7 +42,7 @@ def test_trades_and_funding_use_two_category_specific_shared_connections(monkeyp
                 urls.append(url)
                 return connect(f"ws://127.0.0.1:{port}", **kwargs)
 
-            monkeypatch.setattr("engine.feed.futures_service.connect", local)
+            monkeypatch.setattr("engine.market_data.collection.futures_service.connect", local)
             scope = {"members": {"ETHUSDT", "BTCUSDT"}}
             trades = FuturesCombinedSocket().stream(scope, channel="trade")
             funding = FuturesCombinedSocket().stream(scope, channel="mark")
@@ -86,7 +86,7 @@ def test_rejects_more_than_bounded_group_without_network(monkeypatch):
             def __call__(self, *args, **kwargs):
                 raise AssertionError("Should reject group before consuming events")
         # The socket enforces group size before attempting any network call.
-        monkeypatch.setattr("engine.feed.futures_service.connect", NeverConnect())
+        monkeypatch.setattr("engine.market_data.collection.futures_service.connect", NeverConnect())
         scope = {"members": {f"A{i}USDT" for i in range(MAX_FUTURES_SYMBOLS_PER_SOCKET + 1)}}
         stream = FuturesCombinedSocket().stream(scope)
         # One disconnection signal is emitted for each member; reject as a protocol error.

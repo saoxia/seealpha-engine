@@ -9,7 +9,7 @@ from decimal import Decimal
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .queries import QueryError
+from engine.connectors.binance.queries import QueryError
 
 BASES = {"production": "https://fapi.binance.com", "sandbox": "https://testnet.binancefuture.com"}
 

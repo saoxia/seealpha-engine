@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from engine.strategies.basket_reconciliation import (
+from engine.portfolio.basket_reconciliation import (
     BasketReconciliationError,
     begin_phase,
     checkpoint_to_record,
@@ -14,7 +14,7 @@ from engine.strategies.basket_reconciliation import (
     record_cumulative_fill,
     restore_checkpoint,
 )
-from engine.strategies.basket_targets import (
+from engine.portfolio.basket_targets import (
     LegEvidence,
     LegId,
     MemberLegTarget,

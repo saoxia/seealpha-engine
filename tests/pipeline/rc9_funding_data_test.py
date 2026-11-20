@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from engine.pipeline.funding_data import fetch_history
+from engine.market_data.repair.funding_data import fetch_history
 
 
 def test_history_paginates_exclusive_window_and_preserves_signed_rate():

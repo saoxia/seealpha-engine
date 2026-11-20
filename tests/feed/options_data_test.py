@@ -123,7 +123,7 @@ def test_managed_batch_entry_point_validates_mount_without_single_contract_args(
     async def serve_batch(path, managed_root, catalog):
         called.append((path, managed_root, catalog))
     monkeypatch.setattr(options_service, "serve_batch", serve_batch)
-    monkeypatch.setattr("sys.argv", ["engine.feed.managed", "--options-config", str(manifest), "--root", str(root),
+    monkeypatch.setattr("sys.argv", ["engine.market_data.collection.managed", "--options-config", str(manifest), "--root", str(root),
                                      "--data-root", str(data), "--catalog", str(data / "catalog")])
     managed.main()
     assert called == [(manifest, root.parent, data / "catalog")]

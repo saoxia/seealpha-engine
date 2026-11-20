@@ -4,11 +4,11 @@ from decimal import Decimal
 
 import pytest
 
-from engine.feed.clock import ServerClock
-from engine.feed.feed import Feed
-from engine.feed.models import DAY, MINUTE, DataError, MinuteBar, State, parse_message
-from engine.feed.service import Coordinator
-from engine.feed.store import Store
+from engine.market_data.collection.clock import ServerClock
+from engine.market_data.access.feed import Feed
+from engine.market_data.models import DAY, MINUTE, DataError, MinuteBar, State, parse_message
+from engine.market_data.collection.service import Coordinator
+from engine.market_data.storage.store import Store
 
 BASE = 1_800_000_000_000 // DAY * DAY
 SYMBOL = "BTCUSDT"
@@ -320,8 +320,8 @@ def test_nautilus_conversion_matches_historical_timestamp():
 
 
 def test_existing_catalog_history_and_rest_bridge(tmp_path):
-    from engine.feed.history import CatalogHistory
-    from engine.pipeline.catalog import ParquetDataCatalog
+    from engine.market_data.storage.history import CatalogHistory
+    from engine.market_data.storage.catalog import ParquetDataCatalog
     from nautilus_support import TestInstrumentProvider
 
     symbol = "ETHUSDT"
@@ -382,9 +382,9 @@ def test_retry_after_is_respected_without_duplicate_data(monkeypatch):
 
 
 def test_status_command_rejects_expired_ready(tmp_path, monkeypatch, capsys):
-    from engine.feed.service import main, write_status
+    from engine.market_data.collection.service import main, write_status
 
     write_status(tmp_path, {"state": "READY", "data_ready": True, "valid_until_ms": 1})
-    monkeypatch.setattr("sys.argv", ["engine.feed.service", "status", "--root", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["engine.market_data.collection.service", "status", "--root", str(tmp_path)])
     assert main() == 1
     assert json.loads(capsys.readouterr().out)["reason"] == "status_expired"

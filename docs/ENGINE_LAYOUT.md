@@ -1,0 +1,25 @@
+# Engine 领域目录布局（2026-11-20）
+
+本次为第一阶段代码组织重构，保持对外 HTTP v2 契约、NautilusTrader 版本、SQLite/Parquet 数据目录和订单幂等语义不变。
+
+| 路径 | 所有权与职责 |
+| --- | --- |
+| `engine/api/` | HTTP 路由、独立研究 API、接口输入校验 |
+| `engine/market_data/control/` | 持久化 DataPolicy、运行任务协调、访问租约 |
+| `engine/market_data/collection/` | 实时 WebSocket、REST 来源采集及独立进程入口 |
+| `engine/market_data/calculation/` | K 线及衍生特征计算；消费持久化来源 |
+| `engine/market_data/repair/` | 历史自动扫描、归档下载、核验与补齐、Rust 转换 |
+| `engine/market_data/storage/` | 原始证据日志、分钟库、Nautilus Catalog 存储适配 |
+| `engine/market_data/access/` | 历史/实时数据只读服务与回放隔离 |
+| `engine/market_data/quality/` | 数据质量检查与服务状态观察 |
+| `engine/connectors/` | 交易所协议、Nautilus 适配器；不得反向依赖消费或采集编排 |
+| `engine/strategies/` | 策略包检查、发行物加载、策略配置 |
+| `engine/backtesting/` | 离线回测、模拟与独立子进程执行 |
+| `engine/portfolio/` | 组合/篮子目标、调仓净额与对账逻辑 |
+| `engine/trading/` | Engine 订单、账户运行事实、幂等与恢复 |
+| `engine/research/` | 研究候选、只读快照、研究评估 |
+| `engine/infrastructure/` | 进程管理、任务队列等底层基础设施 |
+
+**控制不变量**：只有经授权的持久化行情配置决定采集、计算与历史修复任务；策略、回测、交易均为只读消费者，不能通过订阅或退订改变采集开关。
+
+**兼容与验收**：`python -m engine` 不变。旧 `python -m engine.feed.managed`、`python -m engine.feed.service`、`python -m engine.pipeline.pair_data` 和 `python -m engine.pipeline.data_management` CLI 保留薄入口；新代码应使用 `engine.market_data` 目录。历史说明保留于 `docs/implementation/`。自动化回归测试必须运行，长时间实盘/真实行情运行验收另行安排。

@@ -6,19 +6,19 @@ from decimal import Decimal
 
 import pytest
 
-from engine.strategies.basket_journal_store import (
+from engine.portfolio.basket_journal_store import (
     BasketJournalConflict,
     BasketJournalError,
     BasketJournalStore,
 )
-from engine.strategies.basket_reconciliation import (
+from engine.portfolio.basket_reconciliation import (
     begin_phase,
     confirm_phase,
     freeze_checkpoint,
     new_checkpoint,
     record_cumulative_fill,
 )
-from engine.strategies.basket_targets import (
+from engine.portfolio.basket_targets import (
     LegEvidence,
     LegId,
     MemberLegTarget,

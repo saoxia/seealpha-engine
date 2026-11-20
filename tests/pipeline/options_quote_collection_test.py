@@ -6,8 +6,8 @@ import pytest
 
 from engine.connectors.binance import options
 from engine.pipeline import options_data
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.pipeline.models import PipelineSettings
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.market_data.repair.models import PipelineSettings
 from tests.connectors.binance.options_queries_test import definition
 
 

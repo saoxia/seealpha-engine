@@ -4,19 +4,19 @@ from decimal import Decimal
 
 import pytest
 
-from engine.strategies.basket_order_evidence import (
+from engine.portfolio.basket_order_evidence import (
     AuthoritativeOrderEvidence,
     bind_phase_orders,
     reconcile_order_evidence,
 )
-from engine.strategies.basket_reconciliation import (
+from engine.portfolio.basket_reconciliation import (
     BasketReconciliationError,
     begin_phase,
     checkpoint_to_record,
     new_checkpoint,
     restore_checkpoint,
 )
-from engine.strategies.basket_targets import (
+from engine.portfolio.basket_targets import (
     LegEvidence,
     LegId,
     MemberLegTarget,

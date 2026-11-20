@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48

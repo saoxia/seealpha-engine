@@ -26,7 +26,7 @@ def test_native_instrument_request_uses_usdm_and_public_fee_policy(monkeypatch):
 def test_legacy_catalog_is_rejected_instead_of_silently_empty(tmp_path):
     import pytest
 
-    from engine.pipeline.catalog import ParquetDataCatalog
+    from engine.market_data.storage.catalog import ParquetDataCatalog
 
     (tmp_path / "data/bar").mkdir(parents=True)
     with pytest.raises(ValueError, match="Legacy v1"):

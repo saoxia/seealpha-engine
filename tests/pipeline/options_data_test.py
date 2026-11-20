@@ -8,16 +8,16 @@ from nautilus_trader.model import AggressorSide, InstrumentId, Price, Quantity, 
 
 from core.market.instruments import instrument_id_for, normalize_symbol
 from engine.connectors.binance import options
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.pipeline.data_management import (
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.market_data.repair.data_management import (
     checked_request,
     dataset_inventory,
     deletion_plan,
     execute,
     preview,
 )
-from engine.pipeline.models import DataRequest, PipelineSettings
-from engine.pipeline.options_data import prepare, validate
+from engine.market_data.repair.models import DataRequest, PipelineSettings
+from engine.market_data.repair.options_data import prepare, validate
 from tests.connectors.binance.options_queries_test import definition
 
 
@@ -278,7 +278,7 @@ def test_local_validation_checks_contract_multiplier_and_precision(context, monk
 
 
 def test_managed_live_late_trades_and_historical_holes_merge_atomically(context, monkeypatch):
-    from engine.pipeline.options_data import persist_live
+    from engine.market_data.repair.options_data import persist_live
 
     settings, item = context
     symbol = item["symbol"]
@@ -465,13 +465,13 @@ def test_history_batch_entry_point_uses_shared_runtime_and_mounted_root(context,
     monkeypatch.setattr(pair_data, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(pair_data, "load_settings", lambda: settings)
     monkeypatch.setattr(options_data, "serve_history_batch", serve_batch)
-    monkeypatch.setattr("sys.argv", ["engine.pipeline.pair_data", "--service", "--options-config", str(manifest), "--root", str(root)])
+    monkeypatch.setattr("sys.argv", ["engine.market_data.repair.pair_data", "--service", "--options-config", str(manifest), "--root", str(root)])
     pair_data.main()
     assert called == [(manifest, settings, root.parent)]
 
 
 def test_batch_remembers_contract_units_before_expiry_without_inventing_data(context, monkeypatch):
-    from engine.pipeline.options_data import persist_live
+    from engine.market_data.repair.options_data import persist_live
 
     settings, item = context
     result = persist_live(item["symbol"], [], settings, definition=options.instrument(item).to_dict())

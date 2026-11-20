@@ -8,9 +8,9 @@ from decimal import Decimal
 import pytest
 from nautilus_trader.model import Bar, BarType, CryptoPerpetual
 
-from engine.runtime import EngineConflict
-from engine.strategies.basket_targets import LegId
-from engine.strategies.generic_simulation import run_native_generic_portfolio
+from engine.trading.runtime import EngineConflict
+from engine.portfolio.basket_targets import LegId
+from engine.backtesting.generic_simulation import run_native_generic_portfolio
 from engine.strategies.package import parse_metadata
 from nautilus_support import TestInstrumentProvider
 from tests.engine.spot_backtest_test import spot_instrument

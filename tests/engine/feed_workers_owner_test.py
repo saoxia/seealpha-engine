@@ -6,10 +6,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.data_manager.contracts import DataPolicy
-from engine.data_manager.service import DataService
+from engine.market_data.control.contracts import DataPolicy
+from engine.market_data.control.service import DataService
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
@@ -86,8 +86,8 @@ def test_engine_options_use_two_shared_workers_and_durable_manifest(tmp_path, mo
     ])
     manager.subscriptions.restore()
     assert len(commands) == 2
-    assert "engine.feed.managed" in commands[0][0]
-    assert "engine.pipeline.pair_data" in commands[1][0]
+    assert "engine.market_data.collection.managed" in commands[0][0]
+    assert "engine.market_data.repair.pair_data" in commands[1][0]
     assert all("--options-config" in args for args, *_ in commands)
     assert len(json.loads((manager.directory / "options-runtime.json").read_text())["policies"]) == count
     assert set(manager.subscriptions.processes) == {("options", "ALL")}
@@ -198,7 +198,7 @@ def test_engine_option_delete_waits_for_access_lease_and_preserves_files(tmp_pat
 
     clock = iter([100.0, 106.0])
     monkeypatch.setattr(
-        "engine.data_manager.subscriptions.time",
+        "engine.market_data.control.subscriptions.time",
         SimpleNamespace(
             monotonic=lambda: next(clock, 106.0),
             sleep=lambda _seconds: None,

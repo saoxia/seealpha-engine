@@ -6,7 +6,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from engine.pipeline.bar_features import (
+from engine.market_data.calculation.bar_features import (
     BASE_COLUMNS,
     FEATURE_COLUMNS,
     BarFeatures,
@@ -16,10 +16,10 @@ from engine.pipeline.bar_features import (
     prepare_bar_features,
     read_bar_features,
 )
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.pipeline.convert_binance_bars import ConversionError
-from engine.pipeline.convert_binance_trades import convert_trade_archive
-from engine.pipeline.models import SyncedArchive, bar_type_for
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.market_data.repair.convert_binance_bars import ConversionError
+from engine.market_data.repair.convert_binance_trades import convert_trade_archive
+from engine.market_data.repair.models import SyncedArchive, bar_type_for
 from nautilus_support import TestInstrumentProvider
 from tests.pipeline.convert_binance_trades_test import (
     parquet_snapshot,
@@ -144,7 +144,7 @@ def test_trade_aggregation_counts_deduplicated_trades_and_uses_quote_quantity(tm
 @pytest.mark.parametrize("intervals", [("1s", "1m", "5m", "15m"), ("3m", "5m"), ("5m",)])
 @pytest.mark.parametrize("chunk_rows", [1, 7, 1000])
 def test_multi_period_aggregation_matches_direct_trade_sums(tmp_path, intervals, chunk_rows):
-    from engine.pipeline.models import interval_delta
+    from engine.market_data.repair.models import interval_delta
 
     start = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
     rows = []
@@ -280,7 +280,7 @@ def test_failed_feature_write_preserves_previous_parquet(feature_dataset, monkey
     def fail_write(*args, **kwargs):
         raise OSError("模拟磁盘写入失败")
 
-    monkeypatch.setattr("engine.pipeline.bar_features.write_native_features", fail_write)
+    monkeypatch.setattr("engine.market_data.calculation.bar_features.write_native_features", fail_write)
     with pytest.raises(OSError, match="磁盘"):
         prepare_bar_features(archives, catalog, bar_intervals=("1m",), force=True, **kwargs)
     assert parquet_snapshot(Path(catalog.path)) == before
@@ -309,7 +309,7 @@ def test_feature_preparation_does_not_reparse_source_csv(feature_dataset, monkey
     catalog, _, archives, kwargs = feature_dataset
     def forbidden(*args, **kwargs):
         raise AssertionError("Source CSV was parsed a second time")
-    monkeypatch.setattr("engine.pipeline.bar_features.iter_trade_archive", forbidden)
+    monkeypatch.setattr("engine.market_data.calculation.bar_features.iter_trade_archive", forbidden)
     prepare_bar_features(archives, catalog, bar_intervals=("1m",), **kwargs)
     data = read_bar_features(catalog, "ETHUSDT", "1m",
         datetime(2026,8,1,tzinfo=UTC),datetime(2026,8,3,tzinfo=UTC))
@@ -326,7 +326,7 @@ def test_feature_metadata_publication_failure_rolls_back_native_parquet(feature_
         if Path(source).name == "pending.metadata.json":
             raise OSError("模拟元数据发布失败")
         return original(source, target)
-    monkeypatch.setattr("engine.pipeline.bar_features.os.replace", fail_metadata)
+    monkeypatch.setattr("engine.market_data.calculation.bar_features.os.replace", fail_metadata)
     with pytest.raises(OSError, match="元数据"):
         prepare_bar_features(archives, catalog, bar_intervals=("1m",), force=True, **kwargs)
     assert parquet_snapshot(Path(catalog.path)) == before

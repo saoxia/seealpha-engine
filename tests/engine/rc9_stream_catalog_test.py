@@ -5,8 +5,8 @@ from decimal import Decimal
 
 from nautilus_trader.model import FundingRateUpdate, InstrumentId, Money
 
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.strategies.backtest import read_history_batches
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.backtesting.backtest import read_history_batches
 from engine.strategies.loading import run_issued_history, run_issued_history_stream
 from tests.engine.backtest_test import write_crossover_catalog
 

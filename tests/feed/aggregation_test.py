@@ -5,8 +5,8 @@ from decimal import Decimal
 import pytest
 
 from core.market.models import MINUTE, DataError, MinuteBar
-from engine.feed.aggregation import Rollups
-from engine.feed.store import Store
+from engine.market_data.calculation.aggregation import Rollups
+from engine.market_data.storage.store import Store
 
 
 def bar(i, *, volume="2", price="10"):

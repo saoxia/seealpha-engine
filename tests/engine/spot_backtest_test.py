@@ -17,8 +17,8 @@ from nautilus_trader.model import (
 )
 
 from core.market.instruments import bar_type_for
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.runtime import EngineConflict, EngineRuntime
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.trading.runtime import EngineConflict, EngineRuntime
 from tests.engine.backtest_test import _issue, _ns, _ohlc, _window
 
 

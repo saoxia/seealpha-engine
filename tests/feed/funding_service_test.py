@@ -8,7 +8,7 @@ from nautilus_trader.model import FundingRateUpdate, InstrumentId
 
 from core.market.instruments import instrument_id_for
 from core.market.models import DataError
-from engine.feed.funding_service import FundingStore, collect_funding, read_funding
+from engine.market_data.collection.funding_service import FundingStore, collect_funding, read_funding
 
 
 def mark(event_ms, next_ms, rate):

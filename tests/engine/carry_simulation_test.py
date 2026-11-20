@@ -10,11 +10,11 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.runtime import EngineConflict, EngineRuntime
-from engine.strategies.carry_simulation import run_native_carry
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.trading.runtime import EngineConflict, EngineRuntime
+from engine.backtesting.carry_simulation import run_native_carry
 from engine.strategies.package import archive_directory, parse_metadata
 from nautilus_support import TestInstrumentProvider
 from tests.engine.basket_history_test import _dataset, _range
