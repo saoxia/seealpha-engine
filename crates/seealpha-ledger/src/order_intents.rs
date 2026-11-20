@@ -95,6 +95,31 @@ pub struct OrderRecoveryItem {
 }
 
 impl Ledger {
+    /// Retrieve the exact immutable registration envelope for signed GET
+    /// reconciliation. Never infer a new send authorization from this read.
+    pub fn registered_order_intent(
+        &self, tenant: &str, account: &str, request: &str,
+    ) -> Result<Option<Value>, LedgerError> {
+        if !identifier(tenant) || !identifier(account) || !identifier(request) {
+            return Err(conflict("invalid registered intent scope"));
+        }
+        let conn=self.lock()?;
+        let raw: Option<(String,String,String)> = conn.query_row(
+            "SELECT environment,client_order_id,intent_json FROM order_intents
+             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+            params![tenant,account,request],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        ).optional().map_err(sql)?;
+        raw.map(|(env,client,text)| {
+            let intent:Value=serde_json::from_str(&text)
+                .map_err(|_|conflict("registered order intent is corrupt"))?;
+            if !valid_intent(&intent,&env,&client) {
+                return Err(conflict("registered order intent is invalid"));
+            }
+            Ok(intent)
+        }).transpose()
+    }
+
     /// Discover immutable registered intents on restart or on explicit read.
     /// Every item is reconciliation-only, including unknown and terminal
     /// observations: order ACKs cannot establish financial settlement.
