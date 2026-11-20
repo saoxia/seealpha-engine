@@ -52,6 +52,49 @@ pub struct Credentials {
     pub secret: String,
 }
 
+/// Signed Binance requests must never leak API keys to a configurable
+/// arbitrary HTTPS origin. Loopback is reserved for local test/proxy adapters.
+fn checked_gateway(base:&str)->Result<String,VenueError>{
+    let url=reqwest::Url::parse(base)
+        .map_err(|_|VenueError::Rejected("交易网关 URL 无效。".into()))?;
+    if !url.username().is_empty() || url.password().is_some() ||
+        url.query().is_some() || url.fragment().is_some() ||
+        !matches!(url.path(),""|"/") {
+        return Err(VenueError::Rejected("交易网关包含不允许的路径或用户信息。".into()));
+    }
+    let host=url.host_str().ok_or_else(||
+        VenueError::Rejected("交易网关域名无效。".into()))?;
+    let official=matches!(host,"api.binance.com"|"fapi.binance.com"|"eapi.binance.com");
+    let sandbox=matches!(host,"testnet.binancefuture.com"|"testnet.binance.vision");
+    let local=matches!(host,"127.0.0.1"|"localhost"|"::1");
+    if (url.scheme()=="https" && (official||sandbox) && url.port().is_none())
+        || (url.scheme()=="http" && local && url.port().is_some()) {
+        return Ok(base.trim_end_matches('/').to_owned());
+    }
+    Err(VenueError::Rejected("交易所签名请求仅允许 Binance 官方域名或带端口的本地网关。".into()))
+}
+fn route_gateway<'a>(base:&'a str,path:&str)->Result<&'a str,VenueError>{
+    let host=reqwest::Url::parse(base).ok()
+        .and_then(|url|url.host_str().map(str::to_owned))
+        .ok_or_else(||VenueError::Rejected("交易网关 URL 无效。".into()))?;
+    if matches!(host.as_str(),"api.binance.com"|"fapi.binance.com"|"eapi.binance.com"){
+        // Static official hosts have equal lifetime to 'base', but avoid
+        // returning a temporary URL string by selecting a static literal.
+        return Ok(match path.split('/').nth(1).unwrap_or("") {
+            "api"=>"https://api.binance.com",
+            "fapi"=>"https://fapi.binance.com",
+            "eapi"=>"https://eapi.binance.com",
+            _=>return Err(VenueError::Symbol),
+        });
+    }
+    if (host=="testnet.binancefuture.com" && path.starts_with("/fapi/"))
+        || (host=="testnet.binance.vision" && path.starts_with("/api/"))
+        || matches!(host.as_str(),"127.0.0.1"|"localhost"|"::1") {
+        return Ok(base);
+    }
+    Err(VenueError::Rejected("沙盒交易网关与订单产品不匹配，拒绝跨市场发送密钥。".into()))
+}
+
 pub struct VenueClient {
     http: reqwest::blocking::Client,
     base: String,
@@ -59,12 +102,7 @@ pub struct VenueClient {
 
 impl VenueClient {
     pub fn new(base: impl Into<String>) -> Result<Self, VenueError> {
-        let base = base.into().trim_end_matches('/').to_string();
-        if !(base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:"))
-            && !base.starts_with("https://")
-        {
-            return Err(VenueError::Rejected("交易网关地址无效。".into()));
-        }
+        let base=checked_gateway(&base.into())?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(8))
             .redirect(reqwest::redirect::Policy::none())
@@ -244,7 +282,8 @@ impl VenueClient {
         let signature = sign_payload(&credentials.secret, &query);
         query.push_str("&signature=");
         query.push_str(&signature);
-        let url = format!("{}{path}?{query}", self.base);
+        let target=route_gateway(&self.base,path)?;
+        let url = format!("{target}{path}?{query}");
         let response = self
             .http
             .request(method.parse().map_err(|_| VenueError::Unconfirmed)?, url)
@@ -372,6 +411,31 @@ fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_gateway_never_sends_exchange_credentials_to_arbitrary_https(){
+        for invalid in [
+            "https://api.binance.com.evil.example",
+            "https://evil.example",
+            "http://fapi.binance.com",
+            "https://api.binance.com/path",
+            "https://user:password@api.binance.com",
+            "https://api.binance.com:443",
+            "http://localhost",
+        ]{
+            assert!(VenueClient::new(invalid).is_err(),"{invalid}");
+        }
+        let official=VenueClient::new("https://fapi.binance.com").unwrap();
+        assert_eq!(route_gateway(&official.base,"/eapi/v1/order").unwrap(),
+            "https://eapi.binance.com");
+        assert_eq!(route_gateway(&official.base,"/api/v3/order").unwrap(),
+            "https://api.binance.com");
+        assert_eq!(route_gateway(&official.base,"/fapi/v1/order").unwrap(),
+            "https://fapi.binance.com");
+        let testnet=VenueClient::new("https://testnet.binancefuture.com").unwrap();
+        assert!(route_gateway(&testnet.base,"/eapi/v1/order").is_err());
+        assert!(route_gateway("http://127.0.0.1:18767","/eapi/v1/order").is_ok());
+    }
 
     #[test]
     fn signature_matches_python_hmac_sha256() {
