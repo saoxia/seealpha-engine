@@ -12,7 +12,7 @@ use thiserror::Error;
 pub use model::{
     CatalogBar,MarketProduct,bar_type,bar_window,instrument_id,interval_ms,NANO_PER_MS,DAY_MS,
 };
-pub use reader::RecordKind;
+pub use reader::{BarGap,RecordKind};
 pub use cleanup::{DeletePreview,PlannedFile};
 
 #[derive(Debug,Error)]
