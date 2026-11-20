@@ -21,6 +21,10 @@ path = "src/lib.rs"
 name = "binance-manifest-inspect"
 path = "src/main.rs"
 
+[[bin]]
+name = "binance-native-source"
+path = "src/native_source.rs"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
