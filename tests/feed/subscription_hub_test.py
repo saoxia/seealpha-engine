@@ -85,9 +85,11 @@ def test_closed_bar_delivery_is_idempotent_but_conflicts_fail_closed():
     initial = bar(60)
     assert hub.accept_closed_bar(BTC, initial)
     assert not hub.accept_closed_bar(BTC, initial)
-    for invalid in (bar(60, "101"), bar(59), bar(61, "0.5")):
+    for invalid in (bar(60, "101"), bar(59)):
         with pytest.raises(MarketDataHubError):
             hub.accept_closed_bar(BTC, invalid)
+    with pytest.raises(MarketDataHubError, match="OHLCV"):
+        bar(61, "0.5")
     assert hub.accept_closed_bar(BTC, bar(120))
     with pytest.raises(MarketDataHubError, match="过期"):
         hub.view("dev", "one", now_ns=200, positions={BTC: Decimal(0)}, max_age_ns=60)
