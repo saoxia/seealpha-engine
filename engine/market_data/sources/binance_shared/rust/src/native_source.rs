@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value,json};
 use tokio::sync::mpsc;
@@ -73,6 +73,7 @@ fn writer_loop(
     let mut journals=BTreeMap::<String,PairJournal>::new();
     let mut funding=BTreeMap::<String,FundingJournal>::new();
     let mut states=BTreeMap::<String,Status>::new();
+    let mut last_published=BTreeMap::<String,Instant>::new();
     for policy in &policies {
         if !policy.realtime_enabled {continue;}
         let root=managed_root.join(&policy.symbol).join(&policy.base_level);
@@ -130,9 +131,13 @@ fn writer_loop(
             write_status(journal,state,product)?;
             return Err(error); // Fail closed: no acknowledgement of rejected writes.
         }
-        // Disk fsync per trade is intentionally equivalent to Python SQLite
-        // synchronous=FULL, not a performance claim; batch transactions follow.
-        write_status(journal,state,product)?;
+        // Durable raw data is committed for each event; status is coalesced to
+        // 1 Hz rather than fsyncing a JSON file for every exchange trade.
+        let urgent=matches!(item.event["kind"].as_str(),Some("disconnected")|Some("connected"));
+        if urgent || last_published.get(&item.symbol).is_none_or(|when|when.elapsed()>=Duration::from_secs(1)) {
+            write_status(journal,state,product)?;
+            last_published.insert(item.symbol.clone(),Instant::now());
+        }
     }
     for (symbol,journal) in &journals {
         let state=states.get_mut(symbol).ok_or("missing source status")?;

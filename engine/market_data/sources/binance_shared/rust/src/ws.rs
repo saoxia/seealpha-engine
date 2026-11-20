@@ -112,7 +112,7 @@ pub async fn run_once(
                         }
                         confirmed=true;
                         for symbol in symbols {
-                            publish(sender,symbol,&json!({"kind":"connected","channel":format!("{channel:?}")})).await?;
+                            publish(sender,symbol,json!({"kind":"connected","channel":format!("{channel:?}")})).await?;
                         }
                     }
                     Packet::Event{symbol,value} if confirmed => publish(sender,&symbol,value).await?,

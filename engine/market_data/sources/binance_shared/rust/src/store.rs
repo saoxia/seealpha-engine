@@ -3,7 +3,9 @@
 //! Uses the same SQLite table and trigger names as PairStore/FundingStore;
 //! the normal Python calculation worker can still consume pending_updates.
 //! This module is intentionally isolated from live order and account APIs.
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
+#[cfg(test)]
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -12,7 +14,6 @@ use rusqlite::{Connection, OptionalExtension, params};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 
-use crate::Product;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
@@ -135,10 +136,20 @@ impl PairJournal {
         })
     }
     pub fn conflicted(&self)->Result<bool> {
-        let value:Option<String>=self.db.query_row(
-            "SELECT detail FROM conflicts LIMIT 1",[],|r|r.get(0)).optional()?;
-        Ok(value.is_some_and(|s|!s.contains(r#""kind": "filtered_zero_trade""#)
-            && !s.contains(r#""kind":"filtered_zero_trade""#)))
+        let mut statement=self.db.prepare("SELECT detail FROM conflicts")?;
+        let records=statement.query_map([],|r|r.get::<_,String>(0))?;
+        for record in records {
+            let raw=record?;
+            let Ok(value)=serde_json::from_str::<Value>(&raw) else {return Ok(true);};
+            let kind=value.get("kind").and_then(Value::as_str);
+            if !matches!(kind,Some("filtered_zero_trade")|Some("invalid_raw_trade")) {
+                return Ok(true);
+            }
+            let Some(row)=value.get("row") else {return Ok(true);};
+            let Ok(trade)=CanonicalTrade::parse(row,i64::MAX-2000) else {return Ok(true);};
+            if !trade.price.is_zero() && !trade.quantity.is_zero() {return Ok(true);}
+        }
+        Ok(false)
     }
     pub fn pending_count(&self)->Result<i64> {
         Ok(self.db.query_row("SELECT count(*) FROM pending_updates",[],|r|r.get(0))?)
