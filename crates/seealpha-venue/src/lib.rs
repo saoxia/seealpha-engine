@@ -663,6 +663,47 @@ mod tests {
         assert!(again.is_some());
     }
 
+    #[test]
+    fn paginated_spot_trades_require_monotonic_exchange_ids() {
+        let (sender, receiver)=std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt=tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap();
+            rt.block_on(async move {
+                let app=axum::Router::new()
+                    .route("/api/v3/myTrades",axum::routing::get(mock_my_trades));
+                let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                sender.send(listener.local_addr().unwrap().port()).unwrap();
+                axum::serve(listener,app).await.unwrap();
+            });
+        });
+        let client=VenueClient::new(format!("http://127.0.0.1:{}",receiver.recv().unwrap())).unwrap();
+        let creds=Credentials{api_key:"key-one".into(),secret:"secret-one".into()};
+        let filled=client.query_order_trades(&creds,Product::Spot,"ETHUSDT","9").unwrap();
+        assert_eq!(filled.len(),1001);
+        assert_eq!(filled[0]["venue_trade_id"],"1");
+        assert_eq!(filled[1000]["venue_trade_id"],"1001");
+        // A server that ignores fromId must never claim a complete history.
+        assert_eq!(client.query_order_trades(&creds,Product::Spot,"ETHUSDT","10"),
+            Err(VenueError::Unconfirmed));
+    }
+    async fn mock_my_trades(request:axum::extract::Request)
+        -> axum::Json<serde_json::Value> {
+        let query=request.uri().query().unwrap_or("");
+        assert!(query.contains("signature="));
+        assert!(query.contains("symbol=ETHUSDT"));
+        let replay=query.contains("orderId=10");
+        let start=if replay || !query.contains("fromId=") {1}else{1001};
+        let end=if start==1 {1000}else{1001};
+        let order=if replay {10}else{9};
+        let rows=(start..=end).map(|tid|json!({
+            "id":tid,"orderId":order,"symbol":"ETHUSDT","buyer":true,
+            "qty":"0.001","price":"2000","time":100,
+            "commission":"0","commissionAsset":"USDT"
+        })).collect::<Vec<_>>();
+        axum::Json(json!(rows))
+    }
+
     async fn mock_order(request: axum::extract::Request) -> axum::Json<serde_json::Value> {
         let query = request.uri().query().unwrap_or("");
         assert!(query.contains("signature="));
