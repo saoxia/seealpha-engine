@@ -3,6 +3,7 @@
 use crate::{
     MemberTarget, PortfolioError, execution_delta, net_signed_quantity, quantize_toward_zero,
 };
+use rust_decimal::prelude::Signed;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -195,10 +196,7 @@ impl Coordinator {
             VirtualKind::Limit { price } if *price > Decimal::ZERO => (),
             VirtualKind::StopMarket { trigger } if *trigger > Decimal::ZERO => (),
             VirtualKind::StopLimit { trigger, price, .. }
-                if *trigger > Decimal::ZERO && *price > Decimal::ZERO =>
-            {
-                ()
-            }
+                if *trigger > Decimal::ZERO && *price > Decimal::ZERO => {}
             _ => return Err(CoordinatorError::Invalid),
         }
         if let VirtualKind::StopLimit { triggered, .. } = &mut order.kind {
