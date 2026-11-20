@@ -121,7 +121,13 @@ fn execute() -> Result<()> {
                 None
             }
         });
-        let previous_error = if let Some(confirmed_ms) = confirmed {
+        // Dirty source buckets may be resumed after a crash, but may not
+        // be acknowledged while exchange trade IDs show a durable hole.
+        let unresolved_gaps: i64 =
+            db.query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
+        let previous_error = if unresolved_gaps > 0 {
+            Some("unresolved_raw_trade_id_gap".into())
+        } else if let Some(confirmed_ms) = confirmed {
             journal_lock.lock_exclusive()?;
             let result = calc::process_pending(&mut db, &retained, confirmed_ms, base_level);
             FileExt::unlock(&journal_lock)?;
@@ -155,6 +161,7 @@ fn execute() -> Result<()> {
                 "checked_ms":now,"valid_until_ms":now+15000,
                 "last_error":previous_error,"backlog":pending+history_backlog as i64,
                 "realtime_pending":pending,"history_backlog":history_backlog,
+                "gap_count":unresolved_gaps,
                 "last_processed_ms":last_processed,"bar_updates":bar_updates(&db,&retained)?,
                 "allow_new_risk":false,"product":product.as_str()
             }),
