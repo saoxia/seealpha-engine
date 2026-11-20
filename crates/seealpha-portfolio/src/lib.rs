@@ -11,6 +11,7 @@ pub mod settlement;
 pub mod history;
 pub mod coordinator;
 pub mod coordinator_snapshot;
+pub mod phase_gate;
 
 use rust_decimal::Decimal;
 use thiserror::Error;
