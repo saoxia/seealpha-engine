@@ -41,9 +41,9 @@ def main():
         with (args.root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if args.spot_config:
-                from engine.market_data.sources.binance.spot.collection import serve_batch
+                from engine.market_data.sources.binance_spot.collection import serve_batch
             else:
-                from engine.market_data.sources.binance.perpetual.collection import serve_batch
+                from engine.market_data.sources.binance_perpetual.collection import serve_batch
             try:
                 asyncio.run(serve_batch(
                     args.spot_config or args.futures_config, args.root.parent, args.catalog,
@@ -60,7 +60,7 @@ def main():
         args.root.mkdir(parents=True, exist_ok=True)
         with (args.root / "writer.lock").open("a") as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            from engine.market_data.sources.binance.options.collection import serve_batch
+            from engine.market_data.sources.binance_options.collection import serve_batch
             try:
                 asyncio.run(serve_batch(args.options_config, args.root.parent, args.catalog))
             except KeyboardInterrupt:
@@ -80,21 +80,21 @@ def main():
         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             if args.policy:
-                from engine.market_data.sources.binance.shared.trades import serve_pair
+                from engine.market_data.sources.binance_shared.trades import serve_pair
                 if policy["product"] == "options":
                     if args.role == "calculation":
                         raise ValueError("期权直接保存交易所闭合 K 线，不启动本地派生")
-                    from engine.market_data.sources.binance.options.implementation import (
+                    from engine.market_data.sources.binance_options.implementation import (
                         serve_options,
                     )
                     asyncio.run(serve_options(policy, args.root, args.catalog))
                 elif args.role == "calculation":
                     if policy["product"] == "spot":
-                        from engine.market_data.sources.binance.spot.calculation import (
+                        from engine.market_data.sources.binance_spot.calculation import (
                             serve_calculation,
                         )
                     else:
-                        from engine.market_data.sources.binance.perpetual.calculation import (
+                        from engine.market_data.sources.binance_perpetual.calculation import (
                             serve_calculation,
                         )
                     asyncio.run(serve_calculation(policy, args.root, args.catalog))

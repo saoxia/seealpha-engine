@@ -2,7 +2,7 @@
 
 
 async def serve_batch(manifest, managed_root, catalog):
-    from engine.market_data.sources.binance.options.implementation import (
+    from engine.market_data.sources.binance_options.implementation import (
         serve_batch as legacy_serve_batch,
     )
 

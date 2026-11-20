@@ -17,7 +17,7 @@ from websockets.exceptions import WebSocketException
 
 from core.market.instruments import INTERVALS, normalize_symbol
 from engine.market_data.collection.service import write_status
-from engine.market_data.sources.binance.shared.trades import serve_pair
+from engine.market_data.sources.binance_shared.trades import serve_pair
 
 # Binance permits 1,024 streams per connection. Reserve high-volume headroom:
 # 128 trade streams on /public + 128 funding streams on /market per group.

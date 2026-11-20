@@ -12,7 +12,7 @@
 
 数据生产端以 **交易所 × 市场类型** 为独立所有权边界，例如 Binance USD-M 永续、Binance 现货和 Binance 期权。每个模块可以独立维护、测试和按需部署；不要求每个模块立即拆成微服务或独立仓库。
 
-- **协议与数据维护分离**：`engine/connectors/` 持有交易所协议和 Nautilus 适配；`engine/market_data/sources/<venue>/<product>/` 持有该市场的采集入口、专有校验和后续逐步迁入的维护规则。连接器不能反向导入数据源、访问层或交易策略。
+- **协议与数据维护分离**：`engine/connectors/` 持有交易所协议和 Nautilus 适配；`engine/market_data/sources/<venue>_<product>/` 持有该市场的采集入口、专有校验和后续逐步迁入的维护规则。连接器不能反向导入数据源、访问层或交易策略。
 - **三项可恢复任务**：实时采集、自动计算、历史扫描/核验/补齐可以独立失败和恢复；是否必须分别运行在三个 OS 进程由实际隔离要求决定。交易所不提供可核验历史来源时应明确记录不可修复状态，不能合成真实 Tick、期权双边报价或 L2。
 - **通用能力只实现一次**：标准聚合、任务调度、Catalog/SQLite/Parquet 持久化适配、数据质量与统一只读访问仍属于公共 `market_data` 层；市场模块可提供专有实现，但不复制通用算法和存储体系。
 - **配置驱动，不由消费者驱动**：仅授权的持久化行情配置决定生产任务生命周期。新增策略、回测、研究消费者不得改动采集配置，也不能直接依赖市场专有内部实现。
@@ -21,10 +21,10 @@
 
 ### 本次 Binance 数据源实现迁移
 
-- `sources/binance/perpetual/`：独立采集、计算、历史核验/补齐入口，以及 USD-M 专有资金费率采集与历史观测。
-- `sources/binance/spot/`：独立采集、计算、历史核验/补齐入口。
-- `sources/binance/options/`：期权实时采集实现与历史报价、成交、盘口证据维护实现。
-- `sources/binance/shared/`：市场间复用的共享 WebSocket 批处理、逐笔持久化、计算和历史修复算法；它不负责决定某市场是否启动。各产品入口验证产品身份，复用公共核心以免复制错误敏感的处理逻辑。
+- `sources/binance_perpetual/`：独立采集、计算、历史核验/补齐入口，以及 USD-M 专有资金费率采集与历史观测。
+- `sources/binance_spot/`：独立采集、计算、历史核验/补齐入口。
+- `sources/binance_options/`：期权实时采集实现与历史报价、成交、盘口证据维护实现。
+- `sources/binance_shared/`：市场间复用的共享 WebSocket 批处理、逐笔持久化、计算和历史修复算法；它不负责决定某市场是否启动。各产品入口验证产品身份，复用公共核心以免复制错误敏感的处理逻辑。
 - 旧 `collection/{futures_service,pair_service,options_service,funding_service}.py`、`calculation/pair_calculation.py` 和 `repair/{pair_data,options_data,funding_data}.py` 仍作为兼容导入。旧 `python -m engine.market_data.repair.pair_data` CLI 保留并委托新实现。
 - 当前改动是**源码归属与调用入口迁移**；不是交易所网络行为重写、独立容器部署或生产运行验收。对现有存储目录、质量门禁、锁及 HTTP 契约不做更改。共享实现仍含少量产品分支，未来扩展新的 venue 时优先通过显式 source 路由而非复制核心。
 
