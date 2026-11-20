@@ -502,17 +502,13 @@ async fn list_fills(
 async fn list_gaps(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
+    Query(query):Query<std::collections::HashMap<String,String>>,
 ) -> Result<Json<Value>, AppError> {
-    let gaps = state
-        .runtime
-        .ledger
-        .gaps(&tenant_id, &account_id)
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    let items = gaps
-        .into_iter()
-        .filter_map(|row| serde_json::from_str::<Value>(&row).ok())
-        .collect::<Vec<_>>();
-    Ok(Json(json!({ "gaps": items })))
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let gaps=state.runtime.ledger.gaps_for_scope(
+        &tenant_id,&account_id,query.get("scope").map(String::as_str)
+    ).map_err(|error| AppError::bad_request(error.to_string()))?;
+    Ok(Json(json!({ "gaps": gaps })))
 }
 
 async fn put_gap(
@@ -539,17 +535,13 @@ async fn put_gap(
 async fn list_events(
     State(state): State<AppState>,
     Path((tenant_id, account_id)): Path<(String, String)>,
+    Query(query):Query<std::collections::HashMap<String,String>>,
 ) -> Result<Json<Value>, AppError> {
-    let events = state
-        .runtime
-        .ledger
-        .events(&tenant_id, &account_id)
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    let items = events
-        .into_iter()
-        .map(|(kind, body)| json!({"kind": kind, "body": body}))
-        .collect::<Vec<_>>();
-    Ok(Json(json!({ "events": items })))
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    let after=query.get("after").and_then(|v|v.parse::<i64>().ok()).unwrap_or(0);
+    let limit=query.get("limit").and_then(|v|v.parse::<i64>().ok()).unwrap_or(200);
+    Ok(Json(state.runtime.ledger.event_page(&tenant_id,&account_id,after,limit)
+        .map_err(|error|AppError::bad_request(error.to_string()))?))
 }
 
 async fn import_bars(
