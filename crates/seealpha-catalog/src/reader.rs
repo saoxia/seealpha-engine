@@ -21,6 +21,14 @@ use crate::{CatalogError,Catalog,model::{CatalogBar,MarketProduct,NANO_PER_MS,ba
 const MAX_FILES:usize=10_000;
 const MAX_BATCH:usize=50_000;
 
+/// A missing interval of *bar opens* on the requested UTC grid.
+/// This is a gap report, not evidence that a trade/Tick archive is complete.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct BarGap {
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum RecordKind{
     Bars,Trades,Quotes,Instruments,FundingRate,OptionGreeks,
@@ -428,6 +436,41 @@ impl Catalog{
         }
         Ok(result)
     }
+    /// Report exactly which aligned Bar windows are absent in [start_ms,end_ms).
+    /// Consumers can decide whether to repair; a read never starts collection.
+    pub fn bar_gaps(
+        &self, symbol: &str, product: MarketProduct, interval: &str,
+        start_ms: i64, end_ms: i64, limit: usize,
+    ) -> Result<Vec<BarGap>, CatalogError> {
+        if start_ms < 0 || end_ms <= start_ms
+            || bar_window(interval, start_ms)?.0 != start_ms
+            || bar_window(interval, end_ms)?.0 != end_ms
+        {
+            return Err(CatalogError::Invalid(
+                "历史缺口检查必须使用完整且对齐的 UTC K 线范围。".into(),
+            ));
+        }
+        let start_ns = start_ms.checked_mul(NANO_PER_MS)
+            .ok_or_else(|| CatalogError::Invalid("开始时间溢出。".into()))?;
+        let end_ns = end_ms.checked_mul(NANO_PER_MS)
+            .ok_or_else(|| CatalogError::Invalid("结束时间溢出。".into()))?;
+        let bars = self.read_bars(symbol, product, interval, start_ns, end_ns, limit)?;
+        let mut expected = start_ms;
+        let mut missing = Vec::new();
+        for bar in bars {
+            if bar.open_time_ms > expected {
+                missing.push(BarGap { start_ms: expected, end_ms: bar.open_time_ms });
+            } else if bar.open_time_ms < expected {
+                return Err(CatalogError::Invalid("历史 K 线重复或倒退。".into()));
+            }
+            expected = bar_window(interval, bar.open_time_ms)?.1;
+        }
+        if expected < end_ms {
+            missing.push(BarGap { start_ms: expected, end_ms });
+        }
+        Ok(missing)
+    }
+
     /// Generic bounded scanner for the other native Nautilus types. All
     /// fields retain original schema names; decimals are encoded as strings,
     /// timestamps remain exact nanoseconds (no lossy JSON floats).
