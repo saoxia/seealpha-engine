@@ -126,6 +126,12 @@ impl VenueClient {
         if intent.product == Product::Spot && intent.reduce_only {
             return Err(VenueError::SpotReduceOnly);
         }
+        if intent.product == Product::FuturesUm &&
+            matches!(intent.order_type.to_ascii_uppercase().as_str(),
+                "STOP"|"STOP_MARKET"|"TAKE_PROFIT"|"TAKE_PROFIT_MARKET"|"TRAILING_STOP_MARKET") {
+            return Err(VenueError::Rejected(
+                "USD-M 条件单必须通过 Algo Service 及预登记的条件单链路提交。".into()));
+        }
         let path = match intent.product {
             Product::FuturesUm => "/fapi/v1/order",
             Product::Spot => "/api/v3/order",
