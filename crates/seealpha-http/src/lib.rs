@@ -1105,16 +1105,28 @@ async fn research_mcp(
                         .pointer("/params/arguments/name")
                         .and_then(Value::as_str)
                         .unwrap_or("research");
-                    let ending = body
-                        .pointer("/params/arguments/ending_balance")
-                        .and_then(Value::as_str)
+                    let carry = state
+                        .runtime
+                        .run_carry_window(
+                            &grant.tenant_id,
+                            "research",
+                            "ETHUSDT",
+                            18,
+                            rust_decimal::Decimal::from(1000),
+                            rust_decimal::Decimal::from(1000),
+                            rust_decimal::Decimal::from(1000),
+                        )
+                        .map_err(AppError::from)?;
+                    let ending = carry["ending_balance"]
+                        .as_str()
                         .unwrap_or("0")
                         .parse()
                         .unwrap_or(rust_decimal::Decimal::ZERO);
-                    state
+                    let candidate = state
                         .runtime
                         .run_candidate_backtest(&grant.tenant_id, "research", name, ending)
-                        .map_err(AppError::from)?
+                        .map_err(AppError::from)?;
+                    json!({"carry": carry, "candidate": candidate})
                 }
                 "cancel_backtest" => {
                     require_op(&grant, "backtests:cancel", None, None).map_err(|_| {
@@ -1585,5 +1597,144 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(latest_option, option);
+    }
+
+    #[tokio::test]
+    async fn research_mcp_creates_submits_and_cancels() {
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-mcp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("state")).unwrap();
+        let config = Config {
+            host: "127.0.0.1".into(),
+            port: 0,
+            auth_mode: AuthMode::Token,
+            token: "ci-engine-token-0123456789abcdef0123456789abcdef".into(),
+            state_dir: root.join("state"),
+            project: root,
+            tenant_id: Some("42".into()),
+            tenant_purpose: Some("development".into()),
+            research_signing_key: Some("research-signing-key-0123456789abcdef".into()),
+            research_mcp_enabled: true,
+            venue_base: None,
+            python: std::path::PathBuf::from("python3"),
+        };
+        let runtime = Arc::new(Runtime::open(&config).unwrap());
+        runtime
+            .ensure_tenant("42", "development", "active")
+            .unwrap();
+        let app = router(AppState {
+            config: Arc::new(config),
+            runtime,
+            market: Arc::new(BinanceSource::new().unwrap()),
+        });
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let claims = json!({
+            "audience": "seealpha-engine-research",
+            "datasets": ["ethusdt"],
+            "expires_at": now + 600,
+            "not_before": now - 10,
+            "ops": ["snapshots:create", "backtests:submit", "backtests:cancel", "backtests:read", "candidates:submit"],
+            "strategies": [],
+            "task_id": "task-1",
+            "tenant_id": "42",
+            "version": 1
+        });
+        let token = seealpha_research::sign_research_grant(
+            "research-signing-key-0123456789abcdef",
+            &claims,
+        )
+        .unwrap();
+        let call_tool = |name: &str, arguments: Value| {
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}
+            })
+        };
+        let (status, _, snapshot) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/research/mcp")
+                .header("authorization", format!("Bearer {token}"))
+                .header(CONTRACT_HEADER, "2")
+                .header(RESEARCH_HEADER, "1")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    call_tool(
+                        "create_snapshot",
+                        json!({"body": "{\"symbol\":\"ETHUSDT\"}"}),
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = snapshot["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("snapshot_id"));
+        let (status, _, submitted) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/research/mcp")
+                .header("authorization", format!("Bearer {token}"))
+                .header(CONTRACT_HEADER, "2")
+                .header(RESEARCH_HEADER, "1")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    call_tool("submit_backtest", json!({"name": "carry-1"})).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = submitted["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("native_dual_venue_development_only"));
+        assert!(text.contains("carry-1"));
+        let (status, _, cancelled) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/research/mcp")
+                .header("authorization", format!("Bearer {token}"))
+                .header(CONTRACT_HEADER, "2")
+                .header(RESEARCH_HEADER, "1")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    call_tool("cancel_backtest", json!({"name": "carry-1"})).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = cancelled["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("cancelled"));
+        let (status, _, again) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/research/mcp")
+                .header("authorization", format!("Bearer {token}"))
+                .header(CONTRACT_HEADER, "2")
+                .header(RESEARCH_HEADER, "1")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    call_tool("submit_backtest", json!({"name": "carry-1"})).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{again}");
     }
 }
