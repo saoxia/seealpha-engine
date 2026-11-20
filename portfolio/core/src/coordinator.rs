@@ -434,15 +434,14 @@ impl Coordinator {
         command_id: &str,
     ) -> Result<(Vec<VirtualFill>, Option<Command>), CoordinatorError> {
         self.ensure_active()?;
-        if let Some(b) = bar {
-            if b.time == 0
+        if let Some(b) = bar
+            && (b.time == 0
                 || b.low <= Decimal::ZERO
                 || b.high < b.low
                 || b.close < b.low
-                || b.close > b.high
-            {
-                return Err(CoordinatorError::Invalid);
-            }
+                || b.close > b.high)
+        {
+            return Err(CoordinatorError::Invalid);
         }
         let mut active = BTreeSet::new();
         for (id, o) in &mut self.orders {
@@ -668,14 +667,13 @@ impl Coordinator {
                 return Err(CoordinatorError::Invalid);
             }
         }
-        if let Some(flight) = &self.flight {
-            if flight.id.is_empty()
+        if let Some(flight) = &self.flight
+            && (flight.id.is_empty()
                 || flight.signed_requested == Decimal::ZERO
                 || flight.filled < Decimal::ZERO
-                || flight.filled > flight.signed_requested.abs()
-            {
-                return Err(CoordinatorError::Invalid);
-            }
+                || flight.filled > flight.signed_requested.abs())
+        {
+            return Err(CoordinatorError::Invalid);
         }
         if self.frozen != self.freeze_reason.is_some()
             || self.used_commands.iter().any(|id| id.trim().is_empty())
