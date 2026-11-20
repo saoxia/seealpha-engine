@@ -25,6 +25,14 @@ const MAX_BATCH:usize=5000;
 
 // Prevent concurrent publisher runs for the same source journal from racing
 // between the Parquet hard-link and its SQLite publication checkpoint.
+fn ensure_no_unresolved_source_gaps(db: &Connection) -> Result<()> {
+    let count: i64 = db.query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
+    if count != 0 {
+        return Err("unreconciled raw trade-ID gaps prohibit Catalog publication".into());
+    }
+    Ok(())
+}
+
 fn publication_lease(pair: &Path) -> Result<File> {
     let path = pair.join("catalog-publish.lock");
     if let Ok(meta) = fs::symlink_metadata(&path)
@@ -106,6 +114,7 @@ async fn execute()->Result<Value>{
     if pair_identity.0!=symbol {
         return Err("wrong source symbol".into());
     }
+    ensure_no_unresolved_source_gaps(&db)?;
     // The existing PairJournal writer and calculation workers use WAL.
     // We add only our own checkpoint table, never mutate raw trades/candles.
     db.execute_batch("CREATE TABLE IF NOT EXISTS catalog_publications (
@@ -222,6 +231,17 @@ async fn execute()->Result<Value>{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_candles_require_no_unrepaired_trade_ids() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE gaps(
+            first_id INTEGER, last_id INTEGER, start_ms INTEGER, end_ms INTEGER,
+            PRIMARY KEY(first_id,last_id));").unwrap();
+        ensure_no_unresolved_source_gaps(&db).unwrap();
+        db.execute("INSERT INTO gaps VALUES (11,12,1000,2000)", []).unwrap();
+        assert!(ensure_no_unresolved_source_gaps(&db).is_err());
+    }
 
     #[test]
     fn only_one_catalog_publisher_can_advance_a_pair_checkpoint() {
