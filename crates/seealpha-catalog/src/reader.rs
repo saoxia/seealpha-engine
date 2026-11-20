@@ -364,10 +364,25 @@ impl Catalog{
             let metadata=reader.schema().metadata();
             if metadata.get("type_name").map(String::as_str)!=Some("Bar") ||
                 metadata.get("bar_type").map(String::as_str)!=Some(id.as_str()) ||
-                metadata.get("price_precision").is_none() ||
-                metadata.get("size_precision").is_none() {
-                return Err(CatalogError::Invalid("Parquet BarType 或精度元数据不一致。".into()));
+                metadata.get("instrument_id").map(String::as_str)!=
+                    Some(instrument_id(symbol,product)?.as_str()) {
+                return Err(CatalogError::Invalid("Parquet BarType 或合约标识不一致。".into()));
             }
+            let parse_precision=|name:&str|->Result<u32,CatalogError>{
+                let value=metadata.get(name)
+                    .ok_or_else(||CatalogError::Invalid(format!("Bar 缺少 {name}。")))?
+                    .parse::<u32>().map_err(|_|CatalogError::Invalid(
+                        format!("Bar {name} 不是整数。")
+                    ))?;
+                if value>16 {
+                    return Err(CatalogError::Invalid(
+                        format!("Bar {name} 超出可用精度。")
+                    ));
+                }
+                Ok(value)
+            };
+            let price_precision=parse_precision("price_precision")?;
+            let size_precision=parse_precision("size_precision")?;
             let stream=reader.with_batch_size(4096).build()
                 .map_err(|err|CatalogError::Parquet(err.to_string()))?;
             for batch in stream {
@@ -398,6 +413,13 @@ impl Catalog{
                         volume:get_decimal(&batch,"volume",row)?,
                     };
                     bar.validate(interval,product)?;
+                    if [bar.open,bar.high,bar.low,bar.close].iter().any(
+                        |value|value.round_dp(price_precision)!=*value
+                    ) || bar.volume.round_dp(size_precision)!=bar.volume {
+                        return Err(CatalogError::Invalid(
+                            "Parquet Bar 数值超过声明的合约精度。".into()
+                        ));
+                    }
                     result.push(bar);
                     if result.len()>limit {
                         return Err(CatalogError::Limit("历史 K 线超过调用上限，请改为分批读取。".into()));
@@ -485,10 +507,35 @@ impl Catalog{
         let paths=candidate_files(&self.root,&rel,start_ns,end_ns)?;
         let mut previous=None;
         let mut out=Vec::new();
+        let mut trade_ids=std::collections::HashSet::new();
         for path in paths {
             let file=File::open(path)?;
             let builder=ParquetRecordBatchReaderBuilder::try_new(file)
                 .map_err(|e|CatalogError::Parquet(e.to_string()))?;
+            let metadata=builder.schema().metadata();
+            let declared=match kind {
+                RecordKind::Trades=>Some("TradeTick"),
+                RecordKind::Quotes=>Some("QuoteTick"),
+                RecordKind::OrderBookDepth=>Some("OrderBookDepth"),
+                RecordKind::OptionGreeks=>Some("OptionGreeks"),
+                RecordKind::FundingRate=>Some("FundingRateUpdate"),
+                RecordKind::InstrumentStatus=>Some("InstrumentStatus"),
+                RecordKind::InstrumentClose=>Some("InstrumentClose"),
+                _=>None,
+            };
+            if declared.is_some_and(|expected|
+                metadata.get("type_name").map(String::as_str)!=Some(expected)
+            ) || metadata.get("instrument_id").is_some_and(
+                |value|value!=identifier
+            ) {
+                return Err(CatalogError::Invalid(
+                    "Parquet 事件 type_name 或 instrument_id 不一致。".into()
+                ));
+            }
+            let (file_first,file_last)=filename_bounds(
+                path.file_name().and_then(|n|n.to_str())
+                    .ok_or_else(||CatalogError::Invalid("文件名不是 UTF-8。".into()))?
+            )?;
             let reader=builder.with_batch_size(4096).build()
                 .map_err(|e|CatalogError::Parquet(e.to_string()))?;
             for batch in reader {
@@ -496,6 +543,25 @@ impl Catalog{
                 let schema=batch.schema();
                 for row in 0..batch.num_rows(){
                     let timestamp=get_ts(&batch,row)?;
+                    if timestamp<file_first || timestamp>file_last {
+                        return Err(CatalogError::Invalid(
+                            "Parquet 事件时间与文件名边界不一致。".into()
+                        ));
+                    }
+                    get_ts_for_column(&batch,"ts_init",row)?;
+                    if matches!(kind,RecordKind::Trades) {
+                        let trade_id=batch.column_by_name("trade_id")
+                            .and_then(|a|a.as_any().downcast_ref::<StringArray>())
+                            .ok_or_else(||CatalogError::Invalid(
+                                "TradeTick trade_id 不是字符串。".into()
+                            ))?;
+                        if trade_id.is_null(row) || trade_id.value(row).is_empty() ||
+                            !trade_ids.insert(trade_id.value(row).to_owned()) {
+                            return Err(CatalogError::Conflict(
+                                "历史 TradeTick trade_id 重复或无效。".into()
+                            ));
+                        }
+                    }
                     if previous.is_some_and(|last|timestamp<last){
                         return Err(CatalogError::Invalid("历史事件时间倒退。".into()));
                     }
