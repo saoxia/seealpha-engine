@@ -291,30 +291,23 @@ def test_strategy_market_snapshot_is_scoped_to_its_own_subscribed_legs():
 
 
 def test_generic_replay_one_market_two_subscribers_with_different_windows():
-    # The target interface is unchanged; two members can ask for the same
-    # Spot stream but receive their own bounded history window.
-    spot_source = _SOURCE.replace(
-        '                {"product": "futures_um", "symbol": "BTCUSDT"},' + chr(10), "",
-    ).replace(
-        '                {"product": "futures_um", "symbol": "BTCUSDT", "quantity": "-0.1"},'
-        + chr(10), "",
-    ).replace(
-        '            data=("closed_bars", "account_positions"),',
-        '            data=("closed_bars", "account_positions"),\\n'
-        '            lookback_bars=4,',
-    ).replace(
-        '        self.publish_basket(\\n',
-        '        assert len(snapshot["history"]["spot:ETHUSDT"]) <= 4\\n'
-        '        self.publish_basket(\\n',
-    ).replace("\\n", "\n")
-    perp_source = _SOURCE.replace(
-        '                {"product": "spot", "symbol": "ETHUSDT"},' + chr(10), "",
-    ).replace(
-        '                {"product": "spot", "symbol": "ETHUSDT", "quantity": "0.1"},'
-        + chr(10), "",
-    )
+    # Two members request the same two physical streams but different windows.
+    # Each receives its own scoped historical view, not a new source request.
+    def custom_source(window):
+        return _SOURCE.replace(
+            '            data=("closed_bars", "account_positions"),',
+            '            data=("closed_bars", "account_positions"),\n'
+            f'            lookback_bars={window},',
+        ).replace(
+            '        self.publish_basket(\n',
+            f'        assert all(len(rows) <= {window} for rows in '
+            'snapshot["history"].values())\n'
+            '        self.publish_basket(\n',
+        )
+
     report = _replay(loads=[
-        {**_load(spot_source), "issuance_id": "spot-window"},
-        {**_load(perp_source), "issuance_id": "perp-window"},
+        {**_load(custom_source(4)), "issuance_id": "four-bars"},
+        {**_load(custom_source(2)), "issuance_id": "two-bars"},
     ])
     assert len(report["orders"]) == 2
+    assert len(report["fills"]) >= 2
