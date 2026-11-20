@@ -11,6 +11,8 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 fs2 = "0.4"
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 rust_decimal = "1"
 seealpha-market = { path = "../../market" }
@@ -39,3 +41,7 @@ path = "src/native_replay.rs"
 [[bin]]
 name = "binance-native-catalog-publish"
 path = "src/native_catalog_publish.rs"
+
+[[bin]]
+name = "binance-um-history"
+path = "src/binance_um_history.rs"
