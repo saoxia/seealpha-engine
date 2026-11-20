@@ -376,3 +376,49 @@ fn now_ms() -> i64 {
     )
     .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+    use std::time::{SystemTime,UNIX_EPOCH};
+
+    #[test]
+    fn legacy_mutable_writers_now_preserve_first_evidence() {
+        let db=Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        db.save_order_request("t","a","r",r#"{"status":"UNKNOWN"}"#).unwrap();
+        db.save_order_request("t","a","r",r#"{"status":"UNKNOWN"}"#).unwrap();
+        assert!(db.save_order_request("t","a","r",r#"{"status":"FILLED"}"#).is_err());
+        assert_eq!(db.request("t","a","r").unwrap().unwrap()["status"],"UNKNOWN");
+        db.upsert_order_row("t","a","production","cl",r#"{"status":"NEW"}"#).unwrap();
+        assert!(db.upsert_order_row("t","a","production","cl",r#"{"status":"FILLED"}"#).is_err());
+        assert_eq!(db.orders("t","a","production").unwrap().len(),1);
+        assert!(db.upsert_fill_row("t","a","production","not-a-trade","{}").is_err());
+        db.upsert_fill_row("t","a","paper","f",r#"{"quantity":"1"}"#).unwrap();
+        assert!(db.upsert_fill_row("t","a","paper","f",r#"{"quantity":"2"}"#).is_err());
+        assert_eq!(db.fills("t","a","paper").unwrap().len(),1);
+    }
+
+    #[test]
+    fn restart_retains_unknown_intent_without_new_send_permission() {
+        let stamp=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path=std::env::temp_dir().join(format!("seealpha-ledger-reopen-{}-{stamp}.sqlite",std::process::id()));
+        let intent=serde_json::json!({"action":"NEW","environment":"sandbox",
+            "client_order_id":"c","symbol":"ETHUSDT","side":"SELL","quantity":"0.1"});
+        {
+            let db=Ledger::open(&path).unwrap();
+            db.ensure_tenant("t","development","active").unwrap();
+            assert_eq!(db.preregister_order_intent("t","a","sandbox","r","c",
+                &"f".repeat(64),&intent).unwrap(),crate::IntentStart::Fresh);
+        }
+        {
+            let db=Ledger::open(&path).unwrap();
+            assert_eq!(db.preregister_order_intent("t","a","sandbox","r","c",
+                &"f".repeat(64),&intent).unwrap(),crate::IntentStart::ReconcileOnly);
+            assert_eq!(db.request("t","a","r").unwrap().unwrap()["status"],"UNKNOWN");
+            assert!(db.fills("t","a","sandbox").unwrap().is_empty());
+        }
+        let _=std::fs::remove_file(&path);
+        let _=std::fs::remove_file(path.with_extension("sqlite-wal"));
+        let _=std::fs::remove_file(path.with_extension("sqlite-shm"));
+    }
+}
