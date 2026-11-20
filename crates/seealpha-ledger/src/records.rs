@@ -19,65 +19,83 @@ impl Ledger {
             .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
+    /// Legacy request insert, now immutable. Once a request identity has been
+    /// stored, use a separate reconciliation record; do not rewrite UNKNOWN.
     pub fn save_order_request(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        request_id: &str,
-        body: &str,
+        &self, tenant_id: &str, account_id: &str, request_id: &str, body: &str,
     ) -> Result<(), LedgerError> {
+        if tenant_id.is_empty() || account_id.is_empty() || request_id.is_empty()
+            || serde_json::from_str::<serde_json::Value>(body).is_err() {
+            return Err(LedgerError::Conflict("invalid order request".into()));
+        }
         let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO order_requests (tenant_id, account_id, request_id, body_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(tenant_id, account_id, request_id) DO UPDATE SET
-                   body_json=excluded.body_json, updated_at=excluded.updated_at",
-                params![tenant_id, account_id, request_id, body, now_ms()],
-            )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        connection.execute(
+            "INSERT OR IGNORE INTO order_requests
+             (tenant_id,account_id,request_id,body_json,updated_at) VALUES(?1,?2,?3,?4,?5)",
+            params![tenant_id,account_id,request_id,body,now_ms()],
+        ).map_err(|e|LedgerError::Sqlite(e.to_string()))?;
+        let original: String=connection.query_row(
+            "SELECT body_json FROM order_requests WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+            params![tenant_id,account_id,request_id],|r|r.get(0),
+        ).map_err(|e|LedgerError::Sqlite(e.to_string()))?;
+        if original!=body {
+            return Err(LedgerError::Conflict("request is immutable; reconcile instead of replay".into()));
+        }
         Ok(())
     }
 
+    /// Preserve the first order row as historical evidence. Updated venue
+    /// statuses belong in append_order_observation(), never a blind UPSERT.
     pub fn upsert_order_row(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        environment: &str,
-        client_order_id: &str,
-        order_json: &str,
+        &self, tenant_id: &str, account_id: &str, environment: &str,
+        client_order_id: &str, order_json: &str,
     ) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO orders (tenant_id, account_id, environment, client_order_id, order_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(tenant_id, account_id, environment, client_order_id) DO UPDATE SET
-                   order_json=excluded.order_json, updated_at=excluded.updated_at",
-                params![tenant_id, account_id, environment, client_order_id, order_json, now_ms()],
-            )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        if serde_json::from_str::<serde_json::Value>(order_json).is_err() {
+            return Err(LedgerError::Conflict("invalid order JSON".into()));
+        }
+        let connection=self.lock()?;
+        connection.execute(
+            "INSERT OR IGNORE INTO orders
+             (tenant_id,account_id,environment,client_order_id,order_json,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![tenant_id,account_id,environment,client_order_id,order_json,now_ms()],
+        ).map_err(|e|LedgerError::Sqlite(e.to_string()))?;
+        let previous:String=connection.query_row(
+            "SELECT order_json FROM orders WHERE tenant_id=?1 AND account_id=?2
+             AND environment=?3 AND client_order_id=?4",
+            params![tenant_id,account_id,environment,client_order_id],|r|r.get(0),
+        ).map_err(|e|LedgerError::Sqlite(e.to_string()))?;
+        if previous!=order_json {
+            return Err(LedgerError::Conflict("order evidence is immutable; append an observation".into()));
+        }
         Ok(())
     }
 
+    /// Legacy raw fill writer is restricted to isolated paper simulation.
+    /// Exchange fills MUST use import_verified_fills() with real trade IDs.
     pub fn upsert_fill_row(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        environment: &str,
-        fill_id: &str,
-        fill_json: &str,
+        &self, tenant_id: &str, account_id: &str, environment: &str,
+        fill_id: &str, fill_json: &str,
     ) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO fills (tenant_id, account_id, environment, fill_id, fill_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(tenant_id, account_id, environment, fill_id) DO UPDATE SET
-                   fill_json=excluded.fill_json, updated_at=excluded.updated_at",
-                params![tenant_id, account_id, environment, fill_id, fill_json, now_ms()],
-            )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+        if environment!="paper" ||
+            serde_json::from_str::<serde_json::Value>(fill_json).is_err() {
+            return Err(LedgerError::Conflict("live fills require verified exchange trade evidence".into()));
+        }
+        let connection=self.lock()?;
+        connection.execute(
+            "INSERT OR IGNORE INTO fills
+             (tenant_id,account_id,environment,fill_id,fill_json,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![tenant_id,account_id,environment,fill_id,fill_json,now_ms()],
+        ).map_err(|e|LedgerError::Sqlite(e.to_string()))?;
+        let original:String=connection.query_row(
+            "SELECT fill_json FROM fills WHERE tenant_id=?1 AND account_id=?2
+             AND environment=?3 AND fill_id=?4",
+            params![tenant_id,account_id,environment,fill_id],|r|r.get(0),
+        ).map_err(|e|LedgerError::Sqlite(e.to_string()))?;
+        if original!=fill_json {
+            return Err(LedgerError::Conflict("fill evidence is immutable".into()));
+        }
         Ok(())
     }
 
