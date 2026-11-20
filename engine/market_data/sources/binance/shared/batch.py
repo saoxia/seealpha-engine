@@ -16,7 +16,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from core.market.instruments import INTERVALS, normalize_symbol
-from engine.market_data.collection.pair_service import serve_pair
+from engine.market_data.sources.binance.shared.trades import serve_pair
 from engine.market_data.collection.service import write_status
 
 # Binance permits 1,024 streams per connection. Reserve high-volume headroom:
