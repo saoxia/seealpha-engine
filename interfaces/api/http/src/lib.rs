@@ -291,7 +291,14 @@ async fn jobs(
     ))
 }
 
-async fn worker_settings(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+async fn worker_settings(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    state
+        .runtime
+        .require_active(&tenant_id)
+        .map_err(AppError::from)?;
     Ok(Json(
         state
             .runtime
@@ -1580,6 +1587,31 @@ mod tests {
                 .unwrap(),
         )
         .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn worker_settings_require_an_active_tenant_even_when_unpinned() {
+        let mut setup = state();
+        Arc::get_mut(&mut setup.config).unwrap().tenant_id = None;
+        setup
+            .runtime
+            .ensure_tenant("42", "development", "active")
+            .unwrap();
+        let app = router(setup);
+        let request = |tenant: &str| {
+            Request::builder()
+                .uri(format!("/tenants/{tenant}/jobs/worker-settings"))
+                .header(
+                    "authorization",
+                    "Bearer ci-engine-token-0123456789abcdef0123456789abcdef",
+                )
+                .body(Body::empty())
+                .unwrap()
+        };
+        let (status, _, _) = call(&app, request("42")).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = call(&app, request("99")).await;
         assert_eq!(status, StatusCode::CONFLICT);
     }
 
