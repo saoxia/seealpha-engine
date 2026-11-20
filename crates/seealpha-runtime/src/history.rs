@@ -5,7 +5,7 @@ use crate::{Runtime,RuntimeError,map_ledger,map_strategy,write_archive};
 use rust_decimal::Decimal;
 use seealpha_backtest::{HistoryBar,PublishedTarget,run_backtest_with_curve,report_json};
 use seealpha_market::{interval_ms,check_symbol};
-use seealpha_strategy::{HostCommand,StrategyBar,run_host};
+use seealpha_strategy::{HostCommand,StrategyBar,IssuedStrategy,AccountScope,run_issued_host};
 use serde_json::{json,Value};
 
 fn invalid(message:&str)->RuntimeError {RuntimeError::Conflict(message.into())}
@@ -61,21 +61,31 @@ impl Runtime {
             });
             history.push(HistoryBar{open_time_ms:bar.open_time_ms,close});
         }
-        let strategies=self.stored_strategies(tenant,account)?;
+        // Load the immutable issuance and its archive from the trusted Ledger.
+        // Never authorize a historical session from caller-supplied strategy metadata.
+        let strategies=self.ledger.strategies(tenant,account).map_err(map_ledger)?;
+        if strategies.is_empty() {
+            return Err(invalid("该账户没有已下发的策略。"));
+        }
         let strategy_count=strategies.len();
         let mut publications=Vec::new();
         let mut risk:Option<Decimal>=None;
         for strategy in strategies {
-            let archive=match strategy.package {
-                crate::PackageBody::Archive(bytes)=>bytes,
-                crate::PackageBody::Directory(_)=>return Err(invalid("回测只接受已下发的归档策略。")),
-            };
-            let file=write_archive(&archive)?;
+            let parameters:Value=serde_json::from_str(&strategy.parameters_json)
+                .map_err(|_|invalid("已下发策略参数记录损坏。"))?;
+            let file=write_archive(&strategy.archive)?;
             self.track_start();
-            let executed=run_host(&HostCommand{
+            let executed=run_issued_host(&HostCommand{
                 python:&self.python,host:&self.host,package_dir:None,
-                archive_path:Some(&file),parameters:&strategy.parameters,
+                archive_path:Some(&file),parameters:&parameters,
                 symbol,interval,bars:&host_bars,op:"run",
+            },IssuedStrategy{
+                tenant_id:&strategy.tenant_id,account_id:&strategy.account_id,
+                issuance_id:&strategy.issuance_id,grant_purpose:&strategy.grant_purpose,
+                code_key:&strategy.code_key,version:&strategy.version,
+                entry_point:&strategy.entry_point,package_hash:&strategy.package_hash,
+            },AccountScope{
+                tenant_id:tenant,account_id:account,purpose:&t.purpose,
             });
             self.track_end();
             let _=std::fs::remove_file(&file);
@@ -91,7 +101,7 @@ impl Runtime {
                 }
                 let amount=p.quantity.parse::<Decimal>().map_err(|_|invalid("策略目标数量无效。"))?;
                 publications.push(PublishedTarget{
-                    member_id:strategy.member_id.clone(),bar_index:p.bar_index,quantity:amount,
+                    member_id:strategy.issuance_id.clone(),bar_index:p.bar_index,quantity:amount,
                 });
             }
         }
