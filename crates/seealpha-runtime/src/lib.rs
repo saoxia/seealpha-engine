@@ -142,6 +142,38 @@ impl Runtime {
         self.ledger.order_recovery_page(tenant, offset, limit).map_err(map_ledger)
     }
 
+    /// Explicit scheduling only; no network IO, no order POST and no claim
+    /// that an observed NEW/ACK implies a completed settlement.
+    pub fn enqueue_order_reconciliations(
+        &self, tenant: &str, now_ms: i64,
+    ) -> Result<usize, RuntimeError> {
+        self.require_active(tenant)?;
+        self.ledger.enqueue_order_reconciliations(tenant,now_ms).map_err(map_ledger)
+    }
+
+    /// Atomically lease one read-side reconciliation task. The caller may
+    /// perform authenticated order/trade/account GETs, never resend the order.
+    pub fn claim_order_reconciliation(
+        &self, tenant:&str, worker:&str, now_ms:i64, lease_ms:i64,
+    ) -> Result<Option<seealpha_ledger::ReconciliationTask>,RuntimeError> {
+        self.require_active(tenant)?;
+        self.ledger.claim_order_reconciliation(tenant,worker,now_ms,lease_ms)
+            .map_err(map_ledger)
+    }
+
+    /// A successful GET observation is still NOT a settled fill. Keep task
+    /// retriable until separately verified financial reconciliation completes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_order_reconciliation(
+        &self, tenant:&str, account:&str, request:&str, worker:&str,
+        now_ms:i64, outcome:&str, error_code:Option<&str>,
+    ) -> Result<(),RuntimeError> {
+        self.require_active(tenant)?;
+        self.ledger.finish_order_reconciliation(
+            tenant,account,request,worker,now_ms,outcome,error_code,
+        ).map_err(map_ledger)
+    }
+
     pub fn inflight(&self) -> usize {
         self.inflight.load(Ordering::Relaxed)
     }
