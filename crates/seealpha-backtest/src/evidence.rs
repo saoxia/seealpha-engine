@@ -5,7 +5,7 @@ use serde_json::{Value,json};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct MarkBar {
-    pub open_time_ms:i64,
+    pub mark_time_ms:i64,
     pub spot:Decimal,
     pub perp:Decimal,
 }
@@ -46,15 +46,15 @@ pub fn run_evidence_carry(
     let mut last_time=None;
     for bar in bars {
         if bar.spot<=Decimal::ZERO || bar.perp<=Decimal::ZERO ||
-            last_time.is_some_and(|prior|bar.open_time_ms<=prior) {
+            last_time.is_some_and(|prior|bar.mark_time_ms<=prior) {
             return Err("invalid or unordered evidence bars");
         }
-        last_time=Some(bar.open_time_ms);
+        last_time=Some(bar.mark_time_ms);
     }
     let mut last_funding=None;
     for event in funding {
-        if event.at_ms<=first.open_time_ms ||
-            event.at_ms>bars.last().map(|v|v.open_time_ms).unwrap_or(first.open_time_ms) ||
+        if event.at_ms<=first.mark_time_ms ||
+            event.at_ms>bars.last().map(|v|v.mark_time_ms).unwrap_or(first.mark_time_ms) ||
             last_funding.is_some_and(|time|event.at_ms<=time) ||
             event.mark_price<=Decimal::ZERO {
             return Err("funding event outside the held position or nonadvancing");
@@ -81,7 +81,7 @@ pub fn run_evidence_carry(
     let mut max_drawdown=Decimal::ZERO;
     for bar in bars {
         while next_funding<funding.len() &&
-            funding[next_funding].at_ms<=bar.open_time_ms {
+            funding[next_funding].at_ms<=bar.mark_time_ms {
             let f=funding[next_funding];
             // A short perpetual receives positive settled funding.
             let cashflow=checked_mul(
@@ -110,7 +110,7 @@ pub fn run_evidence_carry(
                 .checked_div(peak).ok_or("decimal overflow")?;
             max_drawdown=max_drawdown.max(drawdown);
         }
-        curve.push(json!({"open_time_ms":bar.open_time_ms,
+        curve.push(json!({"mark_time_ms":bar.mark_time_ms,
             "spot_close":bar.spot.to_string(),"perp_close":bar.perp.to_string(),
             "gross_notional":gross.to_string(),
             "cumulative_funding":income.to_string(),
@@ -119,7 +119,7 @@ pub fn run_evidence_carry(
     let end_equity=curve.last().and_then(|row|row["equity"].as_str())
         .ok_or("missing ending equity")?;
     Ok(json!({"kind":"carry_evidence","paper_only":true,"exchange_orders":0,
-        "entry_time_ms":first.open_time_ms,"bars":bars.len(),
+        "entry_time_ms":first.mark_time_ms,"bars":bars.len(),
         "spot_qty":position.spot_qty.to_string(),"perp_qty":position.perp_qty.to_string(),
         "starting_balance":position.starting_balance.to_string(),
         "entry_fees":fees.to_string(),"fee_rate":position.fee_rate.to_string(),
@@ -135,8 +135,8 @@ mod tests{
     use super::*;
     #[test]
     fn short_perp_earns_positive_funding_without_fabricated_intervals(){
-        let bars=[MarkBar{open_time_ms:0,spot:Decimal::from(100),perp:Decimal::from(100)},
-            MarkBar{open_time_ms:60_000,spot:Decimal::from(110),perp:Decimal::from(111)}];
+        let bars=[MarkBar{mark_time_ms:0,spot:Decimal::from(100),perp:Decimal::from(100)},
+            MarkBar{mark_time_ms:60_000,spot:Decimal::from(110),perp:Decimal::from(111)}];
         let position=CarryPosition{spot_qty:Decimal::ONE,perp_qty:-Decimal::ONE,
             starting_balance:Decimal::from(200),max_gross_notional:Decimal::from(300),
             fee_rate:Decimal::ZERO};
@@ -148,7 +148,7 @@ mod tests{
     }
     #[test]
     fn rejects_time_travel_and_exposure_overflow(){
-        let bars=[MarkBar{open_time_ms:0,spot:Decimal::from(100),perp:Decimal::from(100)}];
+        let bars=[MarkBar{mark_time_ms:0,spot:Decimal::from(100),perp:Decimal::from(100)}];
         let pos=CarryPosition{spot_qty:Decimal::ONE,perp_qty:-Decimal::ONE,
             starting_balance:Decimal::from(100),max_gross_notional:Decimal::from(10),
             fee_rate:Decimal::ZERO};
