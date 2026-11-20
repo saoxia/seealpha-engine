@@ -100,20 +100,19 @@ impl Ledger {
             params![tenant,account,environment],
             |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
         ).optional().map_err(sql)?;
-        if let Some((revision, old_id, old_time, old_source, old_state)) = &previous {
-            if old_id == evidence_id
-                && *old_time == observed_at_ms
-                && old_source == source
-                && old_state == &body
-            {
-                return Ok(AccountSnapshot {
-                    revision: *revision,
-                    evidence_id: evidence_id.into(),
-                    observed_at_ms,
-                    source: source.into(),
-                    state: state.clone(),
-                });
-            }
+        if let Some((revision, old_id, old_time, old_source, old_state)) = &previous
+            && old_id == evidence_id
+            && *old_time == observed_at_ms
+            && old_source == source
+            && old_state == &body
+        {
+            return Ok(AccountSnapshot {
+                revision: *revision,
+                evidence_id: evidence_id.into(),
+                observed_at_ms,
+                source: source.into(),
+                state: state.clone(),
+            });
         }
         if previous.as_ref().map(|row| row.0) != expected_revision {
             return Err(LedgerError::Conflict(
@@ -244,7 +243,8 @@ mod tests {
             .collect();
         let success = handles
             .into_iter()
-            .filter(|t| t.join().unwrap().is_ok())
+            .map(|t| t.join().unwrap())
+            .filter(|result| result.is_ok())
             .count();
         assert_eq!(success, 1);
         let last = book

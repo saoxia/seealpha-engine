@@ -51,11 +51,11 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 fn base64_decode(text: &str) -> Result<Vec<u8>, LedgerError> {
     let bytes = text.as_bytes();
-    if bytes.len() % 4 != 0 || bytes.len() > 16 * 1024 * 1024 {
+    if !bytes.len().is_multiple_of(4) || bytes.len() > 16 * 1024 * 1024 {
         return Err(invalid("invalid Python archive base64"));
     }
     let mut output = Vec::with_capacity(bytes.len() / 4 * 3);
-    for (index, block) in bytes.chunks_exact(4).enumerate() {
+    for (index, block) in bytes.as_chunks::<4>().0.iter().enumerate() {
         let last = index == bytes.len() / 4 - 1;
         let pad = usize::from(block[3] == b'=') + usize::from(block[2] == b'=');
         if (!last && pad != 0) || pad > 2 || (block[2] == b'=' && block[3] != b'=') {

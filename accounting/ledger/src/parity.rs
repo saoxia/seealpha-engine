@@ -114,6 +114,8 @@ impl Ledger {
         Ok(json!({"events":items,"next":next}))
     }
 
+    // Keep the legacy subscription record fields explicit until v2 contract parity is verified.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_subscription(
         &self,
         tenant_id: &str,
@@ -223,10 +225,11 @@ impl Ledger {
     ) -> Result<Value, LedgerError> {
         let conn = self.lock()?;
         let now = now_ms();
+        let payload_text = payload.to_string();
         let inserted=conn.execute(
             "INSERT OR IGNORE INTO data_jobs(tenant_id,job_id,operation,payload_json,status,created_at,updated_at)
              VALUES(?1,?2,?3,?4,'queued',?5,?5)",
-            params![tenant_id,job_id,operation,payload.to_string(),now],
+            params![tenant_id,job_id,operation,&payload_text,now],
         ).map_err(sqlite)?;
         let stored = conn
             .query_row(
@@ -245,7 +248,7 @@ impl Ledger {
                 },
             )
             .map_err(sqlite)?;
-        if inserted == 0 && (stored.0 != operation || stored.1 != payload.to_string()) {
+        if inserted == 0 && (stored.0 != operation || stored.1 != payload_text) {
             return Err(LedgerError::Conflict("任务编号已用于其他请求。".into()));
         }
         Ok(

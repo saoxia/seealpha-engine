@@ -97,7 +97,7 @@ pub fn inspect_archive(bytes: &[u8]) -> Result<PackageMetadata, StrategyError> {
     let digest = sha256_hex(bytes);
     let mut archive =
         ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| invalid_archive())?;
-    if archive.len() == 0 || archive.len() > MAX_MEMBERS {
+    if archive.is_empty() || archive.len() > MAX_MEMBERS {
         return Err(invalid_archive());
     }
     let mut seen = std::collections::HashSet::new();

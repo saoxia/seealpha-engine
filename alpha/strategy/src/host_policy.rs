@@ -248,7 +248,6 @@ mod tests {
         assert!(check_command(&c).is_err());
         c.op = "prepare";
         assert!(check_command(&c).is_err());
-        c.op = "run";
         let mut invalid = bar();
         invalid.low = "2011".into();
         assert!(check_command(&command(&params, &[invalid])).is_err());

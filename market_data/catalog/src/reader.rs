@@ -695,7 +695,7 @@ impl Catalog {
         let mut trade_ids = std::collections::HashSet::new();
         let mut record_fingerprints = std::collections::HashSet::new();
         for path in paths {
-            let file = File::open(path)?;
+            let file = File::open(&path)?;
             let builder = ParquetRecordBatchReaderBuilder::try_new(file)
                 .map_err(|e| CatalogError::Parquet(e.to_string()))?;
             let metadata = builder.schema().metadata();

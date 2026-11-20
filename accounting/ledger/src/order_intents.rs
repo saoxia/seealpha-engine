@@ -57,14 +57,13 @@ fn valid_intent(intent: &Value, environment: &str, client_id: &str) -> bool {
         "trigger_price",
         "quote_quantity",
     ] {
-        if let Some(field) = intent.get(key) {
-            if field
+        if let Some(field) = intent.get(key)
+            && field
                 .as_str()
                 .and_then(|s| s.parse::<Decimal>().ok())
                 .is_none()
-            {
-                return false;
-            }
+        {
+            return false;
         }
     }
     match intent["action"].as_str() {

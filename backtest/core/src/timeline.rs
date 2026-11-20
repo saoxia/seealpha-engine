@@ -6,6 +6,7 @@ pub mod verified;
 
 use crate::matching::{Ohlc, Side, WorkingOrder, match_bar};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::Signed;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
