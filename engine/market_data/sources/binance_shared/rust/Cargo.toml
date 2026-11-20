@@ -25,6 +25,10 @@ path = "src/main.rs"
 name = "binance-native-source"
 path = "src/native_source.rs"
 
+[[bin]]
+name = "binance-native-calculation"
+path = "src/native_calculation.rs"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

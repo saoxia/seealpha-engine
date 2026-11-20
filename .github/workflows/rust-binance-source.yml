@@ -1,0 +1,32 @@
+name: Rust-native Binance source verification
+on:
+  pull_request:
+    paths:
+      - "engine/market_data/sources/binance_shared/rust/**"
+      - ".github/workflows/rust-binance-source.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-binance-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Resolve native dependency graph
+        run: cargo generate-lockfile --manifest-path engine/market_data/sources/binance_shared/rust/Cargo.toml
+      - name: Emit reproducible lock for review
+        shell: bash
+        run: |
+          echo BEGIN_NATIVE_LOCK_B64
+          base64 -w0 engine/market_data/sources/binance_shared/rust/Cargo.lock
+          echo
+          echo END_NATIVE_LOCK_B64
+      - name: Rust unit/integration tests
+        run: cargo test --release --manifest-path engine/market_data/sources/binance_shared/rust/Cargo.toml
