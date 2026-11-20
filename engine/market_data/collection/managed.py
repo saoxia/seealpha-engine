@@ -88,9 +88,13 @@ def main():
                     asyncio.run(serve_options(policy, args.root, args.catalog))
                 elif args.role == "calculation":
                     if policy["product"] == "spot":
-                        from engine.market_data.sources.binance.spot.calculation import serve_calculation
+                        from engine.market_data.sources.binance.spot.calculation import (
+                            serve_calculation,
+                        )
                     else:
-                        from engine.market_data.sources.binance.perpetual.calculation import serve_calculation
+                        from engine.market_data.sources.binance.perpetual.calculation import (
+                            serve_calculation,
+                        )
                     asyncio.run(serve_calculation(policy, args.root, args.catalog))
                 else:
                     asyncio.run(serve_pair(json.loads(args.policy), args.root, args.catalog, calculate=args.role == "combined"))
