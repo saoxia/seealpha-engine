@@ -10,11 +10,11 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.data_manager.contracts import PairHistoryJob
-from engine.data_manager.repository import StorageUnavailable
-from engine.data_manager.service import DataService
+from engine.market_data.control.contracts import PairHistoryJob
+from engine.market_data.control.repository import StorageUnavailable
+from engine.market_data.control.service import DataService
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 

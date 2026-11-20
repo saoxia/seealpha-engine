@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from nautilus_trader.trading import StrategyConfig
 
-from engine.strategies.targets import TargetHolding
+from engine.portfolio.targets import TargetHolding
 
 
 class PackageError(ValueError):

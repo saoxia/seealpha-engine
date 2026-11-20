@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from engine.strategies.basket_targets import (
+from engine.portfolio.basket_targets import (
     BasketPlanError,
     LegEvidence,
     LegId,

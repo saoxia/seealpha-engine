@@ -1,7 +1,7 @@
 # Build from the repository root: docker build -f docker/engine.Dockerfile -t seealpha-engine:latest .
 FROM rust:1.100-slim AS converter
 WORKDIR /build
-COPY engine/pipeline/rust_converter/ ./rust_converter/
+COPY engine/market_data/repair/rust_converter/ ./rust_converter/
 RUN cargo build --locked --release --manifest-path rust_converter/Cargo.toml
 
 FROM python:3.15-slim
@@ -16,7 +16,7 @@ COPY core/ ./core/
 COPY engine/ ./engine/
 COPY nautilus_support.py ./
 COPY packages/ ./packages/
-COPY --from=converter /build/rust_converter/target/release/nautilus-data-converter /app/engine/pipeline/rust_converter/target/release/nautilus-data-converter
+COPY --from=converter /build/rust_converter/target/release/nautilus-data-converter /app/engine/market_data/repair/rust_converter/target/release/nautilus-data-converter
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8766
 CMD ["python", "-m", "engine"]

@@ -7,7 +7,7 @@ network or exchange calls, send orders, or require Platform API code.
 from fastapi.testclient import TestClient
 
 from core.engine_contracts import ENGINE_CONTRACT_HEADER, ENGINE_CONTRACT_VERSION
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48

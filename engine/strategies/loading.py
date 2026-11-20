@@ -18,8 +18,10 @@ from uuid import uuid4
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.model import AccountType, Bar, BarType, FundingRateUpdate, Money, OmsType
 
-from engine.runtime import EngineConflict
-from engine.strategies.backtest_engine import backtest_engine_config
+from engine.backtesting.backtest_engine import backtest_engine_config
+from engine.portfolio.portfolio_coordinator import PortfolioCoordinator, PortfolioCoordinatorConfig
+from engine.portfolio.target_netting import MemberTarget, net_signed_quantity
+from engine.portfolio.targets import signed_quantity
 from engine.strategies.package import (
     PackageError,
     build_strategy,
@@ -30,9 +32,7 @@ from engine.strategies.package import (
     prepare_parameters,
     release_namespace,
 )
-from engine.strategies.portfolio_coordinator import PortfolioCoordinator, PortfolioCoordinatorConfig
-from engine.strategies.target_netting import MemberTarget, net_signed_quantity
-from engine.strategies.targets import signed_quantity
+from engine.trading.runtime import EngineConflict
 from nautilus_support import TestInstrumentProvider, instrument_fee_model
 
 
@@ -175,7 +175,7 @@ def run_issued_history_stream(loads, batches, starting: Money, *, funding_update
         raise EngineConflict("K 线品种与策略不一致。")
     data = chain([first], iterator)
     if funding_updates:
-        from engine.strategies.research_native import join_funding_updates
+        from engine.research.research_native import join_funding_updates
 
         data = join_funding_updates(data, funding_updates, instrument.id)
     piece = _run_symbol(
@@ -361,7 +361,7 @@ def _prepare_archive(archive, metadata, parameters, tenant_id, issuance_id):
 
 def _load_member(load, instrument, bar_type, order_id_tag):
     if load.get("_trusted_candidate") is True:
-        from engine.strategies.candidate_template import CandidateSignal, validate_candidate
+        from engine.research.candidate_template import CandidateSignal, validate_candidate
 
         parameters = validate_candidate(load["parameters"])
         strategy = build_strategy(

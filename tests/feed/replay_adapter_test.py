@@ -7,13 +7,13 @@ import pytest
 from nautilus_trader.model import Bar, BarType
 
 from core.market.instruments import bar_type_for
-from engine.feed.market_data_service import EngineMarketDataService
-from engine.feed.replay_adapter import (
+from engine.market_data.access.market_data_service import EngineMarketDataService
+from engine.market_data.access.replay_adapter import (
     replay_bar_batches,
     replay_carry_events,
     replay_protected_evidence,
 )
-from engine.feed.subscription_hub import MarketDataHubError, MarketStream
+from engine.market_data.access.subscription_hub import MarketDataHubError, MarketStream
 from nautilus_support import TestInstrumentProvider
 
 PERP = MarketStream("BINANCE", "futures_um", "ETHUSDT", "1m")

@@ -8,10 +8,10 @@ from fastapi.testclient import TestClient
 from nautilus_trader.model import Bar, BarType
 
 from core.market.instruments import bar_type_for
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.runtime import EngineConflict, EngineRuntime
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.trading.runtime import EngineConflict, EngineRuntime
 from nautilus_support import TestInstrumentProvider
 from tests.engine.strategy_load_test import (
     CLOSES,
@@ -268,7 +268,7 @@ def test_full_ai_python_strategy_loads_in_existing_development_backtest(tmp_path
     import json
     import zipfile
 
-    from engine.strategies.python_candidate import inspect_python_candidate
+    from engine.research.python_candidate import inspect_python_candidate
 
     start = datetime(2024, 1, 1, tzinfo=UTC)
     write_crossover_catalog(tmp_path / "data" / "catalog", start)

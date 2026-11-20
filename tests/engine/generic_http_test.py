@@ -4,11 +4,11 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.runtime import EngineRuntime
-from engine.strategies.basket_targets import LegId
+from engine.market_data.storage.catalog import ParquetDataCatalog
+from engine.portfolio.basket_targets import LegId
+from engine.trading.runtime import EngineRuntime
 from tests.engine.generic_simulation_test import _frames, _load, _perp
 from tests.engine.spot_backtest_test import spot_instrument
 

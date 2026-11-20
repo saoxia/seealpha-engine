@@ -218,7 +218,7 @@ class LedgerObserver(Strategy):
 
 
 async def operation_history(account, *, lookback_minutes=1440, **options):
-    from .queries import account_snapshot
+    from engine.connectors.binance.queries import account_snapshot
 
     records = []
     await account_snapshot(

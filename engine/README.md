@@ -5,17 +5,19 @@ Phase 1 把行情、连接和订单事实从业务 API 进程里拆出来。本�
 | 路径 | 职责 |
 | --- | --- |
 | `engine/connectors/` | Binance 适配器与只读/手动执行客户端。不依赖 feed、pipeline、api、web。 |
-| `engine/feed/` | 连续行情。管理入口 `python -m engine.feed.managed`。 |
-| `engine/pipeline/` | 数据管道：历史补齐 `python -m engine.pipeline.pair_data`，一次性任务 `python -m engine.pipeline.data_management`，以及归档、Catalog 和 `rust_converter/`。 |
+| `engine/market_data/` | 行情控制 `control/`、实时采集 `collection/`、自动计算 `calculation/`、历史补齐 `repair/`、存储 `storage/`、统一访问 `access/` 和质量 `quality/`。 |
+| `engine/backtesting/`、`engine/portfolio/` | 回测、模拟和组合目标管理。 |
+| `engine/trading/`、`engine/research/` | 交易运行事实与独立研究逻辑。 |
+| `engine/api/`、`engine/infrastructure/` | Engine HTTP 入口、任务与进程基础设施。 |
 | `app.py` / `__main__.py` | 给业务 API 用的内部 HTTP。 |
 
 可加载的示例在 `packages/ema_crossover/`。引擎不按策略名字保存实现；
 只有业务端下发归档之后，才会按 `tenant_id` 单独加载。
 
 
-## 行情数据架构方向（设计中）
+## 统一行情数据架构（目录已迁移，后续功能仍在演进）
 
-参见 [统一行情数据架构设计决策](../docs/MARKET_DATA_ARCHITECTURE.md)：用户通过授权配置决定交易对、起始日期和采集/维护启停；实时获取、数据计算、历史核验补齐分别独立自动工作；回测、策略、交易只通过统一访问服务消费数据，不能凭读侧订阅改变采集配置。**本节描述后续重构目标，现有实现尚未完全符合。**
+参见 [统一行情数据架构设计决策](../docs/MARKET_DATA_ARCHITECTURE.md)：用户通过授权配置决定交易对、起始日期和采集/维护启停；实时获取、数据计算、历史核验补齐分别独立自动工作；回测、策略、交易只通过统一访问服务消费数据，不能凭读侧订阅改变采集配置。**本节描述后续重构目标，现有实现尚未完全符合。原 `engine.feed.managed`、`engine.feed.service`、`engine.pipeline.pair_data` 和 `engine.pipeline.data_management` CLI 暂保留兼容入口，主实现已经迁移；参见 [代码布局](../docs/ENGINE_LAYOUT.md)。**
 
 ## 可选 Docker 运行模式
 
@@ -82,7 +84,7 @@ uv run python -m engine
 
 ## 跨产品目标规划（研究阶段）
 
-已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按租户/账户/产品/合约组合多成员目标；研究态可将已下发策略的现货+永续目标送入原生双 Venue 模拟撮合，**不会产生真实跨产品订单**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
+已增加独立纯计算模块 `engine.portfolio.basket_targets`，支持按租户/账户/产品/合约组合多成员目标；研究态可将已下发策略的现货+永续目标送入原生双 Venue 模拟撮合，**不会产生真实跨产品订单**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
 
 双市场研究数据同步器 `EngineRuntime.iter_funding_carry_history` 可在开发租户已订阅现货和永续时，从真实 Catalog 严格对齐 K 线并按原始时间插入资金费观测；不产生订单、结算或收益报告，暂不对外开放 HTTP。
 

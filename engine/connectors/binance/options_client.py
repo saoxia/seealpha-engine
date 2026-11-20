@@ -18,10 +18,9 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from core.market.instruments import bar_type_for, interval_delta, normalize_symbol
-
-from . import options
-from . import options_parsing as parsing
-from .queries import QueryError
+from engine.connectors.binance import options
+from engine.connectors.binance import options_parsing as parsing
+from engine.connectors.binance.queries import QueryError
 
 PUBLIC_WS = "wss://fstream.binance.com/public/stream"
 MARKET_WS = "wss://fstream.binance.com/market/stream"

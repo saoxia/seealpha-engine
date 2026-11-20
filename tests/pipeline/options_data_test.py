@@ -8,16 +8,16 @@ from nautilus_trader.model import AggressorSide, InstrumentId, Price, Quantity, 
 
 from core.market.instruments import instrument_id_for, normalize_symbol
 from engine.connectors.binance import options
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.pipeline.data_management import (
+from engine.market_data.repair.data_management import (
     checked_request,
     dataset_inventory,
     deletion_plan,
     execute,
     preview,
 )
-from engine.pipeline.models import DataRequest, PipelineSettings
-from engine.pipeline.options_data import prepare, validate
+from engine.market_data.repair.models import DataRequest, PipelineSettings
+from engine.market_data.repair.options_data import prepare, validate
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from tests.connectors.binance.options_queries_test import definition
 
 
@@ -200,7 +200,7 @@ def test_empty_response_and_nonadvancing_pages_never_create_fake_data(context, m
 def test_worker_entry_point_carries_option_product(context, monkeypatch, tmp_path):
     import sys
 
-    from engine.pipeline import data_management
+    from engine.market_data.repair import data_management
 
     settings, _item = context
     request, calls = bars_request(), []
@@ -278,7 +278,7 @@ def test_local_validation_checks_contract_multiplier_and_precision(context, monk
 
 
 def test_managed_live_late_trades_and_historical_holes_merge_atomically(context, monkeypatch):
-    from engine.pipeline.options_data import persist_live
+    from engine.market_data.repair.options_data import persist_live
 
     settings, item = context
     symbol = item["symbol"]
@@ -306,7 +306,7 @@ def test_managed_live_late_trades_and_historical_holes_merge_atomically(context,
 
 
 def test_managed_live_recovers_source_after_interrupted_install(context, monkeypatch):
-    from engine.pipeline import options_data
+    from engine.market_data.repair import options_data
 
     settings, item = context
     stamp = int(datetime(2026, 8, 1, tzinfo=UTC).timestamp() * 1000)
@@ -326,7 +326,7 @@ def test_managed_live_recovers_source_after_interrupted_install(context, monkeyp
 
 @pytest.mark.parametrize("source", ["ws/kline", "eapi/v1/klines"])
 def test_history_fetches_rest_despite_existing_partial_day(context, monkeypatch, source):
-    from engine.pipeline import options_data
+    from engine.market_data.repair import options_data
 
     settings, item = context
     request, calls = bars_request(), []
@@ -351,7 +351,7 @@ def test_history_fetches_rest_despite_existing_partial_day(context, monkeypatch,
 def test_option_history_checkpoint_retries_empty_day_and_resumes(context, monkeypatch, tmp_path):
     import asyncio
 
-    from engine.pipeline import options_data
+    from engine.market_data.repair import options_data
 
     settings, item = context
     today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -393,7 +393,7 @@ def test_batch_history_limits_writers_and_releases_only_stopped_contract(context
     import threading
     import time
 
-    from engine.pipeline import options_data
+    from engine.market_data.repair import options_data
 
     settings, template = context
     rows = [{**template, "symbol": f"BTC-261225-{85000 + index * 1000}-C", "strike": str(85000 + index * 1000)}
@@ -452,7 +452,7 @@ def test_batch_history_limits_writers_and_releases_only_stopped_contract(context
 
 
 def test_history_batch_entry_point_uses_shared_runtime_and_mounted_root(context, monkeypatch, tmp_path):
-    from engine.pipeline import options_data, pair_data
+    from engine.market_data.repair import options_data, pair_data
 
     settings, _item = context
     (tmp_path / "data").mkdir()
@@ -465,13 +465,13 @@ def test_history_batch_entry_point_uses_shared_runtime_and_mounted_root(context,
     monkeypatch.setattr(pair_data, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(pair_data, "load_settings", lambda: settings)
     monkeypatch.setattr(options_data, "serve_history_batch", serve_batch)
-    monkeypatch.setattr("sys.argv", ["engine.pipeline.pair_data", "--service", "--options-config", str(manifest), "--root", str(root)])
+    monkeypatch.setattr("sys.argv", ["engine.market_data.repair.pair_data", "--service", "--options-config", str(manifest), "--root", str(root)])
     pair_data.main()
     assert called == [(manifest, settings, root.parent)]
 
 
 def test_batch_remembers_contract_units_before_expiry_without_inventing_data(context, monkeypatch):
-    from engine.pipeline.options_data import persist_live
+    from engine.market_data.repair.options_data import persist_live
 
     settings, item = context
     result = persist_live(item["symbol"], [], settings, definition=options.instrument(item).to_dict())
@@ -488,7 +488,7 @@ def test_batch_remembers_contract_units_before_expiry_without_inventing_data(con
 
 
 def test_live_depth_persists_exact_raw_snapshots_and_participates_in_deletion(context):
-    from engine.pipeline import options_data
+    from engine.market_data.repair import options_data
 
     settings, item = context
     request = bars_request()

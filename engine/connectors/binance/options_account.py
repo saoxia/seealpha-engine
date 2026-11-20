@@ -16,9 +16,8 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from core.market.instruments import normalize_symbol
-
-from . import options
-from .queries import QueryError
+from engine.connectors.binance import options
+from engine.connectors.binance.queries import QueryError
 
 READ_PARAMS = {"marginAccount": set(), "position": {"symbol"}, "openOrders": {"symbol", "limit"},
                "order": {"symbol", "orderId", "clientOrderId"},

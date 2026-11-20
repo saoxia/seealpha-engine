@@ -19,7 +19,7 @@ class PublicREST:
     def __init__(
         self, *, symbols=("BTCUSDT", "ETHUSDT"), timeout=12, attempts=4, minimum_interval=0.3, use_native=True
     ):
-        from .native import NativeMarketData
+        from engine.connectors.binance.native import NativeMarketData
 
         self.source = NativeMarketData(symbols, timeout=timeout) if use_native else None
         self.timeout, self.attempts = timeout, attempts
@@ -72,7 +72,7 @@ class KlineSocket:
     """Subscription facade over a shared native data-only Binance node."""
 
     def __init__(self, symbols, on_message, on_reconnect, *, source=None):
-        from .native import NativeMarketData
+        from engine.connectors.binance.native import NativeMarketData
 
         self.source = source or NativeMarketData(symbols)
         self.source.on_message, self.source.on_reconnect = on_message, on_reconnect

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from nautilus_trader.model import InstrumentId, OptionGreeks
 
-from engine.strategies.research_native import greeks_exposures, protective_bracket
+from engine.research.research_native import greeks_exposures, protective_bracket
 
 
 def test_native_greeks_are_contract_adjusted_and_grouped_per_underlying():
@@ -49,7 +49,7 @@ def test_bracket_helper_requires_both_native_exits_reduce_only():
 
 
 def test_depth_batches_keep_global_order_and_bounded_memory(monkeypatch):
-    from engine.strategies import research_native as native
+    from engine.research import research_native as native
 
     class Depth:
         def __init__(self, instrument_id, ts_event):
@@ -71,7 +71,7 @@ def test_depth_batches_keep_global_order_and_bounded_memory(monkeypatch):
 
 
 def test_depth_backtest_runs_streaming_and_disposes_on_failure(monkeypatch):
-    from engine.strategies import research_native as native
+    from engine.research import research_native as native
 
     class Depth:
         def __init__(self, instrument_id, ts_event):
@@ -144,7 +144,7 @@ def test_depth_backtest_runs_streaming_and_disposes_on_failure(monkeypatch):
 
 
 def test_funding_join_is_ordered_one_pass_and_bounded(monkeypatch):
-    from engine.strategies import research_native as native
+    from engine.research import research_native as native
 
     class Bar:
         def __init__(self, ts_event):

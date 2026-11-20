@@ -26,8 +26,12 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
-from .operations import cached_order_observations, enum_text, normalize_event
-from .queries import QueryError, _clear_exception_frames, account_node
+from engine.connectors.binance.operations import (
+    cached_order_observations,
+    enum_text,
+    normalize_event,
+)
+from engine.connectors.binance.queries import QueryError, _clear_exception_frames, account_node
 
 
 class ManualValidationError(QueryError):
@@ -405,7 +409,7 @@ async def execute(account, symbol, command, **options):
 
 async def market_tickers(env):
     """Two bounded public snapshots for the symbol picker, with no execution client."""
-    from .transport import PublicREST
+    from engine.connectors.binance.transport import PublicREST
 
     class TickerREST(PublicREST):
         allowed_endpoints = frozenset({"ticker/24hr", "premiumIndex"})

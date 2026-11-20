@@ -6,7 +6,7 @@ import pytest
 
 from core.market.instruments import bar_window
 from core.market.models import DataError
-from engine.feed.pair_store import PairStore, journal_inventory, journal_preview
+from engine.market_data.storage.pair_store import PairStore, journal_inventory, journal_preview
 
 
 def trade(identity, stamp, price="10"):
@@ -76,7 +76,7 @@ def test_calendar_windows_and_authoritative_candles(tmp_path):
 def test_collection_ignores_legacy_id_gaps_and_never_polls_derived_periods(tmp_path, monkeypatch):
     import asyncio
 
-    import engine.feed.pair_service as module
+    import engine.market_data.collection.pair_service as module
     path = tmp_path / "collection.sqlite"
     store = PairStore(path, "ETHUSDT", "tick", ["1m"])
     store.ticks([trade(1, 170000)], 170500)
@@ -309,7 +309,7 @@ def test_live_events_continue_during_handover_failure_and_shutdown_closes_socket
     import asyncio
     from types import SimpleNamespace
 
-    import engine.feed.pair_service as module
+    import engine.market_data.collection.pair_service as module
     async def scenario():
         gate = asyncio.Event()
         closed = []
@@ -381,7 +381,7 @@ def test_live_events_continue_during_handover_failure_and_shutdown_closes_socket
 def test_failed_recent_snapshot_is_retried_only_after_new_connection(tmp_path, monkeypatch):
     import asyncio
 
-    import engine.feed.pair_service as module
+    import engine.market_data.collection.pair_service as module
 
     async def scenario():
         first, second = asyncio.Event(), asyncio.Event()
@@ -551,19 +551,19 @@ def test_collection_can_commit_without_calculation_and_consumer_recovers_pending
 def test_history_change_is_not_acknowledged_on_failure_and_can_resume(tmp_path, monkeypatch):
     import json
 
-    from engine.feed.history import CatalogHistory
+    from engine.market_data.storage.history import CatalogHistory
     change = tmp_path / "history/changes/2026-10-28.json"
     change.parent.mkdir(parents=True)
     event = {"state": "ready", "end": "2026-10-29T00:00:00+00:00"}
     change.write_text(json.dumps(event))
     def failed(*_args, **_kwargs):
         raise ValueError("incomplete source")
-    monkeypatch.setattr("engine.pipeline.pair_data.calculate_history_change", failed)
+    monkeypatch.setattr("engine.market_data.repair.pair_data.calculate_history_change", failed)
     with pytest.raises(ValueError, match="incomplete source"):
         CatalogHistory(tmp_path / "catalog").consume_change(change)
     assert json.loads(change.read_text()) == event
     calls = []
-    monkeypatch.setattr("engine.pipeline.pair_data.calculate_history_change", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr("engine.market_data.repair.pair_data.calculate_history_change", lambda *args, **kwargs: calls.append((args, kwargs)))
     CatalogHistory(tmp_path / "catalog").consume_change(change)
     assert len(calls) == 1 and not change.exists()
 
@@ -575,7 +575,7 @@ def test_slow_history_recalculation_does_not_block_realtime_dirty_buckets(tmp_pa
     import threading
     import time
 
-    import engine.feed.pair_calculation as module
+    import engine.market_data.calculation.pair_calculation as module
     monkeypatch.setattr(module, 'PROJECT_ROOT', tmp_path)
     now = int(time.time() * 1000)
     left = now // 1000 * 1000 - 4000

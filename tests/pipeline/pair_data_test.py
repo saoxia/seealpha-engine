@@ -6,9 +6,9 @@ from itertools import pairwise
 
 from nautilus_trader.model import Bar
 
-from engine.pipeline.catalog import ParquetDataCatalog
-from engine.pipeline.models import PipelineSettings
-from engine.pipeline.pair_data import backfill, history_bounds
+from engine.market_data.repair.models import PipelineSettings
+from engine.market_data.repair.pair_data import backfill, history_bounds
+from engine.market_data.storage.catalog import ParquetDataCatalog
 from nautilus_support import TestInstrumentProvider
 
 
@@ -23,7 +23,7 @@ def test_history_modes_use_retained_anchor_and_explicit_start(tmp_path):
 
 
 def test_exchange_history_installs_selected_bars_without_ticks_and_retries_idempotently(tmp_path, monkeypatch):
-    import engine.pipeline.pair_data as module
+    import engine.market_data.repair.pair_data as module
     (tmp_path / "data").mkdir()
     monkeypatch.setattr(module, "PROJECT_ROOT", tmp_path)
     settings = PipelineSettings("futures_um", "trades", ("ETHUSDT",), ("1m",), tmp_path / "data/raw", tmp_path / "data/catalog", tmp_path / "data/state")
@@ -73,7 +73,7 @@ def test_history_calculation_derives_complete_windows_and_preserves_conflicts(tm
     from nautilus_trader.model import BarType, Price, Quantity
 
     from core.market.instruments import bar_type_for
-    from engine.pipeline.pair_data import calculate_history_change
+    from engine.market_data.repair.pair_data import calculate_history_change
     source = ParquetDataCatalog(tmp_path / "source")
     source.write_data([TestInstrumentProvider.ethusdt_perp_binance()])
     start = datetime(2026, 10, 28, tzinfo=UTC)
@@ -104,8 +104,8 @@ def test_history_calculation_derives_complete_windows_and_preserves_conflicts(tm
 def test_history_restart_replays_unfinished_day_and_keeps_fixed_duration_anchor(tmp_path, monkeypatch):
     import json
 
-    import engine.pipeline.pair_data as module
-    from engine.pipeline.convert_binance_bars import write_record
+    import engine.market_data.repair.pair_data as module
+    from engine.market_data.repair.convert_binance_bars import write_record
     root = tmp_path / "data/history"
     root.mkdir(parents=True)
     monkeypatch.setattr(module, "PROJECT_ROOT", tmp_path)
@@ -123,7 +123,7 @@ def test_history_restart_replays_unfinished_day_and_keeps_fixed_duration_anchor(
         raise OSError("offline")
     async def stop(_seconds):
         raise asyncio.CancelledError
-    monkeypatch.setattr("engine.pipeline.pair_repair.reconcile_day", unavailable)
+    monkeypatch.setattr("engine.market_data.repair.pair_repair.reconcile_day", unavailable)
     monkeypatch.setattr(module.asyncio, "sleep", stop)
     import pytest
     with pytest.raises(asyncio.CancelledError):
@@ -132,7 +132,7 @@ def test_history_restart_replays_unfinished_day_and_keeps_fixed_duration_anchor(
     async def recovered(*args, **kwargs):
         calls.append(args[0])
         return {"ready": True, "checked_at": "now", "records_written": 0}
-    monkeypatch.setattr("engine.pipeline.pair_repair.reconcile_day", recovered)
+    monkeypatch.setattr("engine.market_data.repair.pair_repair.reconcile_day", recovered)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(module.serve_history(policy, settings, root, rest=object()))
     restored = json.loads((root / "checkpoint.json").read_text())
@@ -157,7 +157,7 @@ def test_history_restart_replays_unfinished_day_and_keeps_fixed_duration_anchor(
 def test_failed_source_page_install_leaves_no_partial_public_file(tmp_path, monkeypatch):
     import pytest
 
-    import engine.pipeline.pair_data as module
+    import engine.market_data.repair.pair_data as module
     catalog = ParquetDataCatalog(tmp_path / 'catalog')
     class InterruptedWriter:
         def __init__(self, path):
@@ -192,7 +192,7 @@ def test_tick_history_reuses_seconds_for_all_periods_and_keeps_trade_order(tmp_p
 
     from nautilus_trader.model import AggressorSide, Price, Quantity, TradeId, TradeTick
 
-    import engine.pipeline.pair_data as module
+    import engine.market_data.repair.pair_data as module
     from core.market.instruments import bar_type_for, bar_window
 
     instrument = TestInstrumentProvider.ethusdt_perp_binance()
@@ -271,7 +271,7 @@ def test_tick_history_reuses_seconds_for_all_periods_and_keeps_trade_order(tmp_p
 
 
 def test_history_does_not_read_unclosed_or_partially_covered_calendar_windows(tmp_path, monkeypatch):
-    import engine.pipeline.pair_data as module
+    import engine.market_data.repair.pair_data as module
 
     source = ParquetDataCatalog(tmp_path / "source")
     source.write_data([TestInstrumentProvider.ethusdt_perp_binance()])
@@ -291,7 +291,7 @@ def test_minute_source_gap_still_blocks_high_period(tmp_path):
     from nautilus_trader.model import BarType, Price, Quantity
 
     from core.market.instruments import bar_type_for
-    from engine.pipeline.pair_data import calculate_history_change
+    from engine.market_data.repair.pair_data import calculate_history_change
 
     source = ParquetDataCatalog(tmp_path / "source")
     source.write_data([TestInstrumentProvider.ethusdt_perp_binance()])
@@ -315,8 +315,8 @@ def test_kline_only_seconds_history_uses_private_tick_source(tmp_path, monkeypat
 
     import pytest
 
-    import engine.pipeline.pair_data as module
-    from engine.pipeline.convert_binance_bars import write_record
+    import engine.market_data.repair.pair_data as module
+    from engine.market_data.repair.convert_binance_bars import write_record
 
     root = tmp_path / "data/managed/history"
     root.mkdir(parents=True)
@@ -337,7 +337,7 @@ def test_kline_only_seconds_history_uses_private_tick_source(tmp_path, monkeypat
         return {"ready": False, "needs_calculation": True, "checked_at": "now", "records_written": 0}
     async def stop(_delay):
         raise asyncio.CancelledError
-    monkeypatch.setattr("engine.pipeline.pair_repair.reconcile_day", repair)
+    monkeypatch.setattr("engine.market_data.repair.pair_repair.reconcile_day", repair)
     monkeypatch.setattr(module.asyncio, "sleep", stop)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(module.serve_history(policy, settings, root, rest=object()))
@@ -354,8 +354,8 @@ def test_archive_publication_wait_is_persisted_and_skips_scanning_until_retry(tm
 
     import pytest
 
-    import engine.pipeline.pair_data as module
-    from engine.pipeline.convert_binance_bars import write_record
+    import engine.market_data.repair.pair_data as module
+    from engine.market_data.repair.convert_binance_bars import write_record
 
     root = tmp_path / "data/history"
     root.mkdir(parents=True)
@@ -383,7 +383,7 @@ def test_archive_publication_wait_is_persisted_and_skips_scanning_until_retry(tm
         raise asyncio.CancelledError
     monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: clock[0]))
     monkeypatch.setattr(module, "_history_archive_available", probe)
-    monkeypatch.setattr("engine.pipeline.pair_repair.reconcile_day", repair)
+    monkeypatch.setattr("engine.market_data.repair.pair_repair.reconcile_day", repair)
     monkeypatch.setattr(module.asyncio, "sleep", stop)
     def run():
         with pytest.raises(asyncio.CancelledError):
@@ -411,8 +411,8 @@ def test_archive_publication_wait_is_persisted_and_skips_scanning_until_retry(tm
 def test_archive_day_becomes_eligible_at_utc_midnight_two_dates_later(tmp_path, monkeypatch):
     import pytest
 
-    import engine.pipeline.pair_data as module
-    from engine.pipeline.convert_binance_bars import write_record
+    import engine.market_data.repair.pair_data as module
+    from engine.market_data.repair.convert_binance_bars import write_record
 
     for at, expected in ((datetime(2026, 11, 7, 23, 59, 59, tzinfo=UTC), 0),
                          (datetime(2026, 11, 8, tzinfo=UTC), 1)):
@@ -445,7 +445,7 @@ def test_archive_day_becomes_eligible_at_utc_midnight_two_dates_later(tmp_path, 
             async def stop(_delay):
                 raise asyncio.CancelledError
             patch.setattr(module, "_history_archive_available", probe)
-            patch.setattr("engine.pipeline.pair_repair.reconcile_day", repair)
+            patch.setattr("engine.market_data.repair.pair_repair.reconcile_day", repair)
             patch.setattr(module.asyncio, "sleep", stop)
             with pytest.raises(asyncio.CancelledError):
                 asyncio.run(module.serve_history(policy, settings, root, rest=object()))
@@ -458,9 +458,9 @@ def test_archive_probe_checks_checksum_and_zip_without_download_and_reuses_local
 
     import pytest
 
-    import engine.pipeline.sync_binance_batch as batch
-    import engine.pipeline.sync_binance_file as download
-    from engine.pipeline.pair_data import _history_archive_available
+    import engine.market_data.repair.sync_binance_batch as batch
+    import engine.market_data.repair.sync_binance_file as download
+    from engine.market_data.repair.pair_data import _history_archive_available
 
     day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=2)
     settings = PipelineSettings("futures_um", "trades", ("ETHUSDT",), (), tmp_path / "raw", tmp_path / "catalog", tmp_path / "state")
@@ -499,8 +499,8 @@ def test_verified_day_is_never_automatically_rescanned_even_after_cursor_replay(
 
     import pytest
 
-    import engine.pipeline.pair_data as module
-    from engine.pipeline.convert_binance_bars import write_record
+    import engine.market_data.repair.pair_data as module
+    from engine.market_data.repair.convert_binance_bars import write_record
 
     root = tmp_path / "data/history"
     root.mkdir(parents=True)
@@ -520,7 +520,7 @@ def test_verified_day_is_never_automatically_rescanned_even_after_cursor_replay(
         return {"ready": True, "scope": "saved_kline_ohlcv", "checked_at": "now", "records_written": 0}
     async def stop(_delay):
         raise asyncio.CancelledError
-    monkeypatch.setattr("engine.pipeline.pair_repair.reconcile_day", verified)
+    monkeypatch.setattr("engine.market_data.repair.pair_repair.reconcile_day", verified)
     monkeypatch.setattr(module.asyncio, "sleep", stop)
     def run():
         with pytest.raises(asyncio.CancelledError):
@@ -545,8 +545,8 @@ def test_old_or_other_configuration_audits_cannot_complete_a_date(tmp_path, monk
 
     import pytest
 
-    import engine.pipeline.pair_data as module
-    from engine.pipeline.convert_binance_bars import write_record
+    import engine.market_data.repair.pair_data as module
+    from engine.market_data.repair.convert_binance_bars import write_record
 
     start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=2)
     policy = {"symbol": "ETHUSDT", "product": "futures_um", "base_level": "tick", "intervals": ["1s", "1m"],
@@ -571,7 +571,7 @@ def test_old_or_other_configuration_audits_cannot_complete_a_date(tmp_path, monk
                     "conflicts": [{"reason": "闭合数据冲突"}]}
         async def stop(_delay):
             raise asyncio.CancelledError
-        monkeypatch.setattr("engine.pipeline.pair_repair.reconcile_day", conflict)
+        monkeypatch.setattr("engine.market_data.repair.pair_repair.reconcile_day", conflict)
         monkeypatch.setattr(module.asyncio, "sleep", stop)
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(module.serve_history(policy, settings, root, rest=object()))

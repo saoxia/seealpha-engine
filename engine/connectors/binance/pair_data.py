@@ -11,8 +11,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from core.market.instruments import normalize_symbol
-
-from .transport import PublicREST
+from engine.connectors.binance.transport import PublicREST
 
 
 class PairREST(PublicREST):

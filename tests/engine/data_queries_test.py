@@ -1,15 +1,15 @@
 """Resident Engine market-data query endpoints read only their tenant's volume."""
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.pipeline.models import PipelineSettings
+from engine.market_data.repair.models import PipelineSettings
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
 
 def test_tenant_data_reads_reject_unauthorized_and_other_tenant(tmp_path, monkeypatch):
-    from engine import data_queries
+    from engine.api import data_queries
 
     root = tmp_path / "data"
     root.mkdir()
@@ -75,7 +75,7 @@ def test_tenant_data_reads_reject_unauthorized_and_other_tenant(tmp_path, monkey
 
 
 def test_data_endpoints_never_accept_arbitrary_paths():
-    from engine.data_queries import Chart, Inventory, Page, Range
+    from engine.api.data_queries import Chart, Inventory, Page, Range
 
     for cls in (Chart, Inventory, Page, Range):
         assert "path" not in cls.model_fields
@@ -86,8 +86,8 @@ def test_api_and_engine_share_a_single_volume_access_lease(tmp_path):
     import pytest
     from fastapi import HTTPException
 
-    from engine.data_manager.service import DataService
-    from engine.data_queries import read_lease
+    from engine.api.data_queries import read_lease
+    from engine.market_data.control.service import DataService
 
     (tmp_path / "data").mkdir()
     service = DataService("42", project=tmp_path, state_root=tmp_path / "state")

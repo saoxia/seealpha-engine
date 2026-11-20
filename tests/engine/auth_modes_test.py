@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
 
 TOKEN = "platform-generated-test-token-" + "x" * 48

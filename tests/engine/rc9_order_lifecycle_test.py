@@ -6,7 +6,7 @@ from types import MethodType, SimpleNamespace
 from nautilus_trader.model import OrderSide, Price, Quantity
 
 from engine.connectors.binance import manual, operations
-from engine.strategies.portfolio_coordinator import PortfolioCoordinator
+from engine.portfolio.portfolio_coordinator import PortfolioCoordinator
 
 
 def test_partial_fill_keeps_working_order_and_inflight_quantity():

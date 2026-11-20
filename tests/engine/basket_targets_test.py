@@ -3,13 +3,13 @@ from decimal import Decimal
 
 import pytest
 
-from engine.strategies.basket_reconciliation import (
+from engine.portfolio.basket_reconciliation import (
     begin_phase,
     checkpoint_to_record,
     new_checkpoint,
     restore_checkpoint,
 )
-from engine.strategies.basket_targets import (
+from engine.portfolio.basket_targets import (
     BasketPlanError,
     LegEvidence,
     LegId,

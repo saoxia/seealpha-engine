@@ -34,11 +34,10 @@ from nautilus_trader.model import (
 )
 
 from core.market.instruments import instrument_id_for, normalize_symbol
-
-from . import options
-from .options_orders import BinanceOptionsOrderTransport, OptionsOrderError
-from .options_parsing import number, stamp
-from .queries import QueryError
+from engine.connectors.binance import options
+from engine.connectors.binance.options_orders import BinanceOptionsOrderTransport, OptionsOrderError
+from engine.connectors.binance.options_parsing import number, stamp
+from engine.connectors.binance.queries import QueryError
 
 STATES = {"NEW": OrderStatus.ACCEPTED, "ACCEPTED": OrderStatus.ACCEPTED,
           "PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED, "FILLED": OrderStatus.FILLED,

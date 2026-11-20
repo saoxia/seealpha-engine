@@ -4,8 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from engine.feed.market_data_service import EngineMarketDataService
-from engine.feed.subscription_hub import ClosedBar, MarketDataHubError, MarketStream
+from engine.market_data.access.market_data_service import EngineMarketDataService
+from engine.market_data.access.subscription_hub import ClosedBar, MarketDataHubError, MarketStream
 
 BTC = MarketStream("BINANCE", "spot", "BTCUSDT", "1m")
 ETH = MarketStream("BINANCE", "futures_um", "ETHUSDT", "1m")

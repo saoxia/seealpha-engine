@@ -10,9 +10,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
-from engine.task_queue import TaskCoordinator, TaskJournal
+from engine.infrastructure.task_queue import TaskCoordinator, TaskJournal
 
 TEST_TOKEN = "integration-test-engine-token-" + "a" * 48
 
@@ -271,7 +271,7 @@ def test_real_engine_http_async_task_auth_validation_and_result(tmp_path, monkey
 
 
 def test_real_data_manager_rejects_duplicate_key_before_second_process(tmp_path):
-    from engine.data_manager.service import DataService
+    from engine.market_data.control.service import DataService
 
     manager = object.__new__(DataService)
     manager.require_storage = lambda **_kw: None

@@ -12,7 +12,7 @@ from core.market.instruments import (
     normalize_symbol,
 )
 from core.market.models import DataError
-from engine.app import create_app
+from engine.api.app import create_app
 from engine.config import EngineConfig
 from engine.connectors.binance import spot
 

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pyarrow as pa
 import pytest
 
-from engine.pipeline.catalog import ParquetDataCatalog, TradeQuote
+from engine.market_data.storage.catalog import ParquetDataCatalog, TradeQuote
 
 
 def test_custom_data_batches_are_lazy_bounded_and_tagged(tmp_path, monkeypatch):

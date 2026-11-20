@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from engine.feed import options_service
+from engine.market_data.collection import options_service
 
 
 def test_stream_flush_checkpoint_reconnect_and_expiry(tmp_path, monkeypatch):
@@ -112,7 +112,7 @@ def test_batch_collector_applies_single_contract_stop_and_keeps_shared_transport
 
 
 def test_managed_batch_entry_point_validates_mount_without_single_contract_args(tmp_path, monkeypatch):
-    from engine.feed import managed
+    from engine.market_data.collection import managed
 
     data = tmp_path / "data"
     root = data / "managed/.options"
@@ -123,7 +123,7 @@ def test_managed_batch_entry_point_validates_mount_without_single_contract_args(
     async def serve_batch(path, managed_root, catalog):
         called.append((path, managed_root, catalog))
     monkeypatch.setattr(options_service, "serve_batch", serve_batch)
-    monkeypatch.setattr("sys.argv", ["engine.feed.managed", "--options-config", str(manifest), "--root", str(root),
+    monkeypatch.setattr("sys.argv", ["engine.market_data.collection.managed", "--options-config", str(manifest), "--root", str(root),
                                      "--data-root", str(data), "--catalog", str(data / "catalog")])
     managed.main()
     assert called == [(manifest, root.parent, data / "catalog")]

@@ -11,7 +11,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .queries import QueryError
+from engine.connectors.binance.queries import QueryError
 
 DAY_MS = 86_400_000
 PAGE_SIZE = 1000

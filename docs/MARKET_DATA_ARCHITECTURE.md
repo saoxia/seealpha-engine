@@ -1,6 +1,6 @@
 # SeeAlpha 统一行情数据架构（设计决策）
 
-> 2026-11-20 确认。**这是未来重构必须遵守的架构目标，不表示代码已全部完成，也不授权生产部署。** 本次仅落地文档，保持现有 API、交易逻辑和数据不变。
+> 2026-11-20 确认。**这是未来重构必须遵守的架构目标，不表示代码已全部完成，也不授权生产部署。** 目录结构已按领域完成第一阶段迁移；行情持续维护能力仍在分阶段收敛，不代表完成验收或授权部署。
 
 ## 一句话目标
 
@@ -83,14 +83,14 @@
 
 | 当前文件 | 可保留的能力 / 目标改动 |
 | --- | --- |
-| `engine/feed/futures_service.py` | 已有共享 WebSocket、多标的动态调整和单合约独立写入；保留作为采集侧参照 |
-| `engine/feed/pair_service.py`、`engine/feed/pair_store.py` | 已有原始成交、持久日志和衍生计算基础；继续采用可恢复的数据事实 |
-| `engine/data_manager/subscriptions.py` | 已有持久化配置、manifest 与采集进程管理；已移除策略读需求对采集启停的隐式覆盖，读需求只用于删除时保护活跃读者 |
-| `engine/feed/strategy_live.py` | 已有策略只读行情桥；实时读请求要求配置已经启用采集，订阅和退订都不启动/停止采集任务 |
-| `engine/feed/market_data_service.py`、`engine/feed/subscription_hub.py` | 已有读侧注册、共享需求和隔离回放雏形；职责应限定为数据访问与消费管理 |
-| `engine/feed/historical_data.py`、`engine/strategies/backtest.py`、`engine/runtime.py` | 已增加统一 Catalog 历史读取入口；回测、组合资金费/期权报价等研究路径通过只读适配器访问市场数据，原有专业校验保留；交易估值仍待迁移 |
-| `engine/feed/options_service.py` | 已有期权共享采集和恢复检查点；历史盘口及 Tick 可修复程度不同，必须按真实可用来源报告质量 |
-| `engine/pipeline/` | 保留历史下载、转换、Catalog 与核验能力，不在统一访问层重做第二份存储管道 |
+| `engine/market_data/collection/futures_service.py` | 已有共享 WebSocket、多标的动态调整和单合约独立写入；保留作为采集侧参照 |
+| `engine/market_data/collection/pair_service.py`、`engine/market_data/storage/pair_store.py` | 已有原始成交、持久日志和衍生计算基础；继续采用可恢复的数据事实 |
+| `engine/market_data/control/subscriptions.py` | 已有持久化配置、manifest 与采集进程管理；已移除策略读需求对采集启停的隐式覆盖，读需求只用于删除时保护活跃读者 |
+| `engine/market_data/access/strategy_live.py` | 已有策略只读行情桥；实时读请求要求配置已经启用采集，订阅和退订都不启动/停止采集任务 |
+| `engine/market_data/access/market_data_service.py`、`engine/market_data/access/subscription_hub.py` | 已有读侧注册、共享需求和隔离回放雏形；职责应限定为数据访问与消费管理 |
+| `engine/market_data/access/historical_data.py`、`engine/backtesting/backtest.py`、`engine/trading/runtime.py` | 已增加统一 Catalog 历史读取入口；回测、组合资金费/期权报价等研究路径通过只读适配器访问市场数据，原有专业校验保留；交易估值仍待迁移 |
+| `engine/market_data/collection/options_service.py` | 已有期权共享采集和恢复检查点；历史盘口及 Tick 可修复程度不同，必须按真实可用来源报告质量 |
+| `engine/market_data/repair/` | 保留历史下载、转换、Catalog 与核验能力，不在统一访问层重做第二份存储管道 |
 
 注意：策略需求临时启用 `realtime_enabled=false` 市场的旧行为已从代码中移除；无实时采集配置的策略请求将拒绝。当前并不意味着所有交易行情访问已经迁移完成。
 
