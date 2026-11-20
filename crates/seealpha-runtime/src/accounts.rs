@@ -597,6 +597,94 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn missing_credentials_keep_reconciliation_retryable_without_order_send() {
+        let (runtime,root)=runtime(None);
+        runtime.ledger.ensure_tenant("restore","production","active").unwrap();
+        let intent=json!({"environment":"production","action":"NEW",
+            "client_order_id":"client1","symbol":"ETHUSDT","product":"spot",
+            "side":"BUY","quantity":"0.1"});
+        runtime.ledger.preregister_order_intent(
+            "restore","account1","production","req1","client1",
+            &"a".repeat(64),&intent,
+        ).unwrap();
+        assert_eq!(runtime.enqueue_order_reconciliations("restore",1).unwrap(),1);
+        assert!(runtime.run_one_registered_order_reconciliation(
+            "restore","worker1","http://127.0.0.1:12345",
+        ).is_err());
+        let task=runtime.ledger.order_reconciliation_task(
+            "restore","account1","req1").unwrap().unwrap();
+        assert_eq!(task.state,"retry");
+        assert_eq!(task.attempts,1);
+        assert_eq!(task.last_error_code.as_deref(),Some("READ_UNCONFIRMED"));
+        assert!(runtime.ledger.latest_order_observation(
+            "restore","account1","production","client1").unwrap().is_none());
+        assert!(runtime.ledger.fills(
+            "restore","account1","production").unwrap().is_empty());
+        let _=fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn signed_get_worker_records_new_without_fill_or_post() {
+        let (sender,receiver)=std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let local=tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap();
+            local.block_on(async move {
+                let app=axum::Router::new()
+                    .route("/api/v3/order",axum::routing::get(mock_reconcile_order))
+                    .route("/api/v3/myTrades",axum::routing::get(mock_reconcile_trades));
+                let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                sender.send(listener.local_addr().unwrap().port()).unwrap();
+                axum::serve(listener,app).await.unwrap();
+            });
+        });
+        let port=receiver.recv().unwrap();
+        let base=format!("http://127.0.0.1:{port}");
+        let (runtime,root)=runtime(Some(base.clone()));
+        runtime.ledger.ensure_tenant("sync","production","active").unwrap();
+        runtime.register_connection(
+            "sync","account1","production","key-one","secret-one").unwrap();
+        let intent=json!({"environment":"production","action":"NEW",
+            "client_order_id":"client1","symbol":"ETHUSDT","product":"spot",
+            "side":"BUY","quantity":"0.1"});
+        runtime.ledger.preregister_order_intent(
+            "sync","account1","production","req1","client1",
+            &"b".repeat(64),&intent,
+        ).unwrap();
+        runtime.enqueue_order_reconciliations("sync",1).unwrap();
+        let result=runtime.run_one_registered_order_reconciliation(
+            "sync","worker1",&base).unwrap().unwrap();
+        assert_eq!(result["resend_order"],false);
+        assert_eq!(result["status"],"NEW");
+        assert_eq!(result["verified_trade_count"],0);
+        let observed=runtime.ledger.latest_order_observation(
+            "sync","account1","production","client1").unwrap().unwrap();
+        assert_eq!(observed["status"],"NEW");
+        assert!(runtime.ledger.fills(
+            "sync","account1","production").unwrap().is_empty());
+        assert_eq!(runtime.ledger.order_reconciliation_task(
+            "sync","account1","req1").unwrap().unwrap().state,"retry");
+        let _=fs::remove_dir_all(root);
+    }
+
+    async fn mock_reconcile_order(request:axum::extract::Request)
+        -> axum::Json<serde_json::Value> {
+        assert_eq!(request.method(),axum::http::Method::GET);
+        assert!(request.uri().query().unwrap_or("").contains("signature="));
+        axum::Json(json!({
+            "clientOrderId":"client1","orderId":42,"symbol":"ETHUSDT",
+            "side":"BUY","type":"LIMIT","origQty":"0.1","executedQty":"0",
+            "price":"2000","status":"NEW",
+        }))
+    }
+    async fn mock_reconcile_trades(request:axum::extract::Request)
+        -> axum::Json<serde_json::Value> {
+        assert_eq!(request.method(),axum::http::Method::GET);
+        assert!(request.uri().query().unwrap_or("").contains("signature="));
+        axum::Json(json!([]))
+    }
+
     async fn mock_account(request: axum::extract::Request) -> axum::Json<serde_json::Value> {
         let query = request.uri().query().unwrap_or("");
         assert!(query.contains("signature="));
