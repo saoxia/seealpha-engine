@@ -117,11 +117,16 @@ impl VenueClient {
             ));
         }
         if intent.product==Product::Option {
-            if intent.order_type.eq_ignore_ascii_case("limit") {
-                pairs.push(("postOnly".to_string(),"false".to_string()));
-            } else if !intent.order_type.eq_ignore_ascii_case("market") {
-                return Err(VenueError::Rejected("期权订单类型尚未支持。".into()));
+            // Binance European Options currently defines LIMIT as the
+            // supported order type. Reject rather than guessing MARKET.
+            if !intent.order_type.eq_ignore_ascii_case("limit") {
+                return Err(VenueError::Rejected("期权订单仅支持已核实的 LIMIT 类型。".into()));
             }
+            if !matches!(intent.time_in_force.to_ascii_uppercase().as_str(),
+                "GTC"|"IOC"|"FOK"|"GTX") {
+                return Err(VenueError::Rejected("期权订单有效期无效。".into()));
+            }
+            pairs.push(("postOnly".to_string(),"false".to_string()));
         }
         let value = self.signed(credentials, "POST", path, &pairs)?;
         // A successful HTTP status without an exchange order identity is an
