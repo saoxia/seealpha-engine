@@ -84,7 +84,7 @@ uv run python -m engine
 
 ## 跨产品目标规划（研究阶段）
 
-已增加独立纯计算模块 `engine.strategies.basket_targets`，支持按租户/账户/产品/合约组合多成员目标；研究态可将已下发策略的现货+永续目标送入原生双 Venue 模拟撮合，**不会产生真实跨产品订单**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
+已增加独立纯计算模块 `engine.portfolio.basket_targets`，支持按租户/账户/产品/合约组合多成员目标；研究态可将已下发策略的现货+永续目标送入原生双 Venue 模拟撮合，**不会产生真实跨产品订单**。当前 `PortfolioCoordinator` 仍只支持单品种，详见 [跨产品组合研究阶段](../docs/BASKET_RESEARCH.md)。
 
 双市场研究数据同步器 `EngineRuntime.iter_funding_carry_history` 可在开发租户已订阅现货和永续时，从真实 Catalog 严格对齐 K 线并按原始时间插入资金费观测；不产生订单、结算或收益报告，暂不对外开放 HTTP。
 

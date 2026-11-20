@@ -22,4 +22,4 @@
 
 **控制不变量**：只有经授权的持久化行情配置决定采集、计算与历史修复任务；策略、回测、交易均为只读消费者，不能通过订阅或退订改变采集开关。
 
-**兼容与验收**：`python -m engine` 不变。旧 `python -m engine.feed.managed`、`python -m engine.feed.service`、`python -m engine.pipeline.pair_data` 和 `python -m engine.pipeline.data_management` CLI 保留薄入口；新代码应使用 `engine.market_data` 目录。历史说明保留于 `docs/implementation/`。自动化回归测试必须运行，长时间实盘/真实行情运行验收另行安排。
+**兼容与验收**：`python -m engine` 不变。旧 `python -m engine.feed.managed`、`python -m engine.feed.service`、`python -m engine.pipeline.pair_data` 和 `python -m engine.pipeline.data_management`、`python -m engine.pipeline.prepare_data`、`python -m engine.pipeline.sync_binance_batch` 和 `python -m engine.pipeline.sync_binance_file` CLI 保留薄入口；新代码应使用 `engine.market_data` 目录。历史说明保留于 `docs/implementation/`。自动化回归测试必须运行，长时间实盘/真实行情运行验收另行安排。
