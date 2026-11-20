@@ -6,7 +6,8 @@
 pub mod matching;
 
 use rust_decimal::Decimal;
-use seealpha_portfolio::{MemberTarget, PaperFill, TargetPublication, replay_targets};
+use seealpha_portfolio::{MemberTarget, PaperFill, TargetPublication, replay_targets,
+    clip_member_targets, net_signed_quantity, quantize_toward_zero};
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -156,12 +157,25 @@ pub fn run_backtest_with_curve(
             changed=true;
         }
         if changed {
-            let targets=latest.iter().map(|(member_id,quantity)|TargetPublication{
-                member_id:member_id.clone(),quantity:*quantity,price:bar.close,
+            // A bar's publications are merged before any execution. Never
+            // turn opposing simultaneous strategies into artificial churn.
+            let targets=latest.iter().map(|(member_id,quantity)|MemberTarget{
+                member_id:member_id.clone(),signed_quantity:*quantity,risk_exit:false,
             }).collect::<Vec<_>>();
-            let (new_fills,position)=replay_targets(
-                &targets,current,risk_limit,Decimal::new(1,8)
-            ).map_err(|e|BacktestError::Portfolio(e.to_string()))?;
+            let clipped=clip_member_targets(&targets,risk_limit)
+                .map_err(|e|BacktestError::Portfolio(e.to_string()))?;
+            let net=net_signed_quantity(&clipped)
+                .map_err(|e|BacktestError::Portfolio(e.to_string()))?;
+            let delta=net.checked_sub(current)
+                .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
+            let delta=quantize_toward_zero(delta,Decimal::new(1,8))
+                .map_err(|e|BacktestError::Portfolio(e.to_string()))?;
+            let position=current.checked_add(delta)
+                .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
+            let new_fills=if delta.is_zero(){Vec::new()}else{vec![PaperFill{
+                side:if delta.is_sign_negative(){"sell".into()}else{"buy".into()},
+                quantity:delta.abs(),price:bar.close,
+            }]};
             for fill in new_fills {
                 let notional=fill.quantity.checked_mul(fill.price)
                     .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
