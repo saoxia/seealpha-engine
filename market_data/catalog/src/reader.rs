@@ -310,7 +310,7 @@ fn nested_row_value(array: &dyn Array, i: usize, depth: usize) -> Result<Value, 
         }
         return Ok(Value::Object(fields));
     }
-    for list in [
+    if let Some(values) = [
         array
             .as_any()
             .downcast_ref::<ListArray>()
@@ -326,8 +326,8 @@ fn nested_row_value(array: &dyn Array, i: usize, depth: usize) -> Result<Value, 
     ]
     .into_iter()
     .flatten()
+    .next()
     {
-        let values = list;
         if values.len() > 50_000 {
             return Err(CatalogError::Limit(
                 "单条盘口或特征数组超过 50,000 项。".into(),
