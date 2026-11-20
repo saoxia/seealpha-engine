@@ -2,7 +2,7 @@
 //!
 //! This module intentionally does not expose an order sender. A venue dispatch
 //! needs independent portfolio/risk authorization and a reviewed cutover gate.
-use seealpha_ledger::{IntentStart, Ledger};
+use seealpha_ledger::{BasketAdmission, IntentStart, Ledger};
 use seealpha_venue::{Product, VenueError};
 use seealpha_venue::order_guard::{
     Admission, IntentJournal, IntentRecord, RecordedOutcome, WriteAction,
@@ -15,6 +15,14 @@ pub(crate) struct LedgerIntentJournal<'a> {
     account: &'a str,
     environment: &'a str,
     immutable_intent: Value,
+    basket: Option<BasketReservation>,
+}
+
+#[derive(Clone)]
+pub(crate) struct BasketReservation {
+    pub(crate) basket_id: String,
+    pub(crate) basket_revision: String,
+    pub(crate) account_revision: i64,
 }
 
 impl<'a> LedgerIntentJournal<'a> {
@@ -25,7 +33,20 @@ impl<'a> LedgerIntentJournal<'a> {
         environment: &'a str,
         immutable_intent: Value,
     ) -> Self {
-        Self { ledger, tenant, account, environment, immutable_intent }
+        Self { ledger, tenant, account, environment, immutable_intent, basket: None }
+    }
+
+    /// Basket reservation is checked by Ledger in the same transaction that
+    /// inserts the order intent. Construct only after Portfolio semantic review.
+    pub(crate) fn new_basket(
+        ledger: &'a Ledger,
+        tenant: &'a str,
+        account: &'a str,
+        environment: &'a str,
+        immutable_intent: Value,
+        basket: BasketReservation,
+    ) -> Self {
+        Self { ledger, tenant, account, environment, immutable_intent, basket: Some(basket) }
     }
 
     fn wire_matches_intent(&self, record: &IntentRecord) -> bool {
@@ -75,15 +96,32 @@ impl IntentJournal for LedgerIntentJournal<'_> {
         if !self.valid_identity(record) {
             return Err(VenueError::Unconfirmed);
         }
-        let registered = self.ledger.preregister_order_intent(
-            self.tenant,
-            self.account,
-            self.environment,
-            &record.request_id,
-            &record.client_order_id,
-            &record.payload_sha256,
-            &self.immutable_intent,
-        ).map_err(|_| VenueError::Unconfirmed)?;
+        let registered = if let Some(basket) = &self.basket {
+            self.ledger.preregister_basket_order_intent(
+                self.tenant,
+                self.account,
+                self.environment,
+                &record.request_id,
+                &record.client_order_id,
+                &record.payload_sha256,
+                &self.immutable_intent,
+                BasketAdmission {
+                    basket_id: &basket.basket_id,
+                    basket_revision: &basket.basket_revision,
+                    account_revision: basket.account_revision,
+                },
+            )
+        } else {
+            self.ledger.preregister_order_intent(
+                self.tenant,
+                self.account,
+                self.environment,
+                &record.request_id,
+                &record.client_order_id,
+                &record.payload_sha256,
+                &self.immutable_intent,
+            )
+        }.map_err(|_| VenueError::Unconfirmed)?;
         Ok(match registered {
             IntentStart::Fresh => Admission::Fresh,
             IntentStart::ReconcileOnly => Admission::Seen,
