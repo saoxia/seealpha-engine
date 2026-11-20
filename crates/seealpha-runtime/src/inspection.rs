@@ -1,0 +1,36 @@
+//! Issued-package preflight inspection in a bounded credential-free Python
+//! strategy host, with Rust-owned archive and metadata validation.
+use crate::{Runtime,RuntimeError,map_strategy,write_archive};
+use serde_json::{json,Value};
+use seealpha_strategy::{inspect_archive,run_host,HostCommand};
+
+impl Runtime {
+    pub fn inspect_strategy_package(
+        &self,tenant_id:&str,bytes:&[u8],parameters:&Value,
+    )->Result<Value,RuntimeError>{
+        self.require_active(tenant_id)?;
+        if !parameters.is_object(){
+            return Err(RuntimeError::Unprocessable("策略包参数必须为对象。".into()));
+        }
+        let metadata=inspect_archive(bytes).map_err(map_strategy)?;
+        let file=write_archive(bytes)?;
+        self.track_start();
+        let result=run_host(&HostCommand{
+            python:&self.python,host:&self.host,package_dir:None,
+            archive_path:Some(&file),parameters,
+            symbol:"",interval:"1m",bars:&[],op:"prepare",
+        });
+        self.track_end();
+        let _=std::fs::remove_file(&file);
+        let prepared=result.map_err(map_strategy)?;
+        Ok(json!({
+            "metadata":{
+                "name":metadata.name,
+                "version":metadata.version,
+                "entry_point":metadata.entry_point,
+                "package_hash":metadata.digest,
+            },
+            "parameters":prepared.prepared,
+        }))
+    }
+}
