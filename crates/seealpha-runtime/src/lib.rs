@@ -132,12 +132,12 @@ impl Runtime {
     pub fn runnable(&self, tenant_id: &str, action: &str) -> Result<Value, RuntimeError> {
         let tenant = self.require_active(tenant_id)?;
         match action {
-            "live" if tenant.purpose == "production" => Ok(json!({
-                "tenant_id": tenant.tenant_id,
-                "action": action,
-                "status": "runnable",
-            })),
-            "live" => Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into())),
+            // A production tenant does not imply permission to trade.
+            // Enable only after separately reviewed end-to-end order admission,
+            // signed evidence reconciliation, and explicit cutover authorization.
+            "live" => Err(RuntimeError::Conflict(
+                "Rust 实盘交易尚未通过集成验收，当前禁止交易。".into(),
+            )),
             "backtest" | "paper" => Ok(json!({
                 "tenant_id": tenant.tenant_id,
                 "action": action,
