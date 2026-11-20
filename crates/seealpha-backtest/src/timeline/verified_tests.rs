@@ -299,3 +299,70 @@ fn fill_callback_cannot_trade_another_instrument_at_the_same_timestamp() {
     assert_eq!(r.fills[0].time_ms,1);
     assert_eq!(r.fills[1].time_ms,2);
 }
+
+
+struct PerpRoundTrip;
+impl Strategy for PerpRoundTrip {
+    fn on_start(&mut self, _: &Account) -> Vec<Command> {
+        vec![Command::Submit(order("open","P",Side::Buy,1,OrderType::Market))]
+    }
+    fn on_fill(&mut self, fill: &Fill, _: &Account) -> Vec<Command> {
+        if fill.order_id == "open" {
+            vec![Command::Submit(order("close","P",Side::Sell,1,OrderType::Market))]
+        } else {Vec::new()}
+    }
+}
+#[test]
+fn perpetual_close_realizes_pnl_exactly_once_without_cash_notional_transfer() {
+    let mut p=c("P",Product::LinearPerpetual);
+    p.initial_margin_ratio=Decimal::new(1,1);
+    p.maintenance_margin_ratio=Decimal::new(5,2);
+    let mut s=PerpRoundTrip;
+    let r=replay(&[p],&[
+        q("P",1,99,100,1,1),q("P",2,110,111,1,1)
+    ],policy(1_000),&mut s).unwrap();
+    assert_eq!(r.fills.len(),2);
+    assert!(r.positions.is_empty());
+    assert_eq!(r.cash,d(1_010));
+    assert_eq!(r.equity,d(1_010));
+    assert_eq!(r.funding,Decimal::ZERO);
+}
+
+#[test]
+fn mark_to_market_maintenance_breach_fails_without_liquidation_fills() {
+    let mut p=c("P",Product::LinearPerpetual);
+    p.initial_margin_ratio=Decimal::new(1,1);
+    p.maintenance_margin_ratio=Decimal::new(5,2);
+    let mut s=starts(vec![order("large","P",Side::Buy,5,OrderType::Market)]);
+    let err=replay(&[p],&[
+        q("P",1,100,100,5,5),
+        Event::Mark(Mark {time_ms:2,instrument:"P".into(),price:d(1)})
+    ],policy(100),&mut s).unwrap_err();
+    assert!(err.contains("maintenance margin"));
+}
+
+#[test]
+fn stale_marks_and_missing_market_coverage_fail_closed() {
+    let mut s=starts(vec![order("one","S",Side::Buy,1,OrderType::Market)]);
+    let policy=Policy {starting_cash:d(1_000),max_mark_age_ms:1,
+        taker_slippage_bps:Decimal::ZERO};
+    let err=replay(&[c("S",Product::Spot)],&[
+        q("S",1,99,100,1,1),
+        Event::Trade(Trade {time_ms:5,instrument:"S".into(),price:d(100)})
+    ],policy,&mut s).unwrap_err();
+    assert!(err.contains("stale mark"));
+}
+
+#[test]
+fn settlement_evidence_cannot_be_replayed_twice() {
+    let mut s=starts(Vec::new());
+    let e=Event::Funding(FundingSettlement {
+        time_ms:1,instrument:"P".into(),evidence_id:"same-source-id".into(),
+        rate:Decimal::ZERO,mark_price:d(100),
+    });
+    assert!(replay(&[c("P",Product::LinearPerpetual)],
+        &[e.clone(),Event::Funding(FundingSettlement {
+            time_ms:2,instrument:"P".into(),evidence_id:"same-source-id".into(),
+            rate:Decimal::ZERO,mark_price:d(100),
+        })],policy(100),&mut s).is_err());
+}
