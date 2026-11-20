@@ -530,9 +530,17 @@ def main():
                 )
                 asyncio.run(serve_options_history(policy, load_settings(), root))
             else:
-                asyncio.run(serve_history(policy, load_settings(), root))
+                if policy.get("product", "futures_um") == "spot":
+                    from engine.market_data.sources.binance.spot.repair import serve_history as source_history
+                else:
+                    from engine.market_data.sources.binance.perpetual.repair import serve_history as source_history
+                asyncio.run(source_history(policy, load_settings(), root))
         return
-    result = asyncio.run(backfill(policy, load_settings()))
+    if policy.get("product", "futures_um") == "spot":
+        from engine.market_data.sources.binance.spot.repair import backfill as source_backfill
+    else:
+        from engine.market_data.sources.binance.perpetual.repair import backfill as source_backfill
+    result = asyncio.run(source_backfill(policy, load_settings()))
     target = Path(os.environ.get(
         "ENGINE_DATA_JOBS", str(PROJECT_ROOT / ".local/state/api/data_jobs"),
     )) / f"{args.job_id}.json"
