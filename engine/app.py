@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from contextlib import aclosing
 from decimal import Decimal
 from pathlib import Path
@@ -31,6 +32,8 @@ from engine.connectors.binance.queries import QueryError
 from engine.data_manager.routes import router as control_router
 from engine.data_manager.service import DataService as EngineDataService
 from engine.data_queries import router as market_data_router
+from engine.feed.strategy_live import ManagedJournalBridge
+from engine.feed.subscription_hub import MarketDataHubError, MarketStream
 from engine.public_queries import router as venue_router
 from engine.research_api import create_research_app
 from engine.runtime import EngineConflict, EngineRuntime, valuation_events
@@ -197,6 +200,22 @@ class SubscriptionBody(BaseModel):
     progress: dict = Field(default_factory=dict)
 
 
+class StrategyStreamBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: Literal["BINANCE"] = "BINANCE"
+    product: Literal["futures_um", "spot"]
+    symbol: str = Field(min_length=2, max_length=64)
+    interval: str = Field(min_length=2, max_length=5)
+    kind: Literal["closed_bars"] = "closed_bars"
+
+
+class StrategyMarketBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    issuance_id: str = Field(min_length=1, max_length=64)
+    streams: list[StrategyStreamBody] = Field(min_length=1, max_length=8)
+    lookback_bars: int = Field(default=1, ge=1, le=256)
+
+
 class StrategyLoadBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     account_id: str = Field(min_length=1, max_length=40)
@@ -310,6 +329,7 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
     app.state.market_data = EngineDataService(
         config.tenant_id or "1", project=runtime.project, state_root=runtime.root,
     )
+    app.state.strategy_market = ManagedJournalBridge(runtime, app.state.market_data)
     app.include_router(venue_router)
     app.include_router(market_data_router)
     app.include_router(control_router)
@@ -340,10 +360,15 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
 
         def supervise():
             manager = app.state.market_data
-            while not stop_monitor.wait(5):
+            last_restore = 0.0
+            while not stop_monitor.wait(1):
                 try:
-                    manager.subscriptions.restore()
-                    manager.monitor.sample()
+                    now = time.monotonic()
+                    if now - last_restore >= 5:
+                        manager.subscriptions.restore()
+                        manager.monitor.sample()
+                        last_restore = now
+                    app.state.strategy_market.poll()
                 except (OSError, ValueError, HTTPException):
                     logging.getLogger(__name__).warning("租户行情管理器重试恢复失败。")
 
@@ -553,6 +578,29 @@ def create_app(config: EngineConfig | None = None, runtime: EngineRuntime | None
         return runtime.note_subscription(
             tenant_id, account_id, body.product, body.symbol, body.role, body.state, body.progress
         )
+
+    @app.post("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions")
+    def start_strategy_market(
+        tenant_id: str, account_id: str, body: StrategyMarketBody,
+    ):
+        try:
+            streams = tuple(MarketStream(**item.model_dump()) for item in body.streams)
+            app.state.strategy_market.subscribe(
+                tenant_id, account_id, body.issuance_id, streams,
+                lookback_bars=body.lookback_bars,
+            )
+            return app.state.strategy_market.status()
+        except MarketDataHubError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @app.delete("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions/{issuance_id}")
+    def stop_strategy_market(tenant_id: str, account_id: str, issuance_id: str):
+        app.state.strategy_market.unsubscribe(tenant_id, account_id, issuance_id)
+        return app.state.strategy_market.status()
+
+    @app.get("/market/strategy-subscriptions")
+    def strategy_market_status():
+        return app.state.strategy_market.status()
 
     @app.post("/tenants/{tenant_id}/accounts/{account_id}/market/workers/note")
     def note_worker(tenant_id: str, account_id: str, body: WorkerNote):
