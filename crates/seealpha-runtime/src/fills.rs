@@ -45,20 +45,36 @@ impl Runtime {
         let client_id=record["response"]["client_order_id"].as_str()
             .ok_or_else(||error("订单客户端编号缺失。"))?.to_owned();
         let product=market_product(&record,&symbol)?;
-        if record["algo_order"]==true {
-            return Err(error("条件单触发状态不等于真实成交；需通过 actualOrderId 与交易所成交明细核对。"));
-        }
+        let algo=record["algo_order"]==true;
         let client=VenueClient::new(venue_base)
             .map_err(|_|error("交易网关配置无效。"))?;
         let credentials=Credentials{api_key:api_key.to_owned(),secret:secret.to_owned()};
-        let Some(order)=client.query_order(&credentials,product,&symbol,&client_id)
-            .map_err(|_|error("交易所订单查询失败，保持原状态且禁止重试委托。"))? else {
-            return Err(error("交易所尚未确认此订单，保持 unknown 状态并人工核验。"));
+        let (order,parent_algo)=if algo {
+            if product!=Product::FuturesUm {
+                return Err(error("只有 USD-M 条件单可以通过 Algo Service 恢复。"));
+            }
+            let parent=client.query_um_conditional(&credentials,&symbol,&client_id)
+                .map_err(|_|error("条件单交易所查询失败，保持 unknown，不可重新提交。"))?;
+            let actual=parent.get("actualOrderId").and_then(|v|
+                v.as_str().map(str::to_owned)
+                    .or_else(||v.as_u64().map(|n|n.to_string())))
+                .filter(|v|!v.is_empty() && v!="0")
+                .ok_or_else(||error("条件单尚未确认触发真实订单，不得虚构成交。"))?;
+            let child=client.query_um_order_by_id(&credentials,&symbol,&actual)
+                .map_err(|_|error("条件单真实子订单查询失败，保持待核实。"))?;
+            (child,Some(parent))
+        }else {
+            let Some(normal)=client.query_order(&credentials,product,&symbol,&client_id)
+                .map_err(|_|error("交易所订单查询失败，保持原状态且禁止重试委托。"))? else {
+                return Err(error("交易所尚未确认此订单，保持 unknown 状态并人工核验。"));
+            };
+            (normal,None)
         };
         let next=VerifiedOrderState::from_exchange(&order)
             .map_err(|_|error("交易所订单状态或累计成交量不可信，拒绝覆盖账本。"))?;
-        if !record["response"]["order"].is_null() {
-            let prev=VerifiedOrderState::from_exchange(&record["response"]["order"])
+        let previous=if algo {&record["triggered_order"]} else {&record["response"]["order"]};
+        if !previous.is_null() {
+            let prev=VerifiedOrderState::from_exchange(previous)
                 .map_err(|_|error("已有订单证据损坏，拒绝覆盖。"))?;
             prev.advance(&next).map_err(|_|error(
                 "交易所订单状态回退、终态变化或累计成交量冲突，需人工核验。"))?;
@@ -79,15 +95,24 @@ impl Runtime {
         self.ledger.import_verified_fills(
             tenant,account,environment,order_id,&trades
         ).map_err(map_ledger)?;
+        let effective_client_id=if algo {
+            order["client_order_id"].as_str()
+                .ok_or_else(||error("条件单触发子订单缺少客户编号。"))?
+        }else{&client_id};
         self.ledger.upsert_order_row(
-            tenant,account,environment,&client_id,&order.to_string()
+            tenant,account,environment,effective_client_id,&order.to_string()
         ).map_err(map_ledger)?;
         let terminal=matches!(
             order["status"].as_str(),Some("FILLED"|"CANCELED"|"EXPIRED"|"EXPIRED_IN_MATCH"|"REJECTED")
         );
         let fills_complete=terminal&&observed==qty;
         record["response"]["status"]=json!("completed");
-        record["response"]["order"]=order.clone();
+        if algo {
+            record["algo_evidence"]=json!(parent_algo);
+            record["triggered_order"]=order.clone();
+        }else {
+            record["response"]["order"]=order.clone();
+        }
         record["records"]=json!(trades);
         record["ledger_synced"]=json!(fills_complete);
         record["verified_fill_count"]=json!(trades.len());
@@ -97,7 +122,7 @@ impl Runtime {
         self.ledger.save_order_request(tenant,account,request_id,&record.to_string())
             .map_err(map_ledger)?;
         Ok(json!({"request_id":request_id,"client_order_id":client_id,
-            "order":order,"verified_fills":trades,
+            "order":order,"parent_algo":parent_algo,"verified_fills":trades,
             "observed_filled_quantity":observed.to_string(),
             "reported_filled_quantity":qty.to_string(),
             "fills_complete":fills_complete,"order_terminal":terminal,
