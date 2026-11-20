@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub mod protocol;
 pub mod ws;
+pub mod store;
 
 use serde_json::Value;
 
