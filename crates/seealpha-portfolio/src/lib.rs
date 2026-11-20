@@ -3,6 +3,9 @@
 //! Strategies publish absolute signed targets. This crate nets them, clips the
 //! aggregate to a risk limit, and sizes the remaining delta toward zero so a
 //! paper fill cannot overshoot the target. It does not submit exchange orders.
+pub mod basket;
+pub mod coordinator;
+
 use rust_decimal::Decimal;
 use thiserror::Error;
 
