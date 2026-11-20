@@ -71,7 +71,8 @@ impl Runtime {
                 // a safe replacement for a production account ledger.
                 let explicitly_ephemeral=std::env::var("ENGINE_ALLOW_EPHEMERAL_STATE")
                     .is_ok_and(|value|value=="1");
-                if !explicitly_ephemeral || config.tenant_purpose.as_deref()==Some("production")
+                if !explicitly_ephemeral ||
+                    config.tenant_purpose.as_deref()!=Some("development")
                     || config.venue_base.is_some() {
                     return Err(error);
                 }
