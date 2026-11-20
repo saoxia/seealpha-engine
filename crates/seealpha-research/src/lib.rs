@@ -4,7 +4,7 @@
 mod scope;
 pub use scope::{
     CandidateEnvelope, ResearchContext, SnapshotAccess, authorize_candidate_envelope,
-    authorize_operation, authorize_snapshot, verify_snapshot_bytes,
+    authorize_operation, authorize_snapshot, authorize_snapshot_request, verify_snapshot_bytes,
 };
 
 use base64::Engine;
