@@ -9,7 +9,6 @@ import json
 import sqlite3
 import time
 from decimal import Decimal
-from pathlib import Path
 from threading import RLock
 
 from engine.feed.subscription_hub import (
