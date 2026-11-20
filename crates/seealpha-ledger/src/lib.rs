@@ -3,6 +3,7 @@ mod records;
 mod parity;
 mod funding;
 mod verified_fills;
+mod exercises;
 pub use records::CatalogBar;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
@@ -131,6 +132,15 @@ CREATE TABLE IF NOT EXISTS catalog_bars (
     volume TEXT NOT NULL,
     PRIMARY KEY (tenant_id, product, symbol, interval, open_time_ms)
 );
+CREATE TABLE IF NOT EXISTS option_exercise_observations (
+    tenant_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    expiry_time_ms INTEGER NOT NULL,
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY(tenant_id,symbol,expiry_time_ms)
+);
+CREATE INDEX IF NOT EXISTS option_exercise_scope
+    ON option_exercise_observations(tenant_id,expiry_time_ms);
 CREATE TABLE IF NOT EXISTS funding_observations (
     tenant_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
