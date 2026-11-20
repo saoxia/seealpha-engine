@@ -119,6 +119,77 @@ pub fn report_json(symbol: &str, quote: &str, report: &BacktestReport) -> Value 
     })
 }
 
+/// A bar-by-bar, multi-member native portfolio replay with a persisted equity
+/// curve. All fills are paper fills; market exchange APIs are never used.
+pub fn run_backtest_with_curve(
+    bars: &[HistoryBar],
+    publications: &[PublishedTarget],
+    starting_balance: Decimal,
+    risk_limit: Decimal,
+) -> Result<(BacktestReport, Vec<Value>), BacktestError> {
+    use std::collections::BTreeMap;
+    if bars.is_empty() {return Err(BacktestError::Empty);}
+    if starting_balance<=Decimal::ZERO {return Err(BacktestError::Balance);}
+    if risk_limit<=Decimal::ZERO {
+        return Err(BacktestError::Portfolio("风险额度无效。".into()));
+    }
+    let mut timeline=publications.to_vec();
+    timeline.sort_by(|a,b|a.bar_index.cmp(&b.bar_index).then(a.member_id.cmp(&b.member_id)));
+    if timeline.iter().any(|p|p.bar_index>=bars.len()) {
+        return Err(BacktestError::Portfolio("目标持仓不属于回测区间。".into()));
+    }
+    let mut current=Decimal::ZERO;
+    let mut cash=starting_balance;
+    let mut latest=BTreeMap::<String,Decimal>::new();
+    let mut fills=Vec::new();
+    let mut equity_curve=Vec::with_capacity(bars.len());
+    let mut cursor=0_usize;
+    for (bar_index,bar) in bars.iter().enumerate() {
+        if bar.close<=Decimal::ZERO {
+            return Err(BacktestError::Portfolio("K 线收盘价无效。".into()));
+        }
+        let mut changed=false;
+        while cursor<timeline.len() && timeline[cursor].bar_index==bar_index {
+            let p=&timeline[cursor];
+            latest.insert(p.member_id.clone(),p.quantity);
+            cursor+=1;
+            changed=true;
+        }
+        if changed {
+            let targets=latest.iter().map(|(member_id,quantity)|TargetPublication{
+                member_id:member_id.clone(),quantity:*quantity,price:bar.close,
+            }).collect::<Vec<_>>();
+            let (new_fills,position)=replay_targets(
+                &targets,current,risk_limit,Decimal::new(1,8)
+            ).map_err(|e|BacktestError::Portfolio(e.to_string()))?;
+            for fill in new_fills {
+                let notional=fill.quantity.checked_mul(fill.price)
+                    .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
+                cash=if fill.side=="buy" {
+                    cash.checked_sub(notional)
+                } else {cash.checked_add(notional)}
+                    .ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
+                fills.push(fill);
+            }
+            current=position;
+        }
+        let equity=cash.checked_add(
+            current.checked_mul(bar.close).ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?
+        ).ok_or_else(||BacktestError::Portfolio("数值溢出。".into()))?;
+        equity_curve.push(json!({"open_time_ms":bar.open_time_ms,
+            "cash":cash.to_string(),"position":current.to_string(),
+            "mark_price":bar.close.to_string(),"equity":equity.to_string()}));
+    }
+    let ending=equity_curve.last()
+        .and_then(|row|row["equity"].as_str())
+        .and_then(|s|s.parse::<Decimal>().ok())
+        .ok_or_else(||BacktestError::Portfolio("权益记录无效。".into()))?;
+    Ok((BacktestReport{
+        bar_count:bars.len(),starting_balance,ending_balance:ending,
+        cash,position:current,fills,
+    },equity_curve))
+}
+
 pub fn basket_gross_notional(legs: &[(Decimal, Decimal)]) -> Result<Decimal, BacktestError> {
     let mut total = Decimal::ZERO;
     for (quantity, price) in legs {
