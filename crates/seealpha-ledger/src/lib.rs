@@ -1,5 +1,7 @@
 //! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
 mod records;
+mod basket_journal;
+pub use basket_journal::StoredBasketJournal;
 mod parity;
 mod funding;
 mod verified_fills;
