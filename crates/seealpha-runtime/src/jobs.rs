@@ -17,7 +17,7 @@ fn hash(tenant:&str,text:&str)->String {
     let mut out=String::with_capacity(32);
     for byte in bytes.iter().take(16) {
         use std::fmt::Write;
-        let _=write!(out,"{byte:02x}");
+        let _=write!(&mut out,"{byte:02x}");
     }
     out
 }
