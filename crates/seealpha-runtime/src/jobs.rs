@@ -51,7 +51,8 @@ impl Runtime {
                 return Err(fail("幂等键无效。"));
             }
         }
-        let id=hash(tenant,idempotency_key.unwrap_or(&parameters.to_string()));
+        let key=idempotency_key.map(str::to_owned).unwrap_or_else(||parameters.to_string());
+        let id=hash(tenant,&key);
         let mut params=parameters.clone();
         if let Some(obj)=params.as_object_mut() {
             obj.entry("product".to_string()).or_insert(json!("futures_um"));
