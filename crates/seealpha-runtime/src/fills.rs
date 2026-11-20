@@ -4,6 +4,7 @@
 use crate::{Runtime,RuntimeError,map_ledger};
 use rust_decimal::Decimal;
 use seealpha_venue::{Credentials,Product,VenueClient};
+use seealpha_venue::lifecycle::VerifiedOrderState;
 use serde_json::{json,Value};
 
 fn error(msg:&str)->RuntimeError {RuntimeError::Conflict(msg.into())}
@@ -54,6 +55,14 @@ impl Runtime {
             .map_err(|_|error("交易所订单查询失败，保持原状态且禁止重试委托。"))? else {
             return Err(error("交易所尚未确认此订单，保持 unknown 状态并人工核验。"));
         };
+        let next=VerifiedOrderState::from_exchange(&order)
+            .map_err(|_|error("交易所订单状态或累计成交量不可信，拒绝覆盖账本。"))?;
+        if !record["response"]["order"].is_null() {
+            let prev=VerifiedOrderState::from_exchange(&record["response"]["order"])
+                .map_err(|_|error("已有订单证据损坏，拒绝覆盖。"))?;
+            prev.advance(&next).map_err(|_|error(
+                "交易所订单状态回退、终态变化或累计成交量冲突，需人工核验。"))?;
+        }
         let order_id=order["order_id"].as_str().ok_or_else(||error("交易所订单 ID 缺失。"))?;
         let qty=order["filled"].as_str().ok_or_else(||error("交易所累计成交量缺失。"))?
             .parse::<Decimal>().map_err(|_|error("交易所累计成交量无效。"))?;
