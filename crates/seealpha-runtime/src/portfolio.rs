@@ -85,7 +85,12 @@ impl Runtime {
                 coordinator.confirm_terminal(&order_id,canceled,denied_at),
             NativePortfolioEvent::Freeze(reason)=>{coordinator.freeze(&reason);Ok(())},
         };
-        result.map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+        if let Err(error)=result {
+            if coordinator.frozen {
+                self.save_native_portfolio(tenant,account,instrument,&coordinator,Some(expected_revision))?;
+            }
+            return Err(RuntimeError::Conflict(error.to_string()));
+        }
         self.save_native_portfolio(tenant,account,instrument,&coordinator,Some(expected_revision))
     }
     /// Caller supplies authoritative net position; persisted flight is a prerequisite
@@ -117,8 +122,15 @@ impl Runtime {
             return Err(RuntimeError::Conflict("stale portfolio state".into()));
         }
         let mut coordinator=state.coordinator;
-        let fills=coordinator.apply_venue_fill(order_id,event_id,cumulative,price,bar)
-            .map_err(|e|RuntimeError::Conflict(e.to_string()))?;
+        let fills=match coordinator.apply_venue_fill(order_id,event_id,cumulative,price,bar){
+            Ok(fills)=>fills,
+            Err(error)=>{
+                if coordinator.frozen {
+                    self.save_native_portfolio(tenant,account,instrument,&coordinator,Some(expected_revision))?;
+                }
+                return Err(RuntimeError::Conflict(error.to_string()));
+            }
+        };
         let updated=self.save_native_portfolio(tenant,account,instrument,
             &coordinator,Some(expected_revision))?;
         Ok(NativePortfolioResult{state:updated,fills,command:None})
