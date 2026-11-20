@@ -2,11 +2,11 @@
 
 ## Status
 
-The owner authorized the directory move and the cutover. The resident process is `seealpha-engine`. Python is limited to `python/strategy_host/` and strategy packages under `packages/`. Live signed trading is refused. Details and the current crate map are in [ARCHITECTURE.md](ARCHITECTURE.md). The notes below record the pre-cutover plan and the safety gates that the paper ledger, HTTP v2 checks, and strategy host are still expected to meet.
+The default resident process is `seealpha-engine`, and its Python usage is limited to the strategy host. **A separate legacy Python Engine has been restored from `f18e48e` pending native feature parity.** It can be run only as an explicitly selected alternative process/image, not as an automatic fallback within Rust; see [LEGACY_PYTHON_RECOVERY.md](LEGACY_PYTHON_RECOVERY.md) for isolation and safety. The native Rust runtime and the restored Python runtime have different capability boundaries. The notes below preserve the original migration plan and historical checkpoints; older statements about files being removed refer to the pre-recovery state.
 
 ## Decision
 
-The Python engine implementation has been removed from this repository. **The only intentionally retained Python runtime is the process that loads Python-authored strategies.**
+**Historical cutover statement (now superseded):** the Python engine implementation was removed by the native runtime switch. It has since been restored for explicit legacy compatibility until equivalent Rust functionality and tests are verified. The normal Rust image still only includes the Python strategy host; the optional legacy image includes the old Python Engine.
 
 Maintain the existing repository layout and ownership boundaries, including engine/market_data/sources/binance_perpetual, binance_spot, binance_options and binance_shared. Rust crates can live inside the same domain directories, not in a new parallel business tree. Existing Python implementation remains authoritative until Rust has passed parity and integration tests.
 
