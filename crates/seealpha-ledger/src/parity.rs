@@ -232,6 +232,103 @@ impl Ledger {
     }
 }
 
+impl Ledger {
+    /// A verified native import never silently rewrites pre-existing evidence.
+    /// Whole-batch insertion rolls back on any conflicting historical bar.
+    pub fn import_verified_catalog_bars(
+        &self, tenant_id:&str,product:&str,symbol:&str,interval:&str,
+        rows:&[crate::CatalogBar],
+    )->Result<usize,LedgerError> {
+        let mut conn=self.lock()?;
+        let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sqlite)?;
+        for bar in rows {
+            let old:Option<(String,String,String,String,String)>=tx.query_row(
+                "SELECT open,high,low,close,volume FROM catalog_bars
+                 WHERE tenant_id=?1 AND product=?2 AND symbol=?3 AND interval=?4 AND open_time_ms=?5",
+                params![tenant_id,product,symbol,interval,bar.open_time_ms],
+                |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))
+            ).optional().map_err(sqlite)?;
+            if let Some(value)=old {
+                let incoming=(&bar.open,&bar.high,&bar.low,&bar.close,&bar.volume);
+                if value.0!=*incoming.0 || value.1!=*incoming.1
+                    || value.2!=*incoming.2 || value.3!=*incoming.3
+                    || value.4!=*incoming.4 {
+                    return Err(LedgerError::Conflict("历史 K 线与已保存证据冲突，未写入。".into()));
+                }
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO catalog_bars
+                 (tenant_id,product,symbol,interval,open_time_ms,open,high,low,close,volume)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![tenant_id,product,symbol,interval,bar.open_time_ms,
+                    bar.open,bar.high,bar.low,bar.close,bar.volume]
+            ).map_err(sqlite)?;
+        }
+        tx.commit().map_err(sqlite)?;
+        Ok(rows.len())
+    }
+
+    pub fn restore_interrupted_data_jobs(&self)->Result<usize,LedgerError> {
+        let conn=self.lock()?;
+        conn.execute(
+            "UPDATE data_jobs SET status='interrupted',
+               result_json='{\"detail\":\"引擎重启后任务状态未核实，禁止自动重试。\"}',
+               updated_at=?1 WHERE status='running'",
+            params![now_ms()],
+        ).map_err(sqlite)
+    }
+
+    pub fn set_strategy_reader(
+        &self,tenant_id:&str,account_id:&str,issuance_id:&str,
+        streams:&Value,lookback:i64,
+    )->Result<Value,LedgerError> {
+        let conn=self.lock()?;
+        conn.execute(
+            "INSERT INTO strategy_market_subscriptions
+             (tenant_id,account_id,issuance_id,streams_json,lookback_bars,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(tenant_id,account_id,issuance_id)
+             DO UPDATE SET streams_json=excluded.streams_json,
+               lookback_bars=excluded.lookback_bars,updated_at=excluded.updated_at",
+            params![tenant_id,account_id,issuance_id,streams.to_string(),lookback,now_ms()]
+        ).map_err(sqlite)?;
+        Ok(json!({"tenant_id":tenant_id,"account_id":account_id,
+            "issuance_id":issuance_id,"streams":streams,"lookback_bars":lookback}))
+    }
+
+    pub fn remove_strategy_reader(
+        &self,tenant_id:&str,account_id:&str,issuance_id:&str
+    )->Result<(),LedgerError> {
+        let conn=self.lock()?;
+        conn.execute(
+            "DELETE FROM strategy_market_subscriptions
+             WHERE tenant_id=?1 AND account_id=?2 AND issuance_id=?3",
+            params![tenant_id,account_id,issuance_id]
+        ).map_err(sqlite)?;
+        Ok(())
+    }
+
+    pub fn strategy_readers(&self,tenant_id:&str)->Result<Vec<Value>,LedgerError> {
+        let conn=self.lock()?;
+        let mut stmt=conn.prepare(
+            "SELECT account_id,issuance_id,streams_json,lookback_bars FROM strategy_market_subscriptions
+             WHERE tenant_id=?1 ORDER BY account_id,issuance_id"
+        ).map_err(sqlite)?;
+        let rows=stmt.query_map(params![tenant_id],|r|{
+            Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,
+                r.get::<_,String>(2)?,r.get::<_,i64>(3)?))
+        }).map_err(sqlite)?;
+        let mut result=Vec::new();
+        for row in rows {
+            let (account,issuance,streams,lookback)=row.map_err(sqlite)?;
+            result.push(json!({"tenant_id":tenant_id,"account_id":account,"issuance_id":issuance,
+                "streams":parse(&streams)?,"lookback_bars":lookback}));
+        }
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
