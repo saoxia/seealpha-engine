@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod settlement;
 pub mod option_trades;
 pub mod conditional;
+pub mod spot_oco;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};

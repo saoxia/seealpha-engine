@@ -45,6 +45,14 @@ impl Runtime {
         let client_id=record["response"]["client_order_id"].as_str()
             .ok_or_else(||error("订单客户端编号缺失。"))?.to_owned();
         let product=market_product(&record,&symbol)?;
+        if record["order_list"]=="oco" {
+            if product!=Product::Spot {
+                return Err(error("OCO 订单列表与交易产品不匹配。"));
+            }
+            return self.sync_verified_oco_fills(
+                tenant,account,environment,request_id,&symbol,&client_id,
+                record,api_key,secret,venue_base);
+        }
         let algo=record["algo_order"]==true;
         let client=VenueClient::new(venue_base)
             .map_err(|_|error("交易网关配置无效。"))?;
@@ -129,4 +137,96 @@ impl Runtime {
             "ledger_synced":fills_complete,
             "repost_order":false}))
     }
+    /// Verify both child orders of a Spot OCO list using exchange-authored
+    /// trade history. The two legs can end differently; never infer a fill
+    /// from the order list status or the other leg's cancellation.
+    #[allow(clippy::too_many_arguments)]
+    fn sync_verified_oco_fills(
+        &self,tenant:&str,account:&str,environment:&str,request_id:&str,
+        symbol:&str,list_id:&str,mut record:Value,
+        api_key:&str,secret:&str,venue_base:&str,
+    )->Result<Value,RuntimeError>{
+        let client=VenueClient::new(venue_base)
+            .map_err(|_|error("现货订单列表网关配置无效。"))?;
+        let credentials=Credentials{
+            api_key:api_key.to_owned(),secret:secret.to_owned(),
+        };
+        let list=client.query_spot_oco(&credentials,symbol,list_id)
+            .map_err(|_|error("OCO 列表证据不完整，保持待核实状态。"))?;
+        let entries=list["orders"].as_array()
+            .ok_or_else(||error("OCO 列表缺少子订单。"))?;
+        let prior=record["order_children"].as_array();
+        let mut children=Vec::new();
+        let mut all_terminal=true;
+        let mut all_complete=true;
+        for entry in entries {
+            let client_id=entry["clientOrderId"].as_str()
+                .ok_or_else(||error("OCO 子订单客户端编号缺失。"))?;
+            let expected_id=entry["orderId"].as_u64()
+                .map(|n|n.to_string())
+                .or_else(||entry["orderId"].as_str().map(str::to_owned))
+                .ok_or_else(||error("OCO 子订单交易所编号缺失。"))?;
+            let order=client.query_order(&credentials,Product::Spot,symbol,client_id)
+                .map_err(|_|error("OCO 子订单查询未确认。"))?
+                .ok_or_else(||error("OCO 子订单未在交易所找到。"))?;
+            if order["order_id"].as_str()!=Some(expected_id.as_str()){
+                return Err(error("OCO 子订单 ID 与列表证据不一致。"));
+            }
+            let state=VerifiedOrderState::from_exchange(&order)
+                .map_err(|_|error("OCO 子订单状态不可核实。"))?;
+            if let Some(old)=prior.and_then(|items|items.iter().find(|row|
+                row["order"]["client_order_id"].as_str()==Some(client_id))) {
+                let previous=VerifiedOrderState::from_exchange(&old["order"])
+                    .map_err(|_|error("旧 OCO 子订单证据损坏。"))?;
+                previous.advance(&state)
+                    .map_err(|_|error("OCO 子订单状态发生不合法回退。"))?;
+            }
+            let trades=client.query_order_trades(
+                &credentials,Product::Spot,symbol,&expected_id
+            ).map_err(|_|error("OCO 真实成交历史未完整核实。"))?;
+            let mut total=Decimal::ZERO;
+            for row in &trades {
+                let amount=row["quantity"].as_str()
+                    .ok_or_else(||error("OCO 成交数量缺失。"))?
+                    .parse::<Decimal>().map_err(|_|error("OCO 成交数量无效。"))?;
+                total=total.checked_add(amount).ok_or_else(||error("OCO 数量溢出。"))?;
+            }
+            if total>state.filled_quantity {
+                return Err(error("OCO 成交证据超过交易所累计成交量。"));
+            }
+            all_terminal &= state.phase.terminal();
+            all_complete &= total==state.filled_quantity;
+            children.push(json!({"order":order,"fills":trades,
+                "observed_quantity":total.to_string()}));
+        }
+        // All remote queries and quantity checks precede any durable writes.
+        for child in &children {
+            let order=&child["order"];
+            let order_id=order["order_id"].as_str()
+                .ok_or_else(||error("OCO 子订单 ID 无效。"))?;
+            let child_client=order["client_order_id"].as_str()
+                .ok_or_else(||error("OCO 子订单客户编号无效。"))?;
+            let trades=child["fills"].as_array().ok_or_else(||error("成交证据无效。"))?;
+            self.ledger.import_verified_fills(
+                tenant,account,environment,order_id,trades
+            ).map_err(map_ledger)?;
+            self.ledger.upsert_order_row(
+                tenant,account,environment,child_client,&order.to_string()
+            ).map_err(map_ledger)?;
+        }
+        let complete=all_terminal&&all_complete&&list["list_status"]=="ALL_DONE";
+        record["response"]["status"]=json!("completed");
+        record["response"]["order"]=list.clone();
+        record["order_children"]=json!(children);
+        record["fills_complete"]=json!(complete);
+        record["ledger_synced"]=json!(complete);
+        record["order_terminal"]=json!(all_terminal);
+        self.ledger.save_order_request(tenant,account,request_id,&record.to_string())
+            .map_err(map_ledger)?;
+        Ok(json!({"request_id":request_id,"client_order_id":list_id,
+            "order_list":list,"order_children":children,
+            "fills_complete":complete,"ledger_synced":complete,
+            "repost_order":false}))
+    }
+
 }
