@@ -226,16 +226,23 @@ pub fn run_host(command: &HostCommand<'_>) -> Result<StrategyRun, StrategyError>
     if !command.host.is_file() {
         return Err(StrategyError::Host);
     }
-    if let Some(path) = command.archive_path {
+    // Verify and pin archive contents in a private file before starting
+    // Python, so a concurrent write to the supplied path cannot swap code.
+    let staged = if let Some(path) = command.archive_path {
         let source = std::fs::read(path).map_err(|_| invalid_archive())?;
         inspect_archive(&source)?;
-    } else if let Some(root) = command.package_dir {
-        inspect_directory(root)?;
-    }
+        Some(issued::StagedArchive::create(&source)?)
+    } else {
+        if let Some(root) = command.package_dir {
+            inspect_directory(root)?;
+        }
+        None
+    };
+    let pinned_archive = staged.as_ref().map(issued::StagedArchive::path);
     let request = serde_json::json!({
         "op": command.op,
         "package_dir": command.package_dir,
-        "archive_path": command.archive_path,
+        "archive_path": pinned_archive,
         "parameters": command.parameters,
         "symbol": command.symbol,
         "interval": command.interval,
