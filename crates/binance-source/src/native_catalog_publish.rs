@@ -11,7 +11,8 @@
 //!
 //! The Catalog publisher is append-only. The watermark is advanced *after*
 //! a Parquet file has been atomically published; exact crash retries are safe.
-use std::{fs,path::PathBuf};
+use std::{fs, fs::{File, OpenOptions}, path::{Path, PathBuf}};
+use fs2::FileExt;
 use rusqlite::{Connection,OpenFlags,OptionalExtension,params};
 use rust_decimal::Decimal;
 use seealpha_catalog::{Catalog,CatalogBar,MarketProduct,bar_window,interval_ms};
@@ -21,6 +22,20 @@ use serde_json::{Value,json};
 type Error=Box<dyn std::error::Error+Send+Sync>;
 type Result<T>=std::result::Result<T,Error>;
 const MAX_BATCH:usize=5000;
+
+// Prevent concurrent publisher runs for the same source journal from racing
+// between the Parquet hard-link and its SQLite publication checkpoint.
+fn publication_lease(pair: &Path) -> Result<File> {
+    let path = pair.join("catalog-publish.lock");
+    if let Ok(meta) = fs::symlink_metadata(&path)
+        && !meta.file_type().is_file()
+    {
+        return Err("unsafe existing publication lease path".into());
+    }
+    let lock = OpenOptions::new().create(true).append(true).open(path)?;
+    lock.try_lock_exclusive()?;
+    Ok(lock)
+}
 
 #[derive(Debug)]
 struct SourceCandle{
@@ -76,6 +91,7 @@ async fn execute()->Result<Value>{
     let pair=PathBuf::from(&args[3]).canonicalize()?;
     let catalog=Catalog::open_existing(&PathBuf::from(&args[4]))?;
     if !pair.is_dir(){return Err("pair journal is not a directory".into());}
+    let _publication_lease = publication_lease(&pair)?;
     let db_path=pair.join("collection.sqlite");
     if !fs::symlink_metadata(&db_path)?.file_type().is_file() {
         return Err("pair journal must be an existing ordinary file".into());
@@ -202,6 +218,27 @@ async fn execute()->Result<Value>{
         "checkpoint_end_ms":after,
         "backend":"nautilus_v2_parquet","data_ready":false,
         "exchange_orders":0,"status":"published_unverified"}))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_one_catalog_publisher_can_advance_a_pair_checkpoint() {
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-catalog-lease-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let first = publication_lease(&root).unwrap();
+        assert!(publication_lease(&root).is_err());
+        drop(first);
+        let reopened = publication_lease(&root).unwrap();
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 #[tokio::main]
 async fn main()->std::process::ExitCode{
