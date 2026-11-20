@@ -10,6 +10,7 @@ pub mod journal;
 pub mod settlement;
 pub mod history;
 pub mod coordinator;
+pub mod coordinator_snapshot;
 
 use rust_decimal::Decimal;
 use thiserror::Error;
