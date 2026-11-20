@@ -94,7 +94,11 @@ impl VenueClient {
             ("type".to_string(), intent.order_type.to_ascii_uppercase()),
             ("quantity".to_string(), intent.quantity.clone()),
             (
-                "newClientOrderId".to_string(),
+                if intent.product==Product::Option {
+                    "clientOrderId".to_string()
+                } else {
+                    "newClientOrderId".to_string()
+                },
                 intent.client_order_id.clone(),
             ),
         ];
@@ -106,11 +110,18 @@ impl VenueClient {
             pairs.push(("price".to_string(), price));
             pairs.push(("timeInForce".to_string(), intent.time_in_force.clone()));
         }
-        if intent.product == Product::FuturesUm {
+        if matches!(intent.product, Product::FuturesUm | Product::Option) {
             pairs.push((
                 "reduceOnly".to_string(),
                 if intent.reduce_only { "true" } else { "false" }.into(),
             ));
+        }
+        if intent.product==Product::Option {
+            if intent.order_type.eq_ignore_ascii_case("limit") {
+                pairs.push(("postOnly".to_string(),"false".to_string()));
+            } else if !intent.order_type.eq_ignore_ascii_case("market") {
+                return Err(VenueError::Rejected("期权订单类型尚未支持。".into()));
+            }
         }
         let value = self.signed(credentials, "POST", path, &pairs)?;
         // A successful HTTP status without an exchange order identity is an
@@ -140,7 +151,8 @@ impl VenueClient {
         };
         let pairs = vec![
             ("symbol".to_string(), venue_symbol(symbol)?),
-            ("origClientOrderId".to_string(), client_order_id.to_string()),
+            (if product==Product::Option {"clientOrderId"}else{"origClientOrderId"}.to_string(),
+                client_order_id.to_string()),
         ];
         let value = self.signed(credentials, "DELETE", path, &pairs)?;
         Ok(order_view(&value, client_order_id))
@@ -161,7 +173,8 @@ impl VenueClient {
         };
         let pairs = vec![
             ("symbol".to_string(), venue_symbol(symbol)?),
-            ("origClientOrderId".to_string(), client_order_id.to_string()),
+            (if product==Product::Option {"clientOrderId"}else{"origClientOrderId"}.to_string(),
+                client_order_id.to_string()),
         ];
         match self.signed(credentials, "GET", path, &pairs) {
             Ok(value) => Ok(Some(order_view(&value, client_order_id))),
@@ -326,7 +339,9 @@ fn snapshot_view(value: &Value) -> Value {
 fn order_view(value: &Value, client_order_id: &str) -> Value {
     json!({
         "client_order_id": value.get("clientOrderId").and_then(Value::as_str).unwrap_or(client_order_id),
-        "order_id": value.get("orderId").map(|item| item.to_string()),
+        "order_id": value.get("orderId").and_then(|item|
+            item.as_str().map(str::to_owned)
+                .or_else(||item.as_u64().map(|n|n.to_string()))),
         "symbol": value.get("symbol").and_then(Value::as_str).unwrap_or(""),
         "side": value.get("side").and_then(Value::as_str).unwrap_or(""),
         "order_type": value.get("type").and_then(Value::as_str).unwrap_or(""),
@@ -381,6 +396,16 @@ mod tests {
             secret: "same".into(),
         });
         assert_eq!(error, Err(VenueError::Credentials));
+    }
+
+    #[test]
+    fn normalized_exchange_order_id_never_contains_json_string_quotes() {
+        let raw=json!({"orderId":"12345678901234567890",
+            "clientOrderId":"sa-123","symbol":"BTC-271231-90000-C",
+            "status":"NEW"});
+        let view=order_view(&raw,"sa-123");
+        assert_eq!(view["order_id"],"12345678901234567890");
+        assert_eq!(view["open"],true);
     }
 
     #[test]
