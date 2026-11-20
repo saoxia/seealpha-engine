@@ -245,3 +245,148 @@ impl Runtime {
         }))
     }
 }
+
+#[cfg(test)]
+mod offline_admission_tests {
+    use super::*;
+    use crate::config::{AuthMode, Config};
+    use seealpha_portfolio::basket::{Checkpoint, Phase, Plan};
+    use seealpha_venue::{Product as VenueProduct, VenueError};
+    use seealpha_venue::order_guard::WriteAction;
+
+    struct FakeWire { attempts: usize, acknowledge: bool }
+    impl SignedTransport for FakeWire {
+        fn send(&mut self, method: &str, path: &str, _: &[(String, String)])
+            -> Result<Value, VenueError> {
+            assert_eq!(method, "POST");
+            assert_eq!(path, "/api/v3/order");
+            self.attempts += 1;
+            if self.acknowledge {
+                Ok(json!({"clientOrderId":"client1","symbol":"ETHUSDT",
+                    "orderId":42,"status":"NEW"}))
+            } else {
+                Err(VenueError::Unconfirmed)
+            }
+        }
+    }
+
+    fn config(path: &std::path::Path) -> Config {
+        Config {
+            host:"127.0.0.1".into(), port:8766, auth_mode:AuthMode::None,
+            token:String::new(), state_dir:path.into(), project:path.into(),
+            tenant_id:None, tenant_purpose:Some("development".into()),
+            research_signing_key:None, research_mcp_enabled:false,
+            venue_base:None, python:"python3".into(),
+        }
+    }
+
+    fn prepared() -> PreparedWrite {
+        PreparedWrite::new("t:a:paper", "req1", VenueProduct::Spot,
+            WriteAction::NewOrder, "ETHUSDT", "client1",
+            vec![
+                ("symbol".into(),"ETHUSDT".into()),
+                ("newClientOrderId".into(),"client1".into()),
+                ("side".into(),"BUY".into()),
+                ("quantity".into(),"0.1".into()),
+                ("price".into(),"2000".into()),
+                ("type".into(),"LIMIT".into()),
+            ]).unwrap()
+    }
+
+    fn setup(runtime: &Runtime) -> (String, Value) {
+        runtime.ensure_tenant("t", "development", "active").unwrap();
+        let leg = LegId {
+            tenant:"t".into(), account:"a".into(),
+            product:Product::Spot, symbol:"ETHUSDT".into(),
+        };
+        let changes = [(leg.clone(),Decimal::new(1,1))].into();
+        let plan = Plan {
+            targets:[(leg.clone(),Decimal::new(1,1))].into(),
+            phases:vec![Phase{name:"buy".into(),changes}],
+            gross_notional:Decimal::new(200,0), executable:false,
+        };
+        let mut cp = Checkpoint::new(plan,[(leg,Decimal::ZERO)].into()).unwrap();
+        cp.begin("req1").unwrap();
+        let encoded = encode_checkpoint("basket1",&cp).unwrap();
+        runtime.ledger.save_basket_journal(
+            "t","a","basket1",&encoded.json,&encoded.revision,None,
+        ).unwrap();
+        runtime.ledger.save_account_snapshot(
+            "t","a","paper",None,"paper1",1,"paper_simulator",
+            &json!({"balances":{"USDT":"1000"},"positions":{"spot:ETHUSDT":"0"}}),
+        ).unwrap();
+        let intent = json!({
+            "action":"NEW","environment":"paper","product":"spot",
+            "client_order_id":"client1","symbol":"ETHUSDT",
+            "side":"BUY","quantity":"0.1","price":"2000","order_type":"LIMIT",
+            "basket_id":"basket1","basket_revision":encoded.revision,
+            "basket_request_id":"req1","account_revision":1,
+            "wire_parameters":[
+                ["symbol","ETHUSDT"],["newClientOrderId","client1"],
+                ["side","BUY"],["quantity","0.1"],["price","2000"],
+                ["type","LIMIT"]
+            ]
+        });
+        (encoded.revision,intent)
+    }
+
+    #[test]
+    fn timeout_then_restart_never_reissues_and_never_invents_fill() {
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-basket-wire-{}-{:?}",
+            std::process::id(), std::thread::current().id(),
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let cfg=config(&root);
+        let runtime=Runtime::open(&cfg).unwrap();
+        let (revision,intent)=setup(&runtime);
+        let mut wire=FakeWire{attempts:0,acknowledge:false};
+        assert!(runtime.dispatch_reserved_basket_leg_fixture(
+            "t","a","paper","basket1",&revision,1,"req1","client1",
+            &intent,prepared(),&mut wire,
+        ).is_err());
+        assert_eq!(wire.attempts,1);
+        assert!(runtime.ledger.fills("t","a","paper").unwrap().is_empty());
+        drop(runtime);
+        let resumed=Runtime::open(&cfg).unwrap();
+        assert!(resumed.dispatch_reserved_basket_leg_fixture(
+            "t","a","paper","basket1",&revision,1,"req1","client1",
+            &intent,prepared(),&mut wire,
+        ).is_err());
+        assert_eq!(wire.attempts,1);
+        assert!(resumed.ledger.request("t","a","req1").unwrap().is_some());
+        drop(resumed);
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn accepted_ack_has_no_fill_and_stale_snapshot_cannot_send() {
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-basket-ack-{}-{:?}",
+            std::process::id(), std::thread::current().id(),
+        ));
+        let _=std::fs::remove_dir_all(&root);
+        let runtime=Runtime::open(&config(&root)).unwrap();
+        let (revision,intent)=setup(&runtime);
+        runtime.ledger.save_account_snapshot(
+            "t","a","paper",Some(1),"paper2",2,"paper_simulator",
+            &json!({"balances":{"USDT":"999"},"positions":{"spot:ETHUSDT":"0"}}),
+        ).unwrap();
+        let mut wire=FakeWire{attempts:0,acknowledge:true};
+        assert!(runtime.dispatch_reserved_basket_leg_fixture(
+            "t","a","paper","basket1",&revision,1,"req1","client1",
+            &intent,prepared(),&mut wire,
+        ).is_err());
+        assert_eq!(wire.attempts,0);
+        // Current revision is valid; the exchange ACK does not prove a fill.
+        runtime.dispatch_reserved_basket_leg_fixture(
+            "t","a","paper","basket1",&revision,2,"req1","client1",
+            &{ let mut updated=intent.clone(); updated["account_revision"]=json!(2); updated },
+            prepared(),&mut wire,
+        ).unwrap();
+        assert_eq!(wire.attempts,1);
+        assert!(runtime.ledger.fills("t","a","paper").unwrap().is_empty());
+        drop(runtime);
+        let _=std::fs::remove_dir_all(root);
+    }
+}
