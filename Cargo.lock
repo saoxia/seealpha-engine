@@ -1745,8 +1745,8 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "rust_decimal",
- "seealpha-binance-market-data-source",
  "seealpha-backtest",
+ "seealpha-binance-market-data-source",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-portfolio",
