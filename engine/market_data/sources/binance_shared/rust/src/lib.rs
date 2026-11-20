@@ -1,11 +1,12 @@
-pub mod protocol;
-pub mod ws;
 //! Bounded, side-effect-free Binance market source policy kernel.
 //!
 //! This is an offline Rust candidate, NOT yet called by the running collectors.
 //! It preserves the existing manifest v1 and source-specific validation rules.
 //! No trading, I/O, network subscription, or storage mutation is performed here.
 use std::collections::{BTreeMap, BTreeSet};
+
+pub mod protocol;
+pub mod ws;
 
 use serde_json::Value;
 
