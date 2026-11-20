@@ -1,9 +1,7 @@
 """USD-M historical maintenance; archive conversion is shared with Spot."""
 
-from engine.market_data.sources.binance.common.history import (
-    backfill as _backfill,
-    serve_history as _serve_history,
-)
+from engine.market_data.sources.binance.common.history import backfill as _backfill
+from engine.market_data.sources.binance.common.history import serve_history as _serve_history
 
 
 def _validate(policy):
