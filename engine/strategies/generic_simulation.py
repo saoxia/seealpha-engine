@@ -225,7 +225,7 @@ def run_native_generic_portfolio(
     curve, targets, count = [], [], 0
     # The shared catalog is keyed by market identity, not strategy identity.
     streams = {
-        leg: MarketStream("BINANCE", leg.product, leg.symbol, interval)
+        leg: MarketStream(str(original_contracts[leg].id.venue), leg.product, leg.symbol, interval)
         for leg in legs
     }
     stream_by_name = {
