@@ -68,9 +68,10 @@ def test_backtest_sessions_share_within_run_but_never_leak_into_live():
                     "dev", "model", now_ns=61,
                     positions={BTC: Decimal(0)}, max_age_ns=60,
                 )
-            with pytest.raises(MarketDataHubError, match="正在使用"):
-                with service.backtest("run-A", (BTC,)):
-                    pass
+            with pytest.raises(MarketDataHubError, match="正在使用"), service.backtest(
+                "run-A", (BTC,),
+            ):
+                pass
         replay_view = replay.view(
             "dev", "model", now_ns=61,
             positions={BTC: Decimal(0)}, max_age_ns=60,
@@ -103,9 +104,8 @@ def test_subscription_without_authorization_or_unsupported_stream_fails_closed()
 
 def test_scope_cleanup_after_error():
     service = EngineMarketDataService()
-    with pytest.raises(RuntimeError):
-        with service.backtest("run", (BTC,)):
-            raise RuntimeError("simulation failed")
+    with pytest.raises(RuntimeError), service.backtest("run", (BTC,)):
+        raise RuntimeError("simulation failed")
     with service.backtest("run", (BTC,)) as replay:
         assert replay.requirements == {}
     service.close()
