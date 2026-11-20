@@ -571,7 +571,15 @@ class EngineRuntime:
             )
             # Keep the lease for the entire iterator consumption and native replay.
             # A concurrent delete must not unlink Parquet files mid-backtest.
-            result = run_issued_history_stream(loads, batches, starting, **({"instrument": instrument} if instrument else {}))
+            from engine.feed.replay_adapter import replay_bar_batches
+            from engine.feed.subscription_hub import MarketStream
+
+            market = MarketStream("BINANCE", product, symbol, interval)
+            with self.market_subscriptions.backtest(uuid.uuid4().hex, (market,)) as replay:
+                result = run_issued_history_stream(
+                    loads, replay_bar_batches(replay, tenant_id, "issued", market, batches),
+                    starting, **({"instrument": instrument} if instrument else {}),
+                )
         result.update(
             interval=interval,
             start=start_at.isoformat(),
@@ -685,16 +693,26 @@ class EngineRuntime:
             perp = next((x for x in perp_rows if str(x.id) == perp_id), None)
             if spot is None or perp is None:
                 raise EngineConflict("历史 Catalog 缺少现货或永续原生合约定义。")
-            result = run_native_carry(
-                loads,
-                self.iter_funding_carry_history(
-                    tenant_id, symbol, start_at.isoformat(), end_at.isoformat(), interval,
-                ),
-                spot, perp, interval=interval,
-                starting_spot=starting_spot_balance,
-                starting_perpetual=starting_perpetual_balance,
-                max_gross_notional=max_gross_notional,
-            )
+            from engine.feed.replay_adapter import replay_carry_events
+            from engine.feed.subscription_hub import MarketStream
+
+            spot_stream = MarketStream("BINANCE", "spot", symbol, interval)
+            perp_stream = MarketStream("BINANCE", "futures_um", symbol, interval)
+            with self.market_subscriptions.backtest(
+                uuid.uuid4().hex, (spot_stream, perp_stream),
+            ) as replay:
+                events = replay_carry_events(
+                    replay, tenant_id, "carry", spot_stream, perp_stream,
+                    self.iter_funding_carry_history(
+                        tenant_id, symbol, start_at.isoformat(), end_at.isoformat(), interval,
+                    ),
+                )
+                result = run_native_carry(
+                    loads, events, spot, perp, interval=interval,
+                    starting_spot=starting_spot_balance,
+                    starting_perpetual=starting_perpetual_balance,
+                    max_gross_notional=max_gross_notional,
+                )
         result.update(
             interval=interval, start=start_at.isoformat(), end=end_at.isoformat(),
         )
@@ -960,12 +978,23 @@ class EngineRuntime:
                 directory, symbol, put_name, call_name, start_at, end_at,
                 interval, option_contracts=contracts, max_quote_age_ns=age,
             )
-            result = run_native_protected(
-                load, evidence, contracts_native, interval=interval,
-                starting_options_balance=starting_options_balance,
-                starting_perpetual_balance=starting_perpetual_balance,
-                max_gross_notional=max_gross_notional,
+            from engine.feed.replay_adapter import replay_protected_evidence
+            from engine.feed.subscription_hub import MarketStream
+
+            streams = (
+                MarketStream("BINANCE", "futures_um", symbol, interval),
+                MarketStream("BINANCE", "options", put_name, interval),
+                MarketStream("BINANCE", "options", call_name, interval),
             )
+            with self.market_subscriptions.backtest(uuid.uuid4().hex, streams) as replay:
+                result = run_native_protected(
+                    load, replay_protected_evidence(
+                        replay, tenant_id, "protected", streams, evidence,
+                    ), contracts_native, interval=interval,
+                    starting_options_balance=starting_options_balance,
+                    starting_perpetual_balance=starting_perpetual_balance,
+                    max_gross_notional=max_gross_notional,
+                )
         result.update(
             start=start_at.isoformat(), end=end_at.isoformat(), interval=interval,
         )
