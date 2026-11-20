@@ -389,10 +389,11 @@ impl Ledger {
         let mut statement = connection.prepare(
             "SELECT tenant_id FROM tenants WHERE status='active' ORDER BY tenant_id"
         ).map_err(|e| LedgerError::Sqlite(e.to_string()))?;
-        statement.query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+        let tenants = rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+        Ok(tenants)
     }
 
     pub fn ensure_tenant(
