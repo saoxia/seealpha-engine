@@ -296,14 +296,20 @@ impl Runtime {
                 "该租户账户没有已下发的策略。".into(),
             ));
         }
-        Ok(loads
+        loads
             .into_iter()
-            .map(|load| StrategyInput {
-                member_id: load.issuance_id,
-                package: PackageBody::Archive(load.archive),
-                parameters: serde_json::from_str(&load.parameters_json).unwrap_or(json!({})),
+            .map(|load| {
+                let parameters = serde_json::from_str(&load.parameters_json)
+                    .map_err(|_| RuntimeError::Conflict(
+                        "已下发策略参数记录损坏，禁止用默认参数执行。".into(),
+                    ))?;
+                Ok(StrategyInput {
+                    member_id: load.issuance_id,
+                    package: PackageBody::Archive(load.archive),
+                    parameters,
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub fn require_active(&self, tenant_id: &str) -> Result<Tenant, RuntimeError> {
