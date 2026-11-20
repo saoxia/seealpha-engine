@@ -214,6 +214,18 @@ impl PairJournal {
             .db
             .query_row("SELECT count(*) FROM trades", [], |r| r.get(0))?)
     }
+
+    /// The highest durable raw trade ID; used by future public REST handover.
+    /// A missing journal tail is not evidence of complete historical coverage.
+    pub fn last_trade_id(&self) -> Result<Option<i64>> {
+        Ok(self.db.query_row("SELECT max(id) FROM trades", [], |r| r.get(0))?)
+    }
+
+    /// Survives writer restarts. An unresolved ID hole must never be READY.
+    pub fn unresolved_gap_count(&self) -> Result<u64> {
+        let count: i64 = self.db.query_row("SELECT count(*) FROM gaps", [], |r| r.get(0))?;
+        Ok(u64::try_from(count)?)
+    }
     /// Validate a page before any insert. A conflicting id inside the page
     /// latches the journal and leaves the trade table unchanged.
     pub fn ingest_page(&mut self, rows: &[Value], now_ms: i64) -> Result<usize> {
@@ -348,6 +360,65 @@ impl PairJournal {
                 i64::from(trade.maker)
             ],
         )?;
+        // Durable, idempotent trade-ID gap tracking. Each write either splits
+        // a known missing range or creates the newly observed neighbour holes.
+        // This is evidence of missing data, not an authorization to fabricate it.
+        let covering: Option<(i64, i64, i64, i64)> = tx
+            .query_row(
+                "SELECT first_id,last_id,start_ms,end_ms FROM gaps WHERE first_id<=? AND last_id>=? LIMIT 1",
+                params![trade.id, trade.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        if let Some((first, last, start_ms, end_ms)) = covering {
+            tx.execute(
+                "DELETE FROM gaps WHERE first_id=? AND last_id=?",
+                params![first, last],
+            )?;
+            if first < trade.id {
+                tx.execute(
+                    "INSERT INTO gaps VALUES (?,?,?,?)",
+                    params![first, trade.id - 1, start_ms, trade.time],
+                )?;
+            }
+            if trade.id < last {
+                tx.execute(
+                    "INSERT INTO gaps VALUES (?,?,?,?)",
+                    params![trade.id + 1, last, trade.time, end_ms],
+                )?;
+            }
+        } else {
+            let previous: Option<(i64, i64)> = tx
+                .query_row(
+                    "SELECT id,timestamp_ms FROM trades WHERE id<? ORDER BY id DESC LIMIT 1",
+                    [trade.id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let next: Option<(i64, i64)> = tx
+                .query_row(
+                    "SELECT id,timestamp_ms FROM trades WHERE id>? ORDER BY id ASC LIMIT 1",
+                    [trade.id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((id, stamp)) = previous
+                && id.checked_add(1).is_some_and(|first| first < trade.id)
+            {
+                tx.execute(
+                    "INSERT OR IGNORE INTO gaps VALUES (?,?,?,?)",
+                    params![id + 1, trade.id - 1, stamp, trade.time],
+                )?;
+            }
+            if let Some((id, stamp)) = next
+                && trade.id.checked_add(1).is_some_and(|first| first < id)
+            {
+                tx.execute(
+                    "INSERT OR IGNORE INTO gaps VALUES (?,?,?,?)",
+                    params![trade.id + 1, id - 1, trade.time, stamp],
+                )?;
+            }
+        }
         // Keep the previous source second dirty for event-driven closure.
         let preceding: Option<i64> = tx.query_row(
             "SELECT max(timestamp_ms)/1000*1000 FROM trades WHERE timestamp_ms<?",
@@ -619,6 +690,58 @@ mod tests {
         drop(journal);
         fs::remove_dir_all(path).unwrap();
     }
+    #[test]
+    fn id_holes_survive_restart_and_close_only_after_real_trades() {
+        let path = root("durable-gaps");
+        let mk = |id| json!({
+            "id":id,"time":1700000000000_i64+id,
+            "price":"10.0","qty":"0.5","isBuyerMaker":false
+        });
+        {
+            let mut journal = PairJournal::open(&path, "ETHUSDT", "tick").unwrap();
+            journal.write_trade(&mk(100), 1700000001000).unwrap();
+            journal.write_trade(&mk(103), 1700000001000).unwrap();
+            assert_eq!(journal.unresolved_gap_count().unwrap(), 1);
+            assert_eq!(journal.last_trade_id().unwrap(), Some(103));
+            journal.write_trade(&mk(101), 1700000001000).unwrap();
+            assert_eq!(journal.unresolved_gap_count().unwrap(), 1);
+        }
+        {
+            let mut journal = PairJournal::open(&path, "ETHUSDT", "tick").unwrap();
+            assert_eq!(journal.unresolved_gap_count().unwrap(), 1);
+            journal.write_trade(&mk(102), 1700000001000).unwrap();
+            assert_eq!(journal.unresolved_gap_count().unwrap(), 0);
+            assert_eq!(journal.trade_count().unwrap(), 4);
+            assert_eq!(
+                journal.write_trade(&mk(102), 1700000001000).unwrap(),
+                WriteReceipt::Duplicate
+            );
+        }
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn a_conflicting_backfill_does_not_clear_durable_gap_evidence() {
+        let path = root("invalid-gap-heal");
+        let mk = |id| json!({
+            "id":id,"time":1700000000000_i64+id,
+            "price":"10","qty":"1","isBuyerMaker":false
+        });
+        let mut journal = PairJournal::open(&path, "ETHUSDT", "tick").unwrap();
+        journal.write_trade(&mk(8), 1700000001000).unwrap();
+        journal.write_trade(&mk(10), 1700000001000).unwrap();
+        let bad = [
+            mk(9),
+            json!({"id":10,"time":1700000000010_i64,
+                   "price":"12","qty":"1","isBuyerMaker":false}),
+        ];
+        assert!(journal.ingest_page(&bad, 1700000001000).is_err());
+        assert_eq!(journal.unresolved_gap_count().unwrap(), 1);
+        assert_eq!(journal.trade_count().unwrap(), 2);
+        drop(journal);
+        fs::remove_dir_all(path).unwrap();
+    }
+
     #[test]
     fn funding_marks_never_invent_settlements() {
         let path = root("funding");
