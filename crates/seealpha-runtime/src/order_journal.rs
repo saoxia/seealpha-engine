@@ -128,7 +128,7 @@ mod tests {
                 ["quantity", "0.01"]
             ]
         });
-        let changed = PreparedWrite::new(
+        let mut changed = PreparedWrite::new(
             "tenant1:account1:production", "request1", Product::Spot,
             WriteAction::NewOrder, "ETHUSDT", "client1",
             vec![
