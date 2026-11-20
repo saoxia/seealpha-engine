@@ -3,7 +3,16 @@
 FROM rust:1.100-slim AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
+COPY market_data ./market_data
+COPY alpha ./alpha
+COPY portfolio ./portfolio
+COPY backtest ./backtest
+COPY accounting ./accounting
+COPY connectivity ./connectivity
+COPY application ./application
+COPY interfaces ./interfaces
+COPY apps ./apps
+COPY benchmarks ./benchmarks
 RUN cargo build --locked --release -p seealpha-engine -p seealpha-binance-market-data-source --bins
 
 FROM python:3.15-slim

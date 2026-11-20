@@ -9,24 +9,34 @@ Platform.
 
 ## Workspace
 
+Rust crates are now grouped by trading/business flow at the repository root:
+
+```text
+market_data/market/             public data / bar pipeline
+market_data/feed/               market data feed
+market_data/catalog/            Nautilus-compatible historical catalog
+market_data/sources/binance/    native Binance data source
+market_data/quality/            data quality checks
+market_data/converter/          historical conversion utility
+alpha/strategy/                 strategy-package validation and host
+portfolio/core/                target netting / risk clip
+accounting/ledger/              durable SQLite state and paper orders
+connectivity/venue/             signed exchange transport
+backtest/core/                 matching / replay / backtest
+application/runtime/            shared orchestration, paper sessions and reconciliation
+application/research/           research grant verification
+interfaces/api/http/            HTTP v2 / existing research MCP routes
+apps/trading_engine/            seealpha-engine executable entrypoint
+benchmarks/rust/                Rust performance measurements
+risk/                           logical domain: implementation currently spans portfolio/runtime
+execution/                      logical domain: implementation currently spans runtime/venue/ledger
 ```
-crates/
-  quality/                 market-data quality checks (gap scan, kline and trade validation)
-  seealpha-market/         public Binance feed and bar pipeline
-  seealpha-portfolio/      decimal target netting, risk clip, paper deltas
-  seealpha-ledger/         SQLite tenant, strategy, and paper-order book
-  seealpha-strategy/       package checks and the Python host process
-  seealpha-research/       research-grant verification
-  seealpha-runtime/        paper session: feed -> pipeline -> strategy -> ledger
-  seealpha-http/           HTTP v2 server
-  seealpha-engine/         process entrypoint
-  seealpha-bench/          hot-path measurements
-  binance-source/          offline Binance source manifest and journal tools
-  data-converter/          historical trade ZIP to Parquet converter
-python/strategy_host/      one-shot strategy process and the small nautilus_trader surface
-packages/                  example strategy packages, including ema_crossover
-core/                      shared contract modules kept for Platform
-```
+
+The Cargo package names and executable names are unchanged. The Python
+strategy host in `python/strategy_host/`, legacy Python runtime in `engine/`,
+shared contract files in `core/`, and sample packages in `packages/` retain
+their existing locations. Dedicated standalone MCP/WS/gRPC servers have not
+been implemented by this reorganization.
 
 ## Request path
 
@@ -80,52 +90,28 @@ handshake mount under `--cap-drop ALL`, the process uses a temporary book
 under `/tmp` and still serves HTTP.
 
 
-## Target business-flow-oriented architecture (migration in progress)
+## Business-flow architecture and remaining refactoring
 
-The repository root should communicate the trading flow without requiring readers
-first to understand Cargo crates. The canonical **target** layout is:
+The **physical directory relocation is complete**, but responsibility changes
+are not implied by moving source files. For example, risk clipping still lives
+in `portfolio/core`, signed exchange transport in `connectivity/venue`, and
+order reconciliation in `application/runtime`. The `risk/` and `execution/`
+directories document desired long-term domain boundaries; they are not yet
+standalone Cargo packages.
 
-```text
-market_data/  -> alpha/ -> portfolio/ -> risk/ -> execution/ -> connectivity/
-                                    accounting/  (positions, fills, PnL and feedback)
-application/  (shared use cases / authorization / orchestration)
-interfaces/   (api, mcp, websocket, grpc protocol boundaries)
-apps/         (trading engine, backtest CLI, optional service entrypoints)
-backtest/     monitoring/     common/     config/     tests/     docs/
-```
+`interfaces/api/http` continues to own the HTTP v2 boundary, including the
+existing research MCP routes. `application/runtime` continues to coordinate
+use cases; extracting thin adapters or separate server processes is a later
+reviewed change.
 
-**This is a target architecture, not a claim that the Rust sources have been
-moved.** The active Cargo workspace still uses `crates/*`; changing its paths
-without migrating every crate source, internal `path` dependency, lockfile,
-container path and CI script would break the engine.
+### Required regression checks
 
-| Target business boundary | Existing Rust implementation | Notes |
-| --- | --- | --- |
-| `market_data/` | `crates/seealpha-market`, `crates/seealpha-feed`, `crates/seealpha-catalog`, `crates/binance-source`, `crates/data-converter`, `crates/quality` | Preserve catalog and ingestion semantics |
-| `alpha/` | `crates/seealpha-strategy`, Python strategy host and `packages/` | Strategy hosting is not an execution gateway |
-| `portfolio/` | `crates/seealpha-portfolio`, runtime portfolio module | Targets and netting |
-| `risk/` | Portfolio risk clipping and runtime order gates | Cross-cutting: do not bypass gates |
-| `execution/` | Runtime order journal, reconciliation and execution functions | Evidence-first, idempotent behavior |
-| `connectivity/` | `crates/seealpha-venue` and market source adapters | Separate signed exchange IO from public feeds |
-| `accounting/` | `crates/seealpha-ledger`, runtime accounts/fills | Durable ledger owns financial facts |
-| `application/` | `crates/seealpha-runtime` | Target shared use-case layer |
-| `interfaces/api/` | `crates/seealpha-http` | Preserve HTTP contract version 2 |
-| `interfaces/mcp/` | Research MCP endpoints within HTTP crate | No standalone server is implied |
-| `apps/trading_engine/` | `crates/seealpha-engine` | Preserve `seealpha-engine` binary name |
-| `backtest/` | `crates/seealpha-backtest` | Preserve existing benchmark and test entrypoints |
-| `common/`, `monitoring/` | Shared code and existing operational instrumentation | Create dedicated crates only when justified |
+1. `cargo fmt --all --check`
+2. `cargo clippy --workspace --all-targets --locked -- -D warnings`
+3. `cargo test --workspace --locked`
+4. `cargo build --workspace --locked --release`
+5. `python3 -m unittest discover -s tests -t . -p '*_test.py' -v`
+6. `docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .`
 
-### Migration requirements
-
-1. Move existing sources as **complete crates** (or refactor into modules) and
-   update workspace membership and all Cargo `path` dependencies together.
-2. Update source paths in Dockerfiles, scripts, tests, and documentation; avoid
-   introducing second implementations that drift from the running engine.
-3. Keep the v2 HTTP contract, Python strategy-host compatibility, paper/live
-   isolation, tenant authorization, durable reconciliation and fail-closed risk
-   rules unchanged.
-4. Validate `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
-   --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo build
-   --workspace --locked --release` and deployment smoke tests before cutover.
-5. Do not claim live-trading readiness until the separate Rust parity and
-   exchange end-to-end acceptance gates are satisfied.
+Do not enable live trading solely because the directory migration is merged.
+Current Rust parity and production exchange acceptance restrictions still apply.

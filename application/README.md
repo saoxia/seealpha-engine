@@ -1,9 +1,10 @@
 # Application services
 
-This directory is the **target boundary** for shared use-case orchestration, not a second trading runtime.
+The active Rust application orchestration crate is [runtime](runtime/).
 
-Intended call path: `interfaces/{api,mcp,...}` → `application` → domain services.
+Interfaces call shared application operations rather than duplicating trading logic.
+Current runtime responsibilities include paper sessions, account state, verified order reconciliation, strategy submission and data jobs. The runtime is **not** a production live-trading approval.
 
-Existing implementation: `crates/seealpha-runtime` owns application orchestration today. Do not duplicate trading state, bypass admission gates, or move order reconciliation without integration tests. Migration status: **planned, not yet relocated**.
+Desired call direction: `interfaces/*` → `application/runtime` → domain crates. The current HTTP adapter is not yet fully refactored to thin use-case handlers; that is a separate behavioral refactor, not part of this directory relocation.
 
-Typical use cases: start/stop strategy, run paper session, query positions, start backtest, reconcile order by verified evidence. All entry points must share authorization, idempotency and audit behavior.
+Keep tenant authorization, idempotency, risk limits, evidence-first reconciliation and audit behavior consistent across all protocols.

@@ -1,10 +1,7 @@
-# Interfaces
+# External interfaces
 
-External protocol adapters belong here, separate from trading logic and process bootstrapping.
+- [api/http](api/http/): the existing REST HTTP v2 server and request validation; this is the active interface
+- `mcp/`: a proposed future dedicated protocol boundary; existing research MCP endpoints currently remain implemented in `api/http`
+- `websocket/`, `grpc/`: potential future adapters, not implemented by this migration
 
-- `api/`: REST/HTTP v2 (currently implemented in `crates/seealpha-http`)
-- `mcp/`: Model Context Protocol adapter (do not assume a standalone MCP server already exists)
-- `websocket/`: streaming adapter (future, only when supported)
-- `grpc/`: RPC adapter (future, only when supported)
-
-Current research MCP route lives in the HTTP crate; preserve its existing auth/contract gates. Interface adapters should call shared application services instead of duplicating portfolio, ledger, risk or execution rules. Migration status: **target topology, current code remains in the original Cargo crates**.
+Do not present unimplemented protocols as working services. Shared business orchestration belongs to `application/runtime`.
