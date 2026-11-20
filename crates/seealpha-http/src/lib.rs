@@ -1,6 +1,7 @@
 //! HTTP v2 boundary. Every response carries `X-SeeAlpha-Engine-Contract-Version: 2`.
 //! Live exchange routes refuse before any credential is stored.
 mod parity;
+mod derivatives;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -132,6 +133,7 @@ pub fn router(state: AppState) -> Router {
             get(latest_candidate),
         )
         .merge(parity::routes())
+        .merge(derivatives::routes())
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
         router = router.route("/research/v1/datasets", get(research_datasets));
