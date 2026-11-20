@@ -41,6 +41,9 @@ pub struct IntentRecord {
     pub symbol: String,
     pub client_order_id: String,
     pub payload_sha256: String,
+    /// Exact untrusted wire fields used to construct payload_sha256.
+    /// A durable intent journal must bind these to the authorized intent.
+    pub parameters: Vec<(String, String)>,
 }
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Admission { Fresh, Seen }
@@ -119,6 +122,7 @@ impl PreparedWrite {
             account_scope:account.into(),request_id:request.into(),
             product,action,symbol:canonical,client_order_id:client_id.into(),
             payload_sha256:format!("{:x}",digest.finalize()),
+            parameters: parameters.clone(),
         },method,path,parameters,attempted:false})
     }
     pub fn record(&self)->&IntentRecord {&self.record}

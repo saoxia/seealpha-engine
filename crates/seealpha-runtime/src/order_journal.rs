@@ -37,6 +37,12 @@ impl<'a> LedgerIntentJournal<'a> {
             && self.immutable_intent["environment"] == self.environment
             && self.immutable_intent["client_order_id"] == record.client_order_id
             && self.immutable_intent["symbol"] == record.symbol
+            // Bind the COMPLETE prepared wire payload, not merely the client ID.
+            // Otherwise a different side, quantity, or price could be signed
+            // under an otherwise valid ledger intent. JSON arrays preserve
+            // pair order; PreparedWrite rejects duplicate parameter names.
+            && self.immutable_intent.get("wire_parameters")
+                == serde_json::to_value(&record.parameters).ok().as_ref()
             && self.immutable_intent["product"] == match record.product {
                 Product::Spot => "spot",
                 Product::FuturesUm => "futures_um",
@@ -108,6 +114,40 @@ mod tests {
     }
 
     #[test]
+    fn altered_wire_payload_cannot_create_a_ledger_intent_or_send() {
+        let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        ledger.ensure_tenant("tenant1", "production", "active").unwrap();
+        let immutable = json!({
+            "environment":"production", "action":"NEW",
+            "client_order_id":"client1", "symbol":"ETHUSDT", "product":"spot",
+            "side":"BUY", "quantity":"0.01",
+            "wire_parameters":[
+                ["symbol", "ETHUSDT"],
+                ["newClientOrderId", "client1"],
+                ["side", "BUY"],
+                ["quantity", "0.01"]
+            ]
+        });
+        let mut changed = PreparedWrite::new(
+            "tenant1:account1:production", "request1", Product::Spot,
+            WriteAction::NewOrder, "ETHUSDT", "client1",
+            vec![
+                ("symbol".into(), "ETHUSDT".into()),
+                ("newClientOrderId".into(), "client1".into()),
+                ("side".into(), "SELL".into()),
+                ("quantity".into(), "0.01".into()),
+            ],
+        ).unwrap();
+        let mut journal = LedgerIntentJournal::new(
+            &ledger, "tenant1", "account1", "production", immutable,
+        );
+        let mut wire = Wire { attempts: 0 };
+        assert!(changed.dispatch(&mut journal, &mut wire).is_err());
+        assert_eq!(wire.attempts, 0);
+        assert!(ledger.request("tenant1", "account1", "request1").unwrap().is_none());
+    }
+
+    #[test]
     fn restart_is_reconciliation_only_and_never_sends_twice() {
         let path = std::env::temp_dir().join(format!(
             "seealpha-intent-adapter-{}-{:?}.sqlite",
@@ -120,6 +160,9 @@ mod tests {
             "environment":"production", "action":"NEW",
             "client_order_id":"client1", "symbol":"ETHUSDT", "product":"spot",
             "side":"BUY", "quantity":"0.01", "price":"2000",
+            "wire_parameters": [
+                ["symbol", "ETHUSDT"], ["newClientOrderId", "client1"]
+            ],
         });
         let make = || PreparedWrite::new(
             "tenant1:account1:production", "request1", Product::Spot,
