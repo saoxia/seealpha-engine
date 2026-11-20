@@ -78,7 +78,93 @@ pub struct BasketAdmission<'a> {
     pub account_revision: i64,
 }
 
+/// Durable, read-only recovery work item. A terminal observation still
+/// requires independent fill/account reconciliation; it is NOT a send permit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderRecoveryItem {
+    pub tenant_id: String,
+    pub account_id: String,
+    pub environment: String,
+    pub request_id: String,
+    pub client_order_id: String,
+    pub product: String,
+    pub symbol: String,
+    pub last_verified_status: Option<String>,
+    pub observed_at_ns: Option<i64>,
+    pub reconciliation_only: bool,
+}
+
 impl Ledger {
+    /// Discover immutable registered intents on restart or on explicit read.
+    /// Every item is reconciliation-only, including unknown and terminal
+    /// observations: order ACKs cannot establish financial settlement.
+    /// Bounded pagination avoids skipping unknown orders in large books.
+    pub fn order_recovery_page(
+        &self, tenant: &str, offset: usize, limit: usize,
+    ) -> Result<Vec<OrderRecoveryItem>, LedgerError> {
+        if tenant.is_empty() || tenant.len() > 128 || limit == 0
+            || limit > 500 || offset > i64::MAX as usize {
+            return Err(conflict("invalid recovery query scope or page size"));
+        }
+        let conn = self.lock()?;
+        let mut statement = conn.prepare(
+            "SELECT oi.tenant_id,oi.account_id,oi.environment,oi.request_id,
+                    oi.client_order_id,oi.intent_json,
+                    (SELECT oo.evidence_json FROM order_observations oo
+                     WHERE oo.tenant_id=oi.tenant_id AND oo.account_id=oi.account_id
+                       AND oo.environment=oi.environment
+                       AND oo.client_order_id=oi.client_order_id
+                     ORDER BY oo.observed_at_ns DESC,oo.observation_id DESC LIMIT 1)
+             FROM order_intents oi
+             WHERE oi.tenant_id=?1
+             ORDER BY oi.created_at,oi.account_id,oi.request_id
+             LIMIT ?2 OFFSET ?3",
+        ).map_err(sql)?;
+        let rows = statement.query_map(
+            params![tenant, limit as i64, offset as i64],
+            |row| Ok((
+                row.get::<_,String>(0)?,row.get::<_,String>(1)?,
+                row.get::<_,String>(2)?,row.get::<_,String>(3)?,
+                row.get::<_,String>(4)?,row.get::<_,String>(5)?,
+                row.get::<_,Option<String>>(6)?,
+            )),
+        ).map_err(sql)?;
+        let mut items = Vec::new();
+        for row in rows {
+            let (tenant_id,account_id,environment,request_id,client_order_id,
+                intent_text,latest_text) = row.map_err(sql)?;
+            let intent: Value = serde_json::from_str(&intent_text)
+                .map_err(|_| conflict("persisted order intent is corrupt"))?;
+            if !valid_intent(&intent,&environment,&client_order_id) {
+                return Err(conflict("persisted order intent has invalid scope or amounts"));
+            }
+            let (last_verified_status,observed_at_ns) = if let Some(raw) = latest_text {
+                let observed: Value = serde_json::from_str(&raw)
+                    .map_err(|_| conflict("persisted order observation is corrupt"))?;
+                let source = observed["source"].as_str();
+                let status = observed["status"].as_str();
+                let at = observed["observed_at_ns"].as_i64();
+                if !matches!(source,Some("signed_exchange_order_query"|"authenticated_user_stream"))
+                    || status.is_none() || at.is_none_or(|v|v<=0)
+                    || observed["client_order_id"].as_str()!=Some(client_order_id.as_str())
+                    || observed["environment"].as_str()!=Some(environment.as_str()) {
+                    return Err(conflict("stored recovery evidence is untrusted or mismatched"));
+                }
+                (status.map(str::to_owned),at)
+            } else {
+                (None,None)
+            };
+            let symbol = intent["symbol"].as_str().unwrap_or("").to_owned();
+            let product = intent["product"].as_str().unwrap_or("unknown").to_owned();
+            items.push(OrderRecoveryItem {
+                tenant_id,account_id,environment,request_id,client_order_id,
+                product,symbol,last_verified_status,observed_at_ns,
+                reconciliation_only:true,
+            });
+        }
+        Ok(items)
+    }
+
     /// Atomic, fail-closed reservation binding. No Venue call is made.
     #[allow(clippy::too_many_arguments)]
     pub fn preregister_basket_order_intent(
@@ -462,6 +548,33 @@ mod tests {
         second["client_order_id"]=json!("order2");
         assert!(book.preregister_basket_order_intent("t","a","production",
             "req-basket","order2",&fingerprint,&second,guard).is_err());
+    }
+
+    #[test]
+    fn recovery_listing_is_read_only_scoped_and_restart_safe() {
+        let book=Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        book.ensure_tenant("t","production","active").unwrap();
+        book.ensure_tenant("other","production","active").unwrap();
+        let intent=new_intent();
+        assert_eq!(book.preregister_order_intent("t","a","production",
+            "req1","cl1",&"a".repeat(64),&intent).unwrap(),IntentStart::Fresh);
+        let first=book.order_recovery_page("t",0,10).unwrap();
+        assert_eq!(first.len(),1);
+        assert!(first[0].reconciliation_only);
+        assert_eq!(first[0].last_verified_status,None);
+        assert!(book.order_recovery_page("other",0,10).unwrap().is_empty());
+        assert!(book.order_recovery_page("t",1,10).unwrap().is_empty());
+        let observed=json!({"environment":"production","client_order_id":"cl1",
+            "status":"NEW","source":"signed_exchange_order_query",
+            "observed_at_ns":10});
+        book.append_order_observation("t","a","production","cl1","o1",&observed).unwrap();
+        let after=book.order_recovery_page("t",0,1).unwrap();
+        assert_eq!(after[0].last_verified_status.as_deref(),Some("NEW"));
+        assert_eq!(after[0].observed_at_ns,Some(10));
+        assert!(after[0].reconciliation_only);
+        assert!(book.order_recovery_page("t",0,501).is_err());
+        assert_eq!(book.preregister_order_intent("t","a","production",
+            "req1","cl1",&"a".repeat(64),&intent).unwrap(),IntentStart::ReconcileOnly);
     }
 
     #[test]
