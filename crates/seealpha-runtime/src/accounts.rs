@@ -2,7 +2,8 @@
 //! SQLite stores only the connection status. Snapshot calls use the supplied
 //! loopback gateway and never write the secret.
 use crate::{Runtime, RuntimeError, map_ledger};
-use seealpha_venue::{Credentials, VenueClient, VenueError};
+use seealpha_venue::{Credentials, VenueClient, VenueError, Product};
+use seealpha_venue::reconciliation::{reconcile_assets, reconcile_positions};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -183,6 +184,54 @@ impl Runtime {
         drop(credentials);
         Ok(snapshot)
     }
+    /// Account evidence and discrepancy report for a single product. This is a
+    /// read-and-audit operation, not a balance mutation or trading approval.
+    /// Expected snapshots are supplied by an authenticated caller and must
+    /// correspond to the same tenant, account, environment and product.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reconcile_account_product(
+        &self, tenant:&str, account:&str, environment:&str,
+        product:Product, expected:&Value, venue_base:&str,
+    )->Result<Value,RuntimeError>{
+        self.require_active(tenant)?;
+        if !matches!(environment,"production"|"sandbox") {
+            return Err(RuntimeError::Unprocessable("账户环境无效。".into()));
+        }
+        let credentials=secrets().lock()
+            .map_err(|_|RuntimeError::Conflict("账户凭据锁不可用。".into()))?
+            .get(&key(tenant,account,environment)).cloned()
+            .ok_or_else(||RuntimeError::Conflict("账户凭据未登记。".into()))?;
+        validate_secret(&credentials.api_key,&credentials.secret)?;
+        let client=VenueClient::new(venue_base)
+            .map_err(|e|map_venue(e,&credentials.api_key,&credentials.secret))?;
+        let observed=client.account_snapshot_product(&credentials,product)
+            .map_err(|e|map_venue(e,&credentials.api_key,&credentials.secret))?;
+        let assets=reconcile_assets(product,expected,&observed)
+            .map_err(|e|map_venue(e,&credentials.api_key,&credentials.secret))?;
+        let positions=if product==Product::Spot {Vec::new()} else {
+            reconcile_positions(product,expected,&observed)
+                .map_err(|e|map_venue(e,&credentials.api_key,&credentials.secret))?
+        };
+        let to_json=|diffs:Vec<seealpha_venue::reconciliation::AccountDifference>| {
+            diffs.into_iter().map(|d|json!({"key":d.key,
+                "expected":d.expected.to_string(),"observed":d.observed.to_string()}))
+                .collect::<Vec<_>>()
+        };
+        let product_name=match product {
+            Product::Spot=>"spot",
+            Product::FuturesUm=>"futures_um",
+            Product::Option=>"options",
+        };
+        let report=json!({"tenant_id":tenant,"account_id":account,
+            "environment":environment,"product":product_name,
+            "asset_differences":to_json(assets),"position_differences":to_json(positions),
+            "source":"signed_exchange_snapshot",
+            "status":"comparison_only"});
+        self.ledger.add_event(tenant,account,"account_reconciliation",
+            &report.to_string()).map_err(map_ledger)?;
+        Ok(report)
+    }
+
 }
 
 fn validate_secret(api_key: &str, secret: &str) -> Result<(), RuntimeError> {

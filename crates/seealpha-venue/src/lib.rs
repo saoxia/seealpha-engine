@@ -6,6 +6,8 @@ pub mod options;
 pub mod options_rules;
 pub mod trades;
 pub mod reconciliation;
+pub mod lifecycle;
+pub mod settlement;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
