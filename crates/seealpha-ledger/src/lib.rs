@@ -143,6 +143,15 @@ CREATE TABLE IF NOT EXISTS data_policies (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY(tenant_id,product,symbol)
 );
+CREATE TABLE IF NOT EXISTS strategy_market_subscriptions (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    issuance_id TEXT NOT NULL,
+    streams_json TEXT NOT NULL,
+    lookback_bars INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(tenant_id,account_id,issuance_id)
+);
 CREATE TABLE IF NOT EXISTS data_jobs (
     tenant_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
