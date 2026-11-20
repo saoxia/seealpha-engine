@@ -2,13 +2,17 @@
 //!
 //! The host is the only Python process. It may publish target holdings and
 //! cannot submit orders. Package bytes are checked before the process starts.
+mod host_policy;
+mod host_process;
+mod issued;
+
+pub use issued::{AccountScope, IssuedStrategy, authorize_issued, run_issued_host};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 use thiserror::Error;
 use zip::ZipArchive;
 
@@ -56,6 +60,7 @@ pub struct StrategyBar {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Publication {
     pub symbol: String,
     pub quantity: String,
@@ -63,6 +68,7 @@ pub struct Publication {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HostResponse {
     ok: bool,
     #[serde(default)]
@@ -85,54 +91,113 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 pub fn inspect_archive(bytes: &[u8]) -> Result<PackageMetadata, StrategyError> {
     if bytes.is_empty() || bytes.len() as u64 > MAX_ARCHIVE_BYTES {
-        return Err(StrategyError::Package("策略包无效。".into()));
+        return Err(invalid_archive());
     }
     let digest = sha256_hex(bytes);
-    let cursor = std::io::Cursor::new(bytes);
-    let mut archive =
-        ZipArchive::new(cursor).map_err(|_| StrategyError::Package("策略包无效。".into()))?;
-    if archive.len() > MAX_MEMBERS {
-        return Err(StrategyError::Package("策略包无效。".into()));
+    let mut archive = ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|_| invalid_archive())?;
+    if archive.len() == 0 || archive.len() > MAX_MEMBERS {
+        return Err(invalid_archive());
     }
+    let mut seen = std::collections::HashSet::new();
     let mut total = 0_u64;
     let mut metadata: Option<Vec<u8>> = None;
     for index in 0..archive.len() {
-        let mut file = archive
-            .by_index(index)
-            .map_err(|_| StrategyError::Package("策略包无效。".into()))?;
-        if file.encrypted() {
-            return Err(StrategyError::Package("策略包无效。".into()));
+        let mut file = archive.by_index(index).map_err(|_| invalid_archive())?;
+        if file.encrypted()
+            || file.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000)
+        {
+            return Err(invalid_archive());
         }
         let name = file.name().to_string();
         reject_member(&name)?;
-        total = total
-            .checked_add(file.size())
-            .ok_or_else(|| StrategyError::Package("策略包无效。".into()))?;
+        if !seen.insert(name.clone()) {
+            return Err(StrategyError::Package("策略包包含重复的路径。".into()));
+        }
+        total = total.checked_add(file.size()).ok_or_else(invalid_archive)?;
         if total > MAX_ARCHIVE_BYTES {
-            return Err(StrategyError::Package("策略包无效。".into()));
+            return Err(invalid_archive());
+        }
+        if file.is_dir() {
+            continue;
+        }
+        let mut content = Vec::new();
+        file.by_ref()
+            .take(MAX_ARCHIVE_BYTES + 1)
+            .read_to_end(&mut content)
+            .map_err(|_| invalid_archive())?;
+        if content.len() as u64 != file.size() {
+            return Err(invalid_archive());
+        }
+        if name.ends_with(".py") {
+            let python = std::str::from_utf8(&content).map_err(|_| invalid_archive())?;
+            if python.contains("strategy_python") {
+                return Err(StrategyError::Package("不能从 strategy_python 加载策略。".into()));
+            }
         }
         if name == "seealpha-package.json" {
-            let mut payload = Vec::new();
-            file.read_to_end(&mut payload)
-                .map_err(|_| StrategyError::Package("策略包无效。".into()))?;
-            metadata = Some(payload);
+            metadata = Some(content);
         }
     }
     let payload = metadata
         .ok_or_else(|| StrategyError::Package("策略包缺少 seealpha-package.json。".into()))?;
-    metadata_from_json(&payload, digest)
+    let meta = metadata_from_json(&payload, digest)?;
+    let entry_file = meta.entry_point.split_once(':')
+        .map(|(module, _)| format!("{}.py", module.replace('.', "/")))
+        .ok_or_else(invalid_archive)?;
+    if !seen.contains(&entry_file) {
+        return Err(StrategyError::Package("策略包缺少声明的 Python 入口。".into()));
+    }
+    Ok(meta)
+}
+
+fn invalid_archive() -> StrategyError {
+    StrategyError::Package("策略包无效。".into())
+}
+
+pub fn inspect_directory(root: &Path) -> Result<PackageMetadata, StrategyError> {
+    let digest = digest_dir(root)?;
+    let metadata = std::fs::read(root.join("seealpha-package.json"))
+        .map_err(|_| StrategyError::Package("策略包缺少 seealpha-package.json。".into()))?;
+    let meta = metadata_from_json(&metadata, digest)?;
+    let module = meta.entry_point.split_once(':')
+        .ok_or_else(invalid_archive)?.0;
+    let entry = root.join(format!("{}.py", module.replace('.', "/")));
+    let info = std::fs::symlink_metadata(&entry).map_err(|_| invalid_archive())?;
+    if !info.file_type().is_file() {
+        return Err(StrategyError::Package("策略包缺少声明的 Python 入口。".into()));
+    }
+    Ok(meta)
 }
 
 pub fn digest_dir(root: &Path) -> Result<String, StrategyError> {
+    let root_info = std::fs::symlink_metadata(root).map_err(|_| invalid_archive())?;
+    if !root_info.file_type().is_dir() {
+        return Err(invalid_archive());
+    }
     let mut files = Vec::new();
     collect_files(root, root, &mut files)?;
+    if files.is_empty() || files.len() > MAX_MEMBERS {
+        return Err(invalid_archive());
+    }
     files.sort();
     let mut hasher = Sha256::new();
+    let mut total = 0_u64;
     for (relative, path) in files {
+        reject_member(&relative)?;
+        let bytes = std::fs::read(path).map_err(|_| invalid_archive())?;
+        total = total.checked_add(bytes.len() as u64).ok_or_else(invalid_archive)?;
+        if total > MAX_ARCHIVE_BYTES {
+            return Err(invalid_archive());
+        }
+        if relative.ends_with(".py") {
+            let python = std::str::from_utf8(&bytes).map_err(|_| invalid_archive())?;
+            if python.contains("strategy_python") {
+                return Err(StrategyError::Package("不能从 strategy_python 加载策略。".into()));
+            }
+        }
         hasher.update(relative.as_bytes());
         hasher.update([0]);
-        let bytes =
-            std::fs::read(path).map_err(|_| StrategyError::Package("策略包无效。".into()))?;
         hasher.update(bytes);
     }
     Ok(hex_encode(hasher.finalize()))
@@ -152,31 +217,24 @@ pub struct HostCommand<'a> {
 }
 
 pub fn run_host(command: &HostCommand<'_>) -> Result<StrategyRun, StrategyError> {
-    let HostCommand {
-        python,
-        host,
-        package_dir,
-        archive_path,
-        parameters,
-        symbol,
-        interval,
-        bars,
-        op,
-    } = *command;
-    if !host.is_file() {
+    host_policy::check_command(command)?;
+    if !command.host.is_file() {
         return Err(StrategyError::Host);
     }
-    if bars.len() > 5_000 {
-        return Err(StrategyError::Package("K 线数量超过上限。".into()));
+    if let Some(path) = command.archive_path {
+        let source = std::fs::read(path).map_err(|_| invalid_archive())?;
+        inspect_archive(&source)?;
+    } else if let Some(root) = command.package_dir {
+        inspect_directory(root)?;
     }
     let request = serde_json::json!({
-        "op": op,
-        "package_dir": package_dir,
-        "archive_path": archive_path,
-        "parameters": parameters,
-        "symbol": symbol,
-        "interval": interval,
-        "bars": bars.iter().map(|bar| HostBar {
+        "op": command.op,
+        "package_dir": command.package_dir,
+        "archive_path": command.archive_path,
+        "parameters": command.parameters,
+        "symbol": command.symbol,
+        "interval": command.interval,
+        "bars": command.bars.iter().map(|bar| HostBar {
             open_time_ms: bar.open_time_ms,
             open: bar.open.clone(),
             high: bar.high.clone(),
@@ -185,59 +243,16 @@ pub fn run_host(command: &HostCommand<'_>) -> Result<StrategyRun, StrategyError>
             volume: bar.volume.clone(),
         }).collect::<Vec<_>>(),
     });
-    let response = invoke(python, host, &request)?;
-    if !response.ok {
-        return Err(StrategyError::Failed(if response.error.is_empty() {
-            "策略执行失败。".into()
-        } else {
-            response.error
-        }));
-    }
-    Ok(StrategyRun {
-        prepared: response.prepared,
-        publications: response.publications,
-    })
+    let response = host_process::invoke(command.python, command.host, &request)?;
+    host_policy::check_response(command, response)
 }
 
-fn invoke(python: &Path, host: &Path, request: &Value) -> Result<HostResponse, StrategyError> {
-    let mut child = Command::new(python)
-        .arg(host)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|_| StrategyError::Host)?;
-    let payload = serde_json::to_vec(request).map_err(|_| StrategyError::Host)?;
-    let mut stdin = child.stdin.take().ok_or(StrategyError::Host)?;
-    stdin.write_all(&payload).map_err(|_| StrategyError::Host)?;
-    drop(stdin);
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|_| StrategyError::Host)? {
-            break status;
-        }
-        if started.elapsed() > Duration::from_secs(30) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(StrategyError::Timeout);
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    };
-    let mut stdout = String::new();
-    if let Some(mut pipe) = child.stdout.take() {
-        pipe.read_to_string(&mut stdout)
-            .map_err(|_| StrategyError::Host)?;
-    }
-    if !status.success() {
-        return Err(StrategyError::Failed("策略宿主异常退出。".into()));
-    }
-    serde_json::from_str(&stdout).map_err(|_| StrategyError::Failed("策略宿主输出无效。".into()))
-}
+
 
 fn metadata_from_json(payload: &[u8], digest: String) -> Result<PackageMetadata, StrategyError> {
     let document: Value = serde_json::from_slice(payload)
         .map_err(|_| StrategyError::Package("策略包说明无效。".into()))?;
-    if document.get("format").and_then(Value::as_i64) != Some(1) {
+    if document.get("format").and_then(Value::as_u64) != Some(1) {
         return Err(StrategyError::Package("策略包说明无效。".into()));
     }
     let name = document
@@ -261,6 +276,22 @@ fn metadata_from_json(payload: &[u8], digest: String) -> Result<PackageMetadata,
     if !valid_entry(entry_point) {
         return Err(StrategyError::Package("策略包入口无效。".into()));
     }
+    let title = document.get("title").unwrap_or(&document["name"]);
+    if !title.as_str().is_some_and(|s| !s.trim().is_empty() && s.trim().len() <= 100)
+        || document.get("description").is_some_and(|value| {
+            !value.is_null() && !value.as_str().is_some_and(|s| s.len() <= 500)
+        })
+        || !document.get("parameters").is_none_or(Value::is_object)
+        || document.get("parameters").and_then(Value::as_object).is_some_and(|parameters| {
+            parameters.keys().any(|key| {
+                matches!(key.to_ascii_lowercase().as_str(),
+                    "api_key" | "secret" | "passphrase" | "password"
+                    | "token" | "credential" | "credentials")
+            })
+        })
+    {
+        return Err(StrategyError::Package("策略包说明无效。".into()));
+    }
     Ok(PackageMetadata {
         name: name.to_string(),
         version: version.to_string(),
@@ -270,29 +301,45 @@ fn metadata_from_json(payload: &[u8], digest: String) -> Result<PackageMetadata,
 }
 
 fn reject_member(name: &str) -> Result<(), StrategyError> {
-    if name.is_empty() || name.ends_with('/') {
+    if name.is_empty()
+        || name.starts_with('/')
+        || name.contains('\\')
+        || name.contains(':')
+        || name.contains('\0')
+        || name.chars().any(char::is_control)
+        || name.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        // A directory ends in '/': its last empty component is allowed only
+        // after every earlier component has passed the same checks.
+        if !(name.ends_with('/')
+            && !name[..name.len() - 1].is_empty()
+            && name[..name.len() - 1].split('/').all(|p| {
+                !p.is_empty() && p != "." && p != ".."
+            })
+            && !name.starts_with('/')
+            && !name.contains('\\')
+            && !name.contains(':')
+            && !name.contains('\0')
+            && !name.chars().any(char::is_control))
+        {
+            return Err(StrategyError::Package("策略包路径无效。".into()));
+        }
+    }
+    if name.ends_with('/') {
         return Ok(());
     }
-    if name.starts_with('/') || name.contains('\\') || name.split('/').any(|part| part == "..") {
-        return Err(StrategyError::Package("策略包路径无效。".into()));
-    }
     let path = Path::new(name);
-    let suffix = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !matches!(suffix.as_str(), "py" | "json" | "md" | "txt") || name.contains("__pycache__") {
+    let suffix = path.extension().and_then(|value| value.to_str())
+        .unwrap_or("").to_ascii_lowercase();
+    if !matches!(suffix.as_str(), "py" | "json" | "md" | "txt")
+        || path.components().any(|p| p.as_os_str() == "__pycache__")
+    {
         return Err(StrategyError::Package("策略包包含不支持的文件。".into()));
     }
     if path.components().any(|part| {
-        part.as_os_str()
-            .to_string_lossy()
-            .starts_with("strategy_python")
+        part.as_os_str().to_string_lossy().starts_with("strategy_python")
     }) {
-        return Err(StrategyError::Package(
-            "不能从 strategy_python 加载策略。".into(),
-        ));
+        return Err(StrategyError::Package("不能从 strategy_python 加载策略。".into()));
     }
     Ok(())
 }
@@ -302,23 +349,28 @@ fn collect_files(
     dir: &Path,
     files: &mut Vec<(String, PathBuf)>,
 ) -> Result<(), StrategyError> {
-    let entries =
-        std::fs::read_dir(dir).map_err(|_| StrategyError::Package("策略包无效。".into()))?;
+    let entries = std::fs::read_dir(dir).map_err(|_| invalid_archive())?;
     for entry in entries {
-        let entry = entry.map_err(|_| StrategyError::Package("策略包无效。".into()))?;
+        let entry = entry.map_err(|_| invalid_archive())?;
         let path = entry.path();
-        if path.is_dir() {
+        let info = std::fs::symlink_metadata(&path).map_err(|_| invalid_archive())?;
+        if info.file_type().is_symlink() {
+            return Err(StrategyError::Package("策略包不能包含符号链接。".into()));
+        }
+        if info.file_type().is_dir() {
             if path.file_name().and_then(|name| name.to_str()) == Some("__pycache__") {
                 continue;
             }
             collect_files(root, &path, files)?;
-        } else if path.is_file() {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|_| StrategyError::Package("策略包无效。".into()))?
-                .to_string_lossy()
-                .replace('\\', "/");
+        } else if info.file_type().is_file() {
+            let relative = path.strip_prefix(root).map_err(|_| invalid_archive())?
+                .to_string_lossy().replace('\\', "/");
             files.push((relative, path));
+            if files.len() > MAX_MEMBERS {
+                return Err(invalid_archive());
+            }
+        } else {
+            return Err(invalid_archive());
         }
     }
     Ok(())
