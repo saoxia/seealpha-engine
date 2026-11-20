@@ -334,6 +334,8 @@ mod tests {
     use arrow_array::{
         ArrayRef, Decimal128Array, StringArray, TimestampNanosecondArray,
     };
+    use arrow_array::builder::StringDictionaryBuilder;
+    use arrow_array::types::Int8Type;
     use arrow_schema::{Field, Schema};
     use crate::RecordKind;
 
@@ -371,8 +373,14 @@ mod tests {
             }
         }
         if let Some(ids) = ids {
-            fields.push(Field::new("aggressor_side", DataType::Utf8, false));
-            arrays.push(Arc::new(StringArray::from(vec!["BUY"; ts.len()])));
+            fields.push(Field::new("aggressor_side", DataType::Dictionary(
+                Box::new(DataType::Int8), Box::new(DataType::Utf8),
+            ), false));
+            let mut side = StringDictionaryBuilder::<Int8Type>::new();
+            for _ in ts {
+                side.append("BUY").unwrap();
+            }
+            arrays.push(Arc::new(side.finish()));
             fields.push(Field::new("trade_id", DataType::Utf8, false));
             arrays.push(Arc::new(StringArray::from(ids.to_vec())));
         }
