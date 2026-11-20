@@ -551,6 +551,33 @@ mod tests {
     }
 
     #[test]
+    fn recovered_unknown_order_survives_file_restart_without_new_send_grant() {
+        let path=std::env::temp_dir().join(format!(
+            "seealpha-recovery-{}-{:?}.sqlite",
+            std::process::id(),std::thread::current().id(),
+        ));
+        let _=std::fs::remove_file(&path);
+        let intent=new_intent();
+        {
+            let ledger=Ledger::open(&path).unwrap();
+            ledger.ensure_tenant("t","production","active").unwrap();
+            assert_eq!(ledger.preregister_order_intent(
+                "t","a","production","req1","cl1",
+                &"a".repeat(64),&intent).unwrap(),IntentStart::Fresh);
+        }
+        let reopened=Ledger::open(&path).unwrap();
+        let page=reopened.order_recovery_page("t",0,100).unwrap();
+        assert_eq!(page.len(),1);
+        assert!(page[0].reconciliation_only);
+        assert_eq!(page[0].last_verified_status,None);
+        assert_eq!(reopened.preregister_order_intent(
+            "t","a","production","req1","cl1",
+            &"a".repeat(64),&intent).unwrap(),IntentStart::ReconcileOnly);
+        drop(reopened);
+        let _=std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn recovery_listing_is_read_only_scoped_and_restart_safe() {
         let book=Ledger::open(std::path::Path::new(":memory:")).unwrap();
         book.ensure_tenant("t","production","active").unwrap();
