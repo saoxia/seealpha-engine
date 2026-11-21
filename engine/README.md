@@ -7,7 +7,7 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 | [market_data](market_data/) | 行情与历史数据 |
 | [strategy](strategy/) | 策略、信号与目标发布 |
 | [portfolio](portfolio/) | 组合、资金与目标仓位 |
-| [connectivity](connectivity/) | 交易所通信 |
+| [connection](connection/) | 交易所私有订单及账户协议（当前为 Binance） |
 | [ledger](ledger/) | 账户与账本事实及持久化 |
 | [backtest](backtest/) | 历史回放与模拟 |
 | [runtime](runtime/) | 跨领域用例编排 |

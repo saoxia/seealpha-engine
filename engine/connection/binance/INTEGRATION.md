@@ -1,16 +1,30 @@
 # seealpha-venue：订单安全门禁与集成契约
 
-> 仅本 crate 的独立增量。**没有接入 Runtime/Ledger，也未开启实盘。**
-> Cargo、Clippy、跨 crate、Python 对照与端到端验收尚未实际执行，不能标为通过。
+> 历史增量的安全契约说明，不代表当前 Runtime/Ledger 接线状态的实时验收报告。目录重构不启用实盘。
+
+## 当前目录归属
+
+`engine/connection/binance/` 是 **Binance 私有 REST 订单与账户适配器**；Binance 行情采集仍在 `engine/market_data/`，不在这里复制 NautilusTrader 能力。Cargo 包名 `seealpha-venue`、`seealpha_venue::*` 公共模块路径保持不变。
+
+| 物理目录 | 职责 |
+| --- | --- |
+| `src/lib.rs` | 签名 HTTP 客户端、端点白名单、公共类型及公开模块声明 |
+| `src/spot/` | Spot OCO、OTO、OTOCO |
+| `src/usd_m/` | USD-M 条件订单（Algo） |
+| `src/options/` | Options 执行、协议规则和真实成交查询 |
+| `src/orders/` | 预登记安全门禁、生命周期、真实成交证据及用户流 |
+| `src/account/` | 多产品只读账户证据、账户对账及资金结算查询 |
+
+模块声明使用 `#[path]` 直接指向实体源码文件，无空壳 crate 或转发模块。业务行为、凭据边界、账户安全门禁与 Ledger 事务归属不变。
 
 ## 当前原生能力与复用范围
 
-原有 `spot_oco.rs`（Spot OCO）、`conditional.rs`（USD-M Algo）、`option_trades.rs`（Options 成交分页）、`options.rs`（期权实验执行器）均保留，不重新实现。原有 `lifecycle.rs` 提供数量严格校验、终态及单调状态迁移。新增：
+原有 `src/spot/oco.rs`（Spot OCO）、`src/usd_m/conditional.rs`（USD-M Algo）、`src/options/trades.rs`（Options 成交分页）、`src/options/execution.rs`（期权实验执行器）均保留，不重新实现。原有 `src/orders/lifecycle.rs` 提供数量严格校验、终态及单调状态迁移。新增：
 
-- `order_guard.rs`：按产品限定 Binance POST/PUT/DELETE 路径，提交一次之前调用持久化 `IntentJournal::admit`。相同账户与 request_id 再次出现时只允许 GET 对账；无法确证的 HTTP 状态、超时、未知响应、ACK 字段不匹配都归于 Unknown，**绝不自动补发**。
-- `spot_oto.rs`：原生 Spot OTO、OTOCO 参数与确定性子单客户编号；交易所管理 pending legs，禁止在本地把触发当作成交，必须从订单列表和子单分别核实。
-- `user_stream.rs`：只接收 Spot `executionReport`、USD-M `ORDER_TRADE_UPDATE` 的字段契约。仅 `x=TRADE` 且拥有有效成交 ID、正数量/价格时产生 `TradeEvidence`；NEW/ACCEPTED/TRIGGERED/AMENDMENT/撤单事件不生成成交。断线、缺消息、逆序累计数量等使该订单冻结。
-- `trades.rs` + `VenueClient::query_order_trades`：Spot `myTrades` 与 USD-M `userTrades` 通过 `fromId` 循环最多 32 页，要求真实 Trade ID 严格递增且订单身份相同。即使分页结束，也必须把数量汇总与已签名查询的订单累计成交数量比较；不能以空结果证明历史完整。
+- `src/orders/guard.rs`：按产品限定 Binance POST/PUT/DELETE 路径，提交一次之前调用持久化 `IntentJournal::admit`。相同账户与 request_id 再次出现时只允许 GET 对账；无法确证的 HTTP 状态、超时、未知响应、ACK 字段不匹配都归于 Unknown，**绝不自动补发**。
+- `src/spot/oto.rs`：原生 Spot OTO、OTOCO 参数与确定性子单客户编号；交易所管理 pending legs，禁止在本地把触发当作成交，必须从订单列表和子单分别核实。
+- `src/orders/user_stream.rs`：只接收 Spot `executionReport`、USD-M `ORDER_TRADE_UPDATE` 的字段契约。仅 `x=TRADE` 且拥有有效成交 ID、正数量/价格时产生 `TradeEvidence`；NEW/ACCEPTED/TRIGGERED/AMENDMENT/撤单事件不生成成交。断线、缺消息、逆序累计数量等使该订单冻结。
+- `src/orders/trades.rs` + `VenueClient::query_order_trades`：Spot `myTrades` 与 USD-M `userTrades` 通过 `fromId` 循环最多 32 页，要求真实 Trade ID 严格递增且订单身份相同。即使分页结束，也必须把数量汇总与已签名查询的订单累计成交数量比较；不能以空结果证明历史完整。
 
 ## Runtime / Ledger 接线要求（未改动）
 
