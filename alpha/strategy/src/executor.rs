@@ -35,6 +35,26 @@ impl StrategyExecutor for NativeEmaExecutor {
     }
 }
 
+/// Account-issued, immutable built-in Rust strategy. This does not load or
+/// execute arbitrary uploaded code: manifest bytes select one compiled-in
+/// implementation only after their exact hash and account scope are authorized.
+///
+/// Callers must obtain `issued` and `scope` from trusted persisted state.
+/// No HTTP issuance or automatic cutover from Python packages is enabled here.
+#[derive(Debug, Clone, Copy)]
+pub struct IssuedNativeEmaExecutor<'a> {
+    pub manifest: &'a [u8],
+    pub issued: IssuedStrategy<'a>,
+    pub scope: AccountScope<'a>,
+}
+
+impl StrategyExecutor for IssuedNativeEmaExecutor<'_> {
+    fn execute(&self, input: ExecutionInput<'_>) -> Result<StrategyRun, StrategyError> {
+        crate::native_manifest::authorize_native_manifest(self.manifest, self.issued, self.scope)?;
+        NativeEmaExecutor.execute(input)
+    }
+}
+
 /// Development-directory Python adapter only. Issued/production archives must
 /// continue through `run_issued_host` with account-scoped authorization.
 #[derive(Debug, Clone, Copy)]
@@ -123,6 +143,52 @@ mod tests {
         assert_eq!(output.publications.len(), 2);
         assert_eq!(output.publications[0].quantity, "1");
         assert_eq!(output.publications[1].quantity, "0");
+    }
+
+    #[test]
+    fn issued_native_executor_requires_exact_manifest_digest_and_account_scope() {
+        const MANIFEST: &[u8] = br#"{"format":1,"runtime":"rust-builtin","name":"ema_crossover","version":"1","entry_point":"native:ema_crossover"}"#;
+        let digest = crate::sha256_hex(MANIFEST);
+        let issued = IssuedStrategy {
+            tenant_id: "tenant-1",
+            account_id: "account-1",
+            issuance_id: "issue-1",
+            grant_purpose: "development",
+            code_key: "ema_crossover",
+            version: "1",
+            entry_point: "native:ema_crossover",
+            package_hash: &digest,
+        };
+        let scope = AccountScope {
+            tenant_id: "tenant-1",
+            account_id: "account-1",
+            purpose: "development",
+        };
+        let bars = ["1", "1", "1", "10", "10", "0"].map(bar);
+        let parameters = json!({"fast_period": 2, "slow_period": 3});
+        let input = ExecutionInput {
+            parameters: &parameters,
+            symbol: "ETHUSDT",
+            interval: "1m",
+            bars: &bars,
+        };
+        let executor = IssuedNativeEmaExecutor { manifest: MANIFEST, issued, scope };
+        assert_eq!(executor.execute(input).unwrap().publications.len(), 2);
+
+        let wrong_scope = IssuedNativeEmaExecutor {
+            scope: AccountScope { account_id: "another-account", ..scope },
+            ..executor
+        };
+        assert!(matches!(wrong_scope.execute(input), Err(StrategyError::Package(_))));
+        let wrong_hash = "0".repeat(64);
+        let wrong_issuance = IssuedNativeEmaExecutor {
+            issued: IssuedStrategy { package_hash: &wrong_hash, ..issued },
+            ..executor
+        };
+        assert!(matches!(wrong_issuance.execute(input), Err(StrategyError::Package(_))));
+        let modified_manifest = [MANIFEST, b" "].concat();
+        let tampered = IssuedNativeEmaExecutor { manifest: &modified_manifest, ..executor };
+        assert!(matches!(tampered.execute(input), Err(StrategyError::Package(_))));
     }
 
     #[test]
