@@ -52,6 +52,7 @@ class BarType:
 
 
 def main():
+    request = None
     try:
         request = json.load(sys.stdin)
         result = handle(request)
@@ -59,6 +60,10 @@ def main():
         result = {"ok": False, "error": str(error) or "策略包无效。"}
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         result = {"ok": False, "error": str(error) or "策略执行失败。"}
+    # Only explicitly versioned requests get a versioned reply; legacy direct
+    # host callers keep the original wire shape for compatibility.
+    if isinstance(request, dict) and type(request.get("protocol_version")) is int and request["protocol_version"] == 1:
+        result["protocol_version"] = 1
     json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0
@@ -67,6 +72,10 @@ def main():
 def handle(request):
     if not isinstance(request, dict):
         raise PackageError("策略请求无效。")
+    if "protocol_version" in request and (
+        type(request["protocol_version"]) is not int or request["protocol_version"] != 1
+    ):
+        raise PackageError("策略宿主协议版本不受支持。")
     parameters = request.get("parameters") or {}
     package_dir = request.get("package_dir")
     archive_path = request.get("archive_path")
