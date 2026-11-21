@@ -261,7 +261,7 @@ fn parse_record(request: &Request, record: &StringRecord) -> Result<Parsed> {
 fn is_header(record: &StringRecord) -> bool {
     record.get(0).is_some_and(|s| {
         matches!(
-            s.trim().to_ascii_lowercase().replace('_', "").replace(' ', "").as_str(),
+            s.trim().to_ascii_lowercase().replace(['_', ' '], "").as_str(),
             "id" | "tradeid" | "aggtradeid" | "aggregatetradeid"
         )
     })
