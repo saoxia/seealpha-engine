@@ -1,6 +1,6 @@
 # SeeAlpha Engine
 
-SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。旧 Python Engine 尚保留部分源文件供后续逐目录迁移，`engine/market_data/`、`engine/api/` 和 `engine/infrastructure/` 已删除，旧运行时不再可执行；Python 策略宿主仍由 Rust Engine 单独调用。
+SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。旧 Python Engine 的 `engine/` 业务模块已整体退役；Rust 作为唯一 Engine 服务进程。Python 策略宿主仍由 Rust Engine 作为受限子进程调用。
 
 Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。`core/engine_contracts.py` 与 `core/trading_contracts.py` 必须与 [saoxia/SeeAlpha](https://github.com/saoxia/SeeAlpha) 逐字节一致。
 
@@ -14,9 +14,11 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 
 行情读取不会隐式启动采集器。模拟会话把公开行情送进流水线，再交给策略宿主；差额记在 `venue=paper`。仓库包含部分实盘订单与账户签名查询实现，但 Rust 功能等价和交易所端到端验收尚未完成，不能据此启用实盘部署。
 
-## 尚未迁移完成的 Python 功能
+## Python 边界与退役范围
 
-旧 Python Engine 仅供参考与后续逐目录删除，不再提供可运行的兼容入口。`engine/market_data/`、`engine/api/` 与 `engine/infrastructure/` 已从当前版本移除。旧 Python 回测等剩余文件仍可能存在对已删除模块的引用；这些代码不能被当作 Rust Engine 的运行时回退。`python -m engine` 只提示使用 Rust 主入口，不再启动 Python HTTP 服务。过往源码可通过 Git 历史查阅，迁移清单见 [market_data Rust 退役记录](docs/RUST_MARKET_DATA_CUTOVER_20261121.md) 和 [infrastructure Rust 退役记录](docs/RUST_INFRASTRUCTURE_CUTOVER_20261121.md)。
+`engine/` 旧运行时、`core/market/` 旧市场模型、旧 option 投影、历史 Python Engine/feed/pipeline 测试和失效的 Legacy CI 已退役。对应的 Rust 能力位于 `market_data/`、`accounting/`、`application/`、`interfaces/` 等 Workspace 模块中，但不宣称与旧 Python 行为完全等价。旧代码仍可从 Git 历史查阅。
+
+**仍使用 Python：** `python/strategy_host/` 和 `packages/ema_crossover/` 是受限策略执行边界；`core/engine_contracts.py` 与 `core/trading_contracts.py` 用于 Platform v2 共享契约和兼容测试；`tests/core/` 与 `tests/strategy/` 继续验证这些边界。仓库因此尚不是零 Python 依赖，不能把策略宿主删除当作 Rust 替换。历史互操作脚本因依赖已退役模块而移除，需采用原生 Rust 测试重新覆盖相关场景。
 
 ## Rust 集中迁移（功能等价尚未完成）
 
@@ -32,7 +34,7 @@ Rust 新增了 Parquet Bar 原子写入、源进程独立的交易所时钟、�
 
 ## 本地开发
 
-旧 Python Engine 测试套件仍有对已删除行情模块的依赖，不再作为 Rust 迁移验收命令；保留的 Python 策略宿主需单独验证。
+已删除依赖退役 Engine 模块的遗留 Python Engine/feed/pipeline 测试；保留 Platform 契约与策略宿主测试，Rust Workspace 是运行时主要回归门禁。
 
 
 ```bash

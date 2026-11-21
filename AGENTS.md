@@ -21,9 +21,13 @@
 2. 最小化代码修改。策略包契约和 HTTP v2 是对外入口。
 3. 同步受影响测试、文档及 Docker/CI。
 4. 检查 diff，不引入 Platform 的 `api/`、`web/` 或用户库。
-5. 运行 `cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked` 和 `python3 -m unittest discover -s tests -t . -p '*_test.py' -v`。发布构建用 `cargo build --workspace --locked --release`。
+5. 运行 `cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked` 和 `python3 -m unittest discover -s tests/core -t . -p '*_test.py' -v`、`python3 -m unittest discover -s tests/strategy -t . -p '*_test.py' -v`。发布构建用 `cargo build --workspace --locked --release`。
 6. 报告已做、未做及失败项，不把未执行的线上/长期验证描述为通过。
 
 ## 领域目录
 
 Rust 代码按业务流程组织在根目录：`market_data/`、`alpha/`、`portfolio/`、`accounting/`、`connectivity/`、`backtest/`，应用编排在 `application/`，外部协议在 `interfaces/`，可执行程序在 `apps/`。`python/strategy_host/` 只负责加载策略包。`packages/` 是示例策略。`core/engine_contracts.py` 与 `core/trading_contracts.py` 仍是 v2 契约，必须与 Platform 逐字节一致。实盘签名下单已关闭：对应 HTTP 路由返回 409，不保存密钥。模拟成交只写入 `venue=paper`。
+
+## Legacy Python 源码退役
+
+`engine/`、`core/market/`、旧 Python Engine/feed/pipeline 测试已在 2026-11-21 退役。不得复活旧 Python Engine HTTP/runtime 作为 Rust 回退。Python 策略宿主、示例策略与对 Platform 的 v2 共享契约仍然存在；后续要取消 Python 运行时必须先在 Rust 中交付可执行策略包替代，并调整包格式、宿主调用、Docker 与相关测试。历史删除不代表 Rust 完全行为等价或实盘已获验收。

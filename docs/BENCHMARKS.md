@@ -21,11 +21,10 @@ SQLite loop is a repeated primary-key read of one pre-registered request.
 Its release timing is in the same range as CPython; the resident set is
 smaller. It is not evidence that a networked database got faster.
 
-Reproduce:
+The historical Python baseline is retained in the table above, but its obsolete runner has been removed alongside the legacy Python Engine. Current Rust-only benchmark:
 
 ```bash
-python3 benchmarks/python_hot_path.py gaps 200000
 cargo run --locked --release -p seealpha-bench -- gaps 200000
 ```
 
-The same commands accept `net`, `aggregate`, `klines`, and `sqlite`.
+The Rust command accepts `net`, `aggregate`, `klines`, and `sqlite` as well. The old Python timing must not be represented as a fresh, rerun comparison.
