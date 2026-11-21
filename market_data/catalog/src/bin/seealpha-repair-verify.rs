@@ -2,12 +2,11 @@
 //! The standalone Rust engine uses the library API directly.
 use rust_decimal::Decimal;
 use seealpha_catalog::{
-    CatalogBar, LocalKline, MarketProduct, VenueKline, validate_venue_klines,
-    venue_kline_differs,
+    CatalogBar, LocalKline, MarketProduct, VenueKline, validate_venue_klines, venue_kline_differs,
 };
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::{self, Read};
 use std::str::FromStr;
 
@@ -67,23 +66,37 @@ fn validate(request: Request) -> Result<Vec<Row>, String> {
     {
         return Err("原生比较来源无效".into());
     }
-    let local = request.local.as_ref().map(|values| {
-        values
-            .iter()
-            .map(|(time, row)| {
-                let timestamp = time.parse::<i64>().map_err(|_| "本地 K 线时间无效")?;
-                let parsed = row
-                    .values
-                    .iter()
-                    .map(|value| Decimal::from_str(value).map_err(|_| "本地 K 线数值无效"))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let values: [Decimal; 5] = parsed
-                    .try_into()
-                    .map_err(|_| "本地 K 线数值数量无效")?;
-                Ok((timestamp, LocalKline { values, complete: row.complete }))
-            })
-            .collect::<Result<HashMap<_, _>, &str>>()
-    }).transpose()?;
+    let local = request
+        .local
+        .as_ref()
+        .map(|values| {
+            values
+                .iter()
+                .map(|(time, row)| {
+                    let timestamp = time.parse::<i64>().map_err(|_| "本地 K 线时间无效")?;
+                    let parsed = row
+                        .values
+                        .iter()
+                        .map(|value| {
+                            Decimal::from_str(value)
+                                .or_else(|_| Decimal::from_scientific(value))
+                                .map_err(|_| "本地 K 线数值无效")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let values: [Decimal; 5] = parsed
+                        .try_into()
+                        .map_err(|_| "本地 K 线数值数量无效")?;
+                    Ok((
+                        timestamp,
+                        LocalKline {
+                            values,
+                            complete: row.complete,
+                        },
+                    ))
+                })
+                .collect::<Result<HashMap<_, _>, &str>>()
+        })
+        .transpose()?;
     let mut native = Vec::with_capacity(request.rows.len());
     let mut output = Vec::with_capacity(request.rows.len());
     for values in &request.rows {
@@ -216,18 +229,32 @@ mod tests {
         ];
         assert!(validate(request(vec![values])).is_err());
     }
+
     #[test]
     fn compare_local_decimals_without_python_fallback() {
         let values = vec![
-            json!(0), json!("10.00"), json!("12.00"), json!("9.00"),
-            json!("11.00"), json!("2.000"), json!(59_999), json!("0"), json!(2),
+            json!(0),
+            json!("10.00"),
+            json!("12.00"),
+            json!("9.00"),
+            json!("11.00"),
+            json!("2.000"),
+            json!(59_999),
+            json!("0"),
+            json!(2),
         ];
         let mut input = request(vec![values]);
         input.source = Some("1m".into());
         input.local = Some(HashMap::from([(
             "0".into(),
             LocalRow {
-                values: ["10.0".into(), "12".into(), "9".into(), "11".into(), "2".into()],
+                values: [
+                    "10.0".into(),
+                    "12".into(),
+                    "9".into(),
+                    "11".into(),
+                    "2".into(),
+                ],
                 complete: true,
             },
         )]));
@@ -237,12 +264,18 @@ mod tests {
     #[test]
     fn comparison_fails_closed_without_local_counterpart() {
         let values = vec![
-            json!(0), json!("10"), json!("12"), json!("9"),
-            json!("11"), json!("2"), json!(59_999), json!("0"), json!(2),
+            json!(0),
+            json!("10"),
+            json!("12"),
+            json!("9"),
+            json!("11"),
+            json!("2"),
+            json!(59_999),
+            json!("0"),
+            json!(2),
         ];
         let mut input = request(vec![values]);
         input.source = Some("1m".into());
         assert!(validate(input).is_err());
     }
-
 }
