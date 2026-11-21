@@ -2,7 +2,8 @@
 //! The standalone Rust engine uses the library API directly.
 use rust_decimal::Decimal;
 use seealpha_catalog::{
-    CatalogBar, LocalKline, MarketProduct, VenueKline, validate_venue_klines, venue_kline_differs,
+    CatalogBar, LocalKline, MarketProduct, SavedKline, VenueKline, aggregate_saved_klines,
+    validate_venue_klines, venue_kline_differs,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +23,67 @@ struct Request {
     source: Option<String>,
     #[serde(default)]
     local: Option<HashMap<String, LocalRow>>,
+}
+
+#[derive(Deserialize)]
+struct AggregateRequest {
+    source_interval: String,
+    target_interval: String,
+    saved: Vec<SavedRow>,
+}
+
+#[derive(Deserialize)]
+struct SavedRow {
+    event_ns: i64,
+    values: [String; 5],
+}
+
+#[derive(Serialize)]
+struct AggregatedRow {
+    values: [String; 5],
+    end: i64,
+    complete: bool,
+}
+
+fn aggregate(request: AggregateRequest) -> Result<HashMap<String, AggregatedRow>, String> {
+    if request.saved.len() > 50_000 {
+        return Err("本地 K 线记录数量超出限制".into());
+    }
+    let saved = request
+        .saved
+        .iter()
+        .map(|row| {
+            Ok(SavedKline {
+                event_ns: row.event_ns,
+                values: [
+                    decimal(&Value::String(row.values[0].clone()))?,
+                    decimal(&Value::String(row.values[1].clone()))?,
+                    decimal(&Value::String(row.values[2].clone()))?,
+                    decimal(&Value::String(row.values[3].clone()))?,
+                    decimal(&Value::String(row.values[4].clone()))?,
+                ],
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let buckets = aggregate_saved_klines(
+        &saved,
+        &request.source_interval,
+        &request.target_interval,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(buckets
+        .into_iter()
+        .map(|bucket| {
+            (
+                bucket.start_ms.to_string(),
+                AggregatedRow {
+                    values: bucket.values.map(|value| value.to_string()),
+                    end: bucket.end_ms,
+                    complete: bucket.complete,
+                },
+            )
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -165,7 +227,16 @@ fn run() -> Result<(), String> {
     if payload.len() > 8 * 1024 * 1024 {
         return Err("交易所证据超过容量限制".into());
     }
-    let request = serde_json::from_str::<Request>(&payload).map_err(|_| "交易所证据 JSON 无效")?;
+    let value: Value = serde_json::from_str(&payload).map_err(|_| "交易所证据 JSON 无效")?;
+    if value.get("mode").and_then(Value::as_str) == Some("aggregate") {
+        let request = serde_json::from_value::<AggregateRequest>(value)
+            .map_err(|_| "本地聚合请求无效")?;
+        let result = aggregate(request)?;
+        return serde_json::to_writer(io::stdout(), &result)
+            .map_err(|_| "写入聚合结果失败".into());
+    }
+    let request = serde_json::from_value::<Request>(value)
+        .map_err(|_| "交易所证据 JSON 无效")?;
     let result = validate(request)?;
     serde_json::to_writer(io::stdout(), &result).map_err(|_| "写入校验结果失败".into())
 }
@@ -193,6 +264,29 @@ mod tests {
             source: None,
             local: None,
         }
+    }
+
+    #[test]
+    fn aggregates_saved_source_bars_for_legacy_repair() {
+        let row = |minute: i64| SavedRow {
+            event_ns: (minute * 60_000 + 59_999) * 1_000_000,
+            values: [
+                "10.00".into(),
+                "12.00".into(),
+                "9.00".into(),
+                "11.00".into(),
+                "1.000".into(),
+            ],
+        };
+        let aggregate_result = aggregate(AggregateRequest {
+            source_interval: "1m".into(),
+            target_interval: "5m".into(),
+            saved: vec![row(0), row(1), row(2), row(3), row(4)],
+        })
+        .unwrap();
+        assert_eq!(aggregate_result["0"].end, 300_000);
+        assert_eq!(aggregate_result["0"].values[4], "5.000");
+        assert!(aggregate_result["0"].complete);
     }
 
     #[test]
