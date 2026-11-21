@@ -158,7 +158,7 @@ pub fn run_native_ema(
         return Err(bad());
     }
     let strategy_symbol = supplied.get("symbol").and_then(Value::as_str).unwrap_or("ETHUSDT");
-    if strategy_symbol.to_ascii_uppercase() != "ETHUSDT" || symbol != "ETHUSDT" {
+    if !strategy_symbol.eq_ignore_ascii_case("ETHUSDT") || symbol != "ETHUSDT" {
         return Err(bad());
     }
     let period = |key: &str, default: usize| -> Result<usize, super::StrategyError> {
