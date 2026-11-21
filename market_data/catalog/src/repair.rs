@@ -169,10 +169,8 @@ pub fn aggregate_saved_klines(
     crate::interval_ms(target_interval)?;
     let mut buckets = BTreeMap::<i64, AggregatedKline>::new();
     for bar in saved {
-        let (opening, closing) = crate::bar_window(
-            source_interval,
-            bar.event_ns.div_euclid(crate::NANO_PER_MS),
-        )?;
+        let (opening, closing) =
+            crate::bar_window(source_interval, bar.event_ns.div_euclid(crate::NANO_PER_MS))?;
         let expected_event = closing
             .checked_sub(1)
             .and_then(|ms| ms.checked_mul(crate::NANO_PER_MS))
@@ -357,20 +355,28 @@ mod venue_tests {
         let complete = aggregate_saved_klines(&[saved(0, 2), saved(1, 3)], "1m", "2m");
         // Binance catalog supports standard source/target periods only.
         assert!(complete.is_err());
-        let partial = aggregate_saved_klines(&[saved(0, 2), saved(2, 3)], "1m", "5m")
-            .unwrap();
+        let partial = aggregate_saved_klines(&[saved(0, 2), saved(2, 3)], "1m", "5m").unwrap();
         assert_eq!(partial.len(), 1);
         assert_eq!(partial[0].values[4], Decimal::from(5));
         assert!(!partial[0].complete);
         let full = aggregate_saved_klines(
-            &[saved(0, 1), saved(1, 1), saved(2, 1), saved(3, 1), saved(4, 1)],
+            &[
+                saved(0, 1),
+                saved(1, 1),
+                saved(2, 1),
+                saved(3, 1),
+                saved(4, 1),
+            ],
             "1m",
             "5m",
         )
         .unwrap();
         assert!(full[0].complete);
         assert_eq!(full[0].values[4], Decimal::from(5));
-        let bad = SavedKline { event_ns: 0, ..saved(0, 1) };
+        let bad = SavedKline {
+            event_ns: 0,
+            ..saved(0, 1)
+        };
         assert!(aggregate_saved_klines(&[bad], "1m", "1m").is_err());
     }
 
