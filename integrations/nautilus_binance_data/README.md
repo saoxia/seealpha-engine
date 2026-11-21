@@ -30,7 +30,7 @@ cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml -- \
 
 **安全与完整性限制：** 不在 Docker 镜像或 Engine Runtime 中安装/自动执行该入口；无交易所账户私钥；不注册订单客户端；不创建或变更数据采集 READY 标志；没有定期 Parquet promote，仅对正常结束触发 promote。崩溃时保留 Feather 并需通过原生 recovery 验证。
 
-原生节点第一轮独立编译、离线单测和 Clippy 曾通过；后续增加的导入器、锁、租户任务接口必须以最新提交为准重新验证。完整 WS/REST/ZIP 覆盖、数据目录交接和下游消费者仍需验收。正式切换之前不删除旧实验采集器。
+原生节点第一轮独立编译、离线单测和 Clippy 曾通过；后续增加的导入器、锁、租户任务接口必须以最新提交为准重新验证。完整 WS/REST/ZIP 覆盖、数据目录交接和下游消费者仍需验收。旧实验采集器、SQLite Journal 和自建 Parquet 转换器已从当前仓库删除；新节点仍保持显式实验开关。
 
 ## 通过现有 Engine Source Supervisor 显式试运行
 
@@ -44,9 +44,9 @@ export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
 mkdir -p /data/nautilus-feather/42/spot /data/nautilus-catalog/42/spot
 ```
 
-调用已经存在的 `/tenants/{tenant_id}/data/control/source/{product}/start` 路由时，Supervisor 将现有租户已启用的 Spot / USD-M 行情策略转换为原生 Nautilus 的多交易对订阅（实验节点每次最多 100 个交易对）；不新增第二套订阅数据库和自动调度。停止路径向子进程发送 `SIGTERM`，以支持 Nautilus 优雅关闭与 Parquet 提交；停止仍不代表历史完整性已核验。旧 SQLite K 线计算器无法直接消费该模式，故被显式禁用。
+调用已经存在的 `/tenants/{tenant_id}/data/control/source/{product}/start` 路由时，Supervisor 将现有租户已启用的 Spot / USD-M 行情策略转换为原生 Nautilus 的多交易对订阅（实验节点每次最多 100 个交易对）；不新增第二套订阅数据库和自动调度。停止路径向子进程发送 `SIGTERM`，以支持 Nautilus 优雅关闭与 Parquet 提交；停止仍不代表历史完整性已核验。旧 SQLite K 线计算器和相关 HTTP 端点已删除，原生 Tick 不会伪装为已验证的历史 K 线。
 
-**未启用以上环境变量时**，原有实验性 `binance-native-source` 行为保持不变。此原生入口默认不在生产镜像里；外部二进制须由维护者手动验证后部署。所有状态仍是 `DEGRADED`，禁止策略直接将连接状态作为完整行情数据就绪证据。
+**未启用以上环境变量时**，Source Supervisor 拒绝启动行情采集，不再回退到已删除的 `binance-native-source`。此原生入口默认不在生产镜像里；外部二进制须由维护者手动验证后部署。所有状态仍是 `DEGRADED`，禁止策略把连接状态作为完整行情就绪证据。
 
 
 ## 离线历史 ZIP 导入

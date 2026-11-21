@@ -1,3 +1,6 @@
+
+> 2026-11-21 备注：以上历史迁移记录保留用于追溯；旧 `nautilus-data-converter` / Binance SQLite Journal / 自研 WebSocket / K 线计算器已从当前 Rust workspace 移除。现行 Spot/USD-M 成交路径使用独立 Nautilus Rust 数据节点、官方 ZIP 下载与原生 Catalog Tick 导入；不得复制历史命令或当作生产 READY 证据。
+
 # Rust 数据底座迁移：NautilusTrader v2 Catalog（2026-11-21）
 
 > 基线：恢复的 Python Engine `f18e48e995becc0662df288058be6059c91c45b0`。本批按旧 Python 数据模型迁移至 Rust；**没有运行 Cargo 编译、测试或端到端验收**（GitHub Actions 按维护者要求暂停）。不能将本分支视为完整、可用于生产实盘的数据底座切换。

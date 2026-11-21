@@ -67,6 +67,7 @@ pub struct Runtime {
     pub project: PathBuf,
     pub python: PathBuf,
     pub host: PathBuf,
+    // Shared state root for derived Catalog/rollup caches (not a raw source journal).
     source_state_dir: PathBuf,
     inflight: AtomicUsize,
     source_processes: Mutex<HashMap<String, Child>>,

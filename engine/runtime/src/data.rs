@@ -181,7 +181,7 @@ impl Runtime {
         let action = field(payload, "action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
-        if !matches!(action, "backfill" | "publish_catalog" | "archive_fetch" | "archive_import") {
+        if !matches!(action, "backfill" | "archive_fetch" | "archive_import") {
             return Err(RuntimeError::Conflict(
                 "该历史任务尚未完成 Rust 等价迁移。".into(),
             ));
@@ -206,14 +206,18 @@ impl Runtime {
                 (product, dataset),
                 ("spot", "trades") | ("futures_um", "aggTrades")
             ) {
-                return Err(bad("不能把不同粒度的历史成交导入实时兼容的 Nautilus Catalog。"));
+                return Err(bad(
+                    "不能把不同粒度的历史成交导入实时兼容的 Nautilus Catalog。",
+                ));
             }
             // The caller must supply precisions independently confirmed from
             // the Nautilus Instrument. ZIP display width is NOT the precision.
-            let price_precision = payload["price_precision"].as_u64()
+            let price_precision = payload["price_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的价格精度。"))?;
-            let size_precision = payload["size_precision"].as_u64()
+            let size_precision = payload["size_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的数量精度。"))?;
             let normalized = json!({
@@ -223,7 +227,8 @@ impl Runtime {
                 "size_precision": size_precision
             });
             let id = hash_job(tenant_id, &normalized);
-            return self.ledger
+            return self
+                .ledger
                 .queue_data_job(tenant_id, &id, action, &normalized)
                 .map_err(map_ledger);
         }
@@ -234,28 +239,6 @@ impl Runtime {
             let day = field(payload, "day")?;
             ArchiveSpec::new(product, dataset, symbol, day)
                 .map_err(|_| bad("Binance 历史 ZIP 归档参数无效。"))?;
-            let normalized = payload.clone();
-            let id = hash_job(tenant_id, &normalized);
-            return self
-                .ledger
-                .queue_data_job(tenant_id, &id, action, &normalized)
-                .map_err(map_ledger);
-        }
-        if action == "publish_catalog" {
-            let product = field(payload, "product")?;
-            let symbol = field(payload, "symbol")?;
-            let interval = field(payload, "interval")?;
-            if !matches!(product, "spot" | "futures_um")
-                || !valid_symbol(product, symbol)
-                || interval_ms(interval).is_err()
-            {
-                return Err(bad("原生 Catalog 发布参数无效。"));
-            }
-            for precision in ["price_precision", "size_precision"] {
-                if payload[precision].as_u64().is_none_or(|n| n > 16) {
-                    return Err(bad("原生发布必须提供来自 Instrument 的价格/数量精度。"));
-                }
-            }
             let normalized = payload.clone();
             let id = hash_job(tenant_id, &normalized);
             return self
@@ -362,15 +345,20 @@ impl Runtime {
                 "任务已领取、取消或需要人工核验。".into(),
             ));
         }
-        let result = if original["action"] == "publish_catalog" {
-            self.publish_catalog_job(tenant_id, &original["payload"])
+        let result = if original["action"] == "archive_fetch" {
+            self.archive_fetch_job(tenant_id, &original["payload"])
                 .await
-        } else if original["action"] == "archive_fetch" {
-            self.archive_fetch_job(tenant_id, &original["payload"]).await
         } else if original["action"] == "archive_import" {
-            self.archive_import_job(tenant_id, &original["payload"]).await
-        } else {
+            self.archive_import_job(tenant_id, &original["payload"])
+                .await
+        } else if original["action"] == "backfill" {
             self.backfill_job(tenant_id, &original["payload"]).await
+        } else {
+            // A legacy publish_catalog job may still exist in the durable
+            // queue. Never reinterpret retired job types as public backfills.
+            Err(RuntimeError::Conflict(
+                "已停用的旧式 Catalog 发布任务；拒绝执行，请使用 Nautilus 原生数据导入任务。".into(),
+            ))
         };
         let (status, body) = match result {
             Ok(value) => ("completed", value),
@@ -418,7 +406,8 @@ impl Runtime {
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err(bad("历史归档租户目录必须是真实目录，禁止符号链接。"));
         }
-        let tenant_root = tenant_path.canonicalize()
+        let tenant_root = tenant_path
+            .canonicalize()
             .map_err(|_| bad("历史归档租户目录不可访问。"))?;
         if !tenant_root.is_dir() || !tenant_root.starts_with(&root) {
             return Err(bad("历史归档租户隔离校验未通过。"));
@@ -452,11 +441,15 @@ impl Runtime {
         }
         let mut report: Value = serde_json::from_slice(&output.stdout)
             .map_err(|_| bad("归档下载回执不是有效 JSON。"))?;
-        let obj = report.as_object_mut()
+        let obj = report
+            .as_object_mut()
             .ok_or_else(|| bad("归档下载回执结构无效。"))?;
         if obj.get("verified") != Some(&json!(true))
             || obj.get("catalog_committed") != Some(&json!(false))
-            || obj.get("sha256").and_then(Value::as_str).is_none_or(|s| s.len() != 64)
+            || obj
+                .get("sha256")
+                .and_then(Value::as_str)
+                .is_none_or(|s| s.len() != 64)
         {
             return Err(bad("归档下载回执缺少完整性证据。"));
         }
@@ -496,7 +489,9 @@ impl Runtime {
             (product, dataset),
             ("spot", "trades") | ("futures_um", "aggTrades")
         ) {
-            return Err(bad("当前 Nautilus Catalog 只接受与实时 TradeTick 同粒度的数据。"));
+            return Err(bad(
+                "当前 Nautilus Catalog 只接受与实时 TradeTick 同粒度的数据。",
+            ));
         }
         let spec = ArchiveSpec::new(product, dataset, symbol, day)
             .map_err(|_| bad("归档来源参数无效。"))?;
@@ -514,12 +509,11 @@ impl Runtime {
         let root = std::path::PathBuf::from(volume)
             .canonicalize()
             .map_err(|_| bad("历史归档根目录不可用。"))?;
-        let tenant_root = crate::sources::native_tenant_product_root(
-            &root.to_string_lossy(), tenant, product,
-        )?
-        .parent()
-        .ok_or_else(|| bad("租户归档路径无效。"))?
-        .to_path_buf();
+        let tenant_root =
+            crate::sources::native_tenant_product_root(&root.to_string_lossy(), tenant, product)?
+                .parent()
+                .ok_or_else(|| bad("租户归档路径无效。"))?
+                .to_path_buf();
         let mut archive = tenant_root.join(product);
         for component in [dataset, symbol] {
             archive.push(component);
@@ -530,8 +524,7 @@ impl Runtime {
             }
         }
         archive.push(spec.archive_name());
-        let meta = std::fs::symlink_metadata(&archive)
-            .map_err(|_| bad("历史 ZIP 尚未下载。"))?;
+        let meta = std::fs::symlink_metadata(&archive).map_err(|_| bad("历史 ZIP 尚未下载。"))?;
         if !meta.is_file() || meta.file_type().is_symlink() {
             return Err(bad("历史 ZIP 必须是普通文件。"));
         }
@@ -542,16 +535,17 @@ impl Runtime {
 
         let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
             .map_err(|_| bad("未配置原生 Nautilus Catalog 根目录。"))?;
-        let catalog = crate::sources::native_tenant_product_root(
-            &catalog_base, tenant, product,
-        )?;
+        let catalog = crate::sources::native_tenant_product_root(&catalog_base, tenant, product)?;
         // The existing source supervisor is authoritative for its children.
         // Do not write historical files while the native live writer is active.
         {
-            let mut processes = self.source_processes.lock()
+            let mut processes = self
+                .source_processes
+                .lock()
                 .map_err(|_| bad("行情进程管理锁不可用。"))?;
             if let Some(child) = processes.get_mut(&format!("{tenant}:{product}"))
-                && child.try_wait()
+                && child
+                    .try_wait()
                     .map_err(|_| bad("行情数据源进程状态不明。"))?
                     .is_none()
             {
@@ -574,11 +568,13 @@ impl Runtime {
             archive.to_string_lossy().into_owned(),
             catalog.to_string_lossy().into_owned(),
             sha.to_owned(),
-            payload["price_precision"].as_u64()
+            payload["price_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("原生 Instrument 价格精度无效。"))?
                 .to_string(),
-            payload["size_precision"].as_u64()
+            payload["size_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("原生 Instrument 数量精度无效。"))?
                 .to_string(),
@@ -596,7 +592,9 @@ impl Runtime {
             return Err(RuntimeError::Conflict(format!(
                 "Nautilus 历史 Tick 导入失败，可能已有局部 Parquet 需核验：{}",
                 String::from_utf8_lossy(&output.stderr)
-                    .chars().take(300).collect::<String>()
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
             )));
         }
         let mut report: Value = serde_json::from_slice(&output.stdout)
@@ -616,79 +614,6 @@ impl Runtime {
         report["source_job_id"] = json!(download_id);
         report["allow_new_risk"] = json!(false);
         Ok(report)
-    }
-
-    async fn publish_catalog_job(
-        &self,
-        tenant: &str,
-        payload: &Value,
-    ) -> Result<Value, RuntimeError> {
-        let product = field(payload, "product")?;
-        let symbol = field(payload, "symbol")?;
-        let interval = field(payload, "interval")?;
-        let base = self
-            .ledger
-            .policies(tenant)
-            .map_err(map_ledger)?
-            .into_iter()
-            .find(|item| item["product"] == product && item["symbol"] == symbol)
-            .and_then(|policy| {
-                policy["base_level"]
-                    .as_str()
-                    .map(|base| if base == "auto" { "1m" } else { base }.to_owned())
-            })
-            .ok_or_else(|| bad("Catalog 发布必须引用已保存的产品源配置。"))?;
-        let source_root = crate::sources::source_root(&self.project, product)?;
-        let pair = source_root
-            .join(symbol)
-            .join(&base)
-            .canonicalize()
-            .map_err(|_| bad("原始行情数据卷不可用。"))?;
-        if !pair.starts_with(&source_root) || !pair.join("collection.sqlite").is_file() {
-            return Err(bad("没有已验证的原始成交 journal。"));
-        }
-        let catalog = self
-            .native_catalog()?
-            .ok_or_else(|| bad("尚未挂载 Python Nautilus v2 Catalog，禁止隐式创建数据目录。"))?;
-        let bin = std::env::var("ENGINE_CATALOG_PUBLISH_BIN")
-            .unwrap_or_else(|_| "binance-native-catalog-publish".into());
-        let precision = field(payload, "price_precision")
-            .ok()
-            .map(str::to_owned)
-            .or_else(|| payload["price_precision"].as_u64().map(|n| n.to_string()))
-            .ok_or_else(|| bad("价格精度无效。"))?;
-        let quantity = field(payload, "size_precision")
-            .ok()
-            .map(str::to_owned)
-            .or_else(|| payload["size_precision"].as_u64().map(|n| n.to_string()))
-            .ok_or_else(|| bad("数量精度无效。"))?;
-        let args = vec![
-            product.to_owned(),
-            symbol.to_owned(),
-            pair.to_string_lossy().to_string(),
-            catalog.root().to_string_lossy().to_string(),
-            interval.to_owned(),
-            precision,
-            quantity,
-        ];
-        let output = tokio::task::spawn_blocking(move || {
-            std::process::Command::new(bin)
-                .args(args)
-                .stdin(std::process::Stdio::null())
-                .output()
-        })
-        .await
-        .map_err(|_| bad("Rust Catalog 发布子进程未能返回结果。"))?
-        .map_err(|_| bad("Rust Catalog 发布子进程无法启动。"))?;
-        if !output.status.success() {
-            let details = String::from_utf8_lossy(&output.stderr);
-            return Err(bad(&format!(
-                "Rust Catalog 发布失败，未推进检查点：{}",
-                details.chars().take(300).collect::<String>()
-            )));
-        }
-        serde_json::from_slice::<Value>(&output.stdout)
-            .map_err(|_| bad("Rust Catalog 发布记录损坏，拒绝推进任务状态。"))
     }
 
     async fn backfill_job(&self, tenant_id: &str, payload: &Value) -> Result<Value, RuntimeError> {
@@ -993,18 +918,10 @@ mod tests {
     }
     #[test]
     fn archive_job_inputs_are_validated_before_enqueue() {
-        assert!(ArchiveSpec::new(
-            "spot", "trades", "BTCUSDT", "2026-11-20",
-        ).is_ok());
-        assert!(ArchiveSpec::new(
-            "futures_um", "aggTrades", "ETHUSDT", "2026-11-20",
-        ).is_ok());
-        assert!(ArchiveSpec::new(
-            "options", "trades", "BTCUSDT", "2026-11-20",
-        ).is_err());
-        assert!(ArchiveSpec::new(
-            "spot", "trades", "../BTCUSDT", "2026-11-20",
-        ).is_err());
+        assert!(ArchiveSpec::new("spot", "trades", "BTCUSDT", "2026-11-20",).is_ok());
+        assert!(ArchiveSpec::new("futures_um", "aggTrades", "ETHUSDT", "2026-11-20",).is_ok());
+        assert!(ArchiveSpec::new("options", "trades", "BTCUSDT", "2026-11-20",).is_err());
+        assert!(ArchiveSpec::new("spot", "trades", "../BTCUSDT", "2026-11-20",).is_err());
     }
     #[test]
     fn deterministic_job_id_is_tenant_scoped() {

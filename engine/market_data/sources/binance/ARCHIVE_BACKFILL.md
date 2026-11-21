@@ -6,10 +6,10 @@
 
 | 操作 | 应由谁负责 | 本次实现 |
 | --- | --- | --- |
-| Spot `@trade` / USD-M `@aggTrade` 实时订阅、多合约连接池、重连 | NautilusTrader `nautilus-binance` | 未改动现有实验性采集器；待原生替换 |
+| Spot `@trade` / USD-M `@aggTrade` 实时订阅、多合约连接池、重连 | NautilusTrader `nautilus-binance` | 已移除自研 WS/REST 成交采集与 SQLite Journal；仅管理员显式启用 Nautilus 原生节点 |
 | REST `request_trades`、`request_agg_trades` | NautilusTrader `BinanceSpotDataClient` / `BinanceFuturesDataClient` | 不增加另一套 REST 历史交易查询 |
 | 日/月 ZIP 下载、官方 checksum 与来源记录 | SeeAlpha 仅做原生缺失部分 | 新增**每日** ZIP 下载 CLI；月归档和调度未实现 |
-| `TradeTick`、历史持久化、流式写入和 Parquet Catalog | NautilusTrader 原生 Model / Persistence | 新增纯离线 ZIP→原生 Catalog 导入器；未替换全部旧转换器 |
+| `TradeTick`、历史持久化、流式写入和 Parquet Catalog | NautilusTrader 原生 Model / Persistence | 使用原生 Tick/Parquet 导入器；已删除自研 Tick/Quote Parquet 仿造转换器 |
 | 历史覆盖、Trade ID 连续性、WS/REST/ZIP 交接与 READY | SeeAlpha 验证业务 | 仍需后续实证及跨模块验收，当前不得宣布 READY |
 
 v2.0.0rc9 的 Nautilus Spot 实时订阅使用 `@trade`，USD-M 使用 `@aggTrade`。Binance 的 `trades` 和 `aggTrades` 是不同的数据产品；**不能把两者混同为无损一致的逐笔成交历史**。按研究需求分别下载：
@@ -39,7 +39,7 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 
 **数据文件位置**：`<root>/<spot|futures_um>/<trades|aggTrades>/<symbol>/<symbol>-<dataset>-<YYYY-MM-DD>.zip`。
 
-> **已识别的旧代码问题**：现存 `src/trade_archive.rs` 对原始 Trade CSV 的列数假设为 Spot 8 列、USD-M 7 列，而 Binance 官方 `trades` 归档格式分别为 7 列和 6 列；Spot 自 2025-01-01 起时间戳还采用微秒。因此该旧聚合工具不可直接作为新下载文件的已验证导入器。本次新 CLI 只验证 ZIP 哈希与容器结构，**不调用**该解析器，也不声称已经得到完整的历史 Tick。
+> 已删除不兼容官方 `trades` CSV 列数与 Spot 微秒时间戳的旧 `trade_archive.rs` 聚合器；历史 Tick 以独立 Nautilus 原生导入器为准。
 
 ## 已接入 Runtime 的显式归档任务
 
@@ -59,7 +59,7 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 
 管理员须配置 `ENGINE_ARCHIVE_ROOT`，并提前创建 `<archive-root>/<tenant_id>/`。服务端只使用该受控路径，从请求体拒绝自定义目录；任务状态保存于已有的租户任务日志。下载完成只表示官方 SHA-256 ZIP 验证成功；回执强制 `data_ready=false`、`allow_new_risk=false` 和 `catalog_committed=false`。无自动交易；Catalog 导入必须通过独立的受控任务。
 
-新增：只有管理员同时设置 `ENGINE_EXPERIMENTAL_SOURCE=1` 与 `ENGINE_NATIVE_NAUTILUS_SOURCE_BIN`，并准备受控的 Nautilus Feather/Catalog 租户目录时，现有 Runtime Source Supervisor 才会调用独立原生节点。此为显式实验切换，**非默认生产切换**；路径验证阻止租户间符号链接跳转，停止使用 SIGTERM 而非强制 SIGKILL。原生节点不会报告 READY，旧 SQLite K 线计算器不可直接消费它。
+管理员必须同时设置 `ENGINE_EXPERIMENTAL_SOURCE=1` 与 `ENGINE_NATIVE_NAUTILUS_SOURCE_BIN`，并准备受控的 Nautilus Feather/Catalog 租户目录时，现有 Runtime Source Supervisor 才会调用独立原生节点。此为显式实验切换，**非默认生产切换**；路径验证阻止租户间符号链接跳转，停止使用 SIGTERM 而非强制 SIGKILL。原生节点不会报告 READY；旧 SQLite K 线计算器及发布任务入口已移除，历史 K 线读取与回测仍使用现有受约束的 Catalog 能力。
 
 ## 已实现：已验证 ZIP → 原生 Nautilus Catalog
 
@@ -70,7 +70,7 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 - Spot 的 trades（原始成交 ID；2025-01-01 起归档时间为微秒）
 - USD-M 的 aggTrades（聚合成交 ID 与首末底层成交 ID；毫秒时间戳）
 
-Spot aggTrades 与 USD-M 原始 trades 仍可下载，但**不能混入上述实时兼容 Catalog**。导入器完整验证 ZIP 哈希、CSV 列数、每行类型、成交 ID 连续性、聚合成交底层 ID 连续性、UTC 日范围、时间顺序及小数精度；先无副作用扫描全文件，再调用 Nautilus 原生 Catalog 分批写入。对相同 timestamp 不跨文件拆批；已有重叠区间会被 Nautilus 拒绝。大文件中途磁盘异常仍可能产生部分 Parquet，失败后必须核对并修复，不能自动重试为已完成状态。
+Spot aggTrades 与 USD-M 原始 trades 仍可下载，但**不能混入上述实时兼容 Catalog**。导入器完整验证 ZIP 哈希、CSV 列数、每行类型、成交 ID 连续性、聚合成交底层 ID 连续性、UTC 日范围、时间顺序及小数精度；先无副作用扫描全文件，再调用 Nautilus 原生 Catalog 分批写入。对相同 timestamp 不跨文件拆批；导入前由 SeeAlpha 查询 Nautilus 原生 Catalog 文件区间并拒绝已存在重叠。大文件中途磁盘异常仍可能产生部分 Parquet，失败后必须核对并修复，不能自动重试为已完成状态。
 
 命令行单独执行示例：
 
@@ -95,12 +95,12 @@ export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
 
 ## 原生 NautilusTrader Rust 节点的初步代码
 
-参见 [integrations/nautilus_binance_data/README.md](../../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。已接入现有 Runtime Source Supervisor 的管理员显式实验路径，但仍不在默认 Docker 中部署；需要经过最新提交的 CI、Instrument 精度、Catalog parity 与数据缺口验收后，才能切换默认行为并删除旧自研实现。
+参见 [integrations/nautilus_binance_data/README.md](../../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。已接入现有 Runtime Source Supervisor 的管理员显式实验路径，但仍不在默认 Docker 中部署；已移除旧通用采集与模拟 Catalog 转换器。仍须进行真实 Binance 数据、Instrument 精度、Catalog parity 与数据缺口验收，才能正式开放 READY。
 
 ## 待完成，不能误认作已实现
 
-1. NautilusTrader `nautilus-binance` 已有显式实验接入，**尚未通过真实市场数据的端到端验收或成为默认源**。通过后应删除重复的 `ws.rs` / `native_source.rs` 通用连接逻辑，而不是增加 SeeAlpha 自定义 Adapter Trait。
-2. ZIP→Nautilus 原生 Tick Catalog 的离线导入器已新增，仍需通过最新独立 Rust CI、离线样本及真实官方 ZIP 验证；现有 `engine/market_data/converter` 尚未清除，不能视为完整替换。
+1. NautilusTrader `nautilus-binance` 已有显式实验接入，**尚未通过真实市场数据的端到端验收或成为默认生产源**。自研 `ws.rs` / `native_source.rs` 已删除，不提供自动回退。
+2. ZIP→Nautilus 原生 Tick Catalog 的离线导入器已新增，自研 `engine/market_data/converter` 已删除；仍需通过最新独立 Rust CI、离线样本及真实官方 ZIP 验证，不能视为完整的历史数据验收。
 3. REST 先按交易所支持的时间、数量和分页范围获取；覆盖不足或需要官方历史归档时再调用 ZIP。**不能根据“1,000 笔”这一单次请求上限臆造固定的时间分界**。
 4. 日/月文件的计划、发布滞后、缺失日期、下载重试、跨 ZIP 的 Trade ID 连续性、实时接续、ZIP 更正重验和来源证据 checkpoint；所有完整性门禁仍由 SeeAlpha 管理。
 5. 运行 `cargo check --workspace --all-targets --locked`、Clippy、单元和集成测试；在未验证前不授权生产 READY。
