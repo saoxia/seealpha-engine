@@ -20,7 +20,7 @@ strategy portfolio   backtest
      ledger
            ^
            |
-  connection/binance       pipeline/*
+  pipeline/nautilus        pipeline/*
 ```
 
 上图表示主要调用/协作关系，不是完整 Cargo 依赖图。以各 crate 的 `Cargo.toml` 为编译依赖的准确来源。
@@ -52,11 +52,11 @@ strategy portfolio   backtest
 
 **策略和回测**：接口 → Runtime → 已授权的 Rust 原生策略/历史数据 → 目标持仓/组合计算 → 回测或纸面持仓与账本。当前只支持受控的原生策略能力；旧 Python ZIP/NautilusTrader 策略不再直接执行。
 
-**订单**：接口 → Runtime 请求预登记与门禁 → Venue 协议 → 成交证据和对账 → Ledger 投影。未知结果不能盲重发。当前真实交易所发送并未获得生产验收授权，旧迁移文档不得被理解为启用承诺。
+**订单**：接口 → Runtime 请求预登记与门禁 → （待接通的）Nautilus 原生执行 → 可信成交证据和对账 → Ledger 投影。未知结果不能盲重发。当前真实交易所发送并未获得生产验收授权，旧迁移文档不得被理解为启用承诺。
 
 ## 逻辑边界但非独立 crate
 
-- [Execution](architecture/execution.md)：订单管理目前跨 Runtime、Venue 和 Ledger。
+- [Execution](architecture/execution.md)：订单管理目前跨 Runtime、Nautilus 和 Ledger；此前未被业务调用的独立订单状态校验 crate 已移除。
 - [Risk](architecture/risk.md)：风险裁剪当前位于 Portfolio，额外门禁位于 Runtime。
 
 不以「目录名称齐全」为目的新建空 crate。只有跨模块职责和事务边界明确后，才考虑独立 Execution/Risk crate。

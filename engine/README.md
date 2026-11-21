@@ -7,7 +7,7 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 | [pipeline](pipeline/) | 完整行情服务：实时订阅、历史采集、质量认证和数据访问 |
 | [strategy](strategy/) | 策略、信号与目标发布 |
 | [portfolio](portfolio/) | 组合、资金与目标仓位 |
-| [connection](connection/) | 交易所连接：Binance 多产品旧适配及逐步抽出的 Binance Options 专属能力 |
+| [connection](connection/) | Binance Options 专属规范化接口；Spot/USD-M 标准执行由 Nautilus 原生工厂规划承接 |
 | [ledger](ledger/) | 账户与账本事实及持久化 |
 | [backtest](backtest/) | 历史回放与模拟 |
 | [runtime](runtime/) | 跨领域用例编排 |

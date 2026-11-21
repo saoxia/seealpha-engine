@@ -10,7 +10,7 @@
 | `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
 | `engine/portfolio/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
 | `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
-| `engine/connection/` | 交易所私有订单、账户协议与状态适配；当前仅 Binance，行情由 `engine/pipeline/` 持有 |
+| `engine/connection/` | Binance Options 专属协议规范化；Spot/USD-M 执行工厂位于 `engine/pipeline/nautilus/`，真实订单发送尚未接通 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
 
 ### Binance Options 专属代码边界（分步迁移）
@@ -22,9 +22,9 @@
 | 规划目录 | 目标职责 | 当前归属 |
 | --- | --- | --- |
 | `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/`、`engine/runtime/`、`engine/pipeline/nautilus/` |
-| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/connection/binance/`、`engine/ledger/` |
+| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/ledger/`、`engine/pipeline/nautilus/` |
 
-不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
+已清理未被业务代码调用的独立 `seealpha-execution` crate；订单状态安全规则仍应在实际执行/对账接入时由其真实所有者实现和验证。不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
 
 ## 应用和对外边界
 

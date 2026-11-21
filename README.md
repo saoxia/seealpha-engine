@@ -6,7 +6,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 
 ## 源码与工程结构
 
-业务源码统一放在 [engine/](engine/)。`docker/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 `engine/` 并列。Rust 测试放在各 crate 的 `src/` 或 `tests/`，不再保留空的根级 Python `tests/`。根目录 `Cargo.toml` 管理全部 15 个 Rust Workspace 成员。
+业务源码统一放在 [engine/](engine/)。`docker/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 `engine/` 并列。Rust 测试放在各 crate 的 `src/` 或 `tests/`，不再保留空的根级 Python `tests/`。根目录 `Cargo.toml` 管理全部 14 个 Rust Workspace 成员。
 
 ### engine/ 内的业务领域与应用
 
@@ -14,13 +14,13 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 - `engine/strategy/`：Rust 内置策略、授权清单和目标持仓发布
 - `engine/portfolio/`：目标净额和风险裁剪
 - `engine/ledger/`：SQLite 账本
-- `engine/connection/`：Binance 订单及账户协议适配（行情服务在 `pipeline/`）
+- `engine/connection/`：Binance Options 专属规范化接口（Spot/USD-M 原生工厂位于 `pipeline/nautilus/`）
 - `engine/backtest/`：历史回放与回测
 - `engine/runtime/`：Runtime、租户和交易会话编排
 - `engine/gateway/`：对外 HTTP API、MCP 协议入口和研究授权校验（独立源码目录，同一 HTTP 服务）
 - `engine/apps/`：Engine 二进制入口
 
-`engine/risk/`（风险管理）和 `engine/execution/`（订单管理与执行）是规划领域，当前相关实现仍分布于 Portfolio、Runtime、Venue 和 Ledger；**尚无对应一级源码目录或独立 crate**，不会创建空模块。`packages/` 保留 Rust 原生策略清单示例，`benchmarks/`、`docker/`、`docs/`、`.github/` 保留工程职责。完整清单见 [一级业务领域布局](docs/architecture/DOMAIN_LAYOUT.md)。
+`engine/risk/`（风险管理）和 `engine/execution/`（订单管理与执行）是规划领域，当前相关实现仍分布于 Portfolio、Runtime、Nautilus 与 Ledger；**尚无对应一级源码目录或独立 crate**，不会创建空模块。`packages/` 保留 Rust 原生策略清单示例，`benchmarks/`、`docker/`、`docs/`、`.github/` 保留工程职责。完整清单见 [一级业务领域布局](docs/architecture/DOMAIN_LAYOUT.md)。
 
 本地持久化行情文件建议放在仓库根级 `data/`（已由 Git 忽略），生产使用外部数据卷；它们不属于 `engine/` 源码目录。详见 [数据目录约定](docs/architecture/DATA_LAYOUT.md)。
 
