@@ -28,7 +28,8 @@ fn identity(tenant: &str, account: &str, environment: &str) -> (String, String, 
 
 fn validate_secret(api_key: &str, secret: &str) -> Result<(), RuntimeError> {
     if api_key.is_empty() || secret.is_empty() || api_key == secret
-        || api_key.contains(['\n', '\r']) || secret.contains(['\n', '\r'])
+        || api_key.chars().any(|c| c == '\n' || c == '\r')
+        || secret.chars().any(|c| c == '\n' || c == '\r')
     {
         return Err(RuntimeError::Conflict("交易账户凭据无效。".into()));
     }
