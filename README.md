@@ -4,20 +4,24 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 
 > **不兼容变更 / 未测试**：原 Python ZIP 策略包、Python 目录策略和 NautilusTrader Python Strategy 不再执行。已有策略不会自动转换为 Rust；需要以当前支持的 Rust 内置策略清单重新下发。此分支按要求没有执行编译、测试、Docker 构建或端到端验收，不应据此判断生产就绪。真实交易所订单、衍生品和历史数据功能的完整等价性也未得到证明。
 
-## Rust workspace
+## 源码与工程结构
 
-- `market_data/`：行情、数据源、质量与 Catalog
-- `strategy/`：Rust 内置策略、授权清单和目标持仓发布
-- `portfolio/`：目标净额和风险裁剪
-- `accounting/`：SQLite 账本
-- `connectivity/`：交易所连接
-- `backtest/`：历史回放与回测
-- `research/`：研究授权和范围校验；研究任务编排仍在 Runtime
-- `application/`：Runtime、租户和交易会话编排
-- `interfaces/`：HTTP v2 和研究接口
-- `apps/`：Engine 二进制入口
+业务源码统一放在 [engine/](engine/)。`docker/`、`tests/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 `engine/` 并列。根目录 `Cargo.toml` 管理全部 16 个 Rust Workspace 成员。
 
-`risk/`（风险管理）和 `execution/`（订单管理与执行）是规划领域，当前相关实现仍分布于 Portfolio、Runtime、Venue 和 Ledger；**尚无对应一级源码目录或独立 crate**，不会创建空模块。`packages/` 保留既有示例资产，`tests/`、`benchmarks/`、`docker/`、`docs/`、`.github/` 保留工程职责。完整清单见 [一级业务领域布局](docs/architecture/DOMAIN_LAYOUT.md)。
+### engine/ 内的业务领域与应用
+
+- `engine/market_data/`：行情、数据源、质量与 Catalog
+- `engine/strategy/`：Rust 内置策略、授权清单和目标持仓发布
+- `engine/portfolio/`：目标净额和风险裁剪
+- `engine/accounting/`：SQLite 账本
+- `engine/connectivity/`：交易所连接
+- `engine/backtest/`：历史回放与回测
+- `engine/research/`：研究授权和范围校验；研究任务编排仍在 Runtime
+- `engine/application/`：Runtime、租户和交易会话编排
+- `engine/interfaces/`：HTTP v2 和研究接口
+- `engine/apps/`：Engine 二进制入口
+
+`engine/risk/`（风险管理）和 `engine/execution/`（订单管理与执行）是规划领域，当前相关实现仍分布于 Portfolio、Runtime、Venue 和 Ledger；**尚无对应一级源码目录或独立 crate**，不会创建空模块。`packages/` 保留既有示例资产，`tests/`、`benchmarks/`、`docker/`、`docs/`、`.github/` 保留工程职责。完整清单见 [一级业务领域布局](docs/architecture/DOMAIN_LAYOUT.md)。
 
 ## 部署
 

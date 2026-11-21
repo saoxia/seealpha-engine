@@ -312,7 +312,7 @@ mod tests {
             auth_mode: AuthMode::None,
             token: String::new(),
             state_dir: state.clone(),
-            project: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            project: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
             tenant_id: None,
             tenant_purpose: None,
             research_signing_key: None,
