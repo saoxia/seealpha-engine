@@ -12,6 +12,7 @@ pub mod features;
 pub mod hub;
 pub mod remaining;
 pub mod rollup;
+pub mod persisted_rollup;
 pub mod session;
 
 pub const MINUTE_MS: i64 = 60_000;

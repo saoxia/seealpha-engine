@@ -94,3 +94,9 @@ Validation: exact tree inventory and diff checked through GitHub; no local Rust/
 - Native feed Trade aggregation now rejects invalid intervals, negative timestamps/IDs, nonpositive prices/quantities, negative quote values and arithmetic overflow, checking rows before last-ID-wins de-duplication. Added a focused regression test.
 - **Not a complete folder replacement**: legacy SQLite rollup persistence, daily Parquet feature materialization and the legacy ZIP/BarDataWrangler adapter are still in `aggregation.py`, `bar_features.py` and `feature_source.py`. Keep those files until native dataflow/storage integration exists; native source reading and feature publication are distinct from arithmetic helpers. Legacy imports of the retired alias are unsupported.
 - Cargo tests are unexecuted in this connector session; no production data or live order flow was changed. Decimal-scale optimization remains a separate task.
+
+## Native persistent minute calculation increment (2026-11-21)
+
+Introduced `market_data/feed/src/persisted_rollup.rs`: a native SQLite closed-minute OHLCV store, 1m/5m/15m aggregation, revisioned materialization and contiguous minute checkpoint updates within one transaction. The new native tables do not share legacy Python writer state. Duplicates are idempotent, conflicting source minutes fail closed, gaps remain incomplete, and derived results never independently authorize new risk. Added offline SQLite regression tests for gap recovery, five-minute aggregation, invalid input and source conflict.
+
+**Scope limitation:** this provides native persistence infrastructure but is not yet wired into the application source supervisor, and it does not replace the legacy `aggregation.py` call sites or `bar_features.py` Parquet generation. Do not delete the directory until those integrations exist. No Cargo execution is claimed in this connected environment.
