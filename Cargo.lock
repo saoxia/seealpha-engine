@@ -1462,6 +1462,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "seealpha-binance-wire"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "reqwest",
+ "sha2",
+]
+
+[[package]]
 name = "seealpha-catalog"
 version = "0.1.0"
 dependencies = [
@@ -1606,10 +1615,10 @@ name = "seealpha-venue"
 version = "0.1.0"
 dependencies = [
  "axum",
- "hmac",
  "reqwest",
  "rust_decimal",
  "seealpha-binance-options",
+ "seealpha-binance-wire",
  "seealpha-execution",
  "serde",
  "serde_json",
