@@ -27,6 +27,16 @@
 
 Options 不属于现有 Nautilus 原生 Binance Spot/USD-M 执行覆盖范围；另行选择独立的 Nautilus ExecutionClient 适配器或受控 Options 网关，**不能**用 Spot/USD-M 原生工厂替代 EAPI。旧 Venue 和 `binance-wire` 的最终删除依赖上述能力实际切换，不以目录清理作为完成标准。
 
+## 原生执行路由身份约束（2026-11-22）
+
+新增 `src/native_execution.rs::resolve_native_target`，供原生执行节点工厂使用同一份交易品种、账户 ID、合约 ID 和 OMS 映射。当前离线 Spot/USD-M LiveNode 测试已改为从此函数取得 Binance product / AccountId / OmsType，而不是各自拼接。在未核实合约、交易所仓位模式、账户身份时失败关闭：
+
+- Spot 必须 `PositionMode::Spot`，对应原生 `OmsType::Hedging` 和 `BTCUSDT.BINANCE` 一类 InstrumentId。
+- USD-M 必须显式核实 `OneWay` 或 `Hedge`，对应原生 `Netting` 或 `Hedging`；InstrumentId 采用 `BTCUSDT-PERP.BINANCE`。
+- 不接受 Options/EAPI、Spot OCO、USD-M Algo、撤单替换和不认识的操作类别；这些路径不能静默降级为普通单。未核实仓位模式、非法合约/账户标识一律拒绝。
+
+**此函数不是发送授权，不创建执行引擎、订单或凭据。** Runtime 尚未消费此路由契约；下一步要把 Ledger 不可变意图、风险判断及重启恢复与 Nautilus 原生命令调度接起来，并经过真实编译、模拟网络与故障注入验收后才能安全代替旧 Venue。
+
 ## 使用 Nautilus 原生执行记录持久化（离线配置验证）
 
 NautilusTrader v2.0.0rc9 在 `NautilusRecordType` 中已有订单提交、接受、拒绝、取消、成交、冲销以及 `OrderStatusReport`、`FillReport`、`PositionStatusReport`、`AccountState`；`StreamingConfig.record_types` 可选择这些原生记录，写入 Nautilus 自带 Feather/Parquet Catalog。离线测试验证 `data_types=TradeTick`、原生执行 `record_types` 和 `.with_streaming_config(...)` 原生 Builder 接口，不创建自定义执行事件 JSON/SQLite/Parquet 写入器。注意：rc9 版本在构建**带 Streaming 的 LiveNode 后销毁节点**时，CI 曾触发 Tokio `failed to park thread: AccessError`；目前该测试仅验证 Streaming 配置与 Builder 的编译契约，单独构建**未启用 Streaming** 的原生执行节点。**Streaming 节点的运行/停止/销毁生命周期尚未验收，不能部署或宣称已接线**。
