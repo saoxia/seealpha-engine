@@ -25,6 +25,10 @@
 
 原来 `VenueClient::place_order` 中期权专用的 LIMIT 类型、价格、TIF、`reduceOnly`、`postOnly` 和 `clientOrderId` 参数构造已迁至 `engine/connection/binance-options/src/order.rs`。签名、预登记门禁、未知结果判定和真实下单权限均仍由旧多产品 Venue 持有；此增量不创建新订单发送通道。
 
+## Options 账户仓位与余额规范化抽离
+
+`reconciliation::position_quantities` / `asset_quantities` 的 Options 分支已改为委托 `seealpha_binance_options::account`：保持原 `quantity/positionAmt`、`marginBalance/balance/walletBalance` 回退优先级、持仓方向及重复键校验。通用对账差额算法及 Spot、USD-M 原有证据规则不变。
+
 ## Options 行权证据抽离
 
 旧 `src/account/settlement.rs` 现仅保留签名 `GET /eapi/v1/exerciseRecord`、时间窗口和满页失败关闭，以及兼容公开函数；Options 行权记录解析和去重由 `binance-options/src/settlement.rs` 唯一实现，USD-M 资金费收入逻辑仍保留原位，未重新实现交易所网络能力。

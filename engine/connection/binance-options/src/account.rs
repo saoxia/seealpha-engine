@@ -2,6 +2,8 @@
 //! Inputs are the two *separate* signed EAPI GET responses. No balances or
 //! positions are inferred from order acknowledgements or another market.
 use serde_json::{Value, json};
+use rust_decimal::Decimal;
+use std::{collections::BTreeMap, str::FromStr};
 
 use crate::OptionsEvidenceError;
 
@@ -30,9 +32,121 @@ pub fn normalize_options_account_snapshot(
     }))
 }
 
+
+/// Parse Options positions under the exchange's own contract and position-side
+/// identities. Missing/duplicate evidence invalidates the whole snapshot.
+pub fn option_position_quantities(
+    snapshot: &Value,
+) -> Result<BTreeMap<String, Decimal>, OptionsEvidenceError> {
+    let positions = snapshot
+        .get("positions")
+        .and_then(Value::as_array)
+        .ok_or(OptionsEvidenceError::Unconfirmed)?;
+    let mut result = BTreeMap::new();
+    for item in positions {
+        let symbol = field(item, &["symbol"])
+            .and_then(Value::as_str)
+            .ok_or(OptionsEvidenceError::Unconfirmed)?;
+        let raw = field(item, &["quantity", "positionAmt"])
+            .ok_or(OptionsEvidenceError::Unconfirmed)?;
+        let amount = decimal(raw)?;
+        let side = field(item, &["positionSide"])
+            .and_then(Value::as_str)
+            .unwrap_or("BOTH");
+        let key = format!("{symbol}:{side}");
+        if result.insert(key, amount).is_some() {
+            return Err(OptionsEvidenceError::Unconfirmed);
+        }
+    }
+    Ok(result)
+}
+
+/// Parse Options margin balances without merging them into Spot/UM wallets.
+pub fn option_asset_quantities(
+    snapshot: &Value,
+) -> Result<BTreeMap<String, Decimal>, OptionsEvidenceError> {
+    let balances = snapshot
+        .get("balances")
+        .and_then(Value::as_array)
+        .ok_or(OptionsEvidenceError::Unconfirmed)?;
+    let mut result = BTreeMap::new();
+    for item in balances {
+        let asset = field(item, &["asset"])
+            .and_then(Value::as_str)
+            .ok_or(OptionsEvidenceError::Unconfirmed)?;
+        let amount = decimal(
+            field(item, &["marginBalance", "balance", "walletBalance"])
+                .ok_or(OptionsEvidenceError::Unconfirmed)?,
+        )?;
+        if result.insert(asset.to_owned(), amount).is_some() {
+            return Err(OptionsEvidenceError::Unconfirmed);
+        }
+    }
+    Ok(result)
+}
+
+fn decimal(value: &Value) -> Result<Decimal, OptionsEvidenceError> {
+    let repr = value
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| value.is_number().then(|| value.to_string()))
+        .ok_or(OptionsEvidenceError::Unconfirmed)?;
+    Decimal::from_str(&repr).map_err(|_| OptionsEvidenceError::Unconfirmed)
+}
+
+fn field<'a>(item: &'a Value, alternatives: &[&str]) -> Option<&'a Value> {
+    alternatives.iter().find_map(|key| item.get(*key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_options_position_sides_and_quantity_fallbacks() {
+        let snapshot = json!({"positions":[
+            {"symbol":"BTC-271231-90000-C","positionSide":"LONG","quantity":"1.250"},
+            {"symbol":"BTC-271231-90000-C","positionSide":"SHORT","positionAmt":"-0.50"}
+        ]});
+        let amounts = option_position_quantities(&snapshot).unwrap();
+        assert_eq!(amounts["BTC-271231-90000-C:LONG"], Decimal::new(1250, 3));
+        assert_eq!(amounts["BTC-271231-90000-C:SHORT"], Decimal::new(-50, 2));
+    }
+
+    #[test]
+    fn options_balances_use_margin_priority_and_preserve_small_values() {
+        let snapshot = json!({"balances":[
+            {"asset":"USDT","marginBalance":"0.00000001","balance":"1234"},
+            {"asset":"BNB","walletBalance":"-1.25"}
+        ]});
+        let balances = option_asset_quantities(&snapshot).unwrap();
+        assert_eq!(balances["USDT"], Decimal::new(1, 8));
+        assert_eq!(balances["BNB"], Decimal::new(-125, 2));
+    }
+
+    #[test]
+    fn options_duplicate_or_malformed_account_evidence_fails_closed() {
+        let bad_positions = json!({"positions":[
+            {"symbol":"ETH-271231-1000-P","quantity":"1"},
+            {"symbol":"ETH-271231-1000-P","quantity":"2"}
+        ]});
+        assert_eq!(option_position_quantities(&bad_positions), Err(OptionsEvidenceError::Unconfirmed));
+        assert_eq!(
+            option_position_quantities(&json!({"positions":[{"symbol":"X","quantity":"NaN"}]})),
+            Err(OptionsEvidenceError::Unconfirmed)
+        );
+        assert_eq!(
+            option_asset_quantities(&json!({"balances":[
+                {"asset":"USDT","marginBalance":"1"},
+                {"asset":"USDT","marginBalance":"2"}
+            ]})),
+            Err(OptionsEvidenceError::Unconfirmed)
+        );
+        assert_eq!(
+            option_asset_quantities(&json!({"balances":[{"asset":"USDT"}]})),
+            Err(OptionsEvidenceError::Unconfirmed)
+        );
+    }
 
     #[test]
     fn accepts_both_supported_signed_account_envelopes_without_revaluation() {
