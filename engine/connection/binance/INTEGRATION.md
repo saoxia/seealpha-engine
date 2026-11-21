@@ -8,7 +8,7 @@
 
 | 物理目录 | 职责 |
 | --- | --- |
-| `src/lib.rs` | 签名 HTTP 客户端、端点白名单、公共类型及公开模块声明 |
+| `src/lib.rs` | 签名 HTTP 传输及响应界限、公共类型、现有只读/预登记写入入口；主机白名单、路由和签名已委托 `binance-wire` |
 | `src/spot/` | Spot OCO（仍被 Runtime 使用） |
 | `src/usd_m/` | USD-M 条件订单（Algo） |
 | `src/options/` | 已迁移并清空，Options 专属证据与分页在 `binance-options/` |
@@ -16,6 +16,12 @@
 | `src/account/` | 多产品只读账户证据、账户对账及资金结算查询 |
 
 仍有部分模块声明通过 `#[path]` 指向实体文件；执行生命周期与 Options 成交规范化的旧公开兼容转发已删除，实际实现分别保留在 `engine/execution` 和 `engine/connection/binance-options`。业务行为、凭据边界、账户安全门禁与 Ledger 事务归属不变。
+
+## 公共 Binance 签名线协议抽离（2026-11-22）
+
+新增 `engine/connection/binance-wire`（`seealpha-binance-wire`），统一维护 Spot/USD-M/Options 的官方主机白名单、测试网产品路由、单一 percent-encoding、签名 HMAC-SHA256。旧 `seealpha-venue` 保持原错误语义映射与 `sign_payload` 公开兼容入口，`VenueClient::signed_wire` 仍是唯一现有私有 HTTP 发出点，不创建额外网络客户端、不改变凭据存储、请求次数、超时、请求门禁、响应大小限制或订单确认政策。Cargo workspace 与 lockfile 同步更新。
+
+这是**公共签名策略抽离，不是生产执行迁移**；旧 Venue 的签名 HTTP 发送、Spot OCO、USD-M Algo、Options 查询和 Runtime/Ledger 接线仍待处理。不能把拆分后的库视为已放开实盘。
 
 ## Options 成交分页协议抽离
 
