@@ -136,6 +136,78 @@ pub fn validate_venue_klines(
     Ok(())
 }
 
+/// Original saved Nautilus bar, with its exact close timestamp in nanoseconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedKline {
+    pub event_ns: i64,
+    pub values: [rust_decimal::Decimal; 5],
+}
+
+/// Complete or partial OHLCV bucket built from the saved source bars.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AggregatedKline {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub values: [rust_decimal::Decimal; 5],
+    pub complete: bool,
+}
+
+/// Replaces the legacy Python `local_klines` bucketing and completeness logic.
+/// No data is written. Duplicate/out-of-order rows cannot be marked complete.
+pub fn aggregate_saved_klines(
+    saved: &[SavedKline],
+    source_interval: &str,
+    target_interval: &str,
+) -> Result<Vec<AggregatedKline>, CatalogError> {
+    use std::collections::BTreeMap;
+
+    if saved.len() > 50_000 {
+        return Err(CatalogError::Limit("本地 K 线聚合记录超出上限。".into()));
+    }
+    // Validate interval names even for empty saved catalogs.
+    crate::interval_ms(source_interval)?;
+    crate::interval_ms(target_interval)?;
+    let mut buckets = BTreeMap::<i64, AggregatedKline>::new();
+    for bar in saved {
+        let (opening, closing) = crate::bar_window(
+            source_interval,
+            bar.event_ns.div_euclid(crate::NANO_PER_MS),
+        )?;
+        let expected_event = closing
+            .checked_sub(1)
+            .and_then(|ms| ms.checked_mul(crate::NANO_PER_MS))
+            .ok_or_else(|| CatalogError::Invalid("本地 K 线纳秒时间溢出。".into()))?;
+        if bar.event_ns != expected_event {
+            return Err(CatalogError::Invalid("已保存 K 线时间边界无效。".into()));
+        }
+        let (left, right) = crate::bar_window(target_interval, opening)?;
+        if let Some(bucket) = buckets.get_mut(&left) {
+            bucket.complete &= opening == bucket.end_ms;
+            bucket.values[1] = bucket.values[1].max(bar.values[1]);
+            bucket.values[2] = bucket.values[2].min(bar.values[2]);
+            bucket.values[3] = bar.values[3];
+            bucket.values[4] = bucket.values[4]
+                .checked_add(bar.values[4])
+                .ok_or_else(|| CatalogError::Invalid("本地 K 线成交量溢出。".into()))?;
+            bucket.end_ms = closing;
+        } else {
+            buckets.insert(
+                left,
+                AggregatedKline {
+                    start_ms: left,
+                    end_ms: closing,
+                    values: bar.values,
+                    complete: opening == left && closing <= right,
+                },
+            );
+        }
+    }
+    for (left, bucket) in &mut buckets {
+        bucket.complete &= bucket.end_ms == crate::bar_window(target_interval, *left)?.1;
+    }
+    Ok(buckets.into_values().collect())
+}
+
 /// A saved candle's OHLCV evidence and whether its constituent windows are complete.
 /// The legacy repair path sends decimal text, which the native bridge parses
 /// before invoking this comparison; no floating-point conversion is permitted.
@@ -266,6 +338,40 @@ mod venue_tests {
         assert!(
             validate_venue_klines(&[row], "1m", 0, 60_000, 0, crate::MarketProduct::Spot).is_err()
         );
+    }
+
+    #[test]
+    fn aggregates_saved_minutes_and_preserves_partial_window_evidence() {
+        fn saved(minute: i64, volume: i64) -> SavedKline {
+            SavedKline {
+                event_ns: (minute * 60_000 + 59_999) * 1_000_000,
+                values: [
+                    Decimal::from(10),
+                    Decimal::from(12),
+                    Decimal::from(9),
+                    Decimal::from(11),
+                    Decimal::from(volume),
+                ],
+            }
+        }
+        let complete = aggregate_saved_klines(&[saved(0, 2), saved(1, 3)], "1m", "2m");
+        // Binance catalog supports standard source/target periods only.
+        assert!(complete.is_err());
+        let partial = aggregate_saved_klines(&[saved(0, 2), saved(2, 3)], "1m", "5m")
+            .unwrap();
+        assert_eq!(partial.len(), 1);
+        assert_eq!(partial[0].values[4], Decimal::from(5));
+        assert!(!partial[0].complete);
+        let full = aggregate_saved_klines(
+            &[saved(0, 1), saved(1, 1), saved(2, 1), saved(3, 1), saved(4, 1)],
+            "1m",
+            "5m",
+        )
+        .unwrap();
+        assert!(full[0].complete);
+        assert_eq!(full[0].values[4], Decimal::from(5));
+        let bad = SavedKline { event_ns: 0, ..saved(0, 1) };
+        assert!(aggregate_saved_klines(&[bad], "1m", "1m").is_err());
     }
 
     #[test]
