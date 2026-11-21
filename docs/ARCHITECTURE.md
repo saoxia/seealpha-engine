@@ -30,14 +30,14 @@ strategy portfolio   backtest
 - **领域能力**：`engine/strategy`、`engine/portfolio`、`engine/backtest` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
 - **交易事实**：`engine/ledger` 持有 SQLite 状态、请求意图、成交和对账证据；`engine/connectivity/venue` 持有交易所协议及交易请求适配。二者不可用简单的 HTTP 传输成功代替实际成交事实。
 - **行情**：`engine/market_data/market` 提供市场模型及公共读取，`sources/binance` 提供 Binance 数据源与明确命名的多个进程入口（`src/bin/`）；`feed` 持有数据门禁、汇总和计算；`catalog` 处理历史数据持久化；`quality` 和 `converter` 是辅助组件。
-- **研究授权**：`engine/research` 管理研究操作授权和作用域；用例编排仍在 `engine/runtime`，历史回放仍在 `engine/backtest`。
+- **研究授权**：`engine/gateway/api/src/research/` 管理研究 Grant 的验签和作用域校验；用例编排仍在 `engine/runtime`，历史回放仍在 `engine/backtest`。
 - **独立程序**：`engine/apps/trading_engine` 编译为 `seealpha-engine`，负责创建 Runtime、HTTP 服务以及显式 smoke 入口。
 
 ## 一级目录原则
 
 顶层区分**业务源码**与**工程资源**：`engine/` 包含全部 Rust 业务领域、应用运行时、接口与可执行入口；`docker/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 Cargo Workspace 配置保留根目录；测试位于各 Rust crate 内。
 
-已实现业务领域：`engine/market_data/`、`engine/strategy/`、`engine/portfolio/`、`engine/ledger/`、`engine/connectivity/`、`engine/backtest/`、`engine/research/`。`engine/risk/` 与 `engine/execution/` 仍是逻辑领域，没有独立空 crate。`engine/runtime/`、`engine/gateway/`、`engine/apps/` 为运行与交付层。详见 [领域布局](architecture/DOMAIN_LAYOUT.md)。
+已实现业务领域：`engine/market_data/`、`engine/strategy/`、`engine/portfolio/`、`engine/ledger/`、`engine/connectivity/`、`engine/backtest/`。`engine/risk/` 与 `engine/execution/` 仍是逻辑领域，没有独立空 crate。`engine/runtime/`、`engine/gateway/`、`engine/apps/` 为运行与交付层。详见 [领域布局](architecture/DOMAIN_LAYOUT.md)。
 
 此次源码整体移动，仅同步更新 Workspace、Docker、CI、相对测试路径及当前架构说明，不改变公开 API、交易行为、真实账户门禁或持久化格式。
 

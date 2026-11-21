@@ -9,7 +9,6 @@ members = [
     "engine/market_data/feed",
     "engine/portfolio",
     "engine/ledger",
-    "engine/research",
     "engine/strategy",
     "engine/connectivity/venue",
     "engine/backtest",

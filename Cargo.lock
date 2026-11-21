@@ -1704,18 +1704,19 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "hmac",
  "http-body-util",
  "rust_decimal",
  "seealpha-backtest",
  "seealpha-catalog",
  "seealpha-ledger",
  "seealpha-market",
- "seealpha-research",
  "seealpha-runtime",
  "serde",
  "serde_json",
  "sha2",
  "subtle",
+ "thiserror",
  "tokio",
  "tower",
  "tower-http",
@@ -1761,18 +1762,6 @@ name = "seealpha-quality"
 version = "0.1.0"
 dependencies = [
  "serde_json",
-]
-
-[[package]]
-name = "seealpha-research"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "hmac",
- "serde_json",
- "sha2",
- "subtle",
- "thiserror",
 ]
 
 [[package]]
