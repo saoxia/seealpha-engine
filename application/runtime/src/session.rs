@@ -553,10 +553,10 @@ class WeightedStrategy:
         assert_eq!(report["exchange_orders"], 0);
         assert_eq!(report["publications"][0]["weight"], "0.5");
         assert!(report["publications"][0].get("quantity").is_none());
-        assert_eq!(report["ending_position"], "1");
+        assert_eq!(report["ending_position"].as_str().unwrap().parse::<Decimal>().unwrap(), Decimal::ONE);
         assert_eq!(report["paper_fills"].as_array().unwrap().len(), 1);
         assert_eq!(report["paper_fills"][0]["side"], "buy");
-        assert_eq!(report["paper_fills"][0]["quantity"], "1");
+        assert_eq!(report["paper_fills"][0]["quantity"].as_str().unwrap().parse::<Decimal>().unwrap(), Decimal::ONE);
         let before = runtime.ledger.order_count("dev", "weighted-paper").unwrap();
         assert_eq!(before, 1);
         let repeated = runtime.run_paper(request).unwrap();
