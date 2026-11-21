@@ -34,6 +34,12 @@ activate any source in the Engine Runtime. The existing
 - Bounded output queue remains backpressured and cannot silently drop trades.
   New offline fixtures exercise the blocking writer and restart behavior.
 
+## Nautilus-first boundary: verified archive download (separate command)
+
+See [ARCHIVE_BACKFILL.md](ARCHIVE_BACKFILL.md). The `binance-trade-archive-fetch` CLI fetches official daily Spot/UM trade archives with strict sidecar checksum and immutable disk publication. It is **offline**, is not invoked from the current Runtime, does not implement a second REST trade-history client, and does not claim Catalog write-back or a continuous historical/real-time handover.
+
+The experimental WebSocket collector below remains **transitional**, disabled by default; its generic Spot/UM subscription and history path should be retired in favor of NautilusTrader only after version-pinned parity tests. Do not extend it with duplicate general-purpose exchange features.
+
 ## Not yet equivalent to Python; integration blockers
 
 1. Add a **public REST recent-trade overlap** task on each new WS session,

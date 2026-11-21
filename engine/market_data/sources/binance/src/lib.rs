@@ -5,6 +5,7 @@
 //! No trading, I/O, network subscription, or storage mutation is performed here.
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod archive_fetch;
 pub mod calc;
 pub mod trade_archive;
 pub mod trade_features;
