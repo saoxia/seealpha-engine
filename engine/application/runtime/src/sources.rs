@@ -38,7 +38,7 @@ pub(crate) fn source_root(
 /// Only existing, real tenant/product directories may receive a native
 /// Nautilus data stream. A symlink to another tenant is not acceptable even
 /// when its canonical target happens to live under the administrator root.
-fn native_tenant_product_root(
+pub(crate) fn native_tenant_product_root(
     base: &str,
     tenant: &str,
     product: &str,

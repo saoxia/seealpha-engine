@@ -181,10 +181,41 @@ impl Runtime {
         let action = field(payload, "action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
-        if !matches!(action, "backfill" | "publish_catalog" | "archive_fetch") {
+        if !matches!(action, "backfill" | "publish_catalog" | "archive_fetch" | "archive_import") {
             return Err(RuntimeError::Conflict(
                 "该历史任务尚未完成 Rust 等价迁移。".into(),
             ));
+        }
+        if action == "archive_import" {
+            let download_id = field(payload, "archive_job_id")?;
+            if download_id.len() != 32 || !download_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(bad("必须提供已经完成的租户 ZIP 下载任务编号。"));
+            }
+            let download = self.data_job(tenant_id, download_id)?;
+            if download["action"] != "archive_fetch"
+                || download["status"] != "completed"
+                || download["result"]["verified"] != true
+            {
+                return Err(RuntimeError::Conflict(
+                    "必须先在同一租户完成可验证的官方 ZIP 获取任务。".into(),
+                ));
+            }
+            let product = field(&download["payload"], "product")?;
+            let dataset = field(&download["payload"], "dataset")?;
+            if !matches!(
+                (product, dataset),
+                ("spot", "trades") | ("futures_um", "aggTrades")
+            ) {
+                return Err(bad("不能把不同粒度的历史成交导入实时兼容的 Nautilus Catalog。"));
+            }
+            let normalized = json!({
+                "action": "archive_import",
+                "archive_job_id": download_id
+            });
+            let id = hash_job(tenant_id, &normalized);
+            return self.ledger
+                .queue_data_job(tenant_id, &id, action, &normalized)
+                .map_err(map_ledger);
         }
         if action == "archive_fetch" {
             let product = field(payload, "product")?;
@@ -326,6 +357,8 @@ impl Runtime {
                 .await
         } else if original["action"] == "archive_fetch" {
             self.archive_fetch_job(tenant_id, &original["payload"]).await
+        } else if original["action"] == "archive_import" {
+            self.archive_import_job(tenant_id, &original["payload"]).await
         } else {
             self.backfill_job(tenant_id, &original["payload"]).await
         };
@@ -421,6 +454,145 @@ impl Runtime {
         obj.insert("data_ready".into(), json!(false));
         obj.insert("allow_new_risk".into(), json!(false));
         obj.insert("exchange_orders".into(), json!(0));
+        Ok(report)
+    }
+
+    /// Explicit offline import of an already downloaded, verified Binance ZIP
+    /// into the upstream Rust Nautilus Catalog, never a custom Tick store.
+    ///
+    /// The previous completed download job is the provenance authority, not
+    /// caller-supplied file paths or checksums. This never declares READY.
+    async fn archive_import_job(
+        &self,
+        tenant: &str,
+        payload: &Value,
+    ) -> Result<Value, RuntimeError> {
+        let download_id = field(payload, "archive_job_id")?;
+        let download = self.data_job(tenant, download_id)?;
+        if download["action"] != "archive_fetch"
+            || download["status"] != "completed"
+            || download["result"]["verified"] != true
+            || download["result"]["catalog_committed"] != false
+            || download["result"]["source"] != "https://data.binance.vision"
+        {
+            return Err(bad("没有已完成且可验证的同租户 Binance 下载证据。"));
+        }
+        let request = &download["payload"];
+        let product = field(request, "product")?;
+        let dataset = field(request, "dataset")?;
+        let symbol = field(request, "symbol")?;
+        let day = field(request, "day")?;
+        if !matches!(
+            (product, dataset),
+            ("spot", "trades") | ("futures_um", "aggTrades")
+        ) {
+            return Err(bad("当前 Nautilus Catalog 只接受与实时 TradeTick 同粒度的数据。"));
+        }
+        let spec = ArchiveSpec::new(product, dataset, symbol, day)
+            .map_err(|_| bad("归档来源参数无效。"))?;
+        let sha = field(&download["result"], "sha256")?;
+        if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(bad("已验证下载记录缺少有效的 SHA-256。"));
+        }
+        if download["result"]["archive"] != spec.remote_path() {
+            return Err(bad("归档来源不匹配，拒绝导入。"));
+        }
+
+        let volume = std::env::var("ENGINE_ARCHIVE_ROOT")
+            .map_err(|_| bad("未配置管理员管理的历史归档根目录。"))?;
+        let root = std::path::PathBuf::from(volume)
+            .canonicalize()
+            .map_err(|_| bad("历史归档根目录不可用。"))?;
+        let tenant_root = crate::sources::native_tenant_product_root(
+            &root.to_string_lossy(), tenant, product,
+        )?
+        .parent()
+        .ok_or_else(|| bad("租户归档路径无效。"))?
+        .to_path_buf();
+        let mut archive = tenant_root.join(product);
+        for component in [dataset, symbol] {
+            archive.push(component);
+            let metadata = std::fs::symlink_metadata(&archive)
+                .map_err(|_| bad("历史数据归档子目录不存在。"))?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(bad("历史数据归档目录不安全。"));
+            }
+        }
+        archive.push(spec.archive_name());
+        let meta = std::fs::symlink_metadata(&archive)
+            .map_err(|_| bad("历史 ZIP 尚未下载。"))?;
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            return Err(bad("历史 ZIP 必须是普通文件。"));
+        }
+        if download["result"]["path"].as_str() != Some(archive.to_string_lossy().as_ref()) {
+            return Err(bad("归档路径与原始下载证明不匹配。"));
+        }
+
+        let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
+            .map_err(|_| bad("未配置原生 Nautilus Catalog 根目录。"))?;
+        let catalog = crate::sources::native_tenant_product_root(
+            &catalog_base, tenant, product,
+        )?;
+        // The existing source supervisor is authoritative for its children.
+        // Do not write historical files while the native live writer is active.
+        {
+            let mut processes = self.source_processes.lock()
+                .map_err(|_| bad("行情进程管理锁不可用。"))?;
+            if let Some(child) = processes.get_mut(&format!("{tenant}:{product}"))
+                && child.try_wait()
+                    .map_err(|_| bad("行情数据源进程状态不明。"))?
+                    .is_none()
+            {
+                return Err(RuntimeError::Conflict(
+                    "原生实时数据源尚在运行，禁止并发导入相同 Catalog。".into(),
+                ));
+            }
+        }
+
+        let executable = std::env::var("ENGINE_NATIVE_NAUTILUS_IMPORT_BIN")
+            .map_err(|_| bad("未安装并配置已验证的 Nautilus 历史导入程序。"))?;
+        if executable.is_empty() {
+            return Err(bad("原生历史导入程序路径为空。"));
+        }
+        let args = [
+            product.to_owned(),
+            dataset.to_owned(),
+            symbol.to_owned(),
+            day.to_owned(),
+            archive.to_string_lossy().into_owned(),
+            catalog.to_string_lossy().into_owned(),
+            sha.to_owned(),
+        ];
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(executable)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .output()
+        })
+        .await
+        .map_err(|_| bad("原生历史导入任务未返回结果。"))?
+        .map_err(|_| bad("无法启动 Nautilus 历史导入程序。"))?;
+        if !output.status.success() {
+            return Err(RuntimeError::Conflict(format!(
+                "Nautilus 历史 Tick 导入失败，可能已有局部 Parquet 需核验：{}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars().take(300).collect::<String>()
+            )));
+        }
+        let mut report: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|_| bad("Nautilus 历史导入回执 JSON 无效。"))?;
+        if report["catalog_committed"] != true
+            || report["data_ready"] != false
+            || report["coverage_complete"] != false
+            || report["sha256"] != sha
+            || report["instrument_id"].as_str().is_none()
+            || report["records"].as_u64().is_none_or(|count| count == 0)
+        {
+            return Err(bad("Nautilus 历史导入回执未包含可信的完整性限制。"));
+        }
+        report["action"] = json!("archive_import");
+        report["source_job_id"] = json!(download_id);
+        report["allow_new_risk"] = json!(false);
         Ok(report)
     }
 
