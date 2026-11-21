@@ -74,7 +74,7 @@ jobs:
           components: rustfmt, clippy
       - name: Diagnose Cargo lockfile drift
         run: |
-          cargo update --offline
+          cargo update --workspace
           git diff -- Cargo.lock
       # Run compilation first so pre-existing workspace formatting debt does not
       # prevent us from observing type/borrow-checker failures in the PR.
