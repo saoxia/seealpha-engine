@@ -8,8 +8,20 @@ pub mod conditional;
 pub mod evidence;
 #[path = "orders/lifecycle.rs"]
 pub mod lifecycle;
-#[path = "options/trades.rs"]
-pub mod option_trades;
+pub mod option_trades {
+    // Compatibility for the previous public parsing API. Only one parser exists.
+    use super::VenueError;
+    use serde_json::Value;
+
+    pub fn normalize_option_trades(
+        symbol: &str,
+        order_id: &str,
+        rows: &[Value],
+    ) -> Result<Vec<Value>, VenueError> {
+        seealpha_binance_options::normalize_option_trades(symbol, order_id, rows)
+            .map_err(|_| VenueError::Unconfirmed)
+    }
+}
 #[path = "orders/guard.rs"]
 pub mod order_guard;
 #[path = "account/reconciliation.rs"]
@@ -43,6 +55,12 @@ pub enum VenueError {
     Rejected(String),
     #[error("交易结果待核实，请刷新委托并按客户订单号核对，不要重复提交。")]
     Unconfirmed,
+}
+
+impl From<seealpha_binance_options::OptionsEvidenceError> for VenueError {
+    fn from(_: seealpha_binance_options::OptionsEvidenceError) -> Self {
+        Self::Unconfirmed
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,6 +519,34 @@ impl VenueClient {
             return Err(VenueError::Rejected(format!("{code} {msg}")));
         }
         Ok(value)
+    }
+}
+
+impl VenueClient {
+    /// Signed read-only Options trade pagination. Protocol/cursor rules live
+    /// exclusively in the dedicated binance-options crate.
+    pub fn option_order_trades(
+        &self,
+        credentials: &Credentials,
+        symbol: &str,
+        order_id: &str,
+    ) -> Result<Vec<Value>, VenueError> {
+        check_credentials(credentials)?;
+        let canonical = venue_symbol(symbol)?;
+        seealpha_binance_options::trades_page::collect_option_order_trades(
+            &canonical,
+            order_id,
+            |from_id| {
+                self.signed(
+                    credentials,
+                    "GET",
+                    seealpha_binance_options::trades_page::EAPI_USER_TRADES_PATH,
+                    &seealpha_binance_options::trades_page::option_user_trades_page_params(
+                        &canonical, from_id,
+                    ),
+                )
+            },
+        )
     }
 }
 
