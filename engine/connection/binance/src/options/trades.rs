@@ -1,12 +1,24 @@
 //! Signed, bounded Binance Options trade pagination; seealpha-binance-options
 //! owns the Options-only trade normalization and evidence checks.
 use crate::{Credentials, VenueClient, VenueError, check_credentials, venue_symbol};
-use seealpha_binance_options::{normalize_option_trades, parse_trade_id};
+use seealpha_binance_options::parse_trade_id;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
 fn digits(value: &Value) -> Result<u64, VenueError> {
     parse_trade_id(value).map_err(|_| VenueError::Unconfirmed)
+}
+
+/// Temporary compatibility surface while Runtime and external callers still
+/// depend on the existing seealpha_venue::option_trades public API.
+/// The actual Options-only parsing and validation lives in binance-options.
+pub fn normalize_option_trades(
+    symbol: &str,
+    order_id: &str,
+    rows: &[Value],
+) -> Result<Vec<Value>, VenueError> {
+    seealpha_binance_options::normalize_option_trades(symbol, order_id, rows)
+        .map_err(|_| VenueError::Unconfirmed)
 }
 
 impl VenueClient {
@@ -48,8 +60,7 @@ impl VenueClient {
                 all.push(row.clone());
             }
             if rows.len() < 1000 {
-                return normalize_option_trades(&canonical, order_id, &all)
-                    .map_err(|_| VenueError::Unconfirmed);
+                return normalize_option_trades(&canonical, order_id, &all);
             }
             from_id = greatest
                 .ok_or(VenueError::Unconfirmed)?
