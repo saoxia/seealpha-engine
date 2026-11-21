@@ -275,7 +275,7 @@ impl VenueClient {
             seealpha_binance_options::order::options_lookup_pairs(&symbol, client_order_id)
         } else {
             vec![
-                ("symbol".to_string(), symbol),
+                ("symbol".to_string(), symbol.clone()),
                 ("origClientOrderId".to_string(), client_order_id.to_string()),
             ]
         };
