@@ -148,11 +148,7 @@ pub struct LocalKline {
 /// Decide whether a verified venue candle needs repair, replacing the legacy
 /// Python `differs` predicate. A missing all-zero slice is not a mismatch
 /// for the tick/second source, but incomplete saved bars always are.
-pub fn venue_kline_differs(
-    local: Option<&LocalKline>,
-    remote: &VenueKline,
-    source: &str,
-) -> bool {
+pub fn venue_kline_differs(local: Option<&LocalKline>, remote: &VenueKline, source: &str) -> bool {
     match local {
         Some(saved) => {
             let observed = [
@@ -271,6 +267,7 @@ mod venue_tests {
             validate_venue_klines(&[row], "1m", 0, 60_000, 0, crate::MarketProduct::Spot).is_err()
         );
     }
+
     #[test]
     fn native_repair_difference_preserves_legacy_zero_trade_exception() {
         let mut remote = candle(0, 60_000);
@@ -293,8 +290,10 @@ mod venue_tests {
         assert!(!venue_kline_differs(None, &remote, "1s"));
         assert!(venue_kline_differs(None, &remote, "1m"));
         assert!(venue_kline_differs(Some(&complete), &remote, "tick"));
-        let incomplete = LocalKline { complete: false, ..complete };
+        let incomplete = LocalKline {
+            complete: false,
+            ..complete
+        };
         assert!(venue_kline_differs(Some(&incomplete), &remote, "1m"));
     }
-
 }
