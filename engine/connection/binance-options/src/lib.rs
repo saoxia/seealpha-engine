@@ -3,6 +3,9 @@
 //! This crate owns Options-only evidence decoding. It never sends orders,
 //! signs requests, stores credentials, or treats an order ACK as a fill.
 //! An incomplete or inconsistent payload fails closed.
+pub mod account;
+pub use account::normalize_options_account_snapshot;
+
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;

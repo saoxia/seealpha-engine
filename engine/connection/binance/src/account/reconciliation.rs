@@ -185,16 +185,8 @@ impl VenueClient {
             Product::Option => {
                 let account = self.signed(credentials, "GET", "/eapi/v1/account", &[])?;
                 let positions = self.signed(credentials, "GET", "/eapi/v1/position", &[])?;
-                let balances = account
-                    .as_array()
-                    .or_else(|| account.get("balances").and_then(Value::as_array))
-                    .or_else(|| account.get("asset").and_then(Value::as_array))
-                    .ok_or(VenueError::Unconfirmed)?;
-                let positions = positions.as_array().ok_or(VenueError::Unconfirmed)?;
-                Ok(
-                    json!({"product":"options","balances":balances,"positions":positions,
-                    "observed_at":Value::Null}),
-                )
+                seealpha_binance_options::normalize_options_account_snapshot(&account, &positions)
+                    .map_err(|_| VenueError::Unconfirmed)
             }
         }
     }

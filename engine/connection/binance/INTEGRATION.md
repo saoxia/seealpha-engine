@@ -19,7 +19,7 @@
 
 ## Options 证据代码抽离（2026-11-21）
 
-`normalize_option_trades` 及其真实成交证据校验已搬至 `engine/connection/binance-options`，当前 `src/options/trades.rs` 仅负责已有签名只读分页请求与错误映射。该迁移不改变用户成交归属、重复 ID 检查、成交数量/手续费字段或任何真实订单发送行为；不代表 Options 的整套交易网络接口已经迁移。
+`normalize_option_trades` 及其真实成交证据校验、期权账户快照结构校验已搬至 `engine/connection/binance-options`。当前 `src/options/trades.rs` 仅负责签名成交分页请求，`src/account/reconciliation.rs` 的 Options 分支只保留签名账户/持仓 GET 与错误映射。该迁移不改变用户成交归属、重复 ID 检查、成交数量/手续费字段或任何真实订单发送行为；不代表 Options 的整套交易网络接口已经迁移。
 
 ## 当前原生能力与复用范围
 
