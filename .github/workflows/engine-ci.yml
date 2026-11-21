@@ -72,6 +72,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
+      # Run compilation first so pre-existing workspace formatting debt does not
+      # prevent us from observing type/borrow-checker failures in the PR.
+      - name: Compile check
+        run: cargo check --workspace --all-targets --locked
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
