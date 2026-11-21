@@ -43,7 +43,9 @@ struct AggregateCatalogRequest {
     end_ms: i64,
 }
 
-fn aggregate_catalog(request: AggregateCatalogRequest) -> Result<HashMap<String, AggregatedRow>, String> {
+fn aggregate_catalog(
+    request: AggregateCatalogRequest,
+) -> Result<HashMap<String, AggregatedRow>, String> {
     let product = MarketProduct::parse(&request.product).map_err(|error| error.to_string())?;
     let buckets = read_aggregated_catalog_klines(
         &request.root,
