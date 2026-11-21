@@ -1,14 +1,14 @@
 //! Signed Binance Options exercise evidence normalization.
 //! Exercise records prove exchange outcomes, not arbitrary calculated wallet changes.
-use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use std::{collections::HashSet, str::FromStr};
+use std::collections::HashSet;
 
-use crate::OptionsEvidenceError;
+use crate::{OptionsEvidenceError, parse_decimal_str};
 
-fn parse_option_amount(value: &Value) -> Result<Decimal, OptionsEvidenceError> {
+fn parse_option_amount(value: &Value) -> Result<(), OptionsEvidenceError> {
     let text = value.as_str().ok_or(OptionsEvidenceError::Unconfirmed)?;
-    Decimal::from_str(text).map_err(|_| OptionsEvidenceError::Unconfirmed)
+    parse_decimal_str(text)?;
+    Ok(())
 }
 
 pub fn normalize_option_exercises(rows: &Value, symbol: &str) -> Result<Vec<Value>, OptionsEvidenceError> {

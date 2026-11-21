@@ -44,10 +44,8 @@ pub fn build_options_order_pairs(
     if !fields.order_type.eq_ignore_ascii_case("limit") {
         return Err(OptionsOrderFieldError::UnsupportedOrderType);
     }
-    if !matches!(
-        fields.time_in_force.to_ascii_uppercase().as_str(),
-        "GTC" | "IOC" | "FOK" | "GTX"
-    ) {
+    let time_in_force = fields.time_in_force.to_ascii_uppercase();
+    if !matches!(time_in_force.as_str(), "GTC" | "IOC" | "FOK" | "GTX") {
         return Err(OptionsOrderFieldError::InvalidTimeInForce);
     }
 
@@ -58,7 +56,7 @@ pub fn build_options_order_pairs(
         ("quantity".into(), fields.quantity.into()),
         ("clientOrderId".into(), fields.client_order_id.into()),
         ("price".into(), fields.price.unwrap_or_default().into()),
-        ("timeInForce".into(), fields.time_in_force.into()),
+        ("timeInForce".into(), time_in_force),
         (
             "reduceOnly".into(),
             if fields.reduce_only { "true" } else { "false" }.into(),
@@ -92,7 +90,9 @@ pub fn validate_options_order_reply(
     if reply.get("clientOrderId").and_then(serde_json::Value::as_str)
         != Some(client_order_id)
         || reply.get("symbol").and_then(serde_json::Value::as_str) != Some(symbol)
-        || reply.get("orderId").is_none_or(serde_json::Value::is_null)
+        || symbol.is_empty() || client_order_id.is_empty()
+        || reply.get("orderId")
+            .is_none_or(|id| crate::parse_order_id_value(id).is_err())
     {
         return Err(crate::OptionsEvidenceError::Unconfirmed);
     }
@@ -110,11 +110,18 @@ mod tests {
         let client = "SA123";
         let valid = json!({"symbol":symbol,"clientOrderId":client,"orderId":42,"status":"NEW"});
         assert_eq!(validate_options_order_reply(&valid,symbol,client),Ok(()));
+        let valid_string_id = json!({"symbol":symbol,"clientOrderId":client,"orderId":"42"});
+        assert_eq!(validate_options_order_reply(&valid_string_id,symbol,client),Ok(()));
         for invalid in [
             json!({"symbol":"ETH-271231-90000-C","clientOrderId":client,"orderId":42}),
             json!({"symbol":symbol,"clientOrderId":"different","orderId":42}),
             json!({"symbol":symbol,"clientOrderId":client}),
             json!({"symbol":symbol,"clientOrderId":client,"orderId":null}),
+            json!({"symbol":symbol,"clientOrderId":client,"orderId":false}),
+            json!({"symbol":symbol,"clientOrderId":client,"orderId":""}),
+            json!({"symbol":symbol,"clientOrderId":client,"orderId":0}),
+            json!({"symbol":symbol,"clientOrderId":client,"orderId":-1}),
+            json!({"symbol":symbol,"clientOrderId":client,"orderId":1.25}),
         ] {
             assert_eq!(
                 validate_options_order_reply(&invalid,symbol,client),
@@ -159,7 +166,7 @@ mod tests {
             ("quantity".into(), "0.25".into()),
             ("clientOrderId".into(), "SA123".into()),
             ("price".into(), "12.00".into()),
-            ("timeInForce".into(), "gtx".into()),
+            ("timeInForce".into(), "GTX".into()),
             ("reduceOnly".into(), "true".into()),
             ("postOnly".into(), "false".into()),
         ];
@@ -183,10 +190,10 @@ mod tests {
     }
 
     #[test]
-    fn supports_only_existing_option_tif_values_without_normalizing_wire_text() {
-        for tif in ["GTC", "IOC", "FOK", "GTX"] {
+    fn normalizes_supported_tif_values_to_official_wire_enum() {
+        for tif in ["GTC", "IOC", "FOK", "GTX", "gtc", "ioc", "fok", "gtx"] {
             let got = build_options_order_pairs(&fields(Some("1"), "LIMIT", tif)).unwrap();
-            assert_eq!(got[6].1, tif);
+            assert_eq!(got[6].1, tif.to_ascii_uppercase());
         }
     }
 }

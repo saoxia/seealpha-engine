@@ -2,9 +2,8 @@
 //! The caller supplies a signed, read-only GET callback. No HTTP client,
 //! secrets, execution commands, account mutation or retries live here.
 use serde_json::Value;
-use std::collections::BTreeSet;
 
-use crate::{OptionsEvidenceError, normalize_option_trades, parse_trade_id};
+use crate::{OptionsEvidenceError, normalize_option_trades, parse_order_id_text, parse_trade_id};
 
 pub const EAPI_USER_TRADES_PATH: &str = "/eapi/v1/userTrades";
 const PAGE_LIMIT: usize = 1000;
@@ -20,6 +19,7 @@ pub fn option_user_trades_page_params(symbol: &str, from_id: u64) -> Vec<(String
 }
 
 /// Traverse consecutive exchange-authored pages before accepting any fills.
+/// A bounded recent-trades query never proves that all historical fills were returned.
 /// Each page callback MUST return the signed GET response for the given cursor.
 /// An incomplete 32nd saturated page, duplicate IDs or regression fails closed.
 pub fn collect_option_order_trades<E, F>(
@@ -32,10 +32,10 @@ where
     F: FnMut(u64) -> Result<Value, E>,
 {
     let invalid = || E::from(OptionsEvidenceError::Unconfirmed);
-    let _ = order_id.parse::<u64>().map_err(|_| invalid())?;
+    parse_order_id_text(order_id).map_err(E::from)?;
     let mut from_id = 0u64;
     let mut all = Vec::new();
-    let mut seen = BTreeSet::new();
+    let mut last_id: Option<u64> = None;
 
     for _ in 0..MAX_PAGES {
         let reply = signed_read(from_id)?;
@@ -43,20 +43,19 @@ where
         if rows.len() > PAGE_LIMIT {
             return Err(invalid());
         }
-        let mut greatest = None;
         for row in rows {
             let id = parse_trade_id(row.get("id").ok_or_else(invalid)?)
                 .map_err(E::from)?;
-            if id < from_id || !seen.insert(id) {
+            if id < from_id || last_id.is_some_and(|last| id <= last) {
                 return Err(invalid());
             }
-            greatest = Some(greatest.map_or(id, |old: u64| old.max(id)));
+            last_id = Some(id);
             all.push(row.clone());
         }
         if rows.len() < PAGE_LIMIT {
             return normalize_option_trades(symbol, order_id, &all).map_err(E::from);
         }
-        from_id = greatest
+        from_id = last_id
             .ok_or_else(invalid)?
             .checked_add(1)
             .ok_or_else(invalid)?;
@@ -115,12 +114,17 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_trade_ids_and_invalid_order_ids_fail_without_retries() {
+    fn duplicate_or_out_of_order_trade_ids_and_invalid_order_ids_fail() {
         let duplicate = collect_option_order_trades::<OptionsEvidenceError, _>(
             "BTC-271231-90000-C", "9",
             |_| Ok(json!([row(7), row(7)])),
         );
         assert_eq!(duplicate, Err(OptionsEvidenceError::Unconfirmed));
+        let reordered = collect_option_order_trades::<OptionsEvidenceError, _>(
+            "BTC-271231-90000-C", "9",
+            |_| Ok(json!([row(8), row(7)])),
+        );
+        assert_eq!(reordered, Err(OptionsEvidenceError::Unconfirmed));
         let invalid = collect_option_order_trades::<OptionsEvidenceError, _>(
             "BTC-271231-90000-C", "not-an-id",
             |_| -> Result<Value, OptionsEvidenceError> {
