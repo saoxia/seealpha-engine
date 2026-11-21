@@ -75,7 +75,7 @@ Spot aggTrades 与 USD-M 原始 trades 仍可下载，但**不能混入上述实
 命令行单独执行示例：
 
 ```sh
-cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml --bin import_archive --   spot trades ETHUSDT 2026-11-20 /data/archives/ETHUSDT-trades-2026-11-20.zip   /data/nautilus-catalog/tenant1/spot <official-sha256>
+cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml --bin import_archive --   spot trades ETHUSDT 2026-11-20 /data/archives/ETHUSDT-trades-2026-11-20.zip   /data/nautilus-catalog/tenant1/spot <official-sha256> <instrument-price-precision> <instrument-size-precision>
 ```
 
 现有数据任务 API 新增 archive_import 操作，只引用先前**同租户**已完成的 archive_fetch 任务编号，不接受客户端自报 ZIP 文件名或哈希值。管理员配置独立原生二进制及 Catalog 根目录：
@@ -88,7 +88,7 @@ export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
 已完成 archive_fetch 后，通过 POST /tenants/{tenant_id}/data/control/job/start 提交：
 
 ```json
-{"payload":{"action":"archive_import","archive_job_id":"<previous-archive-fetch-job-id>"}}
+{"payload":{"action":"archive_import","archive_job_id":"<previous-archive-fetch-job-id>","price_precision":2,"size_precision":3}}
 ```
 
 现有任务队列检查同租户的下载证据与真实归档路径；当前受管数据源运行时拒绝并发导入。原生实时节点及离线导入器同时使用一个 SeeAlpha Catalog 互斥文件锁（仅进程级协调，Parquet 写入仍由 Nautilus 完成）。没有管理之外的第三方 writer 获得这层锁保证；部署时必须禁止其并发写入。导入完成仅能说明该日 ZIP 的已校验记录写入 Catalog；即使 catalog_committed=true，coverage_complete 和 data_ready 仍是 false。
@@ -106,3 +106,5 @@ export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
 5. 运行 `cargo check --workspace --all-targets --locked`、Clippy、单元和集成测试；在未验证前不授权生产 READY。
 
 来源：[Binance 官方公共数据文档](https://github.com/binance/binance-public-data)、[Nautilus rc9 Binance 集成说明](https://github.com/nautechsystems/nautilus_trader/blob/v2.0.0rc9/docs/integrations/binance.md)、[Nautilus rc9 Parquet Catalog](https://github.com/nautechsystems/nautilus_trader/blob/v2.0.0rc9/docs/concepts/data/catalog.md)。
+
+**重要**：`archive_import` 的 `price_precision` 和 `size_precision` 必须来源于 Nautilus 该交易对的 Instrument 元数据，示例数值 2/3 只是 API 格式演示，并非 ETHUSDT 的可靠精度。当前没有自动验证外部来源的精度权威性，导入仍只用于隔离的实验流程；不得将其视为端到端验收通过。
