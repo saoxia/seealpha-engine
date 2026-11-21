@@ -3,6 +3,7 @@
 //! Historical jobs use only public Binance klines and commit atomically to
 //! the Rust catalog after the complete requested interval is validated.
 use crate::{Runtime, RuntimeError, map_ledger};
+use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
 use seealpha_ledger::CatalogBar;
 use seealpha_market::exercise::{ExerciseSource, as_evidence};
 use seealpha_market::funding::FundingSource;
@@ -180,10 +181,24 @@ impl Runtime {
         let action = field(payload, "action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
-        if !matches!(action, "backfill" | "publish_catalog") {
+        if !matches!(action, "backfill" | "publish_catalog" | "archive_fetch") {
             return Err(RuntimeError::Conflict(
                 "该历史任务尚未完成 Rust 等价迁移。".into(),
             ));
+        }
+        if action == "archive_fetch" {
+            let product = field(payload, "product")?;
+            let dataset = field(payload, "dataset")?;
+            let symbol = field(payload, "symbol")?;
+            let day = field(payload, "day")?;
+            ArchiveSpec::new(product, dataset, symbol, day)
+                .map_err(|_| bad("Binance 历史 ZIP 归档参数无效。"))?;
+            let normalized = payload.clone();
+            let id = hash_job(tenant_id, &normalized);
+            return self
+                .ledger
+                .queue_data_job(tenant_id, &id, action, &normalized)
+                .map_err(map_ledger);
         }
         if action == "publish_catalog" {
             let product = field(payload, "product")?;
@@ -309,6 +324,8 @@ impl Runtime {
         let result = if original["action"] == "publish_catalog" {
             self.publish_catalog_job(tenant_id, &original["payload"])
                 .await
+        } else if original["action"] == "archive_fetch" {
+            self.archive_fetch_job(tenant_id, &original["payload"]).await
         } else {
             self.backfill_job(tenant_id, &original["payload"]).await
         };
@@ -320,6 +337,87 @@ impl Runtime {
             .transition_data_job(tenant_id, id, "running", status, Some(&body))
             .map_err(map_ledger)?;
         self.data_job(tenant_id, id)
+    }
+
+    /// Explicit offline Binance historical ZIP acquisition under a tenant-owned
+    /// pre-existing archive volume. No REST/WebSocket client or trading actions.
+    async fn archive_fetch_job(
+        &self,
+        tenant: &str,
+        payload: &Value,
+    ) -> Result<Value, RuntimeError> {
+        let product = field(payload, "product")?;
+        let dataset = field(payload, "dataset")?;
+        let symbol = field(payload, "symbol")?;
+        let day = field(payload, "day")?;
+        ArchiveSpec::new(product, dataset, symbol, day)
+            .map_err(|_| bad("Binance 历史归档请求无效。"))?;
+
+        // The server controls the archive root; the request cannot specify a
+        // filesystem destination. Each tenant's root must exist already.
+        if tenant.is_empty()
+            || tenant.len() > 64
+            || !tenant.bytes().all(|b| b.is_ascii_alphanumeric())
+        {
+            return Err(bad("租户归档路径标识无效。"));
+        }
+        let volume = std::env::var("ENGINE_ARCHIVE_ROOT")
+            .map_err(|_| bad("必须由管理员配置 ENGINE_ARCHIVE_ROOT。"))?;
+        let root = std::path::PathBuf::from(volume)
+            .canonicalize()
+            .map_err(|_| bad("历史归档根目录未就绪。"))?;
+        if !root.is_dir() {
+            return Err(bad("历史归档根目录不是现有目录。"));
+        }
+        let tenant_root = root
+            .join(tenant)
+            .canonicalize()
+            .map_err(|_| bad("租户归档目录尚未创建，禁止自动新建数据卷。"))?;
+        if !tenant_root.is_dir() || !tenant_root.starts_with(&root) {
+            return Err(bad("历史归档租户隔离校验未通过。"));
+        }
+        let binary = std::env::var("ENGINE_ARCHIVE_FETCH_BIN")
+            .unwrap_or_else(|_| "binance-trade-archive-fetch".into());
+        let args = [
+            product.to_owned(),
+            dataset.to_owned(),
+            symbol.to_owned(),
+            day.to_owned(),
+            tenant_root.to_string_lossy().into_owned(),
+        ];
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(binary)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .output()
+        })
+        .await
+        .map_err(|_| bad("归档下载任务未返回结果。"))?
+        .map_err(|_| bad("归档下载命令无法启动。"))?;
+        if !output.status.success() {
+            return Err(RuntimeError::Conflict(format!(
+                "Binance 官方 ZIP 获取/校验失败：{}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(300)
+                    .collect::<String>(),
+            )));
+        }
+        let mut report: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|_| bad("归档下载回执不是有效 JSON。"))?;
+        let obj = report.as_object_mut()
+            .ok_or_else(|| bad("归档下载回执结构无效。"))?;
+        if obj.get("verified") != Some(&json!(true))
+            || obj.get("catalog_committed") != Some(&json!(false))
+            || obj.get("sha256").and_then(Value::as_str).is_none_or(|s| s.len() != 64)
+        {
+            return Err(bad("归档下载回执缺少完整性证据。"));
+        }
+        obj.insert("action".into(), json!("archive_fetch"));
+        obj.insert("data_ready".into(), json!(false));
+        obj.insert("allow_new_risk".into(), json!(false));
+        obj.insert("exchange_orders".into(), json!(0));
+        Ok(report)
     }
 
     async fn publish_catalog_job(
@@ -694,6 +792,21 @@ mod tests {
         assert!(
             valid_policy(&json!({"product":"options","symbol":"ALL","base_level":"auto"})).is_ok()
         );
+    }
+    #[test]
+    fn archive_job_inputs_are_validated_before_enqueue() {
+        assert!(ArchiveSpec::new(
+            "spot", "trades", "BTCUSDT", "2026-11-20",
+        ).is_ok());
+        assert!(ArchiveSpec::new(
+            "futures_um", "aggTrades", "ETHUSDT", "2026-11-20",
+        ).is_ok());
+        assert!(ArchiveSpec::new(
+            "options", "trades", "BTCUSDT", "2026-11-20",
+        ).is_err());
+        assert!(ArchiveSpec::new(
+            "spot", "trades", "../BTCUSDT", "2026-11-20",
+        ).is_err());
     }
     #[test]
     fn deterministic_job_id_is_tenant_scoped() {
