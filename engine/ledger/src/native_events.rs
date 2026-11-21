@@ -192,8 +192,8 @@ mod tests {
     #[test]
     fn native_fill_report_is_quarantined_without_ledger_fill_or_order_observation() {
         let ledger = setup();
-        assert_eq!(ledger.quarantine_native_order_event(event()).unwrap(),true);
-        assert_eq!(ledger.quarantine_native_order_event(event()).unwrap(),false);
+        assert!(ledger.quarantine_native_order_event(event()).unwrap());
+        assert!(!ledger.quarantine_native_order_event(event()).unwrap());
         let events = ledger.quarantined_native_order_events(
             "tenant1","account1","sandbox","client1",
         ).unwrap();
