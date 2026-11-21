@@ -1,6 +1,6 @@
 # 行情持久化数据目录（data）
 
-`engine/pipeline/` 是行情服务**程序代码**；仓库根目录 `data/` 是本地行情**数据文件**（生产可使用独立挂载卷）。`data/` 被根目录的 `.gitignore` 与 `.dockerignore` 排除，**不提交数据文件、占位文件或 Git 下的空目录**。
+`engine/pipeline/` 是行情服务**程序代码**；仓库根目录 `data/` 是本地行情**数据文件**（生产可使用独立挂载卷）。`data/README.md` 是唯一提交到 Git 的目录说明；`.gitignore` 忽略所有实际行情数据和子目录，`.dockerignore` 排除整个 `data/`。
 
 建议布局：
 

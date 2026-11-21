@@ -34,7 +34,7 @@
 
 ## 持久化数据目录
 
-仓库根级 `data/` 仅存放运行时产生的 Feather、Parquet Catalog 和历史归档；已被 `.gitignore`、`.dockerignore` 排除，不是 Rust Workspace 成员。生产环境可挂载独立数据卷，路径由部署参数指定。此次目录调整不移动、删除或修改已有生产数据。参见 [数据目录约定](DATA_LAYOUT.md)。
+仓库根级 `data/` 用于运行时产生的 Feather、Parquet Catalog 和历史归档；仅 `data/README.md` 作为目录说明纳入 Git，实际数据文件被 `.gitignore`、`.dockerignore` 排除，不是 Rust Workspace 成员。生产环境可挂载独立数据卷，路径由部署参数指定。此次目录调整不移动、删除或修改已有生产数据。参见 [数据目录约定](DATA_LAYOUT.md)。
 
 ## 工程设施与资产
 
