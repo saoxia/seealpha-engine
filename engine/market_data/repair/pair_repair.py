@@ -14,7 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from nautilus_trader.model import Bar, BarType, NautilusDataType, Price, Quantity
 
-from core.market.instruments import bar_type_for, bar_window, instrument_id_for
+from core.market.instruments import bar_type_for, instrument_id_for
 from engine.market_data.repair.models import DataRequest
 from engine.market_data.repair.prepare_data import ensure_instruments, prepare_data
 from engine.market_data.storage.catalog import ParquetDataCatalog
@@ -56,6 +56,7 @@ def local_klines(catalog, symbol, level, start_ms, end_ms, *, market="futures_um
                 for stamp, bucket in aggregated.items()}
     except (KeyError, TypeError, json.JSONDecodeError, InvalidOperation) as exc:
         raise ValueError("Rust saved K-line aggregation returned malformed evidence") from exc
+
 
 async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, market="futures_um", local=None, source=None):
     """Fetch public pages; Rust is the sole authority for repair evidence validation."""
