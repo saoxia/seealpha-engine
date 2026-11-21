@@ -51,6 +51,12 @@ A focused runtime test creates a development ledger, registers a member, publish
 
 The persisted coordinator and the paper replay remain separate application workflows. This does not prove that all legacy Python Portfolio callers were migrated, or justify removing `engine/portfolio/` without an import inventory, parity fixtures, and full validation.
 
+## Validation environment and Decimal assertion review
+
+Static review of the weighted paper host-to-ledger integration test found that serialized `rust_decimal::Decimal` values may preserve scale (e.g. `1.0` instead of `1`), including after quantity-increment quantization. Assertions now parse report quantities back into `Decimal` and compare numerically; publication protocol strings are still compared literally where relevant. This change prevents false-negative tests and preserves user-facing report representation.
+
+The current connected container does not have `cargo` or `rustc`, and its git remote fails DNS resolution. The draft PR head has no reported combined commit statuses. **No test suite or build is claimed to have run.** Before deleting any legacy Python files, obtain a working Rust checkout and run the documented full validation matrix.
+
 ## Subsequent directories
 
 - `engine/market_data/repair/`: existing Rust repair decisions and planning are partial; legacy Catalog reads/writes and orchestration remain.
