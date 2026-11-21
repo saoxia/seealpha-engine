@@ -2,7 +2,7 @@
 //! No HTTP admission or executable loading is exposed by this Ledger module.
 
 use crate::{Ledger, LedgerError, now_ms};
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeStrategyLoad {
