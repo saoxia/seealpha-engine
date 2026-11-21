@@ -28,4 +28,4 @@ The complete legacy directory file inventory and all import sites **must be dete
 
 ## Current batch status
 
-**Partial: no Python deleted.** The added `legacy_target_parity.rs` covers the native target selection, bounds, signed quantity and allocation cases. The native fixture suite has **not been executed** in this connector session, and no identical-input Python-versus-Rust comparison or legacy import inventory has been run. Do not treat this as a completed folder cutover or enable live trading based on it.
+**Partial: no Python deleted.** The native coordinator now validates membership before removing resting orders in `flatten`, with failure-atomicity and member-isolation tests in `portfolio/core/tests/coordinator_atomicity.rs`. This is a Rust safety fix, not a Python cutover. The added `legacy_target_parity.rs` covers the native target selection, bounds, signed quantity and allocation cases. The native fixture suite has **not been executed** in this connector session, and no identical-input Python-versus-Rust comparison or legacy import inventory has been run. Do not treat this as a completed folder cutover or enable live trading based on it.
