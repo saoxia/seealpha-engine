@@ -109,15 +109,16 @@ def run_strategy(strategy_type, prepared, symbol, interval, bars):
     index_box = {"index": -1}
 
     def publish(*, symbol, quantity=None, weight=None):
-        if weight is not None or isinstance(quantity, bool) or not isinstance(quantity, Decimal):
-            raise PackageError("目标数量必须是有限 Decimal。")
-        if not quantity.is_finite():
-            raise PackageError("目标数量必须是有限 Decimal。")
-        publications.append({
-            "symbol": str(symbol),
-            "quantity": format(quantity, "f"),
-            "bar_index": index_box["index"],
-        })
+        if (quantity is None) == (weight is None):
+            raise PackageError("目标持仓需要数量或权重其中之一。")
+        amount = quantity if weight is None else weight
+        if isinstance(amount, bool) or not isinstance(amount, Decimal) or not amount.is_finite():
+            raise PackageError("目标数量或权重必须是有限 Decimal。")
+        if weight is not None and not Decimal(-1) <= weight <= Decimal(1):
+            raise PackageError("目标权重必须在 -1 到 1 之间。")
+        publication = {"symbol": str(symbol), "bar_index": index_box["index"]}
+        publication["quantity" if weight is None else "weight"] = format(amount, "f")
+        publications.append(publication)
 
     def blocked(*_args, **_kwargs):
         raise RuntimeError("策略只能公布目标持仓")

@@ -100,8 +100,19 @@ pub(super) fn check_response(
             {
                 return Err(invalid("策略目标发布了未授权的品种或时间索引。"));
             }
-            Decimal::from_str(&publication.quantity)
-                .map_err(|_| invalid("策略目标数量必须是有限 Decimal。"))?;
+            if publication.quantity.is_empty() == publication.weight.is_none() {
+                return Err(invalid("目标持仓需要数量或权重其中之一。"));
+            }
+            if let Some(weight) = &publication.weight {
+                let amount = Decimal::from_str(weight)
+                    .map_err(|_| invalid("目标权重必须是有限 Decimal。"))?;
+                if !amount.is_unit_weight() {
+                    return Err(invalid("目标权重必须在 -1 到 1 之间。"));
+                }
+            } else {
+                Decimal::from_str(&publication.quantity)
+                    .map_err(|_| invalid("策略目标数量必须是有限 Decimal。"))?;
+            }
         }
     }
     Ok(StrategyRun {
@@ -215,6 +226,7 @@ mod tests {
             publications: vec![Publication {
                 symbol: "ETHUSDT".into(),
                 quantity: "0.00000001".into(),
+                weight: None,
                 bar_index: 0,
             }],
         };
@@ -228,6 +240,18 @@ mod tests {
         let mut wrong = good.clone();
         wrong.publications[0].quantity = "NaN".into();
         assert!(check_response(&c, wrong).is_err());
+        let mut weighted = good.clone();
+        weighted.publications[0].quantity.clear();
+        weighted.publications[0].weight = Some("-0.5".into());
+        check_response(&c, weighted.clone()).unwrap();
+        weighted.publications[0].weight = Some("1.1".into());
+        assert!(check_response(&c, weighted).is_err());
+        let mut both = good.clone();
+        both.publications[0].weight = Some("0.5".into());
+        assert!(check_response(&c, both).is_err());
+        let mut neither = good.clone();
+        neither.publications[0].quantity.clear();
+        assert!(check_response(&c, neither).is_err());
         let mut wrong = good.clone();
         wrong.prepared["api_key"] = json!("secret");
         assert!(check_response(&c, wrong).is_err());

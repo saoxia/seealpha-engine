@@ -81,3 +81,21 @@ live-order or external exchange pathways are modified. These changes require
 CI compilation, unit tests, local issued-strategy replay, error parity,
 and proof that existing absolute-quantity reports remain unchanged before
 merging or retiring any Python module.
+
+## Strategy host weight publication protocol (follow-up)
+
+The isolated Python strategy host now accepts a `Decimal` weight between
+-1 and 1 **instead of** an absolute `Decimal` quantity on a publication.
+The host only validates/serializes the string; no allocation multiplication,
+netting, sizing or order logic runs in Python. Rust host-policy parsing
+enforces exactly one target type and rejects out-of-range weights. The
+issued-catalog runtime then constructs `TargetHolding`, and Rust backtest
+resolves each target against the issued member's prepared allocation before
+running netting, risk clipping, fills and equity accounting.
+
+This is a backward-compatible *host protocol* extension: old quantity
+publications remain supported. It is not equivalent to replacing arbitrary
+Python strategy code with Rust, and the legacy Engine must remain isolated.
+Only synthetic offline paper history is in scope; there is no venue-order
+enablement. Require Rust workspace CI, host Python unittest, and
+existing quantity-strategy result parity before merging. 
