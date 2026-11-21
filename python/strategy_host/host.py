@@ -72,10 +72,19 @@ def main():
 def handle(request):
     if not isinstance(request, dict):
         raise PackageError("策略请求无效。")
-    if "protocol_version" in request and (
-        type(request["protocol_version"]) is not int or request["protocol_version"] != 1
-    ):
-        raise PackageError("策略宿主协议版本不受支持。")
+    if "protocol_version" in request:
+        if type(request["protocol_version"]) is not int or request["protocol_version"] != 1:
+            raise PackageError("策略宿主协议版本不受支持。")
+        fields = {
+            "protocol_version", "op", "package_dir", "archive_path",
+            "parameters", "symbol", "interval", "bars",
+        }
+        if set(request) - fields or request.get("op") not in ("run", "prepare"):
+            raise PackageError("策略宿主请求包含不支持的字段或操作。")
+        if bool(request.get("package_dir")) == bool(request.get("archive_path")):
+            raise PackageError("策略宿主必须指定唯一的策略包来源。")
+        if request["op"] == "prepare" and request.get("bars"):
+            raise PackageError("策略预登记不能包含行情。")
     parameters = request.get("parameters") or {}
     package_dir = request.get("package_dir")
     archive_path = request.get("archive_path")
