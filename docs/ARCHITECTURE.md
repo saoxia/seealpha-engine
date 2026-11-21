@@ -32,10 +32,7 @@ risk/                           logical domain: implementation currently spans p
 execution/                      logical domain: implementation currently spans runtime/venue/ledger
 ```
 
-The Cargo package names and executable names are unchanged. The Python
-strategy host in `python/strategy_host/`, legacy Python runtime in `engine/`,
-shared contract files in `core/`, and sample packages in `packages/` retain
-their existing locations. Dedicated standalone MCP/WS/gRPC servers have not
+The Cargo package names and executable names are unchanged. The Python strategy host in `python/strategy_host/`, shared Platform contract files in `core/`, and sample packages in `packages/` retain their existing locations. The legacy `engine/` runtime has been removed. Dedicated standalone MCP/WS/gRPC servers have not
 been implemented by this reorganization.
 
 ## Request path
@@ -156,3 +153,7 @@ Legacy Python tests or scripts importing `engine.strategies` must not be
 treated as evidence of Rust Engine regressions; migrate the callers to the Rust
 Engine HTTP/strategy APIs instead. The repository's full Legacy Engine parity
 gate is not claimed by this folder deletion.
+
+## Legacy Engine final directory cleanup (2026-11-21)
+
+The last dormant Python `engine/` files, old `core/market/` and options projection helpers, stale Python Engine/feed/pipeline tests, and the broken legacy parity workflow were removed. Rust is the exclusive HTTP/market/accounting engine. `python/strategy_host/` and bundled/user Python strategies are still active and are not replaced by this cleanup; Platform-shared `core/engine_contracts.py` and `core/trading_contracts.py` remain compatibility sources. There has been no proof of exact legacy parity or live trading acceptance. See `docs/LEGACY_PYTHON_RECOVERY.md` for retrieving old code from Git history.
