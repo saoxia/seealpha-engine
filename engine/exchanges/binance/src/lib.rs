@@ -2,18 +2,31 @@
 //!
 //! Callers pass the base URL. Nothing in this crate selects a production host.
 //! Credentials are used only to build the request and are not returned or logged.
+#[path = "usd_m/conditional.rs"]
 pub mod conditional;
+#[path = "account/evidence.rs"]
 pub mod evidence;
+#[path = "orders/lifecycle.rs"]
 pub mod lifecycle;
+#[path = "options/trades.rs"]
 pub mod option_trades;
+#[path = "options/execution.rs"]
 pub mod options;
+#[path = "options/rules.rs"]
 pub mod options_rules;
+#[path = "orders/guard.rs"]
 pub mod order_guard;
+#[path = "account/reconciliation.rs"]
 pub mod reconciliation;
+#[path = "account/settlement.rs"]
 pub mod settlement;
+#[path = "spot/oco.rs"]
 pub mod spot_oco;
+#[path = "spot/oto.rs"]
 pub mod spot_oto;
+#[path = "orders/trades.rs"]
 pub mod trades;
+#[path = "orders/user_stream.rs"]
 pub mod user_stream;
 
 use hmac::{Hmac, Mac};

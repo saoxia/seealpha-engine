@@ -11,7 +11,7 @@ members = [
     "engine/portfolio",
     "engine/ledger",
     "engine/strategy",
-    "engine/connectivity/venue",
+    "engine/exchanges/binance",
     "engine/backtest",
     "engine/runtime",
     "engine/gateway/api",
