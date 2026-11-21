@@ -63,7 +63,7 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 
 ## 已实现：已验证 ZIP → 原生 Nautilus Catalog
 
-原生 Rust 导入器位于 integrations/nautilus_binance_data/src/bin/import_archive.rs；它**不实现**自定义 TradeTick、Arrow Schema 或 Parquet Writer，而是复用 NautilusTrader v2.0.0rc9 原生模型及 ParquetDataCatalog::write_to_parquet。
+原生 Rust 导入器位于 engine/pipeline/nautilus/src/bin/import_archive.rs；它**不实现**自定义 TradeTick、Arrow Schema 或 Parquet Writer，而是复用 NautilusTrader v2.0.0rc9 原生模型及 ParquetDataCatalog::write_to_parquet。
 
 对齐实时 TradeTick 粒度的组合严格限定为：
 
@@ -75,7 +75,7 @@ Spot aggTrades 与 USD-M 原始 trades 仍可下载，但**不能混入上述实
 命令行单独执行示例：
 
 ```sh
-cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml --bin import_archive --   spot trades ETHUSDT 2026-11-20 /data/archives/ETHUSDT-trades-2026-11-20.zip   /data/nautilus-catalog/tenant1/spot <official-sha256> <instrument-price-precision> <instrument-size-precision>
+cargo run --manifest-path engine/pipeline/nautilus/Cargo.toml --bin import_archive --   spot trades ETHUSDT 2026-11-20 /data/archives/ETHUSDT-trades-2026-11-20.zip   /data/nautilus-catalog/tenant1/spot <official-sha256> <instrument-price-precision> <instrument-size-precision>
 ```
 
 现有数据任务 API 新增 archive_import 操作，只引用先前**同租户**已完成的 archive_fetch 任务编号，不接受客户端自报 ZIP 文件名或哈希值。管理员配置独立原生二进制及 Catalog 根目录：
@@ -95,12 +95,12 @@ export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
 
 ## 原生 NautilusTrader Rust 节点的初步代码
 
-参见 [integrations/nautilus_binance_data/README.md](../../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。已接入现有 Runtime Source Supervisor 的管理员显式实验路径，但仍不在默认 Docker 中部署；已移除旧通用采集与模拟 Catalog 转换器。仍须进行真实 Binance 数据、Instrument 精度、Catalog parity 与数据缺口验收，才能正式开放 READY。
+参见 [engine/pipeline/nautilus/README.md](../../nautilus/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。已接入现有 Runtime Source Supervisor 的管理员显式实验路径，但仍不在默认 Docker 中部署；已移除旧通用采集与模拟 Catalog 转换器。仍须进行真实 Binance 数据、Instrument 精度、Catalog parity 与数据缺口验收，才能正式开放 READY。
 
 ## 待完成，不能误认作已实现
 
 1. NautilusTrader `nautilus-binance` 已有显式实验接入，**尚未通过真实市场数据的端到端验收或成为默认生产源**。自研 `ws.rs` / `native_source.rs` 已删除，不提供自动回退。
-2. ZIP→Nautilus 原生 Tick Catalog 的离线导入器已新增，自研 `engine/market_data/converter` 已删除；仍需通过最新独立 Rust CI、离线样本及真实官方 ZIP 验证，不能视为完整的历史数据验收。
+2. ZIP→Nautilus 原生 Tick Catalog 的离线导入器已新增，自研 `engine/pipeline/converter` 已删除；仍需通过最新独立 Rust CI、离线样本及真实官方 ZIP 验证，不能视为完整的历史数据验收。
 3. REST 先按交易所支持的时间、数量和分页范围获取；覆盖不足或需要官方历史归档时再调用 ZIP。**不能根据“1,000 笔”这一单次请求上限臆造固定的时间分界**。
 4. 日/月文件的计划、发布滞后、缺失日期、下载重试、跨 ZIP 的 Trade ID 连续性、实时接续、ZIP 更正重验和来源证据 checkpoint；所有完整性门禁仍由 SeeAlpha 管理。
 5. 运行 `cargo check --workspace --all-targets --locked`、Clippy、单元和集成测试；在未验证前不授权生产 READY。

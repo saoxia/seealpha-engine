@@ -6,11 +6,11 @@
 
 | 目录 | 职责与实施状态 |
 | --- | --- |
-| `engine/market_data/` | 行情采集、数据质量、历史 Catalog、Feed、数据处理 |
+| `engine/pipeline/` | 整个行情服务：Nautilus 实时节点、补充数据源、数据完整性验证、Feed/Catalog 访问 |
 | `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
 | `engine/portfolio/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
 | `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
-| `engine/connection/` | 交易所私有订单、账户协议与状态适配；当前仅 Binance，行情由 `engine/market_data/` 持有 |
+| `engine/connection/` | 交易所私有订单、账户协议与状态适配；当前仅 Binance，行情由 `engine/pipeline/` 持有 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
 
 ### Binance Options 专属代码边界（分步迁移）
@@ -32,9 +32,13 @@
 - `engine/gateway/`：对外协议入口；`api/` 为 HTTP API crate，内部 `src/research/` 负责研究签名授权与范围校验；`mcp/` 为复用现有 HTTP 服务的 MCP 协议模块，不增加独立进程或监听端口
 - `engine/apps/`：Engine 主程序和其他可执行入口
 
+## 持久化数据目录
+
+仓库根级 `data/` 用于运行时产生的 Feather、Parquet Catalog 和历史归档；仅 `data/README.md` 作为目录说明纳入 Git，实际数据文件被 `.gitignore`、`.dockerignore` 排除，不是 Rust Workspace 成员。生产环境可挂载独立数据卷，路径由部署参数指定。此次目录调整不移动、删除或修改已有生产数据。参见 [数据目录约定](DATA_LAYOUT.md)。
+
 ## 工程设施与资产
 
-本节目录均在仓库根目录，与 `engine/` 并列。根目录 `Cargo.toml` 和 `Cargo.lock` 管理 Rust Workspace，`benchmarks/rust` 仍属于 Workspace。
+本节目录均在仓库根目录，与 `engine/` 并列。根目录 `Cargo.toml` 和 `Cargo.lock` 管理 Rust Workspace，`engine/pipeline/nautilus` 作为独立 Cargo 项目被明确排除，`benchmarks/rust` 仍属于 Workspace。
 
 
 - 测试：crate 单测、集成测试均就近放置；不再保留只有 Python `__init__.py` 的根目录 `tests/`

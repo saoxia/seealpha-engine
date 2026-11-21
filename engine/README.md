@@ -4,7 +4,7 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 
 | 目录 | 职责 |
 | --- | --- |
-| [market_data](market_data/) | 行情与历史数据 |
+| [pipeline](pipeline/) | 完整行情服务：实时订阅、历史采集、质量认证和数据访问 |
 | [strategy](strategy/) | 策略、信号与目标发布 |
 | [portfolio](portfolio/) | 组合、资金与目标仓位 |
 | [connection](connection/) | 交易所连接：Binance 多产品旧适配及逐步抽出的 Binance Options 专属能力 |
@@ -15,3 +15,5 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 | [apps](apps/) | 可执行入口 |
 
 规划中的 `risk/` 和 `execution/` 暂未独立实现，不创建空目录。详见 [领域布局](../docs/architecture/DOMAIN_LAYOUT.md) 和 [代码导航](../docs/architecture/MODULE_MAP.md)。
+
+持久化行情文件位于仓库根级（或外部挂载卷）的 `data/`，不属于 `engine/` 源码目录；参见 [数据目录约定](../docs/architecture/DATA_LAYOUT.md)。

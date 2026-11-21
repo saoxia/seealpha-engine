@@ -15,10 +15,13 @@
 | 研究授权与操作范围校验 | `engine/gateway/api/src/research/` | `engine/gateway/api/src/research_v1.rs`、`engine/gateway/mcp/src/research.rs` |
 | 目标持仓、篮子、风险裁剪 | `engine/portfolio/src/` | `runtime/src/basket*.rs` |
 | 账户、订单和成交持久化 | `engine/ledger/src/` | `engine/runtime/src/accounts.rs` |
-| Binance 行情进程入口 | `engine/market_data/sources/binance/src/bin/` | 同 crate 的 `lib.rs`、`protocol.rs`、`store.rs` |
-| Feed 门禁、汇总、数据会话 | `engine/market_data/feed/src/` | `remaining.rs` 的测试在 `remaining/tests.rs` |
-| 历史 Catalog 读取、写入和修复 | `engine/market_data/catalog/src/` | `market_data/converter`、`quality` |
+| Binance 实时行情入口（实验性） | `engine/pipeline/nautilus/src/main.rs` | 由 `engine/runtime/src/sources.rs` 显式启动，独立编译 |
+| Binance 官方历史 ZIP | `engine/pipeline/sources/binance/src/bin/` | `engine/pipeline/nautilus/src/bin/import_archive.rs` 原生 Catalog 导入 |
+| Feed 门禁、汇总、数据会话（待精简） | `engine/pipeline/access/feed/src/` | `remaining.rs` 的测试在 `remaining/tests.rs`；不是当前实时采集入口 |
+| 历史 Catalog 读取、写入和修复 | `engine/pipeline/access/catalog/src/` | 质量校验在 `engine/pipeline/integrity/`；原生 Catalog 替代尚待验收 |
 | 独立撮合和验证回放 | `backtest/src/` | `engine/runtime/src/verified_replay.rs` |
+
+持久化行情文件放在 Git 忽略的根级 `data/` 或外部数据卷，见 [数据目录约定](DATA_LAYOUT.md)。
 
 详细的一级目录所有权及 Risk/Execution 规划见 [领域布局](DOMAIN_LAYOUT.md)。
 
