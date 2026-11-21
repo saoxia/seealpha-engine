@@ -433,13 +433,20 @@ async fn paper_session(
         .runtime
         .require_active(&tenant_id)
         .map_err(AppError::from)?;
+    if body.native_sample && !body.use_sample {
+        return Err(AppError::bad_request("native_sample 只能与 use_sample 一起使用。"));
+    }
     let strategies = if body.use_sample {
         if tenant.purpose == "production" {
             return Err(AppError::forbidden("正式租户不能使用示例策略。"));
         }
         vec![StrategyInput {
             member_id: "ema_crossover".into(),
-            package: PackageBody::Directory(state.config.sample_package()),
+            package: if body.native_sample {
+                PackageBody::NativeEma
+            } else {
+                PackageBody::Directory(state.config.sample_package())
+            },
             parameters: if body.parameters.is_null() {
                 json!({})
             } else {
@@ -1460,6 +1467,9 @@ struct PaperBody {
     product: String,
     #[serde(default)]
     use_sample: bool,
+    /// Opt-in Rust-only EMA sample; requires use_sample=true.
+    #[serde(default)]
+    native_sample: bool,
     #[serde(default)]
     request_id: Option<String>,
     #[serde(default)]
