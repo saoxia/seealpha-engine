@@ -206,6 +206,45 @@ pub fn aggregate_saved_klines(
     Ok(buckets.into_values().collect())
 }
 
+/// Read the Nautilus v2 Catalog directly in Rust before aggregating repair evidence.
+/// Prefer the saved target interval; fall back to saved minutes only when no
+/// target bars exist. Neither missing source data nor partial windows are filled.
+pub fn read_aggregated_catalog_klines(
+    catalog_root: &std::path::Path,
+    symbol: &str,
+    product: crate::MarketProduct,
+    target_interval: &str,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<AggregatedKline>, CatalogError> {
+    if start_ms < 0 || end_ms <= start_ms {
+        return Err(CatalogError::Invalid("本地 K 线读取区间无效。".into()));
+    }
+    let start_ns = start_ms
+        .checked_mul(crate::NANO_PER_MS)
+        .ok_or_else(|| CatalogError::Invalid("本地 K 线起点溢出。".into()))?;
+    let end_ns = end_ms
+        .checked_mul(crate::NANO_PER_MS)
+        .ok_or_else(|| CatalogError::Invalid("本地 K 线终点溢出。".into()))?;
+    let catalog = crate::Catalog::open_existing(catalog_root)?;
+    let mut source = target_interval;
+    let mut bars = catalog.read_bars(symbol, product, source, start_ns, end_ns, 50_000)?;
+    if bars.is_empty() && target_interval != "1m" {
+        source = "1m";
+        bars = catalog.read_bars(symbol, product, source, start_ns, end_ns, 50_000)?;
+    }
+    let saved = bars
+        .iter()
+        .map(|bar| {
+            Ok(SavedKline {
+                event_ns: bar.event_ns(source)?,
+                values: [bar.open, bar.high, bar.low, bar.close, bar.volume],
+            })
+        })
+        .collect::<Result<Vec<_>, CatalogError>>()?;
+    aggregate_saved_klines(&saved, source, target_interval)
+}
+
 /// A saved candle's OHLCV evidence and whether its constituent windows are complete.
 /// The legacy repair path sends decimal text, which the native bridge parses
 /// before invoking this comparison; no floating-point conversion is permitted.
