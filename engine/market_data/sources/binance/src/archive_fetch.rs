@@ -369,7 +369,7 @@ mod tests {
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let path = format!("/{}", spec.remote_path());
         let server = tokio::spawn(async move {
-            for _ in 0..3 {
+            for _ in 0..4 {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = [0u8; 4096];
                 let count = socket.read(&mut request).await.unwrap();
