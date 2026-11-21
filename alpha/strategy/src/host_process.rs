@@ -124,7 +124,7 @@ fn invoke_with_timeout(
     if !status.success() {
         return Err(StrategyError::Failed("策略宿主异常退出。".into()));
     }
-    serde_json::from_slice(&output).map_err(|_| StrategyError::Failed("策略宿主输出无效。".into()))
+    crate::protocol::decode_host_response(&output)
 }
 
 #[cfg(test)]
