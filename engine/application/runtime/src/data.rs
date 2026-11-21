@@ -208,9 +208,19 @@ impl Runtime {
             ) {
                 return Err(bad("不能把不同粒度的历史成交导入实时兼容的 Nautilus Catalog。"));
             }
+            // The caller must supply precisions independently confirmed from
+            // the Nautilus Instrument. ZIP display width is NOT the precision.
+            let price_precision = payload["price_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的价格精度。"))?;
+            let size_precision = payload["size_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的数量精度。"))?;
             let normalized = json!({
                 "action": "archive_import",
-                "archive_job_id": download_id
+                "archive_job_id": download_id,
+                "price_precision": price_precision,
+                "size_precision": size_precision
             });
             let id = hash_job(tenant_id, &normalized);
             return self.ledger
@@ -562,6 +572,14 @@ impl Runtime {
             archive.to_string_lossy().into_owned(),
             catalog.to_string_lossy().into_owned(),
             sha.to_owned(),
+            payload["price_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("原生 Instrument 价格精度无效。"))?
+                .to_string(),
+            payload["size_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("原生 Instrument 数量精度无效。"))?
+                .to_string(),
         ];
         let output = tokio::task::spawn_blocking(move || {
             std::process::Command::new(executable)
@@ -585,6 +603,8 @@ impl Runtime {
             || report["data_ready"] != false
             || report["coverage_complete"] != false
             || report["sha256"] != sha
+            || report["price_precision"] != payload["price_precision"]
+            || report["size_precision"] != payload["size_precision"]
             || report["instrument_id"].as_str().is_none()
             || report["records"].as_u64().is_none_or(|count| count == 0)
         {
