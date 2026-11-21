@@ -1,7 +1,7 @@
 # Backtesting and portfolio Python directory retirement
 
-The native Rust owners are `backtest/core` (`seealpha-backtest`) and
-`portfolio/core` (`seealpha-portfolio`). Their integration is through
+The native Rust owners are `backtest` (`seealpha-backtest`) and
+`portfolio` (`seealpha-portfolio`). Their integration is through
 `application/runtime`, `accounting/ledger`, and the native HTTP server.
 
 The legacy directories `engine/backtesting` (8 files) and
