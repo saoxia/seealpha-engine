@@ -1,6 +1,6 @@
 # Binance 历史归档补齐：NautilusTrader 优先
 
-状态：**仅实现归档下载与官方 checksum 校验，不代表已经完成 Nautilus 原生接入**。
+状态：**已具备归档下载、原生 TradeTick/Parquet 离线导入及实验性 Runtime 入口；数据覆盖、跨来源衔接和实盘 READY 尚未验收**。
 
 ## 边界
 
@@ -9,7 +9,7 @@
 | Spot `@trade` / USD-M `@aggTrade` 实时订阅、多合约连接池、重连 | NautilusTrader `nautilus-binance` | 未改动现有实验性采集器；待原生替换 |
 | REST `request_trades`、`request_agg_trades` | NautilusTrader `BinanceSpotDataClient` / `BinanceFuturesDataClient` | 不增加另一套 REST 历史交易查询 |
 | 日/月 ZIP 下载、官方 checksum 与来源记录 | SeeAlpha 仅做原生缺失部分 | 新增**每日** ZIP 下载 CLI；月归档和调度未实现 |
-| `TradeTick`、历史持久化、流式写入和 Parquet Catalog | NautilusTrader 原生 Model / Persistence | 不新增通用 Tick 存储器；当前旧转换器仍需被原生替代 |
+| `TradeTick`、历史持久化、流式写入和 Parquet Catalog | NautilusTrader 原生 Model / Persistence | 新增纯离线 ZIP→原生 Catalog 导入器；未替换全部旧转换器 |
 | 历史覆盖、Trade ID 连续性、WS/REST/ZIP 交接与 READY | SeeAlpha 验证业务 | 仍需后续实证及跨模块验收，当前不得宣布 READY |
 
 v2.0.0rc9 的 Nautilus Spot 实时订阅使用 `@trade`，USD-M 使用 `@aggTrade`。Binance 的 `trades` 和 `aggTrades` 是不同的数据产品；**不能把两者混同为无损一致的逐笔成交历史**。按研究需求分别下载：
@@ -57,9 +57,41 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 }
 ```
 
-管理员须配置 `ENGINE_ARCHIVE_ROOT`，并提前创建 `<archive-root>/<tenant_id>/`。服务端只使用该受控路径，从请求体拒绝自定义目录；任务状态保存于已有的租户任务日志。下载完成只表示官方 SHA-256 ZIP 验证成功；回执强制 `data_ready=false`、`allow_new_risk=false` 和 `catalog_committed=false`。无自动交易和原生 Catalog 导入。
+管理员须配置 `ENGINE_ARCHIVE_ROOT`，并提前创建 `<archive-root>/<tenant_id>/`。服务端只使用该受控路径，从请求体拒绝自定义目录；任务状态保存于已有的租户任务日志。下载完成只表示官方 SHA-256 ZIP 验证成功；回执强制 `data_ready=false`、`allow_new_risk=false` 和 `catalog_committed=false`。无自动交易；Catalog 导入必须通过独立的受控任务。
 
 新增：只有管理员同时设置 `ENGINE_EXPERIMENTAL_SOURCE=1` 与 `ENGINE_NATIVE_NAUTILUS_SOURCE_BIN`，并准备受控的 Nautilus Feather/Catalog 租户目录时，现有 Runtime Source Supervisor 才会调用独立原生节点。此为显式实验切换，**非默认生产切换**；路径验证阻止租户间符号链接跳转，停止使用 SIGTERM 而非强制 SIGKILL。原生节点不会报告 READY，旧 SQLite K 线计算器不可直接消费它。
+
+## 已实现：已验证 ZIP → 原生 Nautilus Catalog
+
+原生 Rust 导入器位于 integrations/nautilus_binance_data/src/bin/import_archive.rs；它**不实现**自定义 TradeTick、Arrow Schema 或 Parquet Writer，而是复用 NautilusTrader v2.0.0rc9 原生模型及 ParquetDataCatalog::write_to_parquet。
+
+对齐实时 TradeTick 粒度的组合严格限定为：
+
+- Spot 的 trades（原始成交 ID；2025-01-01 起归档时间为微秒）
+- USD-M 的 aggTrades（聚合成交 ID 与首末底层成交 ID；毫秒时间戳）
+
+Spot aggTrades 与 USD-M 原始 trades 仍可下载，但**不能混入上述实时兼容 Catalog**。导入器完整验证 ZIP 哈希、CSV 列数、每行类型、成交 ID 连续性、聚合成交底层 ID 连续性、UTC 日范围、时间顺序及小数精度；先无副作用扫描全文件，再调用 Nautilus 原生 Catalog 分批写入。对相同 timestamp 不跨文件拆批；已有重叠区间会被 Nautilus 拒绝。大文件中途磁盘异常仍可能产生部分 Parquet，失败后必须核对并修复，不能自动重试为已完成状态。
+
+命令行单独执行示例：
+
+```sh
+cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml --bin import_archive --   spot trades ETHUSDT 2026-11-20 /data/archives/ETHUSDT-trades-2026-11-20.zip   /data/nautilus-catalog/tenant1/spot <official-sha256>
+```
+
+现有数据任务 API 新增 archive_import 操作，只引用先前**同租户**已完成的 archive_fetch 任务编号，不接受客户端自报 ZIP 文件名或哈希值。管理员配置独立原生二进制及 Catalog 根目录：
+
+```sh
+export ENGINE_NATIVE_NAUTILUS_IMPORT_BIN=/opt/seealpha/bin/import_archive
+export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
+```
+
+已完成 archive_fetch 后，通过 POST /tenants/{tenant_id}/data/control/job/start 提交：
+
+```json
+{"payload":{"action":"archive_import","archive_job_id":"<previous-archive-fetch-job-id>"}}
+```
+
+现有任务队列检查同租户的下载证据与真实归档路径；当前受管数据源运行时拒绝并发导入。原生实时节点及离线导入器同时使用一个 SeeAlpha Catalog 互斥文件锁（仅进程级协调，Parquet 写入仍由 Nautilus 完成）。没有管理之外的第三方 writer 获得这层锁保证；部署时必须禁止其并发写入。导入完成仅能说明该日 ZIP 的已校验记录写入 Catalog；即使 catalog_committed=true，coverage_complete 和 data_ready 仍是 false。
 
 ## 原生 NautilusTrader Rust 节点的初步代码
 
@@ -68,7 +100,7 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 ## 待完成，不能误认作已实现
 
 1. 在当前 Rust Runtime 真正启用并锁定 NautilusTrader `nautilus-binance` 数据客户端，替换实验性 `ws.rs` / `native_source.rs` 的通用连接逻辑。不得以新增 SeeAlpha 自定义 Adapter Trait 代替复用。
-2. 使用 Nautilus Rust `TradeTick` 和原生 Streaming/Catalog，将 ZIP 中的 trade/aggTrade 按原始精度与交易所标识导入；当前 `engine/market_data/converter` 的自研 schema 兼容实现尚不能当作上游原生引擎。
+2. ZIP→Nautilus 原生 Tick Catalog 的离线导入器已新增，仍需通过最新独立 Rust CI、离线样本及真实官方 ZIP 验证；现有 `engine/market_data/converter` 尚未清除，不能视为完整替换。
 3. REST 先按交易所支持的时间、数量和分页范围获取；覆盖不足或需要官方历史归档时再调用 ZIP。**不能根据“1,000 笔”这一单次请求上限臆造固定的时间分界**。
 4. 日/月文件的计划、发布滞后、缺失日期、下载重试、跨 ZIP 的 Trade ID 连续性、实时接续、ZIP 更正重验和来源证据 checkpoint；所有完整性门禁仍由 SeeAlpha 管理。
 5. 运行 `cargo check --workspace --all-targets --locked`、Clippy、单元和集成测试；在未验证前不授权生产 READY。
