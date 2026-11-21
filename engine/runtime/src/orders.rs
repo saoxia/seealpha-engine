@@ -1,5 +1,6 @@
 //! Signed order commands. Credentials stay in the request and never enter SQLite.
 use crate::{Runtime, RuntimeError, map_ledger};
+use seealpha_venue::conditional::validated_algo_view;
 use seealpha_venue::{Credentials, Product, VenueClient};
 use serde_json::{Value, json};
 
@@ -257,7 +258,6 @@ pub(super) fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
 mod tests {
     use super::*;
     use crate::{Config, Runtime};
-    use axum::extract::Request;
     use serde_json::json;
 
     #[test]
@@ -280,42 +280,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_write_gate_never_sends_and_replay_keeps_secrets_out_of_sqlite() {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counter = hits.clone();
-        std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on(async move {
-                let app = axum::Router::new().route(
-                    "/fapi/v1/order",
-                    axum::routing::post(move |_request: Request| {
-                        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        async move {
-                            axum::Json(json!({
-                                "orderId": 7,
-                                "clientOrderId": "SA00000000000000000000000000000001",
-                                "symbol": "ETHUSDT",
-                                "status": "NEW",
-                                "side": "BUY",
-                                "type": "LIMIT",
-                                "origQty": "0.01",
-                                "executedQty": "0",
-                                "price": "2000"
-                            }))
-                        }
-                    }),
-                );
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-                sender.send(listener.local_addr().unwrap().port()).unwrap();
-                axum::serve(listener, app).await.unwrap();
-            });
-        });
-        let port = receiver.recv().unwrap();
-        let root = std::env::temp_dir().join(format!("seealpha-trade-{}", std::process::id()));
+    fn legacy_order_write_is_rejected_before_any_ledger_or_network_effect() {
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-retired-venue-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let config = Config {
             host: "127.0.0.1".into(),
@@ -328,7 +298,7 @@ mod tests {
             tenant_purpose: None,
             research_signing_key: None,
             research_mcp_enabled: false,
-            venue_base: Some(format!("http://127.0.0.1:{port}")),
+            venue_base: Some("http://127.0.0.1:18080".into()),
             python: std::path::PathBuf::from("python3"),
         };
         let runtime = Runtime::open(&config).unwrap();
@@ -342,54 +312,25 @@ mod tests {
             "quantity": "0.01",
             "price": "2000"
         });
-        let command = || OrderCommand {
-            tenant_id: "7".into(),
-            account_id: "11".into(),
-            environment: "production".into(),
-            api_key: "key-one".into(),
-            secret: "secret-one".into(),
-            action: "submit".into(),
-            values: values.clone(),
-            venue_base: format!("http://127.0.0.1:{port}"),
-        };
-        let first = runtime.execute_order(command()).unwrap();
-        assert_eq!(first["response"]["status"], "completed");
-        assert!(first["response"]["order"].is_null());
-        assert!(
-            first["response"]["message"]
-                .as_str()
-                .unwrap_or("")
-                .contains("持久化订单意图登记门禁")
-        );
-        // The legacy transport intentionally forbids all POST/DELETE writes.
-        // An immutable order request is recorded, but no network send occurs.
-        // NEW/ACK is not a fill. Only signed userTrades may enter fills.
-        assert!(
-            runtime
-                .ledger
-                .fills("7", "11", "production")
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            first["response"]["client_order_id"],
-            "SA00000000000000000000000000000001"
-        );
-        let second = runtime.execute_order(command()).unwrap();
-        assert_eq!(second["replay"], true);
-        assert_eq!(
-            second["response"]["client_order_id"],
-            first["response"]["client_order_id"]
-        );
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
-        let mut changed = values.clone();
-        changed["quantity"] = json!("0.02");
-        let rejected = runtime.execute_order(OrderCommand {
-            values: changed,
-            ..command()
-        });
-        assert!(rejected.is_err());
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        for action in ["submit", "cancel"] {
+            let result = runtime.execute_order(OrderCommand {
+                tenant_id: "7".into(),
+                account_id: "11".into(),
+                environment: "production".into(),
+                api_key: "key-one".into(),
+                secret: "secret-one".into(),
+                action: action.into(),
+                values: values.clone(),
+                venue_base: "http://127.0.0.1:18080".into(),
+            });
+            assert!(result.is_err(), "legacy {action} must be disabled");
+        }
+        assert!(runtime.ledger.get_order_request(
+            "7", "11", "00000000-0000-0000-0000-000000000001",
+        ).unwrap().is_none());
+        assert!(runtime.ledger.fills("7", "11", "production").unwrap().is_empty());
+        assert!(runtime.ledger.order_recovery_page("7", 0, 10).unwrap().is_empty());
+
         let mut blob = Vec::new();
         for entry in std::fs::read_dir(&config.state_dir).unwrap() {
             let entry = entry.unwrap();
@@ -399,6 +340,7 @@ mod tests {
         }
         assert!(!blob.windows(10).any(|window| window == b"secret-one"));
         assert!(!blob.windows(7).any(|window| window == b"key-one"));
+        drop(runtime);
         let _ = std::fs::remove_dir_all(root);
     }
 }
