@@ -15,11 +15,11 @@
 | `src/orders/` | 尚在使用的预登记安全门禁与真实成交 REST 取证；通用订单生命周期已归 `engine/execution/` |
 | `src/account/` | 多产品只读账户证据、账户对账及资金结算查询 |
 
-仍有部分模块声明通过 `#[path]` 指向实体文件；执行生命周期与 Options 成交规范化目前保留薄兼容转发。业务行为、凭据边界、账户安全门禁与 Ledger 事务归属不变。
+仍有部分模块声明通过 `#[path]` 指向实体文件；执行生命周期与 Options 成交规范化的旧公开兼容转发已删除，实际实现分别保留在 `engine/execution` 和 `engine/connection/binance-options`。业务行为、凭据边界、账户安全门禁与 Ledger 事务归属不变。
 
 ## Options 成交分页协议抽离
 
-已删除原 `src/options/trades.rs`：有界 EAPI GET /eapi/v1/userTrades 分页的游标、1000 条饱和页、32 页上限、重复 ID 与溢出失败关闭全部迁至 `binance-options/src/trades_page.rs`。旧 `VenueClient::option_order_trades` 只注入签名 GET，不维护第二套分页逻辑。原 `seealpha_venue::option_trades::normalize_option_trades` 保留最小兼容转发。
+已删除原 `src/options/trades.rs`：有界 EAPI GET /eapi/v1/userTrades 分页的游标、1000 条饱和页、32 页上限、重复 ID 与溢出失败关闭全部迁至 `binance-options/src/trades_page.rs`。旧 `VenueClient::option_order_trades` 只注入签名 GET，不维护第二套分页逻辑。旧 `seealpha_venue::option_trades::normalize_option_trades` 兼容转发已删除，调用方应使用 `seealpha_binance_options::normalize_option_trades`。
 
 ## Options 证据代码抽离（2026-11-21）
 
@@ -39,7 +39,7 @@
 
 ## 执行领域状态机从连接器抽离
 
-订单状态单调推进、终态不可回退及成交数量一致性检查已从 `src/orders/lifecycle.rs` 搬到 `engine/execution/src/lifecycle.rs`（`seealpha-execution`），成为交易所无关的 SeeAlpha 执行领域规则。Runtime 直接依赖新 crate，原 `seealpha_venue::lifecycle` 暂时仅保留类型转发，Venue 对外映射为原来的 `Unconfirmed`。这是**搬迁单一实现**，不添加订单 HTTP/WS 客户端，且不改变 Ledger 事务归属。
+订单状态单调推进、终态不可回退及成交数量一致性检查已从 `src/orders/lifecycle.rs` 搬到 `engine/execution/src/lifecycle.rs`（`seealpha-execution`），成为交易所无关的 SeeAlpha 执行领域规则。Runtime 直接依赖新 crate，旧 `seealpha_venue::lifecycle` 类型转发已删除，Venue 对外错误仍映射为原来的 `Unconfirmed`。这是**搬迁单一实现**，不添加订单 HTTP/WS 客户端，且不改变 Ledger 事务归属。
 
 ## 自制用户流移除与恢复门禁
 
