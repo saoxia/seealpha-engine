@@ -187,22 +187,44 @@ def repair_candidates(policy, settings, catalog, source, candidates, day, instru
 
     written, conflicts = 0, []
     if source == "1m":
+        if not candidates:
+            return 0, conflicts
+        binary = Path(os.environ.get("SEEALPHA_REPAIR_VERIFY_BINARY",
+                                    str(Path(__file__).resolve().parents[3] / "target/release/seealpha-repair-verify")))
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise ValueError("Rust minute repair planner unavailable")
+        request = {"mode": "plan_minute_repairs", "root": str(catalog.path),
+                   "symbol": policy["symbol"], "product": policy.get("product", "futures_um"),
+                   "price_precision": instrument.price_precision,
+                   "size_precision": instrument.size_precision,
+                   "candidates": [{"start_ms": item["start_ms"], "end_ms": item["end_ms"],
+                                   "values": [str(value) for value in item["values"]]}
+                                  for item in candidates]}
+        try:
+            response = subprocess.run([str(binary)], input=json.dumps(request), capture_output=True,
+                                      text=True, check=False, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError("Rust minute repair planner failed to execute") from exc
+        if response.returncode != 0:
+            raise ValueError("Rust minute repair planner rejected candidates: " + response.stderr.strip()[:200])
+        try:
+            decisions = json.loads(response.stdout)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Rust minute repair planner returned malformed decisions") from exc
+        if (not isinstance(decisions, list) or len(decisions) != len(candidates)
+                or any(decision not in {"insert", "match", "conflict"} for decision in decisions)):
+            raise ValueError("Rust minute repair planner returned invalid decisions")
         bars = []
-        for item in candidates:
-            values = item["values"]
-            price_step = Decimal(1).scaleb(-instrument.price_precision)
-            size_step = Decimal(1).scaleb(-instrument.size_precision)
-            if (any(value != value.quantize(price_step) for value in values[:4])
-                    or values[4] != values[4].quantize(size_step)):
-                raise ValueError("补齐来源精度与合约不一致")
-            stamp = (item["end_ms"] - 1) * 1000000
-            existing = catalog.bars(bar_types=[bar_type_for(policy["symbol"], "1m", policy.get("product", "futures_um"))], start=stamp, end=stamp)
-            if existing:
-                if any(getattr(existing[0], name).as_decimal() != value for name, value in zip(FIELDS, values, strict=True)):
-                    conflicts.append({"start_ms": item["start_ms"], "interval": "1m", "reason": "已有分钟来源值冲突"})
-                continue
-            bars.append(Bar(BarType.from_str(bar_type_for(policy["symbol"], "1m", policy.get("product", "futures_um"))),
-                            *(Price.from_str(str(value)) for value in values[:4]), Quantity.from_str(str(values[4])), stamp, stamp))
+        for item, decision in zip(candidates, decisions, strict=True):
+            if decision == "conflict":
+                conflicts.append({"start_ms": item["start_ms"], "interval": "1m",
+                                  "reason": "已有分钟来源值冲突"})
+            elif decision == "insert":
+                values = item["values"]
+                stamp = (item["end_ms"] - 1) * 1000000
+                bars.append(Bar(BarType.from_str(bar_type_for(policy["symbol"], "1m", policy.get("product", "futures_um"))),
+                                *(Price.from_str(str(value)) for value in values[:4]),
+                                Quantity.from_str(str(values[4])), stamp, stamp))
         install_bars(catalog, bars)
         return len(bars), conflicts
     if not candidates:
