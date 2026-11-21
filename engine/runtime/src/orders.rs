@@ -42,6 +42,14 @@ impl Runtime {
         if tenant.purpose != "production" {
             return Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into()));
         }
+        // Explicit native backend is staged durably, never dispatched through
+        // the legacy Venue. Production/live host protection above still applies.
+        if let Some(backend) = command.values.get("execution_backend") {
+            if backend.as_str() != Some("nautilus_binance_native") {
+                return Err(RuntimeError::Unprocessable("未知的订单执行后端。".into()));
+            }
+            return crate::native_handoff::stage_native_order_command(self, &command);
+        }
         if !matches!(command.action.as_str(), "submit" | "cancel") {
             return Err(RuntimeError::Unprocessable(
                 "交易操作或账户环境不匹配。".into(),
@@ -385,6 +393,14 @@ impl Runtime {
         };
         let mut stored: Value = serde_json::from_str(&existing)
             .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
+        // Native-staged intents are not legacy REST requests. Never attempt
+        // recovery through VenueClient, including loopback, until native
+        // authenticated execution evidence reconciliation is implemented.
+        if stored["intent"]["execution_backend"] == "nautilus_binance_native" {
+            return Err(RuntimeError::Conflict(
+                "原生执行订单仅允许原生取证对账；该恢复链路尚未接入。".into(),
+            ));
+        }
         if stored["environment"] != environment {
             return Err(RuntimeError::Conflict("账户环境与原始委托不一致。".into()));
         }
