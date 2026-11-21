@@ -8,7 +8,7 @@ use seealpha_backtest::{
 };
 use seealpha_market::{check_symbol, interval_ms};
 use seealpha_portfolio::TargetHolding;
-use seealpha_strategy::{AccountScope, HostCommand, IssuedStrategy, StrategyBar, run_issued_host};
+use seealpha_strategy::{AccountScope, IssuedStrategy, StrategyBar, executor::{ExecutionInput, IssuedNativeEmaExecutor, StrategyExecutor}};
 use serde_json::{Value, json};
 
 fn invalid(message: &str) -> RuntimeError {
@@ -124,21 +124,12 @@ impl Runtime {
         for strategy in strategies {
             let parameters: Value = serde_json::from_str(&strategy.parameters_json)
                 .map_err(|_| invalid("已下发策略参数记录损坏。"))?;
-            let file = write_archive(&strategy.archive)?;
+            // Execute only immutable, authorized built-in Rust strategy code.
+            // No Python host process or temporary archive is involved.
             self.track_start();
-            let executed = run_issued_host(
-                &HostCommand {
-                    python: &self.python,
-                    host: &self.host,
-                    package_dir: None,
-                    archive_path: Some(&file),
-                    parameters: &parameters,
-                    symbol,
-                    interval,
-                    bars: &host_bars,
-                    op: "run",
-                },
-                IssuedStrategy {
+            let executed = IssuedNativeEmaExecutor {
+                manifest: &strategy.archive,
+                issued: IssuedStrategy {
                     tenant_id: &strategy.tenant_id,
                     account_id: &strategy.account_id,
                     issuance_id: &strategy.issuance_id,
@@ -148,14 +139,18 @@ impl Runtime {
                     entry_point: &strategy.entry_point,
                     package_hash: &strategy.package_hash,
                 },
-                AccountScope {
+                scope: AccountScope {
                     tenant_id: tenant,
                     account_id: account,
                     purpose: &t.purpose,
                 },
-            );
+            }.execute(ExecutionInput {
+                parameters: &parameters,
+                symbol,
+                interval,
+                bars: &host_bars,
+            });
             self.track_end();
-            let _ = std::fs::remove_file(&file);
             let result = executed.map_err(map_strategy)?;
             let this_risk = result.prepared["risk_limit"]
                 .as_str()
