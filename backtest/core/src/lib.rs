@@ -4,6 +4,7 @@
 //! quantized delta at that bar's close. Cash is quote currency. Ending equity
 //! is cash plus the marked position. No exchange call is made.
 pub mod evidence;
+pub mod option_quotes;
 pub mod matching;
 pub mod timeline;
 
