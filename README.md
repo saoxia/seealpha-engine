@@ -14,7 +14,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 - `engine/strategy/`：Rust 内置策略、授权清单和目标持仓发布
 - `engine/portfolio/`：目标净额和风险裁剪
 - `engine/ledger/`：SQLite 账本
-- `engine/exchanges/`：Binance 订单及账户协议适配（行情数据源在 `market_data/`）
+- `engine/connection/`：Binance 订单及账户协议适配（行情数据源在 `market_data/`）
 - `engine/backtest/`：历史回放与回测
 - `engine/runtime/`：Runtime、租户和交易会话编排
 - `engine/gateway/`：对外 HTTP API、MCP 协议入口和研究授权校验（独立源码目录，同一 HTTP 服务）

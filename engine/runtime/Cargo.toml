@@ -14,7 +14,7 @@ seealpha-market = { path = "../market_data/market" }
 seealpha-portfolio = { path = "../portfolio" }
 seealpha-backtest = { path = "../backtest" }
 seealpha-strategy = { path = "../strategy" }
-seealpha-venue = { path = "../exchanges/binance" }
+seealpha-venue = { path = "../connection/binance" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

@@ -7,8 +7,8 @@
 | MCP 协议与研究工具 | `engine/gateway/mcp/src/research.rs` | `engine/gateway/api/src/research_v1.rs` 复用授权与任务能力；现有 `/research/mcp` 路由不变 |
 | HTTP 路由、权限和版本 | `engine/gateway/api/src/lib.rs`、`src/routes/` | `parity.rs`、`derivatives.rs`、`research_v1.rs` |
 | Engine 启动与运行配置 | `engine/apps/trading_engine/src/main.rs`、`engine/runtime/src/config.rs` | `gateway/api` |
-| Binance Spot / USD-M / Options 协议 | `engine/exchanges/binance/src/` | `spot/`、`usd_m/`、`options/`、`orders/`、`account/`；Cargo 包名及 Rust 公共模块路径保持不变 |
-| 订单发送、重复请求、对账 | `engine/runtime/src/orders.rs` | `order_journal.rs`、`engine/exchanges/binance`、`ledger` |
+| Binance Spot / USD-M / Options 协议 | `engine/connection/binance/src/` | `spot/`、`usd_m/`、`options/`、`orders/`、`account/`；Cargo 包名及 Rust 公共模块路径保持不变 |
+| 订单发送、重复请求、对账 | `engine/runtime/src/orders.rs` | `order_journal.rs`、`engine/connection/binance`、`ledger` |
 | 回测协调、研究快照 | `engine/runtime/src/research.rs`、`history.rs` | `gateway/api/src/research/`、`engine/backtest` |
 | 策略授权与原生策略 | `engine/strategy/src/` | `engine/runtime/src/session.rs` |
 | 研究授权与操作范围校验 | `engine/gateway/api/src/research/` | `engine/gateway/api/src/research_v1.rs`、`engine/gateway/mcp/src/research.rs` |
