@@ -222,7 +222,7 @@ fn parse_record(request: &Request, record: &StringRecord) -> Result<Parsed> {
     ensure!(start_ms <= ts_ms && ts_ms < end_ms, "trade timestamp outside UTC date");
     let multiplier = if request.spot_micros() { 1_000 } else { 1_000_000 };
     let ts_ns = raw_time.checked_mul(multiplier).context("timestamp nanosecond overflow")?;
-    let aggressor = if maker { AggressorSide::Seller } else { AggressorSide::Buyer };
+    let aggressor = if maker { AggressorSide::Sell } else { AggressorSide::Buy };
     let tick = TradeTick::new_checked(
         request.instrument_id,
         price,
