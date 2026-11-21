@@ -11,7 +11,21 @@
 
 ## 离线 LiveNode 执行接线构建验证（无交易）
 
-`tests/native_execution_node.rs` 在现有固定版本的 NautilusTrader v2.0.0rc9 下构造一套完整的 USD-M `LiveNode` 配置：原生 DataClient + ExecutionClient 工厂、显式 Hedging OMS、Native LiveExecutionEngine 检查间隔及 `with_reconciliation(true)`。测试只执行 `build()` 并销毁节点；不会 `run()`、访问交易所、发送订单或安装到 Engine Runtime。这是调用契约验证，不是恢复、账户安全或实盘验收。
+`tests/native_execution_node.rs` 在现有固定版本的 NautilusTrader v2.0.0rc9 下分别构造 Spot 与 USD-M `LiveNode` 配置：原生 DataClient + ExecutionClient 工厂、显式 Hedging OMS、Native LiveExecutionEngine 检查间隔及 `with_reconciliation(true)`。测试只执行 `build()` 并销毁节点；不会 `run()`、访问交易所、发送订单或安装到 Engine Runtime。这是调用契约验证，不是恢复、账户安全或实盘验收。
+
+## 替换旧 Venue 的明确目标（2026-11-22）
+
+**最终目标不是把旧 `engine/connection/binance` 重新拆成一套自研 Binance 下单客户端。** Spot 和 USD-M 标准订单必须接入固定版本 NautilusTrader `BinanceExecutionClientFactory`、`LiveNode` 以及 Nautilus 原生 ExecutionEngine/RiskEngine；现有 `binance-wire` 不能成为第二条下单通道。
+
+当前新增 Spot LiveNode 离线构建契约，与已有 USD-M Hedging 离线构建契约并列；二者**均不运行节点、不触网、不提交订单、不接入生产 Runtime**。接管顺序及验收条件：
+
+1. 明确 Engine 账户/租户/产品到 Nautilus `AccountId`、`InstrumentId`、OMS 的稳定映射，Spot 固定 Hedging，USD-M 依交易所持仓模式明确选择 Netting/Hedging；不凭空切换模式。
+2. 让 SeeAlpha 风控及 Ledger 对每一条提交、撤单、改单的**不可变指令**先做持久化预登记，且在 Nautilus 发送前确认首次允许执行；断线、超时和未知响应只查证不重发。**目前 Nautilus 自带执行客户端并不能自动满足 SeeAlpha 的持久预登记契约，未经接线不得运行真实提交。**
+3. 只使用 Nautilus 原生执行报告、账户同步和必要的交易所签名成交/订单证据推进 Ledger；真实 trade ID、订单归属、累计数量、手续费、重启重复事件的去重在同一 Ledger 事务内完成。ACK 不构成成交。
+4. 单独核验 Spot OCO、USD-M Algo、订单替换和撤单竞争的原生支持情况。不支持时明确拒绝，不通过普通订单进行功能降级。
+5. 在 mock/sandbox 逐项验证重启恢复、断线重连、顺序错乱、重复报告、部分成交、双向仓位、限额和风控拒绝，解决 rc9 Streaming LiveNode 停止/销毁问题，完成 CI 后再考虑独立受控灰度。
+
+Options 不属于现有 Nautilus 原生 Binance Spot/USD-M 执行覆盖范围；另行选择独立的 Nautilus ExecutionClient 适配器或受控 Options 网关，**不能**用 Spot/USD-M 原生工厂替代 EAPI。旧 Venue 和 `binance-wire` 的最终删除依赖上述能力实际切换，不以目录清理作为完成标准。
 
 ## 使用 Nautilus 原生执行记录持久化（离线配置验证）
 
