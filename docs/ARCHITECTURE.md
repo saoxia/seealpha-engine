@@ -1,159 +1,63 @@
-# SeeAlpha Engine architecture
+# SeeAlpha Engine 当前架构
 
-The resident process is the Rust binary `seealpha-engine`. Python remains only
-where a user-authored strategy package must run. The HTTP contract with
-SeeAlpha Platform is still version 2
-(`X-SeeAlpha-Engine-Contract-Version: 2`). `core/engine_contracts.py` and
-`core/trading_contracts.py` are unchanged and must stay byte-identical with
-Platform.
+> 当前实现说明，基于 2026-11-21 `main` 的 Rust workspace。与此前的 Python/NautilusTrader 迁移记录不同，本文件描述**仓库中实际存在的模块**。新增目录拆分只改变源码组织，不代表行为等价或生产验收通过。
 
-## Workspace
-
-Rust crates are now grouped by trading/business flow at the repository root:
+## 入口与依赖方向
 
 ```text
-market_data/market/             public data / bar pipeline
-market_data/feed/               market data feed
-market_data/catalog/            Nautilus-compatible historical catalog
-market_data/sources/binance/    native Binance data source
-market_data/quality/            data quality checks
-market_data/converter/          historical conversion utility
-alpha/strategy/                 strategy-package validation and host
-portfolio/core/                target netting / risk clip
-accounting/ledger/              durable SQLite state and paper orders
-connectivity/venue/             signed exchange transport
-backtest/core/                 matching / replay / backtest
-application/runtime/            shared orchestration, paper sessions and reconciliation
-application/research/           research grant verification
-interfaces/api/http/            HTTP v2 / existing research MCP routes
-apps/trading_engine/            seealpha-engine executable entrypoint
-benchmarks/rust/                Rust performance measurements
-risk/                           logical domain: implementation currently spans portfolio/runtime
-execution/                      logical domain: implementation currently spans runtime/venue/ledger
+apps/trading_engine
+        |
+interfaces/api/http  (HTTP v2、Research v1/MCP-compatible routes)
+        |
+application/runtime  (租户、账户、策略、纸面会话、数据任务、订单恢复)
+   |        |          |
+   v        v          v
+alpha    portfolio   backtest
+   \        |         /
+    \       v        /
+     accounting/ledger
+           ^
+           |
+  connectivity/venue       market_data/*
 ```
 
-The Cargo package names and executable names are unchanged. The Python strategy host in `python/strategy_host/`, shared Platform contract files in `core/`, and sample packages in `packages/` retain their existing locations. The legacy `engine/` runtime has been removed. Dedicated standalone MCP/WS/gRPC servers have not
-been implemented by this reorganization.
+上图表示主要调用/协作关系，不是完整 Cargo 依赖图。以各 crate 的 `Cargo.toml` 为编译依赖的准确来源。
 
-## Request path
+- **接口**：`interfaces/api/http` 负责认证、版本头、请求校验及 HTTP 响应；按 `src/routes/` 分功能维护，现有 `parity`、`derivatives` 和 `research_v1` 路由继续保留。
+- **应用编排**：`application/runtime` 负责业务用例、授权范围、纸面会话、订单恢复和异步作业。订单命令位于 `orders.rs`，历史研究/回测协调位于 `research.rs`；其他模块按既有功能分文件。
+- **领域能力**：`alpha/strategy`、`portfolio/core`、`backtest/core` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
+- **交易事实**：`accounting/ledger` 持有 SQLite 状态、请求意图、成交和对账证据；`connectivity/venue` 持有交易所协议及交易请求适配。二者不可用简单的 HTTP 传输成功代替实际成交事实。
+- **行情**：`market_data/market` 提供市场模型及公共读取，`sources/binance` 提供 Binance 数据源与明确命名的多个进程入口（`src/bin/`）；`feed` 持有数据门禁、汇总和计算；`catalog` 处理历史数据持久化；`quality` 和 `converter` 是辅助组件。
+- **独立程序**：`apps/trading_engine` 编译为 `seealpha-engine`，负责创建 Runtime、HTTP 服务以及显式 smoke 入口。
 
-1. HTTP checks the contract header, then the pinned tenant, then the bearer token.
-   Wrong contract is 426, another tenant is 403, a bad token is 401. Every
-   response includes the v2 header.
-2. A paper session loads public Binance spot or USD-M klines, recent trades, and
-   a depth snapshot. No API key is sent.
-3. The pipeline validates closed klines, aggregates trades into OHLCV bars, and
-   computes decimal bar features. A read does not start a collector.
-4. The strategy host loads the issued package, or the development-only sample
-   package, and returns `publish` events. `submit_order` raises.
-5. Portfolio code nets absolute targets, clips them to the risk limit, and
-   quantizes the delta toward zero. The ledger pre-registers the session.
-   A repeated fingerprint replays the stored result. An unresolved `unknown`
-   session is not executed again.
-6. Fills from a paper session are marked `venue=paper`.
-7. Signed order routes build a Binance HMAC request and send it only when
-   `ENGINE_VENUE_BASE` is set. Credentials are not written to SQLite. A repeated
-   request id replays the stored result and does not call the venue again.
-   Transport failure leaves the intent `unknown` and reconcile queries; it does
-   not submit a second order. With no gateway URL the route refuses rather than
-   guessing a production host. Connection and account-snapshot routes still do
-   not retain secrets.
+## 典型流向
 
-## Python runtime boundary (Target A)
+**行情**：授权的持久化配置 → 数据源采集/核验 → Feed/Catalog → 只读消费者（研究、回测、策略）。数据读取不能偷偷启动生产者，也不能将缺失的真实成交/盘口数据伪造为已验证事实。
 
-The **default Rust Engine container** must contain no Python trading, market
-data, accounting, research or API implementation. Python is permitted only
-inside `python/strategy_host/` and user-authored `packages/`, which are called
-as a restricted subprocess from the Rust strategy layer. The native container
-must not copy `engine/` (the isolated Legacy Engine) or `core/*.py` (Python
-contract/test definitions; API contract is implemented by Rust HTTP).
+**策略和回测**：接口 → Runtime → 已授权的 Rust 原生策略/历史数据 → 目标持仓/组合计算 → 回测或纸面持仓与账本。当前只支持受控的原生策略能力；旧 Python ZIP/NautilusTrader 策略不再直接执行。
 
-The native Docker CI enumerates every `/app/**/*.py` source file and refuses
-anything outside the two strategy-related prefixes, and separately runs the
-Python strategy host entrypoint. This is **deployment dependency isolation**,
-not proof that Rust has replaced all Legacy Engine capabilities.
+**订单**：接口 → Runtime 请求预登记与门禁 → Venue 协议 → 成交证据和对账 → Ledger 投影。未知结果不能盲重发。当前真实交易所发送并未获得生产验收授权，旧迁移文档不得被理解为启用承诺。
 
-The opt-in `docker/engine-legacy.Dockerfile` remains available in isolation
-until the functional, historical, fault, Platform, and risk/execution parity
-gates in Issue #86 are satisfied. Never run legacy and native engines against
-the same writable state/Catalog. Live exchange writes remain fail-closed.
+## 逻辑边界但非独立 crate
 
-## Python that remains
+- [Execution](architecture/execution.md)：订单管理目前跨 Runtime、Venue 和 Ledger。
+- [Risk](architecture/risk.md)：风险裁剪当前位于 Portfolio，额外门禁位于 Runtime。
 
-`python/strategy_host/host.py` is the glue. Strategy packages such as
-`packages/ema_crossover` are written against `prepare`, a `Strategy` subclass,
-bar callbacks, and `publish`. The host supplies that surface, including the EMA
-the sample package registers, and exits after one JSON request. It is not a
-Nautilus matching engine and it has no exchange client.
+不以「目录名称齐全」为目的新建空 crate。只有跨模块职责和事务边界明确后，才考虑独立 Execution/Risk crate。
 
-## Intentionally retired
+## 不兼容与未验收项
 
-Signed Binance trading, credential retention, Nautilus catalog backtests, and
-options execution are not invoked. Those paths placed or simulated exchange
-orders inside the old Python process. This engine keeps the HTTP status and
-error strings Platform already understands for "no result yet" (`还没有回测` and
-the carry/option equivalents) and refuses live commands. Research grants are
-still verified; `GET /research/v1/datasets` is the mounted research route when
-`ENGINE_RESEARCH_SIGNING_KEY` is set.
+此分支以 Rust 二进制为唯一 Engine HTTP Runtime，没有 Python 宿主或 Python 共享契约源文件。旧 Python 策略不会自动迁移；历史 Tick/L2、期权全生命周期、真实账户/订单恢复与跨 Platform 兼容性不能仅凭迁移后的 Rust 模块名字宣称完整。
 
-## State
+本次整理不变更 HTTP v2、状态库/Parquet 路径、订单幂等、API token、租户隔离、数据质量门禁或交易所安全限制。运行以下命令并检查结果后再合并：
 
-The book remains SQLite at `$ENGINE_STATE/book.sqlite` (WAL). Existing tenant,
-order, and strategy-load tables are created if missing. Paper positions and
-paper session idempotency use additional tables. Secrets are not columns.
-If that directory is not writable, which is the case for the Platform
-handshake mount under `--cap-drop ALL`, the process uses a temporary book
-under `/tmp` and still serves HTTP.
+```bash
+cargo check --workspace --all-targets --locked
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --workspace --locked --release
+docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
+```
 
-
-## Business-flow architecture and remaining refactoring
-
-The **physical directory relocation is complete**, but responsibility changes
-are not implied by moving source files. For example, risk clipping still lives
-in `portfolio/core`, signed exchange transport in `connectivity/venue`, and
-order reconciliation in `application/runtime`. The `risk/` and `execution/`
-directories document desired long-term domain boundaries; they are not yet
-standalone Cargo packages.
-
-`interfaces/api/http` continues to own the HTTP v2 boundary, including the
-existing research MCP routes. `application/runtime` continues to coordinate
-use cases; extracting thin adapters or separate server processes is a later
-reviewed change.
-
-### Required regression checks
-
-1. `cargo fmt --all --check`
-2. `cargo clippy --workspace --all-targets --locked -- -D warnings`
-3. `cargo test --workspace --locked`
-4. `cargo build --workspace --locked --release`
-5. `python3 -m unittest discover -s tests -t . -p '*_test.py' -v`
-6. `docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .`
-
-Do not enable live trading solely because the directory migration is merged.
-Current Rust parity and production exchange acceptance restrictions still apply.
-
-
-## Legacy `engine/strategies` retirement (2026-11-21)
-
-The Python module folder `engine/strategies/` has been removed. Its active
-responsibilities are owned by Rust `alpha/strategy/` (ZIP/manifest validation,
-immutable issuance authorization, bounded preparation via `prepare_archive`,
-and validated target-publication protocol), `application/runtime/` (strategy
-loads and paper sessions), `portfolio/core/` (risk clipping and netting), and
-`backtest/core/` (replay and matching).
-
-The legacy NautilusTrader `loading.py` backtest implementation and its
-Python-only `StrategyConfig` subclass are retired, **not** reimplemented
-byte-for-byte. Rust-native research/backtest behavior is the supported engine
-path. The separately isolated `python/strategy_host/` and sample user
-packages remain intentionally Python because arbitrary user-authored strategy
-code cannot be executed as Rust without a separate strategy-language migration.
-
-Legacy Python tests or scripts importing `engine.strategies` must not be
-treated as evidence of Rust Engine regressions; migrate the callers to the Rust
-Engine HTTP/strategy APIs instead. The repository's full Legacy Engine parity
-gate is not claimed by this folder deletion.
-
-## Legacy Engine final directory cleanup (2026-11-21)
-
-The last dormant Python `engine/` files, old `core/market/` and options projection helpers, stale Python Engine/feed/pipeline tests, and the broken legacy parity workflow were removed. Rust is the exclusive HTTP/market/accounting engine. `python/strategy_host/` and bundled/user Python strategies are still active and are not replaced by this cleanup; Platform-shared `core/engine_contracts.py` and `core/trading_contracts.py` remain compatibility sources. There has been no proof of exact legacy parity or live trading acceptance. See `docs/LEGACY_PYTHON_RECOVERY.md` for retrieving old code from Git history.
+历史过程与已经不再适用的 Python 说明请从 [文档索引](README.md) 中区分查看。

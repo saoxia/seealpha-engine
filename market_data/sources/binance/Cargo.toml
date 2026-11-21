@@ -1,4 +1,5 @@
 [package]
+autobins = false
 name = "seealpha-binance-market-data-source"
 version = "0.1.0"
 edition = "2024"
@@ -27,28 +28,28 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "binance-manifest-inspect"
-path = "src/main.rs"
+path = "src/bin/manifest_inspect.rs"
 
 [[bin]]
 name = "binance-native-source"
-path = "src/native_source.rs"
+path = "src/bin/native_source.rs"
 
 [[bin]]
 name = "binance-native-calculation"
-path = "src/native_calculation.rs"
+path = "src/bin/native_calculation.rs"
 
 [[bin]]
 name = "binance-journal-replay"
-path = "src/native_replay.rs"
+path = "src/bin/native_replay.rs"
 
 [[bin]]
 name = "binance-native-catalog-publish"
-path = "src/native_catalog_publish.rs"
+path = "src/bin/native_catalog_publish.rs"
 
 [[bin]]
 name = "binance-trade-archive-bars"
-path = "src/trade_archive_bars.rs"
+path = "src/bin/trade_archive_bars.rs"
 
 [[bin]]
 name = "binance-trade-feature-publish"
-path = "src/trade_feature_publish.rs"
+path = "src/bin/trade_feature_publish.rs"

@@ -1,33 +1,34 @@
 # SeeAlpha Engine 开发规范
 
-## 范围与迁移约束
+## 当前实现与代码入口
 
-此仓库仅包含 Engine。技术边界：交易所连接器、行情/历史数据、Catalog、策略加载与回测、目标持仓、风控、模拟/交易执行、订单及运行事实归 Engine。用户/租户账户授权、业务数据库、策略发布审批、Platform Web/API 不属于本仓库。
+本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `alpha/strategy`，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。以前的 `engine/`、`core/`、`python/strategy_host/` 目录属于迁移历史，**不得在没有单独需求和验证的情况下恢复成运行时依赖**。
 
-阶段一将原仓库已存在的 Engine 代码迁入独立项目，保持现有模块路径与接口；可独立精简打包/构建依赖，但不授权交易逻辑重构、修改交易所行为或生产部署。原仓库 `saoxia/SeeAlpha` 不由本仓库迁移 PR 自动修改或删除。
+当前架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，代码导航见 [docs/architecture/MODULE_MAP.md](docs/architecture/MODULE_MAP.md)。如文档相互矛盾，以当前 Rust 代码和测试为实际实现依据，同时修订不一致的现行说明。
 
-## 冻结与安全
+## 边界和安全
 
-- 未经明确授权，不更改核心架构、NautilusTrader 版本、HTTP 主契约或主要数据流；不新增无必要的包装、兼容层、工厂。
-- `engine/` 和 `core/` 不得导入 Platform 的 `api/`、`web/`、业务 ORM 或用户库。连接器不反向依赖 `engine/market_data/`、策略或 Platform。
-- 严守订单请求预登记、幂等、未知结果不盲重发、风险门禁、数值精度、恢复顺序和数据完整性。历史/回放不产生实时新风险。
-- 不触碰真实账户、真实下单、生产密钥、旧数据重建、生产状态卷或数据库迁移。仅使用模拟、离线及 CI 合成数据。
-- 不因切仓改写冻结研究来源或历史测试证据，不掩盖测试失败。禁止为通过检查随意删除既有行为。
-- `core/engine_contracts.py`、`core/trading_contracts.py` 仍为 v2 对外边界；破坏性改动必须与原 Platform 同步评审并覆盖兼容性测试。
+- `interfaces/api/http` 持有 HTTP v2 与研究协议边界；`application/runtime` 负责编排；行情、策略、组合、账本、回测与交易所连接分别归属对应领域 crate。
+- 不在没有明确授权和匹配测试时更改 HTTP v2、租户隔离、数据格式、持久化状态、订单幂等、真实账户安全门禁或生产部署。
+- 订单必须先登记请求意图；外部请求未知结果不得盲目再次发送；只有被核验的真实成交证据能更新已成交事实；模拟成交必须与真实成交分离。
+- 行情读取、策略订阅、回测不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据。
+- 不触碰真实账户、真实下单、生产密钥、旧数据重建、生产状态卷或数据库迁移。使用合成/离线数据验证重构。
+- `execution` 和 `risk` 是跨现有 crate 的逻辑领域，参见 `docs/architecture/`；不存在同名独立 crate。
 
-## 必须执行的开发工作流
+## 目录调整规范
 
-1. 检查当前分支/工作区与 `README.md`、`docs/ARCHITECTURE.md`，确认变更归属。
-2. 最小化代码修改。策略包契约和 HTTP v2 是对外入口。
-3. 同步受影响测试、文档及 Docker/CI。
-4. 检查 diff，不引入 Platform 的 `api/`、`web/` 或用户库。
-5. 运行 `cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked` 和 `python3 -m unittest discover -s tests/core -t . -p '*_test.py' -v`、`python3 -m unittest discover -s tests/strategy -t . -p '*_test.py' -v`。发布构建用 `cargo build --workspace --locked --release`。
-6. 报告已做、未做及失败项，不把未执行的线上/长期验证描述为通过。
+1. 首先检查当前 Git 分支、Cargo workspace 和相关模块的公开类型与调用链。
+2. 优先做不改变行为的文件拆分：移动处理函数及测试、修正模块引用、维持现有公开 API。不要为改善外观新增包装、兼容层和独立空 crate。
+3. 使用 `git diff --find-renames` 检查移动与非预期的业务修改；相关文档/容器/CI 必须同步更新。
+4. 运行并记录结果（失败不得隐瞒）：
 
-## 领域目录
+```bash
+cargo check --workspace --all-targets --locked
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --workspace --locked --release
+docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
+```
 
-Rust 代码按业务流程组织在根目录：`market_data/`、`alpha/`、`portfolio/`、`accounting/`、`connectivity/`、`backtest/`，应用编排在 `application/`，外部协议在 `interfaces/`，可执行程序在 `apps/`。`python/strategy_host/` 只负责加载策略包。`packages/` 是示例策略。`core/engine_contracts.py` 与 `core/trading_contracts.py` 仍是 v2 契约，必须与 Platform 逐字节一致。实盘签名下单已关闭：对应 HTTP 路由返回 409，不保存密钥。模拟成交只写入 `venue=paper`。
-
-## Legacy Python 源码退役
-
-`engine/`、`core/market/`、旧 Python Engine/feed/pipeline 测试已在 2026-11-21 退役。不得复活旧 Python Engine HTTP/runtime 作为 Rust 回退。Python 策略宿主、示例策略与对 Platform 的 v2 共享契约仍然存在；后续要取消 Python 运行时必须先在 Rust 中交付可执行策略包替代，并调整包格式、宿主调用、Docker 与相关测试。历史删除不代表 Rust 完全行为等价或实盘已获验收。
+本仓库已有历史格式化债务，CI 中 `cargo fmt --all --check` 暂为 advisory；不能因此把本次新引入的格式问题视为通过。重构不代表旧 Python 功能已 1:1 迁移完毕，也不代表实盘或生产功能已获验收。
