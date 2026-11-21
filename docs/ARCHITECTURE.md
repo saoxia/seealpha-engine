@@ -12,7 +12,7 @@ interfaces/api/http  (HTTP v2、Research v1/MCP-compatible routes)
 application/runtime  (租户、账户、策略、纸面会话、数据任务、订单恢复)
    |        |          |
    v        v          v
-alpha    portfolio   backtest
+strategy portfolio   backtest
    \        |         /
     \       v        /
      accounting/ledger
@@ -25,10 +25,17 @@ alpha    portfolio   backtest
 
 - **接口**：`interfaces/api/http` 负责认证、版本头、请求校验及 HTTP 响应；按 `src/routes/` 分功能维护，现有 `parity`、`derivatives` 和 `research_v1` 路由继续保留。
 - **应用编排**：`application/runtime` 负责业务用例、授权范围、纸面会话、订单恢复和异步作业。订单命令位于 `orders.rs`，历史研究/回测协调位于 `research.rs`；其他模块按既有功能分文件。
-- **领域能力**：`alpha/strategy`、`portfolio/core`、`backtest/core` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
+- **领域能力**：`strategy`、`portfolio/core`、`backtest/core` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
 - **交易事实**：`accounting/ledger` 持有 SQLite 状态、请求意图、成交和对账证据；`connectivity/venue` 持有交易所协议及交易请求适配。二者不可用简单的 HTTP 传输成功代替实际成交事实。
 - **行情**：`market_data/market` 提供市场模型及公共读取，`sources/binance` 提供 Binance 数据源与明确命名的多个进程入口（`src/bin/`）；`feed` 持有数据门禁、汇总和计算；`catalog` 处理历史数据持久化；`quality` 和 `converter` 是辅助组件。
+- **研究授权**：`research` 管理研究操作授权和作用域；用例编排仍在 `application/runtime`，历史回放仍在 `backtest/core`。
 - **独立程序**：`apps/trading_engine` 编译为 `seealpha-engine`，负责创建 Runtime、HTTP 服务以及显式 smoke 入口。
+
+## 一级目录原则
+
+按业务领域划分一级目录：`market_data/`、`strategy/`、`portfolio/`、`accounting/`、`connectivity/`、`backtest/`、`research/` 是已落地的领域；`risk/`、`execution/` 尚为逻辑领域，并未创建同名目录。`application/`、`interfaces/`、`apps/` 保留运行和对外交付职责。详见 [领域布局](architecture/DOMAIN_LAYOUT.md)。
+
+本次仅将 `alpha/strategy` → `strategy`、`application/research` → `research`，以及同步修订 Workspace、Docker、CI 与文档路径。保持 crate 名称、公开 API 和安全边界不变。
 
 ## 典型流向
 
