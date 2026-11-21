@@ -215,6 +215,64 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    // Compile against the *pinned* NautilusTrader 2.0.0rc9 Rust API
+    // (nautilus crates 0.68.0), never against older Python v1 adapters.
+    // Factory::create is an offline constructor, not connect() or submit_order().
+    #[tokio::test]
+    async fn rc9_native_spot_and_usdm_execution_factory_contract() {
+        use nautilus_binance::{
+            config::BinanceExecutionClientConfig,
+            factories::BinanceExecutionClientFactory,
+        };
+        use nautilus_common::{
+            cache::Cache,
+            clock::VirtualClock,
+            factories::ExecutionClientFactory,
+        };
+        use nautilus_model::{
+            enums::OmsType,
+            identifiers::AccountId,
+        };
+        use std::{cell::RefCell, rc::Rc};
+
+        // No network connection or order submission is allowed in this test.
+        // Spot factory enforces Hedging OMS; USD-M accepts Netting or Hedging.
+        for (product, requested_oms, expected_oms, account_id) in [
+            (BinanceProductType::Spot, None, OmsType::Hedging, "BINANCE-SPOT-OFFLINE"),
+            (BinanceProductType::UsdM, None, OmsType::Netting, "BINANCE-UM-OFFLINE"),
+            (
+                BinanceProductType::UsdM,
+                Some(OmsType::Hedging),
+                OmsType::Hedging,
+                "BINANCE-UM-HEDGE-OFFLINE",
+            ),
+        ] {
+            let config = BinanceExecutionClientConfig {
+                account_id: AccountId::from(account_id),
+                product_type: product,
+                environment: BinanceEnvironment::Testnet,
+                api_key: Some("offline-fixture-key".into()),
+                api_secret: Some("offline-fixture-secret".into()),
+                use_ws_trading: false,
+                oms_type: requested_oms,
+                ..Default::default()
+            };
+            config.validate().expect("rc9 native config must validate");
+            let cache = Rc::new(RefCell::new(Cache::default()));
+            let factory = BinanceExecutionClientFactory::new();
+            let client = factory
+                .create(
+                    TraderId::from("SEEALPHA-OFFLINE-001"),
+                    "BINANCE-OFFLINE-EXEC",
+                    &config,
+                    cache.into(),
+                    Rc::new(RefCell::new(VirtualClock::new())),
+                )
+                .expect("rc9 factory must build native client without connecting");
+            assert_eq!(client.oms_type(), expected_oms);
+        }
+    }
+
     #[test]
     fn spot_and_um_use_distinct_native_instrument_ids() {
         let spot = instrument_ids(Product::Spot, "BTCUSDT,ETHBTC").unwrap();

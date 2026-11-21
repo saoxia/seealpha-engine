@@ -9,6 +9,12 @@
 - 默认仅运行单产品；同时采集 Spot 和 USD-M 时运行两个独立节点。这避免一个进程中全局 Nautilus runtime 状态碰撞。
 - `on_start` 对每个交易对调用一次 Nautilus 原生有限 REST 最近成交请求，最多 1,000 条。**返回不证明过去的完整区间**，也不对源缺口执行自定义补齐。
 
+## NautilusTrader rc9 原生执行能力接线检查（尚未启用交易）
+
+当前模块增加离线 factory 契约测试：使用 **rc9 / Rust 0.68.0** 原生 `BinanceExecutionClientFactory` 和 `BinanceExecutionClientConfig`，验证 Spot 使用 Hedging OMS，USD-M 的 Netting/Hedging 选择及配置合法性。测试只构造原生执行客户端，不调用连接、下单、撤单或真实私有接口；运行时继续只启动匿名行情客户端。
+
+**这不等于执行迁移完成。** 在替换 `engine/connection/binance` 之前，需要确保：账户凭据安全交接、订单预登记与幂等、未知结果恢复、Spot OCO/OTO/OTOCO、USD-M Algo、双向持仓、订单归属和 Ledger 真实成交证据的端到端对照。未通过这些门禁，不允许实盘或删除旧订单代码。
+
 ## 离线检查和显式运行
 
 在编译机先运行：
