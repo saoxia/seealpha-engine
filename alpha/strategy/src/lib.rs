@@ -6,6 +6,7 @@ mod decimal;
 mod host_policy;
 mod host_process;
 mod issued;
+pub mod native_ema;
 
 pub use issued::{AccountScope, IssuedStrategy, authorize_issued, run_issued_host};
 
