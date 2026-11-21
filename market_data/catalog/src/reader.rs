@@ -654,6 +654,12 @@ impl Catalog {
             .checked_mul(NANO_PER_MS)
             .ok_or_else(|| CatalogError::Invalid("结束时间溢出。".into()))?;
         let bars = self.read_bars(symbol, product, interval, start_ns, end_ns, limit)?;
+        // Monthly windows are calendar-variable; preserve the verified
+        // bar_window successor logic instead of assuming a fixed duration.
+        if let Some(step_ms) = crate::interval_ms(interval)? {
+            let opens = bars.iter().map(|bar| bar.open_time_ms).collect::<Vec<_>>();
+            return crate::missing_bar_windows(&opens, start_ms, end_ms, step_ms);
+        }
         let mut expected = start_ms;
         let mut missing = Vec::new();
         for bar in bars {

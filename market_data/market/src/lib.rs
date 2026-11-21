@@ -7,6 +7,7 @@ mod binance;
 pub mod clock;
 pub mod exercise;
 pub mod funding;
+pub mod option_stream;
 pub mod options;
 mod pipeline;
 

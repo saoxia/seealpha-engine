@@ -5,6 +5,7 @@
 //! is cash plus the marked position. No exchange call is made.
 pub mod evidence;
 pub mod matching;
+pub mod option_quotes;
 pub mod timeline;
 
 use rust_decimal::Decimal;

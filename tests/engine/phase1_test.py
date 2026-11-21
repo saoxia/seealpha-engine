@@ -111,7 +111,7 @@ def test_strategy_packages_remain_at_the_repository_root():
     assert not (PROJECT / "strategy_python").exists()
     assert (PROJECT / "packages" / "ema_crossover" / "seealpha-package.json").is_file()
     assert not (PROJECT / "engine/strategy_python").exists()
-    assert (PROJECT / "engine/feed/managed.py").is_file()
+    assert (PROJECT / "engine/market_data/collection/managed.py").is_file()
     assert (PROJECT / "engine/connectors/binance/queries.py").is_file()
     assert (PROJECT / "engine/pipeline/pair_data.py").is_file()
     assert not (PROJECT / "feed").exists()

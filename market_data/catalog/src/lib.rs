@@ -4,6 +4,7 @@ mod cleanup;
 mod model;
 mod reader;
 mod records;
+mod repair;
 mod writer;
 
 use std::path::PathBuf;
@@ -15,6 +16,7 @@ pub use model::{
     interval_ms,
 };
 pub use reader::{BarGap, RecordKind};
+pub use repair::missing_bar_windows;
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
