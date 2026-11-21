@@ -26,6 +26,12 @@ The complete legacy directory file inventory and all import sites **must be dete
 
 **Not cut over:** no legacy Python caller or HTTP/application caller has yet been rewired to this new method. It is an opt-in Rust entrypoint, not a proven end-to-end replacement for the legacy coordinator. The legacy directory still requires full file/call-site inventory and cross-language replay parity. No Python code is removed in this batch.
 
+## Active paper-session weight path (follow-up)
+
+`application/runtime/src/session.rs` previously parsed every host publication as nonempty `quantity`, even though the restricted Python strategy host and the issued historical-backtest path accept either `quantity` or `weight`. The paper-session adapter now reads each strategy's validated `prepared.allocation`, constructs `TargetHolding` for either field, and uses Rust `replay_holdings` for all paper fills. The published report keeps the old `quantity` JSON shape for quantity targets and reports `weight` for weight targets. Tests cover both views and invalid allocation.
+
+This is **real application-layer integration**, but it does not route this historical paper replay through `Coordinator::report_holding` (that remains a separate persisted coordinator API). The legacy Python Engine, Python strategy host, and user-authored Python packages are unchanged. A full end-to-end weight-host sample and same-fixture parity run are still required; none have been executed in the connector environment.
+
 ## Subsequent directories
 
 - `engine/market_data/repair/`: existing Rust repair decisions and planning are partial; legacy Catalog reads/writes and orchestration remain.
