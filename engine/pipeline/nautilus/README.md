@@ -1,3 +1,9 @@
+# 当前执行架构（2026-11-22 目录切换）
+
+旧 `engine/connection/binance` / `seealpha-venue` 已从仓库和 Runtime Cargo 依赖移除；Spot / USD-M 原生执行方向仅保留此独立 NautilusTrader 0.68.0 工厂。**注意这只是源代码依赖切换，不表示功能完全迁移：** Runtime 的 `execute_order` 仍只有 Ledger 原生意图登记、不连接原生下单命令；原生执行事件只支持 Ledger 未验证隔离表，尚无实际原生执行事件生产者。旧账户签名查询、历史订单/成交及结算查询接口已经显式 fail-closed，不能再提供私有数据，旧订单无法从原网络查询恢复。Options 没有被 Spot/USD-M 原生执行工厂取代。
+
+**不得启用实盘交易。** 删除目录的请求不等于安全生产验收，也不等于原生账户、成交取证已实现。本次按用户要求未运行 Cargo 编译和测试。下文关于旧目录尚在或不得删除的历史迁移描述是过去阶段的记录，以本节当前状态为准。
+
 # NautilusTrader 原生 Binance Spot / USD-M 行情节点
 
 这是 **NautilusTrader v2.0.0rc9 / Rust crates 0.68.0** 的只读、实验性原生行情节点；目前已由管理员显式开关接入现有 Source Supervisor，但不在默认生产镜像中运行，也不提供交易执行能力。

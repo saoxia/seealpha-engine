@@ -1,7 +1,5 @@
-//! Signed order commands. Credentials stay in the request and never enter SQLite.
+//! Native-only order entry and conservative ledger completion checks.
 use crate::{Runtime, RuntimeError, map_ledger};
-use seealpha_venue::conditional::validated_algo_view;
-use seealpha_venue::{Credentials, Product, VenueClient};
 use serde_json::{Value, json};
 
 pub struct OrderCommand {
@@ -42,6 +40,8 @@ impl Runtime {
         crate::native_handoff::stage_native_order_command(self, &command)
     }
 
+    /// Only the native authenticated event stream can reconcile native orders.
+    /// No implicit retry, no custom REST recovery, no invented fills.
     #[allow(clippy::too_many_arguments)]
     pub fn reconcile_order(
         &self,
@@ -49,122 +49,26 @@ impl Runtime {
         account_id: &str,
         request_id: &str,
         environment: &str,
-        api_key: &str,
-        secret: &str,
-        venue_base: &str,
-        account_revision: &str,
+        _api_key: &str,
+        _secret: &str,
+        _venue_base: &str,
+        _account_revision: &str,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        let Some(existing) = self
-            .ledger
-            .get_order_request(tenant_id, account_id, request_id)
+        let Some(intent) = self.ledger
+            .registered_order_intent(tenant_id, account_id, request_id)
             .map_err(map_ledger)?
         else {
-            return Err(RuntimeError::NotFound("没有该请求".into()));
+            return Err(RuntimeError::NotFound("没有已登记的原生订单意图。".into()));
         };
-        let mut stored: Value = serde_json::from_str(&existing)
-            .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
-        // Native-staged intents are not legacy REST requests. Never attempt
-        // recovery through VenueClient, including loopback, until native
-        // authenticated execution evidence reconciliation is implemented.
-        if stored["intent"]["execution_backend"] == "nautilus_binance_native" {
-            return Err(RuntimeError::Conflict(
-                "原生执行订单仅允许原生取证对账；该恢复链路尚未接入。".into(),
-            ));
+        if intent["execution_backend"] != "nautilus_binance_native"
+            || intent["environment"].as_str() != Some(environment)
+        {
+            return Err(RuntimeError::Conflict("订单不属于原生执行后端或环境不匹配。".into()));
         }
-        if stored["environment"] != environment {
-            return Err(RuntimeError::Conflict("账户环境与原始委托不一致。".into()));
-        }
-        let prior_view = stored.clone();
-        if stored["response"]["status"] == "unknown" {
-            let symbol = stored["symbol"].as_str().unwrap_or("").to_string();
-            let client_order_id = stored["response"]["client_order_id"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            let product = match stored.get("product").and_then(Value::as_str) {
-                Some("futures_um") => Product::FuturesUm,
-                Some("options") => Product::Option,
-                Some("spot") => Product::Spot,
-                _ if symbol.ends_with("-PERP") => Product::FuturesUm,
-                _ if seealpha_market::options::parse_option_symbol(&symbol).is_ok() => {
-                    Product::Option
-                }
-                _ => Product::Spot,
-            };
-            if let Ok(client) = VenueClient::new(venue_base)
-                && let Ok(Some(order)) = (if stored["order_list"] == "oco" {
-                    client
-                        .query_spot_oco(
-                            &Credentials {
-                                api_key: api_key.into(),
-                                secret: secret.into(),
-                            },
-                            &symbol,
-                            &client_order_id,
-                        )
-                        .map(Some)
-                } else if stored["algo_order"] == true {
-                    client
-                        .query_um_conditional(
-                            &Credentials {
-                                api_key: api_key.into(),
-                                secret: secret.into(),
-                            },
-                            &symbol,
-                            &client_order_id,
-                        )
-                        .and_then(|v| {
-                            seealpha_venue::venue_symbol(&symbol).and_then(|canonical| {
-                                validated_algo_view(&v, &client_order_id, &canonical)
-                            })
-                        })
-                        .map(Some)
-                } else {
-                    client.query_order(
-                        &Credentials {
-                            api_key: api_key.into(),
-                            secret: secret.into(),
-                        },
-                        product,
-                        &symbol,
-                        &client_order_id,
-                    )
-                })
-            {
-                stored["response"]["status"] = json!("completed");
-                stored["response"]["order"] = order.clone();
-                stored["response"]["message"] = json!(format!(
-                    "已在交易所核对到委托：{}",
-                    order["status"].as_str().unwrap_or("")
-                ));
-                // A signed GET may show a later status than the original
-                // immutable ACK. Append evidence; never overwrite that ACK.
-                self.ledger
-                    .add_event(
-                        tenant_id,
-                        account_id,
-                        "signed_order_query_observed",
-                        &json!({"request_id":request_id,"client_order_id":client_order_id,
-                            "environment":environment,"source":"signed_exchange_order_query",
-                            "order":order,"fills_verified":false})
-                        .to_string(),
-                    )
-                    .map_err(map_ledger)?;
-            }
-            if stored != prior_view {
-                self.ledger
-                    .append_order_request_view(
-                        tenant_id,
-                        account_id,
-                        request_id,
-                        &stored.to_string(),
-                    )
-                    .map_err(map_ledger)?;
-            }
-        }
-        let _ = account_revision;
-        Ok(stored)
+        Err(RuntimeError::Conflict(
+            "Nautilus 原生订单认证状态和真实成交对账尚未接通，不得使用旧 REST 查询恢复。".into(),
+        ))
     }
 
     pub fn mark_ledger_synced(

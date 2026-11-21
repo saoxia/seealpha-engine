@@ -1,3 +1,5 @@
+> 2026-11-22 更新：旧 `engine/connection/binance` crate 已删除。本 crate 只保留 Options 领域规范化，不提供私有请求签名、下单、查询或对账网络通路。下文旧 Venue 说明是历史内容。
+
 # Binance Options 专属适配能力（迁移中）
 
 本 crate 目前负责 **Options /eapi 用户成交证据、账户快照规范化及订单参数规则及行权证据规范化**，不发送交易请求，也不持有凭据；由原 `engine/connection/binance` 的签名只读查询调用。

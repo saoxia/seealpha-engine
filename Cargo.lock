@@ -1591,7 +1591,6 @@ dependencies = [
  "seealpha-market",
  "seealpha-portfolio",
  "seealpha-strategy",
- "seealpha-venue",
  "serde_json",
  "serde",
  "sha2",
@@ -1609,24 +1608,6 @@ dependencies = [
  "sha2",
  "thiserror",
  "zip",
-]
-
-[[package]]
-name = "seealpha-venue"
-version = "0.1.0"
-dependencies = [
- "axum",
- "reqwest",
- "rust_decimal",
- "seealpha-binance-options",
- "seealpha-binance-wire",
- "seealpha-execution",
- "seealpha-portfolio",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tokio",
 ]
 
 [[package]]
