@@ -1454,6 +1454,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "seealpha-binance-options"
+version = "0.1.0"
+dependencies = [
+ "rust_decimal",
+ "serde_json",
+]
+
+[[package]]
 name = "seealpha-catalog"
 version = "0.1.0"
 dependencies = [
@@ -1599,6 +1607,7 @@ dependencies = [
  "hmac",
  "reqwest",
  "rust_decimal",
+ "seealpha-binance-options",
  "serde",
  "serde_json",
  "sha2",

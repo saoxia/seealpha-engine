@@ -13,6 +13,10 @@
 | `engine/connection/` | 交易所私有订单、账户协议与状态适配；当前仅 Binance，行情由 `engine/market_data/` 持有 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
 
+### Binance Options 专属代码边界（分步迁移）
+
+`engine/connection/binance-options/` 当前仅负责 Options 用户成交证据规范化，由 `engine/connection/binance/` 的签名分页 GET 调用；尚不能取代整个旧多产品 Venue 适配器。Spot / USD-M 行情已复用 NautilusTrader，但交易执行仍依赖 `seealpha-venue`，不可因目录名调整删除真实订单保护逻辑。
+
 ## 规划中的业务领域（当前无同名源码目录）
 
 | 规划目录 | 目标职责 | 当前归属 |
