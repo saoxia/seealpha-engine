@@ -245,6 +245,97 @@ pub fn read_aggregated_catalog_klines(
     aggregate_saved_klines(&saved, source, target_interval)
 }
 
+/// Exact, read-only decision for an existing or missing minute repair candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MinuteRepairDecision {
+    Insert,
+    Match,
+    Conflict,
+}
+
+/// Validate the official one-minute candle against instrument precision before
+/// any Python/Nautilus repair writer sees it. Existing differing evidence must
+/// be marked as conflict rather than overwritten.
+pub fn classify_minute_repair(
+    candidate: &crate::CatalogBar,
+    existing: Option<&crate::CatalogBar>,
+    product: crate::MarketProduct,
+    price_precision: u32,
+    size_precision: u32,
+) -> Result<MinuteRepairDecision, CatalogError> {
+    if price_precision > 16 || size_precision > 16 {
+        return Err(CatalogError::Invalid("修复来源合约精度不受支持。".into()));
+    }
+    candidate.validate("1m", product)?;
+    if [candidate.open, candidate.high, candidate.low, candidate.close]
+        .iter()
+        .any(|value| value.round_dp(price_precision) != *value)
+        || candidate.volume.round_dp(size_precision) != candidate.volume
+    {
+        return Err(CatalogError::Invalid("补齐来源精度与合约不一致。".into()));
+    }
+    Ok(match existing {
+        None => MinuteRepairDecision::Insert,
+        Some(saved) if saved == candidate => MinuteRepairDecision::Match,
+        Some(_) => MinuteRepairDecision::Conflict,
+    })
+}
+
+/// Read existing target minutes once and plan an additive repair, without
+/// opening any writer or modifying saved evidence. Candidates must be sorted
+/// and unique; reject malformed windows before returning any insert decision.
+pub fn plan_minute_repairs(
+    catalog_root: &std::path::Path,
+    symbol: &str,
+    product: crate::MarketProduct,
+    price_precision: u32,
+    size_precision: u32,
+    candidates: &[crate::CatalogBar],
+) -> Result<Vec<MinuteRepairDecision>, CatalogError> {
+    use std::collections::BTreeMap;
+
+    if candidates.len() > 50_000 {
+        return Err(CatalogError::Limit("分钟修复候选数量超过上限。".into()));
+    }
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut previous = None;
+    for bar in candidates {
+        if previous.is_some_and(|before| bar.open_time_ms <= before) {
+            return Err(CatalogError::Invalid("分钟修复候选重复或乱序。".into()));
+        }
+        classify_minute_repair(bar, None, product, price_precision, size_precision)?;
+        previous = Some(bar.open_time_ms);
+    }
+    let first = candidates[0]
+        .open_time_ms
+        .checked_mul(crate::NANO_PER_MS)
+        .ok_or_else(|| CatalogError::Invalid("分钟修复时间溢出。".into()))?;
+    let end_ms = crate::bar_window("1m", candidates[candidates.len() - 1].open_time_ms)?.1;
+    let end = end_ms
+        .checked_mul(crate::NANO_PER_MS)
+        .ok_or_else(|| CatalogError::Invalid("分钟修复时间溢出。".into()))?;
+    let catalog = crate::Catalog::open_existing(catalog_root)?;
+    let existing = catalog
+        .read_bars(symbol, product, "1m", first, end, 50_000)?
+        .into_iter()
+        .map(|bar| (bar.open_time_ms, bar))
+        .collect::<BTreeMap<_, _>>();
+    candidates
+        .iter()
+        .map(|candidate| {
+            classify_minute_repair(
+                candidate,
+                existing.get(&candidate.open_time_ms),
+                product,
+                price_precision,
+                size_precision,
+            )
+        })
+        .collect()
+}
+
 /// A saved candle's OHLCV evidence and whether its constituent windows are complete.
 /// The legacy repair path sends decimal text, which the native bridge parses
 /// before invoking this comparison; no floating-point conversion is permitted.
@@ -417,6 +508,30 @@ mod venue_tests {
             ..saved(0, 1)
         };
         assert!(aggregate_saved_klines(&[bad], "1m", "1m").is_err());
+    }
+
+    #[test]
+    fn minute_repair_classification_preserves_exact_precision_and_conflicts() {
+        let product = crate::MarketProduct::FuturesUm;
+        let candidate = candle(0, 60_000).bar;
+        assert_eq!(
+            classify_minute_repair(&candidate, None, product, 2, 3).unwrap(),
+            MinuteRepairDecision::Insert
+        );
+        assert_eq!(
+            classify_minute_repair(&candidate, Some(&candidate), product, 2, 3).unwrap(),
+            MinuteRepairDecision::Match
+        );
+        let mut saved = candidate.clone();
+        saved.volume = Decimal::from(9);
+        assert_eq!(
+            classify_minute_repair(&candidate, Some(&saved), product, 2, 3).unwrap(),
+            MinuteRepairDecision::Conflict
+        );
+        let mut excessive = candidate.clone();
+        excessive.close = "11.001".parse().unwrap();
+        assert!(classify_minute_repair(&excessive, None, product, 2, 3).is_err());
+        assert!(classify_minute_repair(&candidate, None, product, 17, 3).is_err());
     }
 
     #[test]
