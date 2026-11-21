@@ -9,6 +9,10 @@
 - 默认仅运行单产品；同时采集 Spot 和 USD-M 时运行两个独立节点。这避免一个进程中全局 Nautilus runtime 状态碰撞。
 - `on_start` 对每个交易对调用一次 Nautilus 原生有限 REST 最近成交请求，最多 1,000 条。**返回不证明过去的完整区间**，也不对源缺口执行自定义补齐。
 
+## 离线 LiveNode 执行接线构建验证（无交易）
+
+`tests/native_execution_node.rs` 在现有固定版本的 NautilusTrader v2.0.0rc9 下构造一套完整的 USD-M `LiveNode` 配置：原生 DataClient + ExecutionClient 工厂、显式 Hedging OMS、Native LiveExecutionEngine 检查间隔及 `with_reconciliation(true)`。测试只执行 `build()` 并销毁节点；不会 `run()`、访问交易所、发送订单或安装到 Engine Runtime。这是调用契约验证，不是恢复、账户安全或实盘验收。
+
 ## NautilusTrader rc9 原生执行能力接线检查（尚未启用交易）
 
 当前模块增加离线 factory 契约测试：使用 **rc9 / Rust 0.68.0** 原生 `BinanceExecutionClientFactory` 和 `BinanceExecutionClientConfig`，验证 Spot 使用 Hedging OMS，USD-M 的 Netting/Hedging 选择及配置合法性。测试只构造原生执行客户端，不调用连接、下单、撤单或真实私有接口；运行时继续只启动匿名行情客户端。
