@@ -4,6 +4,8 @@
 //! signs requests, stores credentials, or treats an order ACK as a fill.
 //! An incomplete or inconsistent payload fails closed.
 pub mod account;
+pub mod settlement;
+pub use settlement::normalize_option_exercises;
 pub mod order;
 pub use order::{OptionsOrderFields, build_options_order_pairs};
 pub use account::normalize_options_account_snapshot;

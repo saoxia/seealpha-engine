@@ -38,6 +38,10 @@ pub fn position_quantities(
     product: Product,
     snapshot: &Value,
 ) -> Result<BTreeMap<String, Decimal>, VenueError> {
+    if product == Product::Option {
+        return seealpha_binance_options::account::option_position_quantities(snapshot)
+            .map_err(|_| VenueError::Unconfirmed);
+    }
     let positions = snapshot
         .get("positions")
         .and_then(Value::as_array)
@@ -47,10 +51,10 @@ pub fn position_quantities(
         let symbol = field(item, &["symbol"])
             .and_then(Value::as_str)
             .ok_or(VenueError::Unconfirmed)?;
-        let raw = match product {
-            Product::FuturesUm => field(item, &["positionAmt"]),
-            Product::Option => field(item, &["quantity", "positionAmt"]),
-            Product::Spot => return Err(VenueError::Symbol),
+        let raw = if product == Product::FuturesUm {
+            field(item, &["positionAmt"])
+        } else {
+            return Err(VenueError::Symbol);
         }
         .ok_or(VenueError::Unconfirmed)?;
         let amount = decimal(raw)?;
@@ -103,6 +107,10 @@ pub fn asset_quantities(
     product: Product,
     snapshot: &Value,
 ) -> Result<BTreeMap<String, Decimal>, VenueError> {
+    if product == Product::Option {
+        return seealpha_binance_options::account::option_asset_quantities(snapshot)
+            .map_err(|_| VenueError::Unconfirmed);
+    }
     let assets = snapshot
         .get("balances")
         .and_then(Value::as_array)
@@ -112,18 +120,11 @@ pub fn asset_quantities(
         let asset = field(item, &["asset"])
             .and_then(Value::as_str)
             .ok_or(VenueError::Unconfirmed)?;
-        let amount = match product {
-            Product::Spot => {
-                decimal(field(item, &["free"]).ok_or(VenueError::Unconfirmed)?)?
-                    + decimal(field(item, &["locked"]).ok_or(VenueError::Unconfirmed)?)?
-            }
-            Product::FuturesUm => {
-                decimal(field(item, &["walletBalance", "balance"]).ok_or(VenueError::Unconfirmed)?)?
-            }
-            Product::Option => decimal(
-                field(item, &["marginBalance", "balance", "walletBalance"])
-                    .ok_or(VenueError::Unconfirmed)?,
-            )?,
+        let amount = if product == Product::Spot {
+            decimal(field(item, &["free"]).ok_or(VenueError::Unconfirmed)?)?
+                + decimal(field(item, &["locked"]).ok_or(VenueError::Unconfirmed)?)?
+        } else {
+            decimal(field(item, &["walletBalance", "balance"]).ok_or(VenueError::Unconfirmed)?)?
         };
         if result.insert(asset.to_owned(), amount).is_some() {
             return Err(VenueError::Unconfirmed);
@@ -263,6 +264,25 @@ impl VenueClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn option_reconciliation_uses_dedicated_parser_and_preserves_old_errors() {
+        let left = json!({"positions":[
+            {"symbol":"BTC-271231-90000-C","quantity":"1.25"}
+        ]});
+        let right = json!({"positions":[
+            {"symbol":"BTC-271231-90000-C","quantity":"1.00"}
+        ]});
+        let diffs = reconcile_positions(Product::Option, &left, &right).unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].expected, Decimal::new(125, 2));
+        assert_eq!(diffs[0].observed, Decimal::ONE);
+        let bad = json!({"balances":[{"asset":"USDT","marginBalance":"invalid"}]});
+        assert_eq!(
+            asset_quantities(Product::Option, &bad),
+            Err(VenueError::Unconfirmed)
+        );
+    }
     #[test]
     fn detects_missing_and_changed_hedge_mode_positions() {
         let left = json!({"positions":[
