@@ -17,6 +17,10 @@
 
 模块声明使用 `#[path]` 直接指向实体源码文件，无空壳 crate 或转发模块。业务行为、凭据边界、账户安全门禁与 Ledger 事务归属不变。
 
+## Options 成交分页协议抽离
+
+已删除原 `src/options/trades.rs`：有界 EAPI GET /eapi/v1/userTrades 分页的游标、1000 条饱和页、32 页上限、重复 ID 与溢出失败关闭全部迁至 `binance-options/src/trades_page.rs`。旧 `VenueClient::option_order_trades` 只注入签名 GET，不维护第二套分页逻辑。原 `seealpha_venue::option_trades::normalize_option_trades` 保留最小兼容转发。
+
 ## Options 证据代码抽离（2026-11-21）
 
 `normalize_option_trades` 及其真实成交证据校验、期权账户快照结构校验已搬至 `engine/connection/binance-options`。当前 `src/options/trades.rs` 仅负责签名成交分页请求，`src/account/reconciliation.rs` 的 Options 分支只保留签名账户/持仓 GET 与错误映射。该迁移不改变用户成交归属、重复 ID 检查、成交数量/手续费字段或任何真实订单发送行为；不代表 Options 的整套交易网络接口已经迁移。

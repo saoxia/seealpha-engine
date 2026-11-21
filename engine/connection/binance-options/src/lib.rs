@@ -4,6 +4,7 @@
 //! signs requests, stores credentials, or treats an order ACK as a fill.
 //! An incomplete or inconsistent payload fails closed.
 pub mod account;
+pub mod trades_page;
 pub mod settlement;
 pub use settlement::normalize_option_exercises;
 pub mod order;
