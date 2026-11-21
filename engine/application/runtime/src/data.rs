@@ -369,10 +369,14 @@ impl Runtime {
         if !root.is_dir() {
             return Err(bad("历史归档根目录不是现有目录。"));
         }
-        let tenant_root = root
-            .join(tenant)
-            .canonicalize()
+        let tenant_path = root.join(tenant);
+        let metadata = std::fs::symlink_metadata(&tenant_path)
             .map_err(|_| bad("租户归档目录尚未创建，禁止自动新建数据卷。"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(bad("历史归档租户目录必须是真实目录，禁止符号链接。"));
+        }
+        let tenant_root = tenant_path.canonicalize()
+            .map_err(|_| bad("历史归档租户目录不可访问。"))?;
         if !tenant_root.is_dir() || !tenant_root.starts_with(&root) {
             return Err(bad("历史归档租户隔离校验未通过。"));
         }
