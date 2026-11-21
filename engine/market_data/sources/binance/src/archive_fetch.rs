@@ -163,7 +163,7 @@ impl ArchiveSpec {
             return verify_existing(&path, &self.csv_name(), &expected);
         }
 
-        let parent = path.parent().ok_or("archive destination has no parent")?;
+        let parent = path.parent().ok_or("archive destination has no parent")?.to_path_buf();
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let staging = parent.join(format!(
             ".{}.{}.{}.part",
@@ -203,7 +203,7 @@ impl ArchiveSpec {
             let reused = match fs::hard_link(&staging, &path) {
                 Ok(()) => {
                     // Link installation must be durable before reporting success.
-                    File::open(parent)?.sync_all()?;
+                    File::open(&parent)?.sync_all()?;
                     false
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
