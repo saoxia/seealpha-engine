@@ -81,7 +81,8 @@ fn mirror_confirmed_minutes(
             break;
         }
         if start < 0 || end != start.checked_add(60_000).ok_or("minute timestamp overflow")?
-            || body["symbol"] != symbol || body["interval"] != "1m"
+            || body["symbol"].as_str() != Some(symbol)
+            || body["interval"].as_str() != Some("1m")
             || body["start_ms"] != start || body["end_ms"] != end
         {
             return Err("invalid native source minute evidence".into());
