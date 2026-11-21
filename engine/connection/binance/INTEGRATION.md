@@ -70,6 +70,10 @@ Options 账户两次签名只读 GET 的顺序与路径（`/eapi/v1/account`、`
 - `src/orders/user_stream.rs`：历史 Spot/USD-M 自制 User Stream 状态机未被 Runtime 接线，现已删除；不应与 NautilusTrader 2.0.0rc9 原生用户流和执行事件重复实现。**当前 Runtime 不会自动消费原生执行流、不能宣称具备流恢复能力。**
 - `src/orders/trades.rs` + `VenueClient::query_order_trades`：Spot `myTrades` 与 USD-M `userTrades` 通过 `fromId` 循环最多 32 页，要求真实 Trade ID 严格递增且订单身份相同。即使分页结束，也必须把数量汇总与已签名查询的订单累计成交数量比较；不能以空结果证明历史完整。
 
+## Runtime 旧 REST 写入入口停用（2026-11-22）
+
+`Runtime::execute_order` 已删除旧 Venue 的 Spot / USD-M / Options 下单及撤单调用分支，拒绝未选择 Nautilus 原生后端的订单。显式原生请求仅持久化 UNKNOWN 意图，不发送交易所请求，也不借旧 Venue 发单。旧连接器当前只在 Runtime 的账户、历史成交、已存订单只读取证及内部 Journal 测试中保留依赖；**这些读/核验能力没有被 Nautilus 原生闭环取代前，不能删除目录或 crate**。先完成原生执行命令与 Ledger 幂等授权的集成，再迁移完整原生执行事件/账户/成交证据和故障恢复，最后删除旧 Venue 及其剩余依赖。
+
 ## Runtime / Ledger 接线要求（未改动）
 
 1. Runtime 先通过风控，确认账户、产品、策略/人工指令、风险预算和目标订单参数。为**每一条可能写到交易所的动作**单独分配稳定 request_id 与 clientOrderId/listClientOrderId/clientAlgoId。撤单、改单、替换单也必须预登记，不是无副作用读操作。
