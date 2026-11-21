@@ -291,3 +291,90 @@ impl Runtime {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AuthMode, Config};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn weighted_portfolio_event_persists_and_rejects_other_instruments() {
+        let state = std::env::temp_dir().join(format!(
+            "seealpha-native-holding-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let config = Config {
+            host: "127.0.0.1".into(),
+            port: 0,
+            auth_mode: AuthMode::None,
+            token: String::new(),
+            state_dir: state.clone(),
+            project: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            tenant_id: None,
+            tenant_purpose: None,
+            research_signing_key: None,
+            research_mcp_enabled: false,
+            venue_base: None,
+            python: PathBuf::from("python3"),
+        };
+        let runtime = Runtime::open(&config).unwrap();
+        runtime.ensure_tenant("dev", "development", "active").unwrap();
+
+        let coordinator = Coordinator::new(Decimal::ONE, Decimal::from(10)).unwrap();
+        let saved = runtime
+            .save_native_portfolio("dev", "paper", "ETHUSDT", &coordinator, None)
+            .unwrap();
+        let registered = runtime
+            .apply_native_portfolio_event(
+                "dev", "paper", "ETHUSDT", &saved.revision,
+                NativePortfolioEvent::RegisterMember("strategy-a".into()),
+            ).unwrap();
+        let published = runtime
+            .apply_native_portfolio_event(
+                "dev", "paper", "ETHUSDT", &registered.revision,
+                NativePortfolioEvent::PublishHolding {
+                    member: "strategy-a".into(),
+                    holding: TargetHolding::new(
+                        "ETHUSDT", None, Some(Decimal::new(5, 1))
+                    ).unwrap(),
+                    allocation: Decimal::from(4),
+                    risk_exit: false,
+                },
+            ).unwrap();
+        let recovered = runtime
+            .recover_native_portfolio("dev", "paper", "ETHUSDT")
+            .unwrap().unwrap();
+        assert_eq!(published.revision, recovered.revision);
+        let reconciled = runtime
+            .reconcile_native_portfolio(
+                "dev", "paper", "ETHUSDT", &recovered.revision,
+                None, Decimal::ZERO, "paper-command-1",
+            ).unwrap();
+        assert!(matches!(
+            reconciled.command,
+            Some(Command::Submit { signed_quantity, .. })
+                if signed_quantity == Decimal::from(2)
+        ));
+
+        let current = reconciled.state.revision;
+        let mismatch = runtime.apply_native_portfolio_event(
+            "dev", "paper", "ETHUSDT", &current,
+            NativePortfolioEvent::PublishHolding {
+                member: "strategy-a".into(),
+                holding: TargetHolding::new("BTCUSDT", Some(Decimal::ONE), None).unwrap(),
+                allocation: Decimal::ONE,
+                risk_exit: false,
+            },
+        );
+        assert!(matches!(mismatch, Err(RuntimeError::Conflict(_))));
+        assert_eq!(
+            runtime.recover_native_portfolio("dev", "paper", "ETHUSDT")
+                .unwrap().unwrap().revision,
+            current
+        );
+        let _ = std::fs::remove_dir_all(state);
+    }
+}
