@@ -15,13 +15,13 @@
 
 ### Binance Options 专属代码边界（分步迁移）
 
-`engine/connection/binance-options/` 当前仅负责 Options 用户成交证据规范化，由 `engine/connection/binance/` 的签名分页 GET 调用；尚不能取代整个旧多产品 Venue 适配器。Spot / USD-M 行情已复用 NautilusTrader，但交易执行仍依赖 `seealpha-venue`，不可因目录名调整删除真实订单保护逻辑。
+`engine/connection/binance/` 已删除。`engine/connection/binance-options/` 保留 Options 领域规范化，但没有签名私有通信通路；Spot / USD-M 使用 NautilusTrader 原生数据节点和执行工厂离线配置，Runtime 仍只登记订单。
 
 ## 规划中的业务领域（当前无同名源码目录）
 
 | 规划目录 | 目标职责 | 当前归属 |
 | --- | --- | --- |
-| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/`、`engine/runtime/`、`engine/connection/binance/` |
+| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/`、`engine/runtime/`、`engine/pipeline/nautilus/` |
 | `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/connection/binance/`、`engine/ledger/` |
 
 不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
