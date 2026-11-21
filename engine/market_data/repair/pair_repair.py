@@ -24,7 +24,7 @@ FIELDS = ("open", "high", "low", "close", "volume")
 
 
 def local_klines(catalog, symbol, level, start_ms, end_ms, *, market="futures_um"):
-    """Read saved target candles; old minute-only catalogs need at most 1,440 rows."""
+    """Read saved source bars; Rust owns OHLCV aggregation and completeness."""
     bars = catalog.bars(bar_types=[bar_type_for(symbol, level, market)],
                         start=start_ms * 1000000, end=end_ms * 1000000 - 1)
     source = level
@@ -32,26 +32,30 @@ def local_klines(catalog, symbol, level, start_ms, end_ms, *, market="futures_um
         source = "1m"
         bars = catalog.bars(bar_types=[bar_type_for(symbol, source, market)],
                             start=start_ms * 1000000, end=end_ms * 1000000 - 1)
-    buckets = {}
-    for bar in bars:
-        opening, closing = bar_window(source, bar.ts_event // 1000000)
-        if bar.ts_event != (closing - 1) * 1000000:
-            raise ValueError("已保存 K 线时间边界无效；不标记核验完成")
-        left, right = bar_window(level, opening)
-        values = [getattr(bar, field).as_decimal() for field in FIELDS]
-        if left not in buckets:
-            buckets[left] = {"values": values, "end": closing,
-                             "complete": opening == left and closing <= right}
-        else:
-            bucket = buckets[left]
-            old = bucket["values"]
-            bucket["complete"] &= opening == bucket["end"]
-            old[1], old[2], old[3], old[4] = max(old[1], values[1]), min(old[2], values[2]), values[3], old[4] + values[4]
-            bucket["end"] = closing
-    for left, bucket in buckets.items():
-        bucket["complete"] &= bucket["end"] == bar_window(level, left)[1]
-    return buckets
-
+    binary = Path(os.environ.get("SEEALPHA_REPAIR_VERIFY_BINARY",
+                                str(Path(__file__).resolve().parents[3] / "target/release/seealpha-repair-verify")))
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise ValueError("Rust repair validator unavailable; build seealpha-repair-verify or configure SEEALPHA_REPAIR_VERIFY_BINARY")
+    request = {"mode": "aggregate", "source_interval": source, "target_interval": level,
+               "saved": [{"event_ns": bar.ts_event,
+                          "values": [str(getattr(bar, field).as_decimal()) for field in FIELDS]}
+                         for bar in bars]}
+    try:
+        result = subprocess.run([str(binary)], input=json.dumps(request), capture_output=True,
+                                text=True, check=False, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("Rust saved K-line aggregation failed to execute") from exc
+    if result.returncode != 0:
+        raise ValueError("本地 K 线原生聚合失败：" + result.stderr.strip()[:200])
+    try:
+        aggregated = json.loads(result.stdout)
+        if not isinstance(aggregated, dict):
+            raise ValueError("Rust saved K-line aggregation returned invalid buckets")
+        return {int(stamp): {"values": [Decimal(value) for value in bucket["values"]],
+                             "end": bucket["end"], "complete": bucket["complete"]}
+                for stamp, bucket in aggregated.items()}
+    except (KeyError, TypeError, json.JSONDecodeError, InvalidOperation) as exc:
+        raise ValueError("Rust saved K-line aggregation returned malformed evidence") from exc
 
 async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, market="futures_um", local=None, source=None):
     """Fetch public pages; Rust is the sole authority for repair evidence validation."""
