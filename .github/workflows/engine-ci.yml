@@ -76,7 +76,7 @@ jobs:
       # prevent us from observing type/borrow-checker failures in the PR.
       - name: Diagnose Cargo.lock synchronization (temporary)
         run: |
-          cargo metadata --format-version 1 --no-deps > /dev/null || true
+          cargo update --workspace
           echo "=== Cargo.lock changes ==="
           git diff -- Cargo.lock
           echo "=== End of lockfile changes ==="
