@@ -30,6 +30,8 @@ pub fn reserve_catalog_writer(root: &Path) -> Result<File> {
         .create(true)
         .read(true)
         .write(true)
+        // The advisory lock must not mutate an existing lock inode.
+        .truncate(false)
         .open(&lock_path)
         .context("could not open native Catalog writer lock")?;
     FileExt::try_lock_exclusive(&file)
