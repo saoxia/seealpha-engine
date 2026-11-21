@@ -61,6 +61,7 @@ struct Stats {
     last_raw_id: Option<u64>,
     price_precision: Option<u8>,
     size_precision: Option<u8>,
+    csv_row_digest: String,
 }
 
 impl Request {
@@ -265,10 +266,18 @@ where
         .flexible(false)
         .from_reader(csv.take(MAX_CSV_BYTES + 1));
     let mut stats = Stats::default();
+    let mut row_digest = Sha256::new();
     for (index, record) in reader.records().enumerate() {
         let record = record.with_context(|| format!("invalid CSV row {}", index + 1))?;
         if index == 0 && is_header(&record) {
             continue;
+        }
+        // Hash all original cell bytes to detect a source change between
+        // the complete validation pass and the subsequent Catalog write.
+        // Length-prefix cells so distinct column boundaries never collide.
+        for cell in &record {
+            row_digest.update((cell.len() as u64).to_le_bytes());
+            row_digest.update(cell.as_bytes());
         }
         let row = parse_record(request, &record)
             .with_context(|| format!("malformed exchange CSV row {}", index + 1))?;
@@ -306,6 +315,7 @@ where
         consume(row.tick)?;
     }
     ensure!(stats.count > 0, "empty daily CSV");
+    stats.csv_row_digest = format!("{:x}", row_digest.finalize());
     Ok(stats)
 }
 
@@ -353,6 +363,7 @@ fn import(request: &Request, archive: &Path, catalog_root: &Path) -> Result<serd
         "instrument_id": request.instrument_id.to_string(),
         "dataset": if request.dataset == Dataset::Trades {"trades"} else {"aggTrades"},
         "sha256": request.hash,
+        "csv_row_digest": validated.csv_row_digest,
         "records": validated.count,
         "first_trade_id": validated.first_id,
         "last_trade_id": validated.last_id,
