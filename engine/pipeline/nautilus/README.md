@@ -37,6 +37,12 @@ Options 不属于现有 Nautilus 原生 Binance Spot/USD-M 执行覆盖范围；
 
 **此函数不是发送授权，不创建执行引擎、订单或凭据。** Runtime 尚未消费此路由契约；下一步要把 Ledger 不可变意图、风险判断及重启恢复与 Nautilus 原生命令调度接起来，并经过真实编译、模拟网络与故障注入验收后才能安全代替旧 Venue。
 
+## Runtime 原生订单意图持久化增量（2026-11-22）
+
+`engine/runtime/src/native_handoff.rs` 新增内部 `stage_native_intent`，使用**现有** `Ledger::preregister_order_intent` 原子登记不可变原生订单意图。支持经校验的 Spot/USD-M 单腿 LIMIT 订单元数据、账户/合约/持仓模式、精确 Decimal 字符串，将它们一起纳入 SHA-256 指纹并绑定 `execution_backend=nautilus_binance_native`。新的指令首次登记为 `StagedFirstAttempt`；同一请求重放为 `ReconcileOnly`，冲突请求拒绝；SQLite 重启后也不会产生第二次首次登记。
+
+**当前该模块完全不发送订单、并且尚未接入 Runtime::execute_order。** `StagedFirstAttempt` 不是交易授权；不能被任何原生客户端直接用作实盘发送许可。后续还必须接入风控账户预算、原生 OrderFactory 与执行命令、原生事件/订单/成交证据对账，确认 Ledger 原子持久化及重启恢复无漏洞后，才能替换旧 Venue。当前不引入 Nautilus crates 到 Rust Runtime 的主工作区，避免未验收的生产依赖切换。
+
 ## 使用 Nautilus 原生执行记录持久化（离线配置验证）
 
 NautilusTrader v2.0.0rc9 在 `NautilusRecordType` 中已有订单提交、接受、拒绝、取消、成交、冲销以及 `OrderStatusReport`、`FillReport`、`PositionStatusReport`、`AccountState`；`StreamingConfig.record_types` 可选择这些原生记录，写入 Nautilus 自带 Feather/Parquet Catalog。离线测试验证 `data_types=TradeTick`、原生执行 `record_types` 和 `.with_streaming_config(...)` 原生 Builder 接口，不创建自定义执行事件 JSON/SQLite/Parquet 写入器。注意：rc9 版本在构建**带 Streaming 的 LiveNode 后销毁节点**时，CI 曾触发 Tokio `failed to park thread: AccessError`；目前该测试仅验证 Streaming 配置与 Builder 的编译契约，单独构建**未启用 Streaming** 的原生执行节点。**Streaming 节点的运行/停止/销毁生命周期尚未验收，不能部署或宣称已接线**。
