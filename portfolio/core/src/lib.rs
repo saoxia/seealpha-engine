@@ -174,6 +174,55 @@ pub fn clip_member_targets(
     Ok(clipped)
 }
 
+/// A weighted or absolute holding publication, resolved into an account
+/// quantity before the existing paper netting / risk / sizing pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoldingPublication {
+    pub member_id: String,
+    pub holding: TargetHolding,
+    pub allocation: Decimal,
+    pub price: Decimal,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum HoldingReplayError {
+    #[error("mixed instruments cannot be netted into one position")]
+    MixedInstruments,
+    #[error(transparent)]
+    Target(#[from] TargetHoldingError),
+    #[error(transparent)]
+    Portfolio(#[from] PortfolioError),
+}
+
+/// Resolve every holding before replaying any fills. Reject mixed symbols and
+/// invalid weight/allocation atomically, rather than producing a partial trace.
+pub fn replay_holdings(
+    publications: &[HoldingPublication],
+    position: Decimal,
+    risk_limit: Decimal,
+    increment: Decimal,
+) -> Result<(Vec<PaperFill>, Decimal), HoldingReplayError> {
+    let mut resolved = Vec::with_capacity(publications.len());
+    let mut symbol: Option<&str> = None;
+    for publication in publications {
+        match symbol {
+            Some(first) if first != publication.holding.symbol => {
+                return Err(HoldingReplayError::MixedInstruments);
+            }
+            None => symbol = Some(&publication.holding.symbol),
+            _ => {}
+        }
+        resolved.push(TargetPublication {
+            member_id: publication.member_id.clone(),
+            quantity: publication
+                .holding
+                .signed_quantity(publication.allocation)?,
+            price: publication.price,
+        });
+    }
+    replay_targets(&resolved, position, risk_limit, increment).map_err(Into::into)
+}
+
 /// Walk absolute target publications in time order and emit paper deltas.
 /// The ending position is the clipped net target after the last publication.
 pub fn replay_targets(
@@ -278,6 +327,65 @@ mod tests {
         );
         let flat = TargetHolding::new("ETHUSDT", None, Some(Decimal::ZERO)).unwrap();
         assert_eq!(flat.signed_quantity(Decimal::ONE).unwrap(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn replay_holdings_nets_weights_before_paper_execution() {
+        let publications = vec![
+            HoldingPublication {
+                member_id: "long".into(),
+                holding: TargetHolding::new("ETHUSDT", None, Some(Decimal::new(75, 2))).unwrap(),
+                allocation: Decimal::from(4),
+                price: Decimal::from(100),
+            },
+            HoldingPublication {
+                member_id: "short".into(),
+                holding: TargetHolding::new("ETHUSDT", None, Some(Decimal::new(-25, 2))).unwrap(),
+                allocation: Decimal::from(4),
+                price: Decimal::from(101),
+            },
+        ];
+        let (fills, position) = replay_holdings(
+            &publications,
+            Decimal::ZERO,
+            Decimal::from(10),
+            Decimal::ONE,
+        )
+        .unwrap();
+        assert_eq!(fills.len(), 2);
+        assert_eq!(fills[0].quantity, Decimal::from(3));
+        assert_eq!(fills[1].side, "sell");
+        assert_eq!(fills[1].quantity, Decimal::ONE);
+        assert_eq!(position, Decimal::from(2));
+    }
+
+    #[test]
+    fn replay_holdings_rejects_mixed_symbols_and_bad_allocation() {
+        let first = HoldingPublication {
+            member_id: "a".into(),
+            holding: TargetHolding::new("ETHUSDT", Some(Decimal::ONE), None).unwrap(),
+            allocation: Decimal::ONE,
+            price: Decimal::from(100),
+        };
+        let mut second = first.clone();
+        second.member_id = "b".into();
+        second.holding.symbol = "BTCUSDT".into();
+        assert_eq!(
+            replay_holdings(
+                &[first.clone(), second],
+                Decimal::ZERO,
+                Decimal::from(10),
+                Decimal::ONE
+            )
+            .unwrap_err(),
+            HoldingReplayError::MixedInstruments
+        );
+        let mut bad = first;
+        bad.allocation = Decimal::ZERO;
+        assert_eq!(
+            replay_holdings(&[bad], Decimal::ZERO, Decimal::from(10), Decimal::ONE).unwrap_err(),
+            HoldingReplayError::Target(TargetHoldingError::Allocation)
+        );
     }
 
     #[test]
