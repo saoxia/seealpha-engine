@@ -95,11 +95,11 @@ export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
 
 ## 原生 NautilusTrader Rust 节点的初步代码
 
-参见 [integrations/nautilus_binance_data/README.md](../../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。当前不在 Engine Runtime 或 Docker 中启动；需要先通过独立 CI、精度与 Catalog parity、数据缺口验证后再切换和删除旧自研实现。
+参见 [integrations/nautilus_binance_data/README.md](../../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。已接入现有 Runtime Source Supervisor 的管理员显式实验路径，但仍不在默认 Docker 中部署；需要经过最新提交的 CI、Instrument 精度、Catalog parity 与数据缺口验收后，才能切换默认行为并删除旧自研实现。
 
 ## 待完成，不能误认作已实现
 
-1. 在当前 Rust Runtime 真正启用并锁定 NautilusTrader `nautilus-binance` 数据客户端，替换实验性 `ws.rs` / `native_source.rs` 的通用连接逻辑。不得以新增 SeeAlpha 自定义 Adapter Trait 代替复用。
+1. NautilusTrader `nautilus-binance` 已有显式实验接入，**尚未通过真实市场数据的端到端验收或成为默认源**。通过后应删除重复的 `ws.rs` / `native_source.rs` 通用连接逻辑，而不是增加 SeeAlpha 自定义 Adapter Trait。
 2. ZIP→Nautilus 原生 Tick Catalog 的离线导入器已新增，仍需通过最新独立 Rust CI、离线样本及真实官方 ZIP 验证；现有 `engine/market_data/converter` 尚未清除，不能视为完整替换。
 3. REST 先按交易所支持的时间、数量和分页范围获取；覆盖不足或需要官方历史归档时再调用 ZIP。**不能根据“1,000 笔”这一单次请求上限臆造固定的时间分界**。
 4. 日/月文件的计划、发布滞后、缺失日期、下载重试、跨 ZIP 的 Trade ID 连续性、实时接续、ZIP 更正重验和来源证据 checkpoint；所有完整性门禁仍由 SeeAlpha 管理。
