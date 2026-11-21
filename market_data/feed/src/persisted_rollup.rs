@@ -97,7 +97,7 @@ impl PersistentRollups {
         {
             return Err(PersistError::Invalid);
         }
-        let next = bar.open_ms.checked_add(MINUTE).ok_or(PersistError::Overflow)?;
+        bar.open_ms.checked_add(MINUTE).ok_or(PersistError::Overflow)?;
         let tx = self.connection.transaction()?;
         let stored: Option<(String, String, String, String, String)> = tx.query_row(
             "SELECT open, high, low, close, volume FROM native_minute_bars WHERE symbol=?1 AND open_ms=?2",

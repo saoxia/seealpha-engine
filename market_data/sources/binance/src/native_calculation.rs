@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
+use rust_decimal::Decimal;
+use seealpha_feed::persisted_rollup::{MinuteBar, PersistentRollups};
 use seealpha_binance_market_data_source::{
     Product,
     calc::{self, bar_window},
@@ -48,6 +50,103 @@ fn bar_updates(db: &Connection, retained: &BTreeSet<String>) -> Result<Vec<Value
         }
     }
     Ok(updates)
+}
+
+/// Mirror only contiguous, closed and complete 1m source candles into the
+/// separate Rust derivation database. No REST certification or live READY
+/// permission is implied. The cursor remains at a gap until source repair.
+fn mirror_confirmed_minutes(
+    source: &Connection,
+    derived: &mut PersistentRollups,
+    symbol: &str,
+    confirmed_ms: i64,
+    cursor: &mut Option<i64>,
+) -> Result<usize> {
+    let from = cursor.unwrap_or(0);
+    let mut stmt = source.prepare(
+        "SELECT start_ms,end_ms,value FROM candles
+         WHERE interval='1m' AND start_ms>=?1 AND end_ms<=?2
+         ORDER BY start_ms LIMIT 256"
+    )?;
+    let mut rows = stmt.query(params![from, confirmed_ms])?;
+    let mut processed = 0_usize;
+    while let Some(row) = rows.next()? {
+        let start: i64 = row.get(0)?;
+        let end: i64 = row.get(1)?;
+        let body: Value = serde_json::from_str(&row.get::<_, String>(2)?)?;
+        if body["is_closed"] != true || body["is_complete"] != true {
+            break;
+        }
+        if cursor.is_some_and(|expected| expected != start) {
+            break;
+        }
+        if start < 0 || end != start.checked_add(60_000).ok_or("minute timestamp overflow")?
+            || body["symbol"].as_str() != Some(symbol)
+            || body["interval"].as_str() != Some("1m")
+            || body["start_ms"] != start || body["end_ms"] != end
+        {
+            return Err("invalid native source minute evidence".into());
+        }
+        let decimal = |field: &str| -> Result<Decimal> {
+            Ok(body[field].as_str().ok_or("source minute decimal missing")?.parse()?)
+        };
+        derived.accept_closed(&MinuteBar {
+            symbol: symbol.to_string(),
+            open_ms: start,
+            open: decimal("open")?,
+            high: decimal("high")?,
+            low: decimal("low")?,
+            close: decimal("close")?,
+            volume: decimal("volume")?,
+        })?;
+        *cursor = Some(end);
+        processed += 1;
+    }
+    Ok(processed)
+}
+
+#[cfg(test)]
+mod native_mirror_tests {
+    use super::*;
+
+    fn candle(start: i64, complete: bool) -> String {
+        json!({"symbol":"ETHUSDT","interval":"1m",
+            "start_ms":start,"end_ms":start+60_000,
+            "open":"10","high":"11","low":"9","close":"10","volume":"2",
+            "is_closed":true,"is_complete":complete}).to_string()
+    }
+
+    #[test]
+    fn mirror_stops_at_gap_then_advances_after_repair() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE candles(interval TEXT,start_ms INTEGER,end_ms INTEGER,value TEXT);").unwrap();
+        for start in [0,120_000] {
+            db.execute("INSERT INTO candles VALUES ('1m',?1,?2,?3)",
+                params![start,start+60_000,candle(start,true)]).unwrap();
+        }
+        let mut derived = PersistentRollups::memory().unwrap();
+        let mut cursor = None;
+        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",180_000,&mut cursor).unwrap(),1);
+        assert_eq!(cursor,Some(60_000));
+        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),Some(60_000));
+        db.execute("INSERT INTO candles VALUES ('1m',60000,120000,?1)",
+            [candle(60_000,true)]).unwrap();
+        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",180_000,&mut cursor).unwrap(),2);
+        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),Some(180_000));
+    }
+
+    #[test]
+    fn mirror_does_not_accept_incomplete_or_future_minutes() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE candles(interval TEXT,start_ms INTEGER,end_ms INTEGER,value TEXT);").unwrap();
+        db.execute("INSERT INTO candles VALUES ('1m',0,60000,?1)",
+            [candle(0,false)]).unwrap();
+        let mut derived = PersistentRollups::memory().unwrap();
+        let mut cursor = None;
+        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",60000,&mut cursor).unwrap(),0);
+        assert_eq!(cursor,None);
+        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),None);
+    }
 }
 
 fn execute() -> Result<()> {
@@ -107,6 +206,10 @@ fn execute() -> Result<()> {
     }
     let state_root = root.join("calculation");
     fs::create_dir_all(&state_root)?;
+    // This database belongs only to the native calculation worker. It is
+    // never shared with the legacy Python aggregation writer.
+    let mut derived = PersistentRollups::open(&state_root.join("native-rollups.sqlite"))?;
+    let mut mirror_cursor = None::<i64>;
     let mut last_processed = None::<i64>;
     let mut index = 0_u64;
     loop {
@@ -135,7 +238,14 @@ fn execute() -> Result<()> {
                     if records > 0 {
                         last_processed = Some(confirmed_ms);
                     }
-                    None
+                    // Only after the source journal has processed its dirty
+                    // receipts and its unresolved raw-ID gap count is zero.
+                    match mirror_confirmed_minutes(
+                        &db, &mut derived, symbol, confirmed_ms, &mut mirror_cursor,
+                    ) {
+                        Ok(_) => None,
+                        Err(error) => Some(format!("native_rollup_mirror_failed: {error}")),
+                    }
                 }
                 Err(error) => Some(error.to_string()),
             }
@@ -162,6 +272,7 @@ fn execute() -> Result<()> {
                 "realtime_pending":pending,"history_backlog":history_backlog,
                 "gap_count":unresolved_gaps,
                 "last_processed_ms":last_processed,"bar_updates":bar_updates(&db,&retained)?,
+                "derived_minute_checkpoint_ms":derived.checkpoint(symbol)?,
                 "allow_new_risk":false,"product":product.as_str()
             }),
         )?;
