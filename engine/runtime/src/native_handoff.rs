@@ -156,6 +156,35 @@ mod tests {
     }
 
     #[test]
+    fn native_intent_restart_never_reissues_first_attempt() {
+        let path = std::env::temp_dir().join(format!(
+            "seealpha-native-handoff-{}-{:?}.sqlite",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let ledger = Ledger::open(&path).unwrap();
+            ledger.ensure_tenant("tenant1", "production", "active").unwrap();
+            assert_eq!(
+                stage_native_intent(&ledger, &intent()).unwrap(),
+                NativeIntentDecision::StagedFirstAttempt
+            );
+        }
+        {
+            let recovered = Ledger::open(&path).unwrap();
+            assert_eq!(
+                stage_native_intent(&recovered, &intent()).unwrap(),
+                NativeIntentDecision::ReconcileOnly
+            );
+            let page = recovered.order_recovery_page("tenant1", 0, 10).unwrap();
+            assert_eq!(page.len(), 1);
+            assert!(page[0].reconciliation_only);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn conflicting_native_instruction_never_gets_another_fresh_attempt() {
         let ledger = ledger();
         stage_native_intent(&ledger, &intent()).unwrap();
