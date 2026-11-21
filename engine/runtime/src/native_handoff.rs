@@ -3,7 +3,7 @@
 //! A new execution path must additionally enforce portfolio/risk reservation
 //! and native lifecycle acceptance before consuming a fresh registration.
 use seealpha_ledger::{IntentStart, Ledger, LedgerError};
-use serde_json::{Value, json};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
