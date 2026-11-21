@@ -27,7 +27,7 @@
 
 ## 当前原生能力与复用范围
 
-原有 `src/spot/oco.rs`（Spot OCO）、`src/usd_m/conditional.rs`（USD-M Algo）、`src/options/trades.rs`（Options 成交分页）、`src/options/execution.rs`（期权实验执行器）均保留，不重新实现。原有 `src/orders/lifecycle.rs` 提供数量严格校验、终态及单调状态迁移。新增：
+原有 `src/spot/oco.rs`（Spot OCO）、`src/usd_m/conditional.rs`（USD-M Algo）、`src/options/trades.rs`（Options 成交分页）仍保留，不重新实现。旧 `src/options/execution.rs` 仅用于离线原型的 `OptionsExecutor`、`src/options/rules.rs` 中未被运行时引用的测试辅助规则已删除；真实订单仍由 Venue/Runtime 使用预登记门禁处理，`binance-options` 保留实际使用的专属解析与 EAPI 订单参数规则。原有 `src/orders/lifecycle.rs` 提供数量严格校验、终态及单调状态迁移。新增：
 
 - `src/orders/guard.rs`：按产品限定 Binance POST/PUT/DELETE 路径，提交一次之前调用持久化 `IntentJournal::admit`。相同账户与 request_id 再次出现时只允许 GET 对账；无法确证的 HTTP 状态、超时、未知响应、ACK 字段不匹配都归于 Unknown，**绝不自动补发**。
 - `src/spot/oto.rs`：原生 Spot OTO、OTOCO 参数与确定性子单客户编号；交易所管理 pending legs，禁止在本地把触发当作成交，必须从订单列表和子单分别核实。

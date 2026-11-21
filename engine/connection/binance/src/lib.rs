@@ -10,10 +10,6 @@ pub mod evidence;
 pub mod lifecycle;
 #[path = "options/trades.rs"]
 pub mod option_trades;
-#[path = "options/execution.rs"]
-pub mod options;
-#[path = "options/rules.rs"]
-pub mod options_rules;
 #[path = "orders/guard.rs"]
 pub mod order_guard;
 #[path = "account/reconciliation.rs"]
