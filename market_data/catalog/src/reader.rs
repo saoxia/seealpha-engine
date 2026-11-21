@@ -654,9 +654,26 @@ impl Catalog {
             .checked_mul(NANO_PER_MS)
             .ok_or_else(|| CatalogError::Invalid("结束时间溢出。".into()))?;
         let bars = self.read_bars(symbol, product, interval, start_ns, end_ns, limit)?;
-        let step_ms = crate::interval_ms(interval)?;
-        let opens = bars.iter().map(|bar| bar.open_time_ms).collect::<Vec<_>>();
-        crate::missing_bar_windows(&opens, start_ms, end_ms, step_ms)
+        // Monthly windows are calendar-variable; preserve the verified
+        // bar_window successor logic instead of assuming a fixed duration.
+        if let Some(step_ms) = crate::interval_ms(interval)? {
+            let opens = bars.iter().map(|bar| bar.open_time_ms).collect::<Vec<_>>();
+            return crate::missing_bar_windows(&opens, start_ms, end_ms, step_ms);
+        }
+        let mut expected = start_ms;
+        let mut missing = Vec::new();
+        for bar in bars {
+            if bar.open_time_ms > expected {
+                missing.push(BarGap { start_ms: expected, end_ms: bar.open_time_ms });
+            } else if bar.open_time_ms < expected {
+                return Err(CatalogError::Invalid("历史 K 线重复或倒退。".into()));
+            }
+            expected = bar_window(interval, bar.open_time_ms)?.1;
+        }
+        if expected < end_ms {
+            missing.push(BarGap { start_ms: expected, end_ms });
+        }
+        Ok(missing)
     }
 
     /// Generic bounded scanner for the other native Nautilus types. All
