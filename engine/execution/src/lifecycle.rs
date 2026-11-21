@@ -1,5 +1,5 @@
 //! Exchange order lifecycle validation, independent of transport and product.
-use crate::VenueError;
+use crate::OrderStateError;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::str::FromStr;
@@ -16,7 +16,7 @@ pub enum OrderPhase {
 }
 
 impl OrderPhase {
-    pub fn parse(status: &str) -> Result<Self, VenueError> {
+    pub fn parse(status: &str) -> Result<Self, OrderStateError> {
         match status {
             "NEW" | "ACCEPTED" => Ok(Self::New),
             "PARTIALLY_FILLED" => Ok(Self::PartiallyFilled),
@@ -25,7 +25,7 @@ impl OrderPhase {
             "REJECTED" => Ok(Self::Rejected),
             "EXPIRED" | "EXPIRED_IN_MATCH" => Ok(Self::Expired),
             "UNKNOWN" => Ok(Self::Unknown),
-            _ => Err(VenueError::Unconfirmed),
+            _ => Err(OrderStateError::Unconfirmed),
         }
     }
     pub fn terminal(self) -> bool {
@@ -45,38 +45,38 @@ pub struct VerifiedOrderState {
     pub original_quantity: Decimal,
 }
 
-fn amount(value: &Value) -> Result<Decimal, VenueError> {
+fn amount(value: &Value) -> Result<Decimal, OrderStateError> {
     let raw = value
         .as_str()
         .map(str::to_owned)
         .or_else(|| value.as_u64().map(|x| x.to_string()))
-        .ok_or(VenueError::Unconfirmed)?;
-    Decimal::from_str(&raw).map_err(|_| VenueError::Unconfirmed)
+        .ok_or(OrderStateError::Unconfirmed)?;
+    Decimal::from_str(&raw).map_err(|_| OrderStateError::Unconfirmed)
 }
 impl VerifiedOrderState {
     /// No fabricated FILLED state: exchange identities and cumulative quantities
     /// must agree with the actual response.
-    pub fn from_exchange(order: &Value) -> Result<Self, VenueError> {
+    pub fn from_exchange(order: &Value) -> Result<Self, OrderStateError> {
         let client_order_id = order
             .get("client_order_id")
             .and_then(Value::as_str)
             .filter(|v| !v.is_empty())
-            .ok_or(VenueError::Unconfirmed)?
+            .ok_or(OrderStateError::Unconfirmed)?
             .to_owned();
         let exchange_order_id = order
             .get("order_id")
             .and_then(Value::as_str)
             .filter(|v| !v.is_empty())
-            .ok_or(VenueError::Unconfirmed)?
+            .ok_or(OrderStateError::Unconfirmed)?
             .to_owned();
         let phase = OrderPhase::parse(
             order
                 .get("status")
                 .and_then(Value::as_str)
-                .ok_or(VenueError::Unconfirmed)?,
+                .ok_or(OrderStateError::Unconfirmed)?,
         )?;
-        let filled_quantity = amount(order.get("filled").ok_or(VenueError::Unconfirmed)?)?;
-        let original_quantity = amount(order.get("quantity").ok_or(VenueError::Unconfirmed)?)?;
+        let filled_quantity = amount(order.get("filled").ok_or(OrderStateError::Unconfirmed)?)?;
+        let original_quantity = amount(order.get("quantity").ok_or(OrderStateError::Unconfirmed)?)?;
         if original_quantity <= Decimal::ZERO
             || filled_quantity < Decimal::ZERO
             || filled_quantity > original_quantity
@@ -85,7 +85,7 @@ impl VerifiedOrderState {
             || (phase == OrderPhase::PartiallyFilled
                 && (filled_quantity.is_zero() || filled_quantity == original_quantity))
         {
-            return Err(VenueError::Unconfirmed);
+            return Err(OrderStateError::Unconfirmed);
         }
         Ok(Self {
             client_order_id,
@@ -99,27 +99,27 @@ impl VerifiedOrderState {
     /// A stale websocket update cannot move the order backwards. A terminal
     /// order cannot become open or change the terminal reason. An exchange
     /// correction requires explicit investigation instead of automatic overwrite.
-    pub fn advance(&self, newer: &Self) -> Result<(), VenueError> {
+    pub fn advance(&self, newer: &Self) -> Result<(), OrderStateError> {
         if self.client_order_id != newer.client_order_id
             || self.exchange_order_id != newer.exchange_order_id
             || self.original_quantity != newer.original_quantity
             || newer.filled_quantity < self.filled_quantity
         {
-            return Err(VenueError::Unconfirmed);
+            return Err(OrderStateError::Unconfirmed);
         }
         if self.phase == OrderPhase::Unknown || newer == self {
             return Ok(());
         }
         if newer.phase == OrderPhase::Unknown || self.phase.terminal() {
-            return Err(VenueError::Unconfirmed);
+            return Err(OrderStateError::Unconfirmed);
         }
         if newer.phase == OrderPhase::New && self.phase != OrderPhase::New {
-            return Err(VenueError::Unconfirmed);
+            return Err(OrderStateError::Unconfirmed);
         }
         if newer.phase == OrderPhase::PartiallyFilled
             && newer.filled_quantity <= self.filled_quantity
         {
-            return Err(VenueError::Unconfirmed);
+            return Err(OrderStateError::Unconfirmed);
         }
         Ok(())
     }
