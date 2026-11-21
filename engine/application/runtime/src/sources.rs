@@ -35,6 +35,52 @@ pub(crate) fn source_root(
         .canonicalize()
         .map_err(|_| bad("原生产品源根目录尚未创建，拒绝隐式创建新数据卷。"))
 }
+/// Only existing, real tenant/product directories may receive a native
+/// Nautilus data stream. A symlink to another tenant is not acceptable even
+/// when its canonical target happens to live under the administrator root.
+fn native_tenant_product_root(
+    base: &str,
+    tenant: &str,
+    product: &str,
+) -> Result<PathBuf, RuntimeError> {
+    if tenant.is_empty() || tenant.len() > 64
+        || !tenant.bytes().all(|x| x.is_ascii_alphanumeric())
+    {
+        return Err(bad("无效的源租户目录名称。"));
+    }
+    let root = PathBuf::from(base)
+        .canonicalize()
+        .map_err(|_| bad("原生 Nautilus 数据根目录尚未创建。"))?;
+    if !root.is_dir() {
+        return Err(bad("原生 Nautilus 数据根目录不是现有目录。"));
+    }
+    let tenant_path = root.join(tenant);
+    let product_path = tenant_path.join(product);
+    for path in [&tenant_path, &product_path] {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|_| bad("必须提前创建租户与产品数据目录。"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(bad("禁止使用符号链接作为租户产品数据目录。"));
+        }
+    }
+    product_path.canonicalize().map_err(|_| bad("源产品目录无效。"))
+}
+
+/// Derives the *same* authorized native subscriptions from the committed
+/// policy manifest. No independent strategy subscription state is introduced.
+fn enabled_native_symbols(manifest: &[u8], product: Product) -> Result<String, RuntimeError> {
+    let rows = parse_manifest(manifest, product)
+        .map_err(|_| bad("Nautilus 行情源策略清单无效。"))?;
+    let symbols = rows.into_iter()
+        .filter(|entry| entry.realtime_enabled)
+        .map(|entry| entry.symbol)
+        .collect::<Vec<_>>();
+    if symbols.is_empty() || symbols.len() > 100 {
+        return Err(bad("单个实验性 Nautilus 节点只允许 1 到 100 个交易对。"));
+    }
+    Ok(symbols.join(","))
+}
+
 fn manifest_bytes(policies: &[Value], product: Product) -> Result<Vec<u8>, RuntimeError> {
     let mut entries = Vec::new();
     for policy in policies {
@@ -120,12 +166,31 @@ impl Runtime {
             .source_state_dir
             .join(format!("source-{safe_tenant}-{product}.json"));
         atomic_manifest(&manifest_path, &manifest)?;
-        let binary = std::env::var("ENGINE_SOURCE_BIN")
-            .unwrap_or_else(|_| "binance-native-source".to_string());
-        let child = Command::new(binary)
-            .arg(product)
-            .arg(&manifest_path)
-            .arg(&root)
+        // A native Nautilus client is used only when the maintainer
+        // explicitly installs/points at its verified binary; otherwise the
+        // existing experimental collector remains unchanged.
+        let native_binary = std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
+            .ok()
+            .filter(|path| !path.is_empty());
+        let mut command = if let Some(binary) = native_binary.as_deref() {
+            let symbols = enabled_native_symbols(&manifest, source)?;
+            let feather_base = std::env::var("ENGINE_NATIVE_NAUTILUS_FEATHER_ROOT")
+                .map_err(|_| bad("未配置 Nautilus Feather 管理根目录。"))?;
+            let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
+                .map_err(|_| bad("未配置 Nautilus Catalog 管理根目录。"))?;
+            let feather = native_tenant_product_root(&feather_base, tenant, product)?;
+            let catalog = native_tenant_product_root(&catalog_base, tenant, product)?;
+            let mut command = Command::new(binary);
+            command.arg(product).arg(symbols).arg(feather).arg(catalog);
+            command
+        } else {
+            let binary = std::env::var("ENGINE_SOURCE_BIN")
+                .unwrap_or_else(|_| "binance-native-source".to_string());
+            let mut command = Command::new(binary);
+            command.arg(product).arg(&manifest_path).arg(&root);
+            command
+        };
+        let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -135,7 +200,8 @@ impl Runtime {
         processes.insert(key, child);
         Ok(json!({"tenant_id":tenant,"product":product,"pid":pid,
             "status":"experimental_degraded","data_ready":false,
-            "exchange_orders":0,"root":root,"manifest":manifest_path,
+            "allow_new_risk":false,"exchange_orders":0,"root":root,"manifest":manifest_path,
+            "backend":if native_binary.is_some() {"nautilus_native_data"} else {"legacy_experimental"},
             "message":"源仍处于 DEGRADED，未完成历史衔接与数据质量验收。"}))
     }
 
@@ -148,6 +214,11 @@ impl Runtime {
         symbol: &str,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant)?;
+        if std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
+            .is_ok_and(|path| !path.is_empty())
+        {
+            return Err(bad("Nautilus 原生 Catalog 源尚未验证旧 SQLite K 线计算器输入协议。"));
+        }
         if !explicit_enable() {
             return Err(bad("原生行情计算尚未验收，必须显式启用实验开关。"));
         }
