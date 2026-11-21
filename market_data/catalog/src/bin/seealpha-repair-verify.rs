@@ -2,8 +2,9 @@
 //! The standalone Rust engine uses the library API directly.
 use rust_decimal::Decimal;
 use seealpha_catalog::{
-    CatalogBar, LocalKline, MarketProduct, SavedKline, VenueKline, aggregate_saved_klines,
-    read_aggregated_catalog_klines, validate_venue_klines, venue_kline_differs,
+    CatalogBar, LocalKline, MarketProduct, MinuteRepairDecision, SavedKline, VenueKline,
+    aggregate_saved_klines, plan_minute_repairs, read_aggregated_catalog_klines,
+    validate_venue_klines, venue_kline_differs,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -67,6 +68,64 @@ fn aggregate_catalog(
                     complete: bucket.complete,
                 },
             )
+        })
+        .collect())
+}
+
+#[derive(Deserialize)]
+struct MinuteRepairPlanRequest {
+    root: PathBuf,
+    symbol: String,
+    product: String,
+    price_precision: u32,
+    size_precision: u32,
+    candidates: Vec<MinuteRepairRow>,
+}
+
+#[derive(Deserialize)]
+struct MinuteRepairRow {
+    start_ms: i64,
+    end_ms: i64,
+    values: [String; 5],
+}
+
+fn plan_minutes(request: MinuteRepairPlanRequest) -> Result<Vec<&'static str>, String> {
+    if request.candidates.len() > 50_000 {
+        return Err("分钟修复候选超过上限".into());
+    }
+    let product = MarketProduct::parse(&request.product).map_err(|error| error.to_string())?;
+    let bars = request
+        .candidates
+        .iter()
+        .map(|row| {
+            if row.start_ms.checked_add(60_000) != Some(row.end_ms) {
+                return Err("分钟修复窗口边界无效".into());
+            }
+            Ok(CatalogBar {
+                open_time_ms: row.start_ms,
+                open: decimal(&Value::String(row.values[0].clone()))?,
+                high: decimal(&Value::String(row.values[1].clone()))?,
+                low: decimal(&Value::String(row.values[2].clone()))?,
+                close: decimal(&Value::String(row.values[3].clone()))?,
+                volume: decimal(&Value::String(row.values[4].clone()))?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let decisions = plan_minute_repairs(
+        &request.root,
+        &request.symbol,
+        product,
+        request.price_precision,
+        request.size_precision,
+        &bars,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(decisions
+        .iter()
+        .map(|decision| match decision {
+            MinuteRepairDecision::Insert => "insert",
+            MinuteRepairDecision::Match => "match",
+            MinuteRepairDecision::Conflict => "conflict",
         })
         .collect())
 }
@@ -264,6 +323,13 @@ fn run() -> Result<(), String> {
         return Err("交易所证据超过容量限制".into());
     }
     let value: Value = serde_json::from_str(&payload).map_err(|_| "交易所证据 JSON 无效")?;
+    if value.get("mode").and_then(Value::as_str) == Some("plan_minute_repairs") {
+        let request = serde_json::from_value::<MinuteRepairPlanRequest>(value)
+            .map_err(|_| "分钟修复计划参数无效")?;
+        let result = plan_minutes(request)?;
+        return serde_json::to_writer(io::stdout(), &result)
+            .map_err(|_| "写入分钟修复计划失败".into());
+    }
     if value.get("mode").and_then(Value::as_str) == Some("aggregate_catalog") {
         let request = serde_json::from_value::<AggregateCatalogRequest>(value)
             .map_err(|_| "本地 Catalog 聚合请求无效")?;
@@ -305,6 +371,29 @@ mod tests {
             source: None,
             local: None,
         }
+    }
+
+    #[test]
+    fn minute_repair_planner_rejects_invalid_close_boundaries() {
+        let request = MinuteRepairPlanRequest {
+            root: PathBuf::from("."),
+            symbol: "ETHUSDT".into(),
+            product: "futures_um".into(),
+            price_precision: 2,
+            size_precision: 3,
+            candidates: vec![MinuteRepairRow {
+                start_ms: 0,
+                end_ms: 59_999,
+                values: [
+                    "10".into(),
+                    "12".into(),
+                    "9".into(),
+                    "11".into(),
+                    "2".into(),
+                ],
+            }],
+        };
+        assert!(plan_minutes(request).is_err());
     }
 
     #[test]
