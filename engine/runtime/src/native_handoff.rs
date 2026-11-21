@@ -297,6 +297,36 @@ mod tests {
     }
 
     #[test]
+    fn staged_native_order_can_store_unverified_reports_without_creating_fills() {
+        use seealpha_ledger::UnverifiedNativeOrderEvent;
+        let ledger = ledger();
+        assert_eq!(
+            stage_native_intent(&ledger, &intent()).unwrap(),
+            NativeIntentDecision::StagedFirstAttempt
+        );
+        let report = UnverifiedNativeOrderEvent {
+            tenant:"tenant1", account:"account1", environment:"sandbox",
+            request_id:"request1", client_order_id:"client1",
+            product:"futures_um", symbol:"BTCUSDT-PERP",
+            event_id:"native-event-001", event_type:"FillReport",
+            observed_at_ns:100000,
+        };
+        assert!(ledger.quarantine_native_order_event(report).unwrap());
+        assert!(!ledger.quarantine_native_order_event(report).unwrap());
+        assert_eq!(ledger.quarantined_native_order_events(
+            "tenant1","account1","sandbox","client1",
+        ).unwrap().len(),1);
+        assert!(ledger.fills("tenant1","account1","sandbox").unwrap().is_empty());
+        assert!(ledger.latest_order_observation(
+            "tenant1","account1","sandbox","client1",
+        ).unwrap().is_none());
+        assert_eq!(
+            stage_native_intent(&ledger, &intent()).unwrap(),
+            NativeIntentDecision::ReconcileOnly
+        );
+    }
+
+    #[test]
     fn first_registration_is_durable_and_replay_is_reconcile_only() {
         let ledger = ledger();
         assert_eq!(

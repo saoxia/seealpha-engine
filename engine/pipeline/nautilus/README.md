@@ -135,3 +135,9 @@ Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/or
 原生订单登记在 Ledger 后，`reconcile_order` 已拒绝旧 Venue 查询；本次进一步让后台 `run_one_registered_order_reconciliation` 在提取任何旧 `VenueClient` 或账户凭据前检查 `intent.execution_backend`，原生订单只返回待核实错误并由已有任务机制保持 `retry`，绝不会通过旧 REST 查询生成签名订单证据。直接 `sync_verified_order_fills` 也拒绝原生意图的历史 `order_requests.intent` 路由，避免误用旧成交格式计入 Ledger。
 
 回归测试覆盖已登记账户凭据与原生订单同时存在时：无可信订单观察、无成交、未完成任务保持重试。原生 Nautilus `FillReport` / `OrderStatusReport` 的事件来源认证、同租户账户映射、官方成交记录对照仍须单独完成；**不能**将普通 ACK 或未验证报告作为 `signed_exchange_user_trades` 写入。此增量未触发真实网络发送。
+
+## Nautilus 原生执行事件隔离暂存（2026-11-22）
+
+Ledger 新增 `native_order_event_quarantine` 表及 `quarantine_native_order_event`，接收**未核实的原生事件元数据**，仅限已存在 `execution_backend=nautilus_binance_native` 的不可变 Spot/USD-M `NEW` 意图。入库前在同一 SQLite IMMEDIATE 事务校验租户、账户、环境、请求号、客户订单号、产品、合约；同一事件 ID 内容一致时去重，内容冲突则拒绝。支持 `OrderSubmitted`、`OrderAccepted`、`OrderRejected`、`OrderCanceled`、`OrderExpired`、`OrderFilled`、`OrderFillVoided`、`OrderStatusReport`、`FillReport` 的事件**类型标记**。
+
+**严格区分暂存与认证：** 此接口不接收/保存可冒充已认证成交的 JSON 负载、不将事件作为 `signed_exchange_user_trades`，也不操作 `fills`、`order_observations`、资产或仓位。它还没有由 Nautilus 原生事件订阅器调用；只是构建了后续事件接入所需的独立、幂等、重启持久化 Ledger 存储。接下来必须验证 rc9 原生节点的运行/重连、可信事件生产者身份、FillReport 的实际成交 ID / 手续费与交易所核账一致性，才可能开放可信执行报告入账。旧只读取证适配器当前仍需保留。
