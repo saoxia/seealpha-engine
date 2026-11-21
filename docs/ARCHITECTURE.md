@@ -134,3 +134,25 @@ reviewed change.
 
 Do not enable live trading solely because the directory migration is merged.
 Current Rust parity and production exchange acceptance restrictions still apply.
+
+
+## Legacy `engine/strategies` retirement (2026-11-21)
+
+The Python module folder `engine/strategies/` has been removed. Its active
+responsibilities are owned by Rust `alpha/strategy/` (ZIP/manifest validation,
+immutable issuance authorization, bounded preparation via `prepare_archive`,
+and validated target-publication protocol), `application/runtime/` (strategy
+loads and paper sessions), `portfolio/core/` (risk clipping and netting), and
+`backtest/core/` (replay and matching).
+
+The legacy NautilusTrader `loading.py` backtest implementation and its
+Python-only `StrategyConfig` subclass are retired, **not** reimplemented
+byte-for-byte. Rust-native research/backtest behavior is the supported engine
+path. The separately isolated `python/strategy_host/` and sample user
+packages remain intentionally Python because arbitrary user-authored strategy
+code cannot be executed as Rust without a separate strategy-language migration.
+
+Legacy Python tests or scripts importing `engine.strategies` must not be
+treated as evidence of Rust Engine regressions; migrate the callers to the Rust
+Engine HTTP/strategy APIs instead. The repository's full Legacy Engine parity
+gate is not claimed by this folder deletion.
