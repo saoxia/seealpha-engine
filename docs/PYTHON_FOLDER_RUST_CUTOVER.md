@@ -80,3 +80,9 @@ The current connected container does not have `cargo` or `rustc`, and its git re
 Removed the legacy Python quality directory (`validate_data.py`, `monitor.py`, `__init__.py`) and its duplicate non-workspace Rust crate. The active `market_data/quality` crate owns closed OHLCV/Trade validation, strict maker flag parsing, inclusive catalog gap computation and read-only service status observation (`monitor::observe_status`, `monitor::read_monitor`). The monitor requires caller-supplied process supervision evidence; it never starts a source or modifies market data. Legacy Python Engine imports of the retired module are intentionally unsupported until their containing folders are cut over.
 
 This is a directory-level source retirement, **not** proof of feature-for-feature compatibility or green CI. In particular, native supervisor wiring and full catalog coverage checks should be iterated separately. Decimal/precision cleanup is independent and does not block retirement. Cargo commands were not run in this connector environment.
+
+## Empty legacy namespace retirement: `engine/feed/` and `engine/pipeline/` (2026-11-21)
+
+The checked-in tree contained only `__init__.py` in each directory. Both namespace markers are removed as a follow-up clean-up after native Rust feed and pipeline orchestration landed under `market_data/feed/` and `market_data/market/src/pipeline.rs`. The five former Python pipeline forwarders were already removed in an earlier change. **This batch removes no remaining Python business logic** and does not assert that every legacy entry point is compatible with Rust. No live data or exchange state is touched.
+
+Validation: exact tree inventory and diff checked through GitHub; no local Rust/Python test execution in this connector session.
