@@ -109,3 +109,9 @@ python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
 
 测试网关只能是本地模拟 HTTP/WebSocket；不得配置真实密钥、调用真实订单接口、开启生产订单路由。
+
+## Ledger Basket Journal 去 Venue 化（2026-11-22）
+
+Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/order_journal.rs` 以及 `dispatch_reserved_basket_leg_fixture`。篮子订单阶段仍通过现有 `Runtime::preregister_reserved_basket_leg` 和 `Ledger::preregister_basket_order_intent` 进行同一事务内的账户快照版本、篮子版本及不可变意图预登记。离线回归测试现在直接核验首次登记、SQLite 重启后仅对账、旧账户快照拒绝以及注册成功仍无成交；不再模拟旧 REST 写请求。
+
+这删除了一项实际的 `seealpha-venue` Runtime 依赖，但账户与订单/成交的签名只读证据链仍在旧连接器中，不能据此删除 `engine/connection/binance`。接下来需要完成 Nautilus 原生认证执行报告/账户同步与 Ledger 原子验证，清除剩余只读依赖后再删除该目录。当前不开放原生真实下单。
