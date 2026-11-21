@@ -227,6 +227,34 @@ mod tests {
     }
 
     #[test]
+    fn native_event_deduplication_survives_database_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "seealpha-native-event-{}-{:?}.sqlite",
+            std::process::id(), std::thread::current().id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let ledger = Ledger::open(&path).unwrap();
+            ledger.ensure_tenant("tenant1","production","active").unwrap();
+            ledger.preregister_order_intent(
+                "tenant1","account1","sandbox","request1","client1",
+                &"a".repeat(64),&order_intent(),
+            ).unwrap();
+            assert!(ledger.quarantine_native_order_event(event()).unwrap());
+        }
+        {
+            let restarted = Ledger::open(&path).unwrap();
+            assert!(!restarted.quarantine_native_order_event(event()).unwrap());
+            let rows = restarted.quarantined_native_order_events(
+                "tenant1","account1","sandbox","client1",
+            ).unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(restarted.fills("tenant1","account1","sandbox").unwrap().is_empty());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn events_from_legacy_intents_cannot_enter_native_quarantine() {
         let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
         ledger.ensure_tenant("tenant1","production","active").unwrap();
