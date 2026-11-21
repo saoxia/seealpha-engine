@@ -2,6 +2,7 @@
 //! This module is intentionally kept distinct from NautilusTrader execution
 //! clients: it owns only SeeAlpha's fail-closed business lifecycle assertions.
 pub mod lifecycle;
+pub mod admission;
 
 use thiserror::Error;
 

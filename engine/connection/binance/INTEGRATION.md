@@ -41,6 +41,10 @@
 
 订单状态单调推进、终态不可回退及成交数量一致性检查已从 `src/orders/lifecycle.rs` 搬到 `engine/execution/src/lifecycle.rs`（`seealpha-execution`），成为交易所无关的 SeeAlpha 执行领域规则。Runtime 直接依赖新 crate，原 `seealpha_venue::lifecycle` 暂时仅保留类型转发，Venue 对外映射为原来的 `Unconfirmed`。这是**搬迁单一实现**，不添加订单 HTTP/WS 客户端，且不改变 Ledger 事务归属。
 
+## 持久化执行准入协议抽离
+
+`engine/execution/src/admission.rs` 持有唯一的持久化准入、一次外部调用、确认后观察持久化失败关闭协议。旧 `orders/guard.rs` 仍管理 Binance 特有的写请求路由与 ACK 字段规则，但 `PreparedWrite::dispatch` 现在调用 `seealpha_execution::admission::dispatch_once`，不再自行实现发送重试/准入时序。Runtime 的 `LedgerIntentJournal` 直接实现通用 `IntentJournal<IntentRecord, VenueError>`；真正交易权限仍被 loopback-only 门禁限制。
+
 ## 当前原生能力与复用范围
 
 原有 `src/spot/oco.rs`（Spot OCO）、`src/usd_m/conditional.rs`（USD-M Algo）、`src/options/trades.rs`（Options 成交分页）仍保留，不重新实现。旧 `src/options/execution.rs` 仅用于离线原型的 `OptionsExecutor`、`src/options/rules.rs` 中未被运行时引用的测试辅助规则已删除；真实订单仍由 Venue/Runtime 使用预登记门禁处理，`binance-options` 保留实际使用的专属解析与 EAPI 订单参数规则。原有 `src/orders/lifecycle.rs` 提供数量严格校验、终态及单调状态迁移。新增：

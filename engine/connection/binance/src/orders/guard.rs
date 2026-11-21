@@ -69,26 +69,8 @@ pub struct IntentRecord {
     /// A durable intent journal must bind these to the authorized intent.
     pub parameters: Vec<(String, String)>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Admission {
-    Fresh,
-    Seen,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RecordedOutcome {
-    Accepted,
-    Rejected,
-    Unknown,
-}
-pub trait IntentJournal {
-    /// Atomic unique insert by (account_scope, request_id); Seen never sends.
-    fn admit(&mut self, record: &IntentRecord) -> Result<Admission, VenueError>;
-    fn observe(
-        &mut self,
-        record: &IntentRecord,
-        outcome: RecordedOutcome,
-    ) -> Result<(), VenueError>;
-}
+pub use seealpha_execution::admission::{Admission, IntentJournal, RecordedOutcome};
+
 /// Mockable wire interface. The only crate-provided real implementation is
 /// private and is constructed by dispatch_live after durable admission.
 pub trait SignedTransport {
@@ -199,42 +181,25 @@ impl PreparedWrite {
         &self.record
     }
     /// The journal is the sole grant of permission to issue one write request.
-    pub fn dispatch<J: IntentJournal, T: SignedTransport>(
+    pub fn dispatch<J: IntentJournal<IntentRecord, VenueError>, T: SignedTransport>(
         &mut self,
         journal: &mut J,
         transport: &mut T,
     ) -> Result<Value, VenueError> {
-        if self.attempted {
-            return Err(VenueError::Unconfirmed);
-        }
-        self.attempted = true;
-        if journal.admit(&self.record)? != Admission::Fresh {
-            return Err(VenueError::Unconfirmed);
-        }
-        // An exchange 4xx may still mean ambiguous execution (e.g. timeout).
-        // No response failure is proof that a write did not take effect.
-        let result = transport
-            .send(self.method, self.path, &self.parameters)
-            .map_err(|_| VenueError::Unconfirmed)
-            .and_then(|v| {
-                if self.ack_matches(&v) {
-                    Ok(v)
-                } else {
-                    Err(VenueError::Unconfirmed)
-                }
-            });
-        let outcome = if result.is_ok() {
-            RecordedOutcome::Accepted
-        } else {
-            RecordedOutcome::Unknown
-        };
-        // Persistence failure after a wire call must stay UNKNOWN.
-        journal
-            .observe(&self.record, outcome)
-            .map_err(|_| VenueError::Unconfirmed)?;
-        result
+        let record = &self.record;
+        let method = self.method;
+        let path = self.path;
+        let parameters = &self.parameters;
+        seealpha_execution::admission::dispatch_once(
+            &mut self.attempted,
+            record,
+            journal,
+            || transport.send(method, path, parameters),
+            |reply| Self::ack_matches(record, reply),
+            || VenueError::Unconfirmed,
+        )
     }
-    pub fn dispatch_live<J: IntentJournal>(
+    pub fn dispatch_live<J: IntentJournal<IntentRecord, VenueError>>(
         &mut self,
         journal: &mut J,
         client: &VenueClient,
@@ -247,9 +212,9 @@ impl PreparedWrite {
         };
         self.dispatch(journal, &mut wire)
     }
-    fn ack_matches(&self, v: &Value) -> bool {
-        let id = self.record.client_order_id.as_str();
-        match self.record.action {
+    fn ack_matches(record: &IntentRecord, v: &Value) -> bool {
+        let id = record.client_order_id.as_str();
+        match record.action {
             WriteAction::NewOco => {
                 v["listClientOrderId"].as_str() == Some(id)
                     && v["contingencyType"].as_str() == Some("OCO")
@@ -267,7 +232,7 @@ impl PreparedWrite {
             }
             WriteAction::NewOrder => {
                 v["clientOrderId"].as_str() == Some(id)
-                    && v["symbol"].as_str() == Some(self.record.symbol.as_str())
+                    && v["symbol"].as_str() == Some(record.symbol.as_str())
                     && !v["orderId"].is_null()
                     && v["status"].as_str().is_some()
             }
@@ -278,7 +243,7 @@ impl PreparedWrite {
             {
                 (v["origClientOrderId"].as_str() == Some(id)
                     || v["clientOrderId"].as_str() == Some(id))
-                    && v["symbol"].as_str() == Some(self.record.symbol.as_str())
+                    && v["symbol"].as_str() == Some(record.symbol.as_str())
                     && !v["orderId"].is_null()
                     && matches!(v["status"].as_str(), Some("CANCELED" | "CANCELLED"))
             }
@@ -296,7 +261,7 @@ mod tests {
         outcomes: Vec<RecordedOutcome>,
         broken: bool,
     }
-    impl IntentJournal for Journal {
+    impl IntentJournal<IntentRecord, VenueError> for Journal {
         fn admit(&mut self, r: &IntentRecord) -> Result<Admission, VenueError> {
             if self.broken {
                 return Err(VenueError::Unconfirmed);
