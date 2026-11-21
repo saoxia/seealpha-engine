@@ -15,6 +15,22 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  no-tracked-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Reject tracked Python source after Rust-only cutover
+        shell: bash
+        run: |
+          set -euo pipefail
+          files="$(git ls-files -- '*.py' '*.pyi' '*.pyw')"
+          if [[ -n "$files" ]]; then
+            echo "Unexpected tracked Python files:"
+            printf '%s\n' "$files"
+            exit 1
+          fi
+
   docker-scope:
     runs-on: ubuntu-latest
     timeout-minutes: 5
