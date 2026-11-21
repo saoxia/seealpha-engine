@@ -1490,6 +1490,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "seealpha-execution"
+version = "0.1.0"
+dependencies = [
+ "rust_decimal",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "seealpha-feed"
 version = "0.1.0"
 dependencies = [
@@ -1574,6 +1583,7 @@ dependencies = [
  "seealpha-backtest",
  "seealpha-binance-market-data-source",
  "seealpha-catalog",
+ "seealpha-execution",
  "seealpha-feed",
  "seealpha-ledger",
  "seealpha-market",
@@ -1608,6 +1618,7 @@ dependencies = [
  "reqwest",
  "rust_decimal",
  "seealpha-binance-options",
+ "seealpha-execution",
  "serde",
  "serde_json",
  "sha2",

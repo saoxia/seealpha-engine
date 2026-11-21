@@ -7,14 +7,15 @@ license = "Apache-2.0"
 
 [dependencies]
 seealpha-ledger = { path = "../ledger" }
-seealpha-feed = { path = "../market_data/feed" }
-seealpha-catalog = { path = "../market_data/catalog" }
-seealpha-binance-market-data-source = { path = "../market_data/sources/binance" }
-seealpha-market = { path = "../market_data/market" }
+seealpha-feed = { path = "../pipeline/access/feed" }
+seealpha-catalog = { path = "../pipeline/access/catalog" }
+seealpha-binance-market-data-source = { path = "../pipeline/sources/binance" }
+seealpha-market = { path = "../pipeline/sources/market" }
 seealpha-portfolio = { path = "../portfolio" }
 seealpha-backtest = { path = "../backtest" }
 seealpha-strategy = { path = "../strategy" }
 seealpha-venue = { path = "../connection/binance" }
+seealpha-execution = { path = "../execution" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

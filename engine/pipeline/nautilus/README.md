@@ -30,17 +30,17 @@ NautilusTrader v2.0.0rc9 在 `NautilusRecordType` 中已有订单提交、接受
 在编译机先运行：
 
 ```sh
-cargo test --manifest-path integrations/nautilus_binance_data/Cargo.toml
-cargo check --manifest-path integrations/nautilus_binance_data/Cargo.toml --all-targets
+cargo test --manifest-path engine/pipeline/nautilus/Cargo.toml
+cargo check --manifest-path engine/pipeline/nautilus/Cargo.toml --all-targets
 ```
 
 明确准备**既有** Feather 和 Catalog 根目录后，运行：
 
 ```sh
-cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml -- \
+cargo run --manifest-path engine/pipeline/nautilus/Cargo.toml -- \
   spot BTCUSDT,ETHUSDT /data/seealpha/feather /data/seealpha/catalog
 
-cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml -- \
+cargo run --manifest-path engine/pipeline/nautilus/Cargo.toml -- \
   futures_um BTCUSDT,ETHUSDT /data/seealpha/feather-um /data/seealpha/catalog-um
 ```
 
@@ -70,8 +70,8 @@ mkdir -p /data/nautilus-feather/42/spot /data/nautilus-catalog/42/spot
 新增 import_archive 二进制。输入 Binance 官方 ZIP 与先前校验通过的 SHA-256；按 Spot trades 或 USD-M aggTrades 格式读取，构造 NautilusTrader 原生 TradeTick 并调用 Nautilus 原生 ParquetDataCatalog 写入，不新建 Arrow/Parquet 实现。
 
 ```sh
-cargo test --manifest-path integrations/nautilus_binance_data/Cargo.toml --all-targets
-cargo run --manifest-path integrations/nautilus_binance_data/Cargo.toml --bin import_archive -- \
+cargo test --manifest-path engine/pipeline/nautilus/Cargo.toml --all-targets
+cargo run --manifest-path engine/pipeline/nautilus/Cargo.toml --bin import_archive -- \
   spot trades ETHUSDT 2026-11-20 /data/archives/ETHUSDT-trades-2026-11-20.zip \
   /data/catalog/42/spot <official-sha256> <instrument-price-precision> <instrument-size-precision>
 ```

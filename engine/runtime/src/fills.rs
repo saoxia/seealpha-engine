@@ -3,7 +3,7 @@
 //! an accepted NEW order.
 use crate::{Runtime, RuntimeError, map_ledger};
 use rust_decimal::Decimal;
-use seealpha_venue::lifecycle::VerifiedOrderState;
+use seealpha_execution::lifecycle::VerifiedOrderState;
 use seealpha_venue::{Credentials, Product, VenueClient};
 use serde_json::{Value, json};
 

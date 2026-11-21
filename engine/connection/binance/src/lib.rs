@@ -6,8 +6,10 @@
 pub mod conditional;
 #[path = "account/evidence.rs"]
 pub mod evidence;
-#[path = "orders/lifecycle.rs"]
-pub mod lifecycle;
+pub mod lifecycle {
+    // Historical API compatibility while Runtime is moved off seealpha-venue.
+    pub use seealpha_execution::lifecycle::{OrderPhase, VerifiedOrderState};
+}
 pub mod option_trades {
     // Compatibility for the previous public parsing API. Only one parser exists.
     use super::VenueError;
@@ -30,8 +32,6 @@ pub mod reconciliation;
 pub mod settlement;
 #[path = "spot/oco.rs"]
 pub mod spot_oco;
-#[path = "spot/oto.rs"]
-pub mod spot_oto;
 #[path = "orders/trades.rs"]
 pub mod trades;
 #[path = "orders/user_stream.rs"]
@@ -59,6 +59,12 @@ pub enum VenueError {
 
 impl From<seealpha_binance_options::OptionsEvidenceError> for VenueError {
     fn from(_: seealpha_binance_options::OptionsEvidenceError) -> Self {
+        Self::Unconfirmed
+    }
+}
+
+impl From<seealpha_execution::OrderStateError> for VenueError {
+    fn from(_: seealpha_execution::OrderStateError) -> Self {
         Self::Unconfirmed
     }
 }

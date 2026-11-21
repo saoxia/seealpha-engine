@@ -1,11 +1,13 @@
 # Local runtime state, secrets, data and logs
+# Keep the data directory visible but ignore every runtime file beneath it.
 .local/
 .venv/
 .env
 .env.*
 *.pem
 *.key
-data/
+/data/*
+!/data/README.md
 logs/
 reports/
 __pycache__/
