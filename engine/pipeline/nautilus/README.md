@@ -129,3 +129,9 @@ Runtime archive_import 任务只接受 archive_job_id，对应同租户、已完
 Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/order_journal.rs` 以及 `dispatch_reserved_basket_leg_fixture`。篮子订单阶段仍通过现有 `Runtime::preregister_reserved_basket_leg` 和 `Ledger::preregister_basket_order_intent` 进行同一事务内的账户快照版本、篮子版本及不可变意图预登记。离线回归测试现在直接核验首次登记、SQLite 重启后仅对账、旧账户快照拒绝以及注册成功仍无成交；不再模拟旧 REST 写请求。
 
 这删除了一项实际的 `seealpha-venue` Runtime 依赖，但账户与订单/成交的签名只读证据链仍在旧连接器中，不能据此删除 `engine/connection/binance`。接下来需要完成 Nautilus 原生认证执行报告/账户同步与 Ledger 原子验证，清除剩余只读依赖后再删除该目录。当前不开放原生真实下单。
+
+## 原生订单与旧只读取证隔离（2026-11-22）
+
+原生订单登记在 Ledger 后，`reconcile_order` 已拒绝旧 Venue 查询；本次进一步让后台 `run_one_registered_order_reconciliation` 在提取任何旧 `VenueClient` 或账户凭据前检查 `intent.execution_backend`，原生订单只返回待核实错误并由已有任务机制保持 `retry`，绝不会通过旧 REST 查询生成签名订单证据。直接 `sync_verified_order_fills` 也拒绝原生意图的历史 `order_requests.intent` 路由，避免误用旧成交格式计入 Ledger。
+
+回归测试覆盖已登记账户凭据与原生订单同时存在时：无可信订单观察、无成交、未完成任务保持重试。原生 Nautilus `FillReport` / `OrderStatusReport` 的事件来源认证、同租户账户映射、官方成交记录对照仍须单独完成；**不能**将普通 ACK 或未验证报告作为 `signed_exchange_user_trades` 写入。此增量未触发真实网络发送。
