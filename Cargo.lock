@@ -1591,7 +1591,6 @@ dependencies = [
  "seealpha-market",
  "seealpha-portfolio",
  "seealpha-strategy",
- "seealpha-venue",
  "serde_json",
  "serde",
  "sha2",
