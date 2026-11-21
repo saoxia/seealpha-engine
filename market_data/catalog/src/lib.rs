@@ -17,7 +17,8 @@ pub use model::{
 };
 pub use reader::{BarGap, RecordKind};
 pub use repair::{
-    LocalKline, VenueKline, missing_bar_windows, validate_venue_klines, venue_kline_differs,
+    AggregatedKline, LocalKline, SavedKline, VenueKline, aggregate_saved_klines,
+    missing_bar_windows, validate_venue_klines, venue_kline_differs,
 };
 
 #[derive(Debug, Error)]
