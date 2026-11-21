@@ -1644,6 +1644,7 @@ version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "chrono",
  "csv",
  "fs2",
  "futures-util",
@@ -1655,6 +1656,7 @@ dependencies = [
  "seealpha-market",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-tungstenite",
  "zip 2.6.1",

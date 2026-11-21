@@ -35,6 +35,52 @@ pub(crate) fn source_root(
         .canonicalize()
         .map_err(|_| bad("原生产品源根目录尚未创建，拒绝隐式创建新数据卷。"))
 }
+/// Only existing, real tenant/product directories may receive a native
+/// Nautilus data stream. A symlink to another tenant is not acceptable even
+/// when its canonical target happens to live under the administrator root.
+pub(crate) fn native_tenant_product_root(
+    base: &str,
+    tenant: &str,
+    product: &str,
+) -> Result<PathBuf, RuntimeError> {
+    if tenant.is_empty() || tenant.len() > 64
+        || !tenant.bytes().all(|x| x.is_ascii_alphanumeric())
+    {
+        return Err(bad("无效的源租户目录名称。"));
+    }
+    let root = PathBuf::from(base)
+        .canonicalize()
+        .map_err(|_| bad("原生 Nautilus 数据根目录尚未创建。"))?;
+    if !root.is_dir() {
+        return Err(bad("原生 Nautilus 数据根目录不是现有目录。"));
+    }
+    let tenant_path = root.join(tenant);
+    let product_path = tenant_path.join(product);
+    for path in [&tenant_path, &product_path] {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|_| bad("必须提前创建租户与产品数据目录。"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(bad("禁止使用符号链接作为租户产品数据目录。"));
+        }
+    }
+    product_path.canonicalize().map_err(|_| bad("源产品目录无效。"))
+}
+
+/// Derives the *same* authorized native subscriptions from the committed
+/// policy manifest. No independent strategy subscription state is introduced.
+fn enabled_native_symbols(manifest: &[u8], product: Product) -> Result<String, RuntimeError> {
+    let rows = parse_manifest(manifest, product)
+        .map_err(|_| bad("Nautilus 行情源策略清单无效。"))?;
+    let symbols = rows.into_iter()
+        .filter(|entry| entry.realtime_enabled)
+        .map(|entry| entry.symbol)
+        .collect::<Vec<_>>();
+    if symbols.is_empty() || symbols.len() > 100 {
+        return Err(bad("单个实验性 Nautilus 节点只允许 1 到 100 个交易对。"));
+    }
+    Ok(symbols.join(","))
+}
+
 fn manifest_bytes(policies: &[Value], product: Product) -> Result<Vec<u8>, RuntimeError> {
     let mut entries = Vec::new();
     for policy in policies {
@@ -87,7 +133,16 @@ impl Runtime {
             ));
         }
         let source = source_product(product)?;
-        let root = source_root(&self.project, product)?;
+        let native_binary = std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
+            .ok()
+            .filter(|path| !path.is_empty());
+        let root = if native_binary.is_some() {
+            let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
+                .map_err(|_| bad("未配置 Nautilus Catalog 管理根目录。"))?;
+            native_tenant_product_root(&catalog_base, tenant, product)?
+        } else {
+            source_root(&self.project, product)?
+        };
         if !root.is_dir() {
             return Err(bad("数据源根目录不是现有目录。"));
         }
@@ -120,12 +175,25 @@ impl Runtime {
             .source_state_dir
             .join(format!("source-{safe_tenant}-{product}.json"));
         atomic_manifest(&manifest_path, &manifest)?;
-        let binary = std::env::var("ENGINE_SOURCE_BIN")
-            .unwrap_or_else(|_| "binance-native-source".to_string());
-        let child = Command::new(binary)
-            .arg(product)
-            .arg(&manifest_path)
-            .arg(&root)
+        // A native Nautilus client is used only when the maintainer
+        // explicitly installs/points at its verified binary; otherwise the
+        // existing experimental collector remains unchanged.
+        let mut command = if let Some(binary) = native_binary.as_deref() {
+            let symbols = enabled_native_symbols(&manifest, source)?;
+            let feather_base = std::env::var("ENGINE_NATIVE_NAUTILUS_FEATHER_ROOT")
+                .map_err(|_| bad("未配置 Nautilus Feather 管理根目录。"))?;
+            let feather = native_tenant_product_root(&feather_base, tenant, product)?;
+            let mut command = Command::new(binary);
+            command.arg(product).arg(symbols).arg(feather).arg(&root);
+            command
+        } else {
+            let binary = std::env::var("ENGINE_SOURCE_BIN")
+                .unwrap_or_else(|_| "binance-native-source".to_string());
+            let mut command = Command::new(binary);
+            command.arg(product).arg(&manifest_path).arg(&root);
+            command
+        };
+        let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -135,7 +203,8 @@ impl Runtime {
         processes.insert(key, child);
         Ok(json!({"tenant_id":tenant,"product":product,"pid":pid,
             "status":"experimental_degraded","data_ready":false,
-            "exchange_orders":0,"root":root,"manifest":manifest_path,
+            "allow_new_risk":false,"exchange_orders":0,"root":root,"manifest":manifest_path,
+            "backend":if native_binary.is_some() {"nautilus_native_data"} else {"legacy_experimental"},
             "message":"源仍处于 DEGRADED，未完成历史衔接与数据质量验收。"}))
     }
 
@@ -148,6 +217,11 @@ impl Runtime {
         symbol: &str,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant)?;
+        if std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
+            .is_ok_and(|path| !path.is_empty())
+        {
+            return Err(bad("Nautilus 原生 Catalog 源尚未验证旧 SQLite K 线计算器输入协议。"));
+        }
         if !explicit_enable() {
             return Err(bad("原生行情计算尚未验收，必须显式启用实验开关。"));
         }
@@ -251,12 +325,54 @@ impl Runtime {
         let mut child = processes
             .remove(&key)
             .ok_or_else(|| bad("没有本进程管理的对应原生数据源。"))?;
-        child
-            .kill()
-            .map_err(|_| bad("无法终止数据源进程，需检查其写入锁。"))?;
-        child.wait().map_err(|_| bad("数据源停止结果待核验。"))?;
+        // Preserve legacy collector stop semantics. Only the explicitly
+        // selected Nautilus writer needs a graceful Feather -> Parquet flush.
+        if !std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
+            .is_ok_and(|value| !value.is_empty())
+        {
+            child.kill().map_err(|_| bad("无法终止实验性数据源进程。"))?;
+            child.wait().map_err(|_| bad("实验性数据源退出状态未知。"))?;
+            return Ok(json!({"tenant_id":tenant,"product":product,
+                "status":"stopped","data_ready":false}));
+        }
+        // SIGKILL bypasses Nautilus LiveNode's Feather -> Parquet flush and
+        // leaves recoverable partial files. Prefer SIGTERM and retain the child
+        // on failed/timed-out shutdown; never report a catalog commit here.
+        let already_exited = child
+            .try_wait()
+            .map_err(|_| bad("数据源进程状态未知。"))?
+            .is_some();
+        if !already_exited {
+            let signal = Command::new("/bin/kill")
+                .arg("-TERM")
+                .arg(child.id().to_string())
+                .status();
+            if !signal.is_ok_and(|result| result.success()) {
+                processes.insert(key, child);
+                return Err(bad("无法向原生数据源发送 SIGTERM，保留进程管理状态。"));
+            }
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(30))
+                .ok_or_else(|| bad("数据源关闭截止时间无效。"))?;
+            loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    Ok(None) => {
+                        processes.insert(key, child);
+                        return Err(bad("数据源仍在完成退出/写入，不能报告成功关闭。"));
+                    }
+                    Err(_) => {
+                        processes.insert(key, child);
+                        return Err(bad("数据源停止状态待验证，保留进程管理状态。"));
+                    }
+                }
+            }
+        }
         Ok(json!({"tenant_id":tenant,"product":product,
-            "status":"stopped","data_ready":false}))
+            "status":"stopped","data_ready":false,"catalog_committed":false}))
     }
 
     pub fn native_source_status(&self, tenant: &str, product: &str) -> Result<Value, RuntimeError> {
@@ -306,6 +422,52 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nautilus_native_symbols_reuse_only_active_validated_policies() {
+        let policies = vec![
+            json!({"product":"spot","symbol":"ETHUSDT","base_level":"1m","realtime_enabled":true}),
+            json!({"product":"spot","symbol":"BTCUSDT","base_level":"1m","realtime_enabled":false}),
+        ];
+        let manifest = manifest_bytes(&policies, Product::Spot).unwrap();
+        assert_eq!(enabled_native_symbols(&manifest, Product::Spot).unwrap(), "ETHUSDT");
+    }
+
+    #[test]
+    fn nautilus_root_is_tenant_and_market_scoped() {
+        let dir = std::env::temp_dir().join(format!(
+            "seealpha-native-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let dir_string = dir.to_string_lossy().into_owned();
+        std::fs::create_dir_all(dir.join("tenant1").join("spot")).unwrap();
+        let got = native_tenant_product_root(&dir_string, "tenant1", "spot").unwrap();
+        assert_eq!(got, dir.join("tenant1").join("spot"));
+        assert!(native_tenant_product_root(&dir_string, "../tenant1", "spot").is_err());
+        assert!(native_tenant_product_root(&dir_string, "tenant2", "spot").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nautilus_root_rejects_cross_tenant_symlinks() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "seealpha-native-symlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("tenant1").join("spot")).unwrap();
+        symlink(dir.join("tenant1"), dir.join("tenant2")).unwrap();
+        assert!(native_tenant_product_root(
+            &dir.to_string_lossy(), "tenant2", "spot"
+        ).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn source_manifest_rejects_invalid_policy_before_starting_any_process() {
         let policies = vec![

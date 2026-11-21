@@ -3,6 +3,7 @@
 //! Historical jobs use only public Binance klines and commit atomically to
 //! the Rust catalog after the complete requested interval is validated.
 use crate::{Runtime, RuntimeError, map_ledger};
+use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
 use seealpha_ledger::CatalogBar;
 use seealpha_market::exercise::{ExerciseSource, as_evidence};
 use seealpha_market::funding::FundingSource;
@@ -180,10 +181,65 @@ impl Runtime {
         let action = field(payload, "action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
-        if !matches!(action, "backfill" | "publish_catalog") {
+        if !matches!(action, "backfill" | "publish_catalog" | "archive_fetch" | "archive_import") {
             return Err(RuntimeError::Conflict(
                 "该历史任务尚未完成 Rust 等价迁移。".into(),
             ));
+        }
+        if action == "archive_import" {
+            let download_id = field(payload, "archive_job_id")?;
+            if download_id.len() != 32 || !download_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(bad("必须提供已经完成的租户 ZIP 下载任务编号。"));
+            }
+            let download = self.data_job(tenant_id, download_id)?;
+            if download["action"] != "archive_fetch"
+                || download["status"] != "completed"
+                || download["result"]["verified"] != true
+            {
+                return Err(RuntimeError::Conflict(
+                    "必须先在同一租户完成可验证的官方 ZIP 获取任务。".into(),
+                ));
+            }
+            let product = field(&download["payload"], "product")?;
+            let dataset = field(&download["payload"], "dataset")?;
+            if !matches!(
+                (product, dataset),
+                ("spot", "trades") | ("futures_um", "aggTrades")
+            ) {
+                return Err(bad("不能把不同粒度的历史成交导入实时兼容的 Nautilus Catalog。"));
+            }
+            // The caller must supply precisions independently confirmed from
+            // the Nautilus Instrument. ZIP display width is NOT the precision.
+            let price_precision = payload["price_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的价格精度。"))?;
+            let size_precision = payload["size_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的数量精度。"))?;
+            let normalized = json!({
+                "action": "archive_import",
+                "archive_job_id": download_id,
+                "price_precision": price_precision,
+                "size_precision": size_precision
+            });
+            let id = hash_job(tenant_id, &normalized);
+            return self.ledger
+                .queue_data_job(tenant_id, &id, action, &normalized)
+                .map_err(map_ledger);
+        }
+        if action == "archive_fetch" {
+            let product = field(payload, "product")?;
+            let dataset = field(payload, "dataset")?;
+            let symbol = field(payload, "symbol")?;
+            let day = field(payload, "day")?;
+            ArchiveSpec::new(product, dataset, symbol, day)
+                .map_err(|_| bad("Binance 历史 ZIP 归档参数无效。"))?;
+            let normalized = payload.clone();
+            let id = hash_job(tenant_id, &normalized);
+            return self
+                .ledger
+                .queue_data_job(tenant_id, &id, action, &normalized)
+                .map_err(map_ledger);
         }
         if action == "publish_catalog" {
             let product = field(payload, "product")?;
@@ -309,6 +365,10 @@ impl Runtime {
         let result = if original["action"] == "publish_catalog" {
             self.publish_catalog_job(tenant_id, &original["payload"])
                 .await
+        } else if original["action"] == "archive_fetch" {
+            self.archive_fetch_job(tenant_id, &original["payload"]).await
+        } else if original["action"] == "archive_import" {
+            self.archive_import_job(tenant_id, &original["payload"]).await
         } else {
             self.backfill_job(tenant_id, &original["payload"]).await
         };
@@ -320,6 +380,242 @@ impl Runtime {
             .transition_data_job(tenant_id, id, "running", status, Some(&body))
             .map_err(map_ledger)?;
         self.data_job(tenant_id, id)
+    }
+
+    /// Explicit offline Binance historical ZIP acquisition under a tenant-owned
+    /// pre-existing archive volume. No REST/WebSocket client or trading actions.
+    async fn archive_fetch_job(
+        &self,
+        tenant: &str,
+        payload: &Value,
+    ) -> Result<Value, RuntimeError> {
+        let product = field(payload, "product")?;
+        let dataset = field(payload, "dataset")?;
+        let symbol = field(payload, "symbol")?;
+        let day = field(payload, "day")?;
+        ArchiveSpec::new(product, dataset, symbol, day)
+            .map_err(|_| bad("Binance 历史归档请求无效。"))?;
+
+        // The server controls the archive root; the request cannot specify a
+        // filesystem destination. Each tenant's root must exist already.
+        if tenant.is_empty()
+            || tenant.len() > 64
+            || !tenant.bytes().all(|b| b.is_ascii_alphanumeric())
+        {
+            return Err(bad("租户归档路径标识无效。"));
+        }
+        let volume = std::env::var("ENGINE_ARCHIVE_ROOT")
+            .map_err(|_| bad("必须由管理员配置 ENGINE_ARCHIVE_ROOT。"))?;
+        let root = std::path::PathBuf::from(volume)
+            .canonicalize()
+            .map_err(|_| bad("历史归档根目录未就绪。"))?;
+        if !root.is_dir() {
+            return Err(bad("历史归档根目录不是现有目录。"));
+        }
+        let tenant_path = root.join(tenant);
+        let metadata = std::fs::symlink_metadata(&tenant_path)
+            .map_err(|_| bad("租户归档目录尚未创建，禁止自动新建数据卷。"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(bad("历史归档租户目录必须是真实目录，禁止符号链接。"));
+        }
+        let tenant_root = tenant_path.canonicalize()
+            .map_err(|_| bad("历史归档租户目录不可访问。"))?;
+        if !tenant_root.is_dir() || !tenant_root.starts_with(&root) {
+            return Err(bad("历史归档租户隔离校验未通过。"));
+        }
+        let binary = std::env::var("ENGINE_ARCHIVE_FETCH_BIN")
+            .unwrap_or_else(|_| "binance-trade-archive-fetch".into());
+        let args = [
+            product.to_owned(),
+            dataset.to_owned(),
+            symbol.to_owned(),
+            day.to_owned(),
+            tenant_root.to_string_lossy().into_owned(),
+        ];
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(binary)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .output()
+        })
+        .await
+        .map_err(|_| bad("归档下载任务未返回结果。"))?
+        .map_err(|_| bad("归档下载命令无法启动。"))?;
+        if !output.status.success() {
+            return Err(RuntimeError::Conflict(format!(
+                "Binance 官方 ZIP 获取/校验失败：{}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(300)
+                    .collect::<String>(),
+            )));
+        }
+        let mut report: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|_| bad("归档下载回执不是有效 JSON。"))?;
+        let obj = report.as_object_mut()
+            .ok_or_else(|| bad("归档下载回执结构无效。"))?;
+        if obj.get("verified") != Some(&json!(true))
+            || obj.get("catalog_committed") != Some(&json!(false))
+            || obj.get("sha256").and_then(Value::as_str).is_none_or(|s| s.len() != 64)
+        {
+            return Err(bad("归档下载回执缺少完整性证据。"));
+        }
+        obj.insert("action".into(), json!("archive_fetch"));
+        obj.insert("data_ready".into(), json!(false));
+        obj.insert("allow_new_risk".into(), json!(false));
+        obj.insert("exchange_orders".into(), json!(0));
+        Ok(report)
+    }
+
+    /// Explicit offline import of an already downloaded, verified Binance ZIP
+    /// into the upstream Rust Nautilus Catalog, never a custom Tick store.
+    ///
+    /// The previous completed download job is the provenance authority, not
+    /// caller-supplied file paths or checksums. This never declares READY.
+    async fn archive_import_job(
+        &self,
+        tenant: &str,
+        payload: &Value,
+    ) -> Result<Value, RuntimeError> {
+        let download_id = field(payload, "archive_job_id")?;
+        let download = self.data_job(tenant, download_id)?;
+        if download["action"] != "archive_fetch"
+            || download["status"] != "completed"
+            || download["result"]["verified"] != true
+            || download["result"]["catalog_committed"] != false
+            || download["result"]["source"] != "https://data.binance.vision"
+        {
+            return Err(bad("没有已完成且可验证的同租户 Binance 下载证据。"));
+        }
+        let request = &download["payload"];
+        let product = field(request, "product")?;
+        let dataset = field(request, "dataset")?;
+        let symbol = field(request, "symbol")?;
+        let day = field(request, "day")?;
+        if !matches!(
+            (product, dataset),
+            ("spot", "trades") | ("futures_um", "aggTrades")
+        ) {
+            return Err(bad("当前 Nautilus Catalog 只接受与实时 TradeTick 同粒度的数据。"));
+        }
+        let spec = ArchiveSpec::new(product, dataset, symbol, day)
+            .map_err(|_| bad("归档来源参数无效。"))?;
+        let sha = field(&download["result"], "sha256")?;
+        if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(bad("已验证下载记录缺少有效的 SHA-256。"));
+        }
+        let archive_source = spec.remote_path();
+        if download["result"]["archive"].as_str() != Some(archive_source.as_str()) {
+            return Err(bad("归档来源不匹配，拒绝导入。"));
+        }
+
+        let volume = std::env::var("ENGINE_ARCHIVE_ROOT")
+            .map_err(|_| bad("未配置管理员管理的历史归档根目录。"))?;
+        let root = std::path::PathBuf::from(volume)
+            .canonicalize()
+            .map_err(|_| bad("历史归档根目录不可用。"))?;
+        let tenant_root = crate::sources::native_tenant_product_root(
+            &root.to_string_lossy(), tenant, product,
+        )?
+        .parent()
+        .ok_or_else(|| bad("租户归档路径无效。"))?
+        .to_path_buf();
+        let mut archive = tenant_root.join(product);
+        for component in [dataset, symbol] {
+            archive.push(component);
+            let metadata = std::fs::symlink_metadata(&archive)
+                .map_err(|_| bad("历史数据归档子目录不存在。"))?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(bad("历史数据归档目录不安全。"));
+            }
+        }
+        archive.push(spec.archive_name());
+        let meta = std::fs::symlink_metadata(&archive)
+            .map_err(|_| bad("历史 ZIP 尚未下载。"))?;
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            return Err(bad("历史 ZIP 必须是普通文件。"));
+        }
+        let expected_path = archive.to_string_lossy().to_string();
+        if download["result"]["path"].as_str() != Some(expected_path.as_str()) {
+            return Err(bad("归档路径与原始下载证明不匹配。"));
+        }
+
+        let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
+            .map_err(|_| bad("未配置原生 Nautilus Catalog 根目录。"))?;
+        let catalog = crate::sources::native_tenant_product_root(
+            &catalog_base, tenant, product,
+        )?;
+        // The existing source supervisor is authoritative for its children.
+        // Do not write historical files while the native live writer is active.
+        {
+            let mut processes = self.source_processes.lock()
+                .map_err(|_| bad("行情进程管理锁不可用。"))?;
+            if let Some(child) = processes.get_mut(&format!("{tenant}:{product}"))
+                && child.try_wait()
+                    .map_err(|_| bad("行情数据源进程状态不明。"))?
+                    .is_none()
+            {
+                return Err(RuntimeError::Conflict(
+                    "原生实时数据源尚在运行，禁止并发导入相同 Catalog。".into(),
+                ));
+            }
+        }
+
+        let executable = std::env::var("ENGINE_NATIVE_NAUTILUS_IMPORT_BIN")
+            .map_err(|_| bad("未安装并配置已验证的 Nautilus 历史导入程序。"))?;
+        if executable.is_empty() {
+            return Err(bad("原生历史导入程序路径为空。"));
+        }
+        let args = [
+            product.to_owned(),
+            dataset.to_owned(),
+            symbol.to_owned(),
+            day.to_owned(),
+            archive.to_string_lossy().into_owned(),
+            catalog.to_string_lossy().into_owned(),
+            sha.to_owned(),
+            payload["price_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("原生 Instrument 价格精度无效。"))?
+                .to_string(),
+            payload["size_precision"].as_u64()
+                .filter(|v| *v <= 16)
+                .ok_or_else(|| bad("原生 Instrument 数量精度无效。"))?
+                .to_string(),
+        ];
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(executable)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .output()
+        })
+        .await
+        .map_err(|_| bad("原生历史导入任务未返回结果。"))?
+        .map_err(|_| bad("无法启动 Nautilus 历史导入程序。"))?;
+        if !output.status.success() {
+            return Err(RuntimeError::Conflict(format!(
+                "Nautilus 历史 Tick 导入失败，可能已有局部 Parquet 需核验：{}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars().take(300).collect::<String>()
+            )));
+        }
+        let mut report: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|_| bad("Nautilus 历史导入回执 JSON 无效。"))?;
+        if report["catalog_committed"] != true
+            || report["data_ready"] != false
+            || report["coverage_complete"] != false
+            || report["sha256"].as_str() != Some(sha)
+            || report["price_precision"] != payload["price_precision"]
+            || report["size_precision"] != payload["size_precision"]
+            || report["instrument_id"].as_str().is_none()
+            || report["records"].as_u64().is_none_or(|count| count == 0)
+        {
+            return Err(bad("Nautilus 历史导入回执未包含可信的完整性限制。"));
+        }
+        report["action"] = json!("archive_import");
+        report["source_job_id"] = json!(download_id);
+        report["allow_new_risk"] = json!(false);
+        Ok(report)
     }
 
     async fn publish_catalog_job(
@@ -694,6 +990,21 @@ mod tests {
         assert!(
             valid_policy(&json!({"product":"options","symbol":"ALL","base_level":"auto"})).is_ok()
         );
+    }
+    #[test]
+    fn archive_job_inputs_are_validated_before_enqueue() {
+        assert!(ArchiveSpec::new(
+            "spot", "trades", "BTCUSDT", "2026-11-20",
+        ).is_ok());
+        assert!(ArchiveSpec::new(
+            "futures_um", "aggTrades", "ETHUSDT", "2026-11-20",
+        ).is_ok());
+        assert!(ArchiveSpec::new(
+            "options", "trades", "BTCUSDT", "2026-11-20",
+        ).is_err());
+        assert!(ArchiveSpec::new(
+            "spot", "trades", "../BTCUSDT", "2026-11-20",
+        ).is_err());
     }
     #[test]
     fn deterministic_job_id_is_tenant_scoped() {

@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
+# Validate pinned Nautilus Rust without mutating the production workspace graph.
+exclude = ["integrations/nautilus_binance_data"]
 members = [
     "engine/market_data/quality",
     "engine/market_data/converter",

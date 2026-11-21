@@ -1,0 +1,25 @@
+name: Nautilus native Binance data integration
+on:
+  pull_request:
+    paths:
+      - "integrations/nautilus_binance_data/**"
+      - ".github/workflows/nautilus-native-data.yml"
+      - "Cargo.toml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-binance-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt, clippy
+      - name: Native Nautilus Binance integration compile
+        run: cargo check --manifest-path integrations/nautilus_binance_data/Cargo.toml --all-targets
+      - name: Native Nautilus Binance offline tests
+        run: cargo test --manifest-path integrations/nautilus_binance_data/Cargo.toml
+      - name: Native Nautilus Binance clippy
+        run: cargo clippy --manifest-path integrations/nautilus_binance_data/Cargo.toml --all-targets -- -D warnings
