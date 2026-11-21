@@ -64,7 +64,10 @@ pub struct StrategyBar {
 #[serde(deny_unknown_fields)]
 pub struct Publication {
     pub symbol: String,
+    #[serde(default)]
     pub quantity: String,
+    #[serde(default)]
+    pub weight: Option<String>,
     pub bar_index: usize,
 }
 
