@@ -18,13 +18,6 @@ members = [
     "apps/trading_engine",
     "benchmarks/rust",
 ]
-# These crates are preserved only for the opt-in legacy Python runtime.
-# Do not include them in the native Rust workspace.
-exclude = [
-    "engine/market_data/repair/rust_converter",
-    "engine/market_data/sources/binance_shared/rust",
-]
-
 [profile.release]
 lto = "thin"
 codegen-units = 16

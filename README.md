@@ -1,6 +1,6 @@
 # SeeAlpha Engine
 
-SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。迁移期间已恢复旧 Python Engine 作为**独立、显式启用的兼容运行时**；Python 策略宿主仍由 Rust Engine 单独调用。
+SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。旧 Python Engine 尚保留部分源文件供后续逐目录迁移，但 `engine/market_data/` 已删除，旧运行时不再可执行；Python 策略宿主仍由 Rust Engine 单独调用。
 
 Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。`core/engine_contracts.py` 与 `core/trading_contracts.py` 必须与 [saoxia/SeeAlpha](https://github.com/saoxia/SeeAlpha) 逐字节一致。
 
@@ -16,15 +16,13 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 
 ## 尚未迁移完成的 Python 功能
 
-从 [`f18e48e`](https://github.com/saoxia/seealpha-engine/tree/f18e48e995becc0662df288058be6059c91c45b0) 恢复了被提前删除的旧 Python 引擎、测试及锁定依赖。**Rust 默认容器不包含旧 Python Engine**；如需使用旧能力，单独构建 `docker/engine-legacy.Dockerfile` 并使用独立端口、数据卷和状态目录。不要把两个运行时连接到同一可写账本或采集任务。
-
-恢复步骤、风险隔离、启动方式及逐功能替换标准见 [Python Engine 恢复与迁移规则](docs/LEGACY_PYTHON_RECOVERY.md)。完整 Rust 功能等价尚未通过验收，不应删除仍承担旧功能的 Python 模块。
+旧 Python Engine 仅供参考与后续逐目录删除，不再提供可运行的兼容入口。`engine/market_data/` 已从当前版本移除，原 Python API、回测及任务队列中仍存在该模块导入；这些代码不能被当作 Rust Engine 的运行时回退。过往源码可通过 Git 历史查阅，迁移清单见 [market_data Rust 退役记录](docs/RUST_MARKET_DATA_CUTOVER_20261121.md)。
 
 ## Rust 集中迁移（功能等价尚未完成）
 
 本轮已在 Rust 原生 Engine 中补齐一批账户状态、持久化行情配置/任务、策略读侧订阅、严格历史 K 线读取和已发行策略的本地回测路径，并接入独立 Binance 产品源的显式试验性管理。新数据源在完成 REST 衔接/时钟/历史证据前始终返回 `data_ready=false`，**不会**向策略提供已就绪的实盘行情保证。
 
-Python Engine 仍作为独立兼容运行时保留。详细实现边界、未迁移功能和最终验收清单见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)。GitHub Actions 仍暂停，不应把当前 Rust 分支直接用于实盘。
+旧 Python Engine 目前因 `engine/market_data/` 已删除而不再可执行。详细实现边界、未迁移功能和最终验收清单见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)。GitHub Actions 仍暂停，不应把当前 Rust 分支直接用于实盘。
 
 ## Rust 数据底座：对齐 Python Nautilus v2 Catalog
 
@@ -34,12 +32,14 @@ Rust 新增了 Parquet Bar 原子写入、源进程独立的交易所时钟、�
 
 ## 本地开发
 
+旧 Python Engine 测试套件仍有对已删除行情模块的依赖，不再作为 Rust 迁移验收命令；保留的 Python 策略宿主需单独验证。
+
+
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --workspace --locked --release
-python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
 
 热路径对照见 [docs/BENCHMARKS.md](docs/BENCHMARKS.md)。
