@@ -352,6 +352,68 @@ mod tests {
         assert!(checksum_from_sidecar(format!("{hash}  {name} extra").as_bytes(), name).is_err());
     }
 
+    #[tokio::test]
+    async fn official_archive_mock_download_reuse_and_tamper_rejection() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let spec = ArchiveSpec::new("spot", "trades", "BTCUSDT", "2026-11-20").unwrap();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(spec.csv_name(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"1,10,2,20,1795132800000000,false,true\n").unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let sidecar = format!("{hash}  {}\n", spec.archive_name()).into_bytes();
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let path = format!("/{}", spec.remote_path());
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0u8; 4096];
+                let count = socket.read(&mut request).await.unwrap();
+                let line = std::str::from_utf8(&request[..count]).unwrap();
+                let body = if line.starts_with(&format!("GET {path}.CHECKSUM ")) {
+                    &sidecar
+                } else if line.starts_with(&format!("GET {path} ")) {
+                    &bytes
+                } else {
+                    panic!("unexpected test HTTP request");
+                };
+                let headers = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(headers.as_bytes()).await.unwrap();
+                socket.write_all(body).await.unwrap();
+            }
+        });
+
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-archive-fetch-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build().unwrap();
+        let saved = spec.download_from(&client, &origin, &root).await.unwrap();
+        assert!(!saved.reused);
+        assert_eq!(saved.sha256, hash);
+        assert!(saved.path.is_file());
+
+        let reused = spec.download_from(&client, &origin, &root).await.unwrap();
+        assert!(reused.reused);
+        assert_eq!(reused.path, saved.path);
+
+        fs::write(&saved.path, b"tampered archive").unwrap();
+        assert!(spec.download_from(&client, &origin, &root).await.is_err());
+        server.await.unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn zip_must_contain_only_the_requested_csv() {
         let dir = std::env::temp_dir().join(format!(
