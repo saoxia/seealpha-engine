@@ -4,7 +4,7 @@
 //! Package issuance, tenant authorization and risk/ledger decisions remain at
 //! the runtime boundary; this trait does not confer permission to run packages.
 
-use crate::{HostCommand, StrategyBar, StrategyError, StrategyRun, run_host};
+use crate::{AccountScope, HostCommand, IssuedStrategy, StrategyBar, StrategyError, StrategyRun, run_host, run_issued_host};
 use serde_json::Value;
 use std::path::Path;
 
@@ -60,6 +60,39 @@ impl StrategyExecutor for DevelopmentPythonExecutor<'_> {
     }
 }
 
+/// Account-issued Python archive executor. Unlike the development adapter,
+/// this always runs the immutable archive authorization checks before the host.
+/// The runtime must first load the issuance from its trusted ledger and verify
+/// the requested bytes and parameters match the persisted record.
+#[derive(Debug, Clone, Copy)]
+pub struct IssuedPythonExecutor<'a> {
+    pub python: &'a Path,
+    pub host: &'a Path,
+    pub archive_path: &'a Path,
+    pub issued: IssuedStrategy<'a>,
+    pub scope: AccountScope<'a>,
+}
+
+impl StrategyExecutor for IssuedPythonExecutor<'_> {
+    fn execute(&self, input: ExecutionInput<'_>) -> Result<StrategyRun, StrategyError> {
+        run_issued_host(
+            &HostCommand {
+                python: self.python,
+                host: self.host,
+                package_dir: None,
+                archive_path: Some(self.archive_path),
+                parameters: input.parameters,
+                symbol: input.symbol,
+                interval: input.interval,
+                bars: input.bars,
+                op: "run",
+            },
+            self.issued,
+            self.scope,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +123,40 @@ mod tests {
         assert_eq!(output.publications.len(), 2);
         assert_eq!(output.publications[0].quantity, "1");
         assert_eq!(output.publications[1].quantity, "0");
+    }
+
+    #[test]
+    fn issued_executor_fails_closed_without_verified_archive() {
+        let parameters = json!({});
+        let issued = IssuedStrategy {
+            tenant_id: "tenant-1",
+            account_id: "account-1",
+            issuance_id: "issue-1",
+            grant_purpose: "production",
+            code_key: "alpha_strategy",
+            version: "1.0",
+            entry_point: "strategy:Strategy",
+            package_hash: "a",
+        };
+        let executor = IssuedPythonExecutor {
+            python: Path::new("/absent/python"),
+            host: Path::new("/absent/host.py"),
+            archive_path: Path::new("/absent/archive.zip"),
+            issued,
+            scope: AccountScope {
+                tenant_id: "tenant-1",
+                account_id: "account-1",
+                purpose: "production",
+            },
+        };
+        assert!(executor
+            .execute(ExecutionInput {
+                parameters: &parameters,
+                symbol: "ETHUSDT",
+                interval: "1m",
+                bars: &[],
+            })
+            .is_err());
     }
 
     #[test]
