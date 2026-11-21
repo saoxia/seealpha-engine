@@ -9,7 +9,7 @@
 | `engine/market_data/` | 行情采集、数据质量、历史 Catalog、Feed、数据处理 |
 | `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
 | `engine/portfolio/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
-| `engine/accounting/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
+| `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
 | `engine/connectivity/` | 交易所协议与外部请求/状态适配 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
 | `engine/research/` | 研究签名授权与作用域校验；由 `application/research/` 原样迁入，Cargo 包名保持 `seealpha-research` |
@@ -19,7 +19,7 @@
 | 规划目录 | 目标职责 | 当前归属 |
 | --- | --- | --- |
 | `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/core/`、`engine/application/runtime/`、`engine/connectivity/venue/` |
-| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/application/runtime/`、`engine/connectivity/venue/`、`engine/accounting/ledger/` |
+| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/application/runtime/`、`engine/connectivity/venue/`、`engine/ledger/` |
 
 不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
 

@@ -12,7 +12,7 @@ http-body-util = "0.1"
 rust_decimal = "1"
 seealpha-backtest = { path = "../../../backtest/core" }
 seealpha-catalog = { path = "../../../market_data/catalog" }
-seealpha-ledger = { path = "../../../accounting/ledger" }
+seealpha-ledger = { path = "../../../ledger" }
 seealpha-market = { path = "../../../market_data/market" }
 seealpha-research = { path = "../../../research" }
 seealpha-runtime = { path = "../../../application/runtime" }

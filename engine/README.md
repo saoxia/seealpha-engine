@@ -8,7 +8,7 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 | [strategy](strategy/) | 策略、信号与目标发布 |
 | [portfolio](portfolio/) | 组合、资金与目标仓位 |
 | [connectivity](connectivity/) | 交易所通信 |
-| [accounting](accounting/) | 账户与账本事实 |
+| [ledger](ledger/) | 账户与账本事实及持久化 |
 | [backtest](backtest/) | 历史回放与模拟 |
 | [research](research/) | 研究授权 |
 | [application](application/) | 跨领域用例编排 |

@@ -8,7 +8,7 @@ members = [
     "engine/market_data/market",
     "engine/market_data/feed",
     "engine/portfolio/core",
-    "engine/accounting/ledger",
+    "engine/ledger",
     "engine/research",
     "engine/strategy",
     "engine/connectivity/venue",
