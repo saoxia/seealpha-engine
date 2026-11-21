@@ -43,6 +43,14 @@ The original ordered publication replay in `portfolio/core/src/lib.rs` produces 
 
 The change affects the Rust Engine's paper-session accounting semantics and must be compared against expected production behavior. Tests are committed but **not executed**; do not merge before cargo checks and regression review. The legacy Python Engine remains intact.
 
+## Durable native portfolio event integration
+
+The existing `application/runtime/src/portfolio.rs` persists coordinator snapshots with optimistic revisions. Previously its `NativePortfolioEvent::PublishTarget` accepted only an absolute quantity. It now also accepts `PublishHolding { member, holding, allocation, risk_exit }`, validates `holding.symbol == instrument` before mutation, and delegates to `Coordinator::report_holding`. The original absolute-target event remains supported.
+
+A focused runtime test creates a development ledger, registers a member, publishes a 0.5 weighted target at allocation 4, reloads persisted coordinator state, reconciles an offline target delta of 2, and verifies a wrong-symbol publication returns a conflict without advancing the stored revision. **Test committed, not executed.** This is a Rust-native persisted API pathway, not a live venue order route.
+
+The persisted coordinator and the paper replay remain separate application workflows. This does not prove that all legacy Python Portfolio callers were migrated, or justify removing `engine/portfolio/` without an import inventory, parity fixtures, and full validation.
+
 ## Subsequent directories
 
 - `engine/market_data/repair/`: existing Rust repair decisions and planning are partial; legacy Catalog reads/writes and orchestration remain.
