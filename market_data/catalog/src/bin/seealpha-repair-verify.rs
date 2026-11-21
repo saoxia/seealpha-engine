@@ -83,9 +83,8 @@ fn validate(request: Request) -> Result<Vec<Row>, String> {
                                 .map_err(|_| "本地 K 线数值无效")
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let values: [Decimal; 5] = parsed
-                        .try_into()
-                        .map_err(|_| "本地 K 线数值数量无效")?;
+                    let values: [Decimal; 5] =
+                        parsed.try_into().map_err(|_| "本地 K 线数值数量无效")?;
                     Ok((
                         timestamp,
                         LocalKline {
