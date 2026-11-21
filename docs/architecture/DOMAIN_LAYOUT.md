@@ -34,12 +34,12 @@
 本节目录均在仓库根目录，与 `engine/` 并列。根目录 `Cargo.toml` 和 `Cargo.lock` 管理 Rust Workspace，`benchmarks/rust` 仍属于 Workspace。
 
 
-- `tests/`：跨模块与端到端测试；crate 单测和集成测试仍就近放置
+- 测试：crate 单测、集成测试均就近放置；不再保留只有 Python `__init__.py` 的根目录 `tests/`
 - `benchmarks/`：性能基准
 - `docker/`：现有 Docker 构建和部署，沿用名称
 - `docs/`：现行架构与历史审计；历史迁移快照不批量重写
 - `.github/`：CI 与仓库工作流
-- `packages/`：已有示例策略资产，部分仍使用历史 Python 协议，**不等于当前 Rust Runtime 可执行**
+- `packages/`：Rust 原生策略清单示例；旧 Python ZIP 示例已退役
 - `scripts/`：将来有自动化脚本再创建，目前不创建空目录
 
 ## 维护不变量

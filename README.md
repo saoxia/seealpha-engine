@@ -6,7 +6,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 
 ## 源码与工程结构
 
-业务源码统一放在 [engine/](engine/)。`docker/`、`tests/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 `engine/` 并列。根目录 `Cargo.toml` 管理全部 16 个 Rust Workspace 成员。
+业务源码统一放在 [engine/](engine/)。`docker/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 `engine/` 并列。Rust 测试放在各 crate 的 `src/` 或 `tests/`，不再保留空的根级 Python `tests/`。根目录 `Cargo.toml` 管理全部 16 个 Rust Workspace 成员。
 
 ### engine/ 内的业务领域与应用
 
@@ -21,7 +21,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 - `engine/interfaces/`：HTTP v2 和研究接口
 - `engine/apps/`：Engine 二进制入口
 
-`engine/risk/`（风险管理）和 `engine/execution/`（订单管理与执行）是规划领域，当前相关实现仍分布于 Portfolio、Runtime、Venue 和 Ledger；**尚无对应一级源码目录或独立 crate**，不会创建空模块。`packages/` 保留既有示例资产，`tests/`、`benchmarks/`、`docker/`、`docs/`、`.github/` 保留工程职责。完整清单见 [一级业务领域布局](docs/architecture/DOMAIN_LAYOUT.md)。
+`engine/risk/`（风险管理）和 `engine/execution/`（订单管理与执行）是规划领域，当前相关实现仍分布于 Portfolio、Runtime、Venue 和 Ledger；**尚无对应一级源码目录或独立 crate**，不会创建空模块。`packages/` 保留 Rust 原生策略清单示例，`benchmarks/`、`docker/`、`docs/`、`.github/` 保留工程职责。完整清单见 [一级业务领域布局](docs/architecture/DOMAIN_LAYOUT.md)。
 
 ## 部署
 

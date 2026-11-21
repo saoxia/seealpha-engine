@@ -114,10 +114,6 @@ impl Config {
         self.project.join("python/strategy_host/host.py")
     }
 
-    pub fn sample_package(&self) -> PathBuf {
-        self.project.join("packages/ema_crossover")
-    }
-
     pub fn book_path(&self) -> PathBuf {
         self.state_dir.join("book.sqlite")
     }

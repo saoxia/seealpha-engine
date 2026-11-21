@@ -8,7 +8,6 @@ COPY benchmarks ./benchmarks
 RUN cargo build --locked --release -p seealpha-engine -p seealpha-binance-market-data-source --bins
 
 # Default deployment: a Rust runtime without Python interpreter, host, or strategy packages.
-# Python strategy execution is opt-in via docker/engine-python.Dockerfile.
 FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 libsqlite3-0 \
