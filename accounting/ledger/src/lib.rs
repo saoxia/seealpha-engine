@@ -1,5 +1,7 @@
 //! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
 mod legacy;
+mod native_issuance;
+pub use native_issuance::NativeStrategyLoad;
 mod order_intents;
 mod order_reconciliation_tasks;
 mod records;
@@ -221,6 +223,22 @@ CREATE TABLE IF NOT EXISTS strategy_loads (
     entry_point TEXT NOT NULL,
     package_hash TEXT NOT NULL,
     archive BLOB NOT NULL,
+    loaded_at INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, account_id, issuance_id)
+);
+-- Native strategy artifacts are separate from legacy Python ZIP loads.
+-- Strictly immutable by issuance ID; never silently replace granted code.
+CREATE TABLE IF NOT EXISTS native_strategy_loads (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    issuance_id TEXT NOT NULL,
+    code_key TEXT NOT NULL,
+    version TEXT NOT NULL,
+    grant_purpose TEXT NOT NULL,
+    parameters_json TEXT NOT NULL,
+    entry_point TEXT NOT NULL,
+    package_hash TEXT NOT NULL,
+    manifest BLOB NOT NULL,
     loaded_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, issuance_id)
 );
