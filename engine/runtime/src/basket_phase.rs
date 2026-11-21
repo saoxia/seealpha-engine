@@ -1,7 +1,5 @@
-//! Persist a cross-leg risk decision and an unresolved basket phase before
-//! any potential Venue side effect. Only cfg(test) exercises a mock transport.
-#[cfg(test)]
-use crate::order_journal::{BasketReservation, LedgerIntentJournal};
+//! Persist cross-leg risk decisions and unresolved basket phases before
+//! any potential native execution side effect. No venue transport exists here.
 use crate::{Runtime, RuntimeError, map_ledger};
 use rust_decimal::Decimal;
 use seealpha_ledger::{BasketAdmission, IntentStart};
@@ -10,8 +8,6 @@ use seealpha_portfolio::{
     journal::{decode_checkpoint, encode_checkpoint},
     phase_gate::{PhaseGateLimits, gate_next_phase},
 };
-#[cfg(test)]
-use seealpha_venue::order_guard::{PreparedWrite, SignedTransport};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -143,61 +139,6 @@ impl Runtime {
                 },
             )
             .map_err(map_ledger)
-    }
-
-    /// Offline-only wiring of the reserved risk stage to Venue one-shot
-    /// admission. No signed exchange transport is constructed by Runtime.
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn dispatch_reserved_basket_leg_fixture<T: SignedTransport>(
-        &self,
-        tenant: &str,
-        account: &str,
-        environment: &str,
-        basket_id: &str,
-        basket_revision: &str,
-        account_revision: i64,
-        request_id: &str,
-        client_order_id: &str,
-        intent: &Value,
-        mut prepared: PreparedWrite,
-        transport: &mut T,
-    ) -> Result<Value, RuntimeError> {
-        let record = prepared.record();
-        if record.request_id != request_id || record.client_order_id != client_order_id {
-            return Err(RuntimeError::Conflict(
-                "Venue 请求身份与风控预留不一致。".into(),
-            ));
-        }
-        self.validate_reserved_basket_leg(
-            tenant,
-            account,
-            environment,
-            basket_id,
-            basket_revision,
-            account_revision,
-            request_id,
-            client_order_id,
-            &record.payload_sha256,
-            intent,
-        )?;
-        let mut journal = LedgerIntentJournal::new_basket(
-            &self.ledger,
-            tenant,
-            account,
-            environment,
-            intent.clone(),
-            BasketReservation {
-                basket_id: basket_id.into(),
-                basket_revision: basket_revision.into(),
-                account_revision,
-            },
-        );
-        prepared.dispatch(&mut journal, transport).map_err(|_| {
-            RuntimeError::Conflict(
-                "Venue 模拟发送失败或状态未知，请按订单身份对账，禁止重复提交。".into(),
-            )
-        })
     }
 
     /// Read the trusted, replay-verified basket checkpoint, validate all legs,
@@ -343,31 +284,9 @@ mod offline_admission_tests {
     use super::*;
     use crate::config::{AuthMode, Config};
     use seealpha_portfolio::basket::{Checkpoint, Phase, Plan};
-    use seealpha_venue::order_guard::WriteAction;
-    use seealpha_venue::{Product as VenueProduct, VenueError};
 
-    struct FakeWire {
-        attempts: usize,
-        acknowledge: bool,
-    }
-    impl SignedTransport for FakeWire {
-        fn send(
-            &mut self,
-            method: &str,
-            path: &str,
-            _: &[(String, String)],
-        ) -> Result<Value, VenueError> {
-            assert_eq!(method, "POST");
-            assert_eq!(path, "/api/v3/order");
-            self.attempts += 1;
-            if self.acknowledge {
-                Ok(json!({"clientOrderId":"client1","symbol":"ETHUSDT",
-                    "orderId":42,"status":"NEW"}))
-            } else {
-                Err(VenueError::Unconfirmed)
-            }
-        }
-    }
+    const FINGERPRINT: &str =
+        "0a7c81cd762df0d271b730d4928c7b2f9e6acbe31b702b96836e311d6c5ac204";
 
     fn config(path: &std::path::Path) -> Config {
         Config {
@@ -384,26 +303,6 @@ mod offline_admission_tests {
             venue_base: None,
             python: "python3".into(),
         }
-    }
-
-    fn prepared() -> PreparedWrite {
-        PreparedWrite::new(
-            "t:a:paper",
-            "req1",
-            VenueProduct::Spot,
-            WriteAction::NewOrder,
-            "ETHUSDT",
-            "client1",
-            vec![
-                ("symbol".into(), "ETHUSDT".into()),
-                ("newClientOrderId".into(), "client1".into()),
-                ("side".into(), "BUY".into()),
-                ("quantity".into(), "0.1".into()),
-                ("price".into(), "2000".into()),
-                ("type".into(), "LIMIT".into()),
-            ],
-        )
-        .unwrap()
     }
 
     fn setup(runtime: &Runtime) -> (String, Value) {
@@ -450,19 +349,26 @@ mod offline_admission_tests {
             "side":"BUY","quantity":"0.1","price":"2000","order_type":"LIMIT",
             "basket_id":"basket1","basket_revision":encoded.revision,
             "basket_request_id":"req1","account_revision":1,
-            "wire_parameters":[
-                ["symbol","ETHUSDT"],["newClientOrderId","client1"],
-                ["side","BUY"],["quantity","0.1"],["price","2000"],
-                ["type","LIMIT"]
-            ]
         });
         (encoded.revision, intent)
     }
 
+    fn preregister(
+        runtime: &Runtime,
+        revision: &str,
+        account_revision: i64,
+        intent: &Value,
+    ) -> Result<IntentStart, RuntimeError> {
+        runtime.preregister_reserved_basket_leg(
+            "t", "a", "paper", "basket1", revision, account_revision,
+            "req1", "client1", FINGERPRINT, intent,
+        )
+    }
+
     #[test]
-    fn timeout_then_restart_never_reissues_and_never_invents_fill() {
+    fn first_registration_then_restart_is_reconciliation_only_without_fills() {
         let root = std::env::temp_dir().join(format!(
-            "seealpha-basket-wire-{}-{:?}",
+            "seealpha-basket-native-{}-{:?}",
             std::process::id(),
             std::thread::current().id(),
         ));
@@ -470,58 +376,27 @@ mod offline_admission_tests {
         let cfg = config(&root);
         let runtime = Runtime::open(&cfg).unwrap();
         let (revision, intent) = setup(&runtime);
-        let mut wire = FakeWire {
-            attempts: 0,
-            acknowledge: false,
-        };
-        assert!(
-            runtime
-                .dispatch_reserved_basket_leg_fixture(
-                    "t",
-                    "a",
-                    "paper",
-                    "basket1",
-                    &revision,
-                    1,
-                    "req1",
-                    "client1",
-                    &intent,
-                    prepared(),
-                    &mut wire,
-                )
-                .is_err()
+        assert_eq!(
+            preregister(&runtime, &revision, 1, &intent).unwrap(),
+            IntentStart::Fresh
         );
-        assert_eq!(wire.attempts, 1);
         assert!(runtime.ledger.fills("t", "a", "paper").unwrap().is_empty());
         drop(runtime);
         let resumed = Runtime::open(&cfg).unwrap();
-        assert!(
-            resumed
-                .dispatch_reserved_basket_leg_fixture(
-                    "t",
-                    "a",
-                    "paper",
-                    "basket1",
-                    &revision,
-                    1,
-                    "req1",
-                    "client1",
-                    &intent,
-                    prepared(),
-                    &mut wire,
-                )
-                .is_err()
+        assert_eq!(
+            preregister(&resumed, &revision, 1, &intent).unwrap(),
+            IntentStart::ReconcileOnly
         );
-        assert_eq!(wire.attempts, 1);
         assert!(resumed.ledger.request("t", "a", "req1").unwrap().is_some());
+        assert!(resumed.ledger.fills("t", "a", "paper").unwrap().is_empty());
         drop(resumed);
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn accepted_ack_has_no_fill_and_stale_snapshot_cannot_send() {
+    fn stale_account_revision_fails_before_preregistration_and_ack_is_not_a_fill() {
         let root = std::env::temp_dir().join(format!(
-            "seealpha-basket-ack-{}-{:?}",
+            "seealpha-basket-native-revision-{}-{:?}",
             std::process::id(),
             std::thread::current().id(),
         ));
@@ -531,60 +406,21 @@ mod offline_admission_tests {
         runtime
             .ledger
             .save_account_snapshot(
-                "t",
-                "a",
-                "paper",
-                Some(1),
-                "paper2",
-                2,
-                "paper_simulator",
+                "t", "a", "paper", Some(1), "paper2", 2, "paper_simulator",
                 &json!({"balances":{"USDT":"999"},"positions":{"spot:ETHUSDT":"0"}}),
             )
             .unwrap();
-        let mut wire = FakeWire {
-            attempts: 0,
-            acknowledge: true,
-        };
-        assert!(
-            runtime
-                .dispatch_reserved_basket_leg_fixture(
-                    "t",
-                    "a",
-                    "paper",
-                    "basket1",
-                    &revision,
-                    1,
-                    "req1",
-                    "client1",
-                    &intent,
-                    prepared(),
-                    &mut wire,
-                )
-                .is_err()
+        assert!(preregister(&runtime, &revision, 1, &intent).is_err());
+        assert!(runtime.ledger.request("t", "a", "req1").unwrap().is_none());
+        let mut updated = intent.clone();
+        updated["account_revision"] = json!(2);
+        assert_eq!(
+            preregister(&runtime, &revision, 2, &updated).unwrap(),
+            IntentStart::Fresh
         );
-        assert_eq!(wire.attempts, 0);
-        // Current revision is valid; the exchange ACK does not prove a fill.
-        runtime
-            .dispatch_reserved_basket_leg_fixture(
-                "t",
-                "a",
-                "paper",
-                "basket1",
-                &revision,
-                2,
-                "req1",
-                "client1",
-                &{
-                    let mut updated = intent.clone();
-                    updated["account_revision"] = json!(2);
-                    updated
-                },
-                prepared(),
-                &mut wire,
-            )
-            .unwrap();
-        assert_eq!(wire.attempts, 1);
+        // Durable registration is not a fill, an ACK or native send permission.
         assert!(runtime.ledger.fills("t", "a", "paper").unwrap().is_empty());
+        assert!(runtime.ledger.order_recovery_page("t", 0, 10).unwrap()[0].reconciliation_only);
         drop(runtime);
         let _ = std::fs::remove_dir_all(root);
     }

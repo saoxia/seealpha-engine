@@ -123,3 +123,9 @@ cargo run --manifest-path engine/pipeline/nautilus/Cargo.toml --bin import_archi
 Runtime archive_import 任务只接受 archive_job_id，对应同租户、已完成且验证通过的 archive_fetch 任务。管理员还需提供 ENGINE_NATIVE_NAUTILUS_IMPORT_BIN，目标 Catalog 必须已创建。实时节点和离线导入器持有同一个跨进程 Catalog writer lock，避免 SeeAlpha 受管进程同时写入。对外仍不报告 READY；跨日连续性、REST/WS 接续、Catalog 读取回测一致性以及真实 Binance 数据验收仍是 release gate。
 
 **精度要求**：Binance ZIP 中 `price` 与 `qty` 通常以固定宽度小数字符串表示，不等于 Nautilus Instrument 的价格/数量精度。`import_archive` 现强制要求最后两个参数是已经核实的 Instrument `price_precision`、`size_precision`（0–16），使用 `Price::from_decimal_dp` / `Quantity::from_decimal_dp` 做可精确表示的转换；无法无损转换的记录将被拒绝。不要直接采用 CSV 的小数位数。此版本尚未在 Runtime 内自动从上游 Nautilus Instrument Catalog 读取精度，因此导入需要明确提供精度且不能报告 READY。
+
+## Ledger Basket Journal 去 Venue 化（2026-11-22）
+
+Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/order_journal.rs` 以及 `dispatch_reserved_basket_leg_fixture`。篮子订单阶段仍通过现有 `Runtime::preregister_reserved_basket_leg` 和 `Ledger::preregister_basket_order_intent` 进行同一事务内的账户快照版本、篮子版本及不可变意图预登记。离线回归测试现在直接核验首次登记、SQLite 重启后仅对账、旧账户快照拒绝以及注册成功仍无成交；不再模拟旧 REST 写请求。
+
+这删除了一项实际的 `seealpha-venue` Runtime 依赖，但账户与订单/成交的签名只读证据链仍在旧连接器中，不能据此删除 `engine/connection/binance`。接下来需要完成 Nautilus 原生认证执行报告/账户同步与 Ledger 原子验证，清除剩余只读依赖后再删除该目录。当前不开放原生真实下单。

@@ -2,8 +2,6 @@
 mod accounts;
 mod basket;
 mod basket_phase;
-#[allow(dead_code)] // Staged: order sender remains disabled until risk/evidence gate is wired.
-mod order_journal;
 mod portfolio;
 pub use portfolio::{NativePortfolioEvent, NativePortfolioResult, NativePortfolioState};
 mod catalog;
