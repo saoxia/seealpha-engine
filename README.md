@@ -1,6 +1,6 @@
 # SeeAlpha Engine
 
-SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。旧 Python Engine 的 `engine/` 业务模块已整体退役；Rust 作为唯一 Engine 服务进程。Python 策略宿主仍由 Rust Engine 作为受限子进程调用。
+SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。旧 Python Engine 的 `engine/` 业务模块已整体退役；Rust 作为唯一 Engine 服务进程。需要 Python 策略时，Python Host 通过可选部署层由 Rust Engine 以受限子进程调用。
 
 Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。`core/engine_contracts.py` 与 `core/trading_contracts.py` 必须与 [saoxia/SeeAlpha](https://github.com/saoxia/SeeAlpha) 逐字节一致。
 
@@ -13,6 +13,30 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 - `docs/ARCHITECTURE.md`：运行路径和已退役的实盘行为。
 
 行情读取不会隐式启动采集器。模拟会话把公开行情送进流水线，再交给策略宿主；差额记在 `venue=paper`。仓库包含部分实盘订单与账户签名查询实现，但 Rust 功能等价和交易所端到端验收尚未完成，不能据此启用实盘部署。
+
+## 运行镜像：Rust 默认版与可选 Python 策略版
+
+默认镜像 **不安装 Python、也不包含任何 `.py` 文件**，适合运行 Rust 内核和显式指定的 `native_sample` 模拟策略：
+
+```bash
+docker build -f docker/engine.Dockerfile -t seealpha-engine:native .
+docker run --rm -p 127.0.0.1:8766:8766 \
+  -e ENGINE_HOST=0.0.0.0 -e ENGINE_AUTH_MODE=token \
+  -e ENGINE_TOKEN='replace-with-at-least-32-character-random-token' \
+  seealpha-engine:native
+```
+
+如确需运行现有 Python 策略包，可单独叠加 Python 策略宿主：
+
+```bash
+docker build -f docker/engine-python.Dockerfile -t seealpha-engine:python .
+docker run --rm -p 127.0.0.1:8766:8766 \
+  -e ENGINE_HOST=0.0.0.0 -e ENGINE_AUTH_MODE=token \
+  -e ENGINE_TOKEN='replace-with-at-least-32-character-random-token' \
+  seealpha-engine:python
+```
+
+注意：Python 版仍是 **Rust Engine 主进程 + 本地受限 Python 子进程**，不是独立网络服务；它是部署时可选的兼容层，不代表策略 IPC 或插件协议已完全解耦。默认 Rust 镜像的 Python 策略下发、`use_sample: true`（未指定 `native_sample`）等请求会因宿主不可用而拒绝；调用者必须显式采用 Rust 原生模式或安装兼容层。Python Host 的 OS 沙箱、凭据隔离和资源限额仍需由部署环境单独保证。
 
 ## 原生 Rust 策略模拟（开发模式）
 
