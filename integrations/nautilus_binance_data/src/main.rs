@@ -66,10 +66,7 @@ fn instrument_ids(product: Product, symbols: &str) -> Result<Vec<InstrumentId>> 
     for symbol in raw {
         ensure!(
             (5..=30).contains(&symbol.len())
-                && symbol
-                    .bytes()
-                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-                ,
+                && symbol.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()),
             "invalid or unsupported symbol: {symbol:?}"
         );
         let id = product.instrument(symbol);
