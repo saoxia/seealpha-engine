@@ -51,6 +51,12 @@ Options 不属于现有 Nautilus 原生 Binance Spot/USD-M 执行覆盖范围；
 
 **这不是原生下单完成：** `execute_order` 还没有连接 Nautilus ExecutionEngine 的原生订单命令，首次登记也不授予实盘发送权；`reconcile_order` 对原生意图暂时拒绝，直到单独构建并验收原生证据回写。这一增量只是把 Runtime 的显式原生请求从旧 Venue 处理路径移出来；真实外部 Binance 仍被原有主机门禁禁止。
 
+## Runtime 旧 REST 订单写入路径正式停用（2026-11-22）
+
+`Runtime::execute_order` 已删除通过 `VenueClient::place_order` / `cancel_order` / Spot OCO / USD-M Algo 发送的旧代码分支。现在只接受显式 `execution_backend="nautilus_binance_native"` 并进入 Ledger 的原生意图登记模块；没有后端标识、未知后端或旧格式命令都会在注册订单意图和网络副作用之前失败关闭。原有 loopback-only 主机门禁、正式租户校验仍保留。
+
+**重要：** 当前原生 Runtime 路由仍是只登记、不下单；原生 Nautilus ExecutionEngine 实际发送和 Ledger 成交事件闭环仍待接线。旧 `engine/connection/binance` 暂不可删除，因为 Runtime 的只读账户查询、历史成交核查、订单恢复以及测试中的 Journal 仍引用其公共接口；直接删除将破坏证据链。下一步必须将这些能力迁至原生执行/账户事件处理和独立的 SeeAlpha 领域接口，全部测试通过后才能移除 crate。
+
 ## 使用 Nautilus 原生执行记录持久化（离线配置验证）
 
 NautilusTrader v2.0.0rc9 在 `NautilusRecordType` 中已有订单提交、接受、拒绝、取消、成交、冲销以及 `OrderStatusReport`、`FillReport`、`PositionStatusReport`、`AccountState`；`StreamingConfig.record_types` 可选择这些原生记录，写入 Nautilus 自带 Feather/Parquet Catalog。离线测试验证 `data_types=TradeTick`、原生执行 `record_types` 和 `.with_streaming_config(...)` 原生 Builder 接口，不创建自定义执行事件 JSON/SQLite/Parquet 写入器。注意：rc9 版本在构建**带 Streaming 的 LiveNode 后销毁节点**时，CI 曾触发 Tokio `failed to park thread: AccessError`；目前该测试仅验证 Streaming 配置与 Builder 的编译契约，单独构建**未启用 Streaming** 的原生执行节点。**Streaming 节点的运行/停止/销毁生命周期尚未验收，不能部署或宣称已接线**。
