@@ -782,6 +782,65 @@ mod tests {
     }
 
     #[test]
+    fn native_intent_worker_never_uses_legacy_signed_rest_or_creates_fills() {
+        use crate::native_handoff::{NativeIntent, stage_native_intent};
+        let (runtime, root) = runtime(None);
+        runtime
+            .ledger
+            .ensure_tenant("native", "production", "active")
+            .unwrap();
+        let staged = NativeIntent {
+            tenant: "native",
+            account: "account1",
+            environment: "production",
+            request_id: "req1",
+            client_order_id: "client1",
+            product: "spot",
+            symbol: "ETHUSDT",
+            side: "BUY",
+            order_type: "LIMIT",
+            quantity: "0.1",
+            price: "2000",
+            position_mode: "spot",
+        };
+        stage_native_intent(&runtime.ledger, &staged).unwrap();
+        runtime
+            .register_connection("native", "account1", "production", "key-one", "secret-one")
+            .unwrap();
+        assert_eq!(runtime.enqueue_order_reconciliations("native", 1).unwrap(), 1);
+        // A reachable local host is intentionally irrelevant: reject before
+        // constructing VenueClient or making any signed GET.
+        let failure = runtime
+            .run_one_registered_order_reconciliation(
+                "native", "worker1", "http://127.0.0.1:18080",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            failure,
+            RuntimeError::Conflict(ref msg) if msg.contains("禁止回退旧连接器")
+        ));
+        let task = runtime
+            .ledger
+            .order_reconciliation_task("native", "account1", "req1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.state, "retry");
+        assert_eq!(task.last_error_code.as_deref(), Some("READ_UNCONFIRMED"));
+        assert!(runtime.ledger.latest_order_observation(
+            "native", "account1", "production", "client1",
+        ).unwrap().is_none());
+        assert!(runtime.ledger.fills("native", "account1", "production")
+            .unwrap().is_empty());
+        // The explicit fill sync endpoint must not project native orders
+        // through the legacy request layout or mark an ACK as a fill.
+        assert!(runtime.sync_verified_order_fills(
+            "native", "account1", "production", "req1",
+            "key-one", "secret-one", "http://127.0.0.1:18080",
+        ).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn signed_get_worker_records_new_without_fill_or_post() {
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
