@@ -1,1 +1,0 @@
-"""SeeAlpha Engine trading module."""
