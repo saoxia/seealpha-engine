@@ -1,5 +1,8 @@
 //! Stateless EAPI optionTrade stream normalization: never creates a fill.
-use crate::{MarketError, options::{OptionTrade, parse_option_symbol}};
+use crate::{
+    MarketError,
+    options::{OptionTrade, parse_option_symbol},
+};
 use rust_decimal::Decimal;
 use serde_json::Value;
 
@@ -23,8 +26,10 @@ pub fn parse_option_trade_event(
     fn precise(value: &Value) -> Result<Decimal, MarketError> {
         match value {
             Value::String(text) => text.parse::<Decimal>().map_err(|_| MarketError::Decimal),
-            Value::Number(number) if number.is_i64() || number.is_u64() =>
-                number.to_string().parse::<Decimal>().map_err(|_| MarketError::Decimal),
+            Value::Number(number) if number.is_i64() || number.is_u64() => number
+                .to_string()
+                .parse::<Decimal>()
+                .map_err(|_| MarketError::Decimal),
             _ => Err(MarketError::Decimal),
         }
     }
@@ -34,8 +39,11 @@ pub fn parse_option_trade_event(
         return Err(MarketError::Trade);
     }
     Ok(OptionTrade {
-        symbol: expected_symbol.to_owned(), trade_id: id,
-        timestamp_ms: timestamp, price, quantity,
+        symbol: expected_symbol.to_owned(),
+        trade_id: id,
+        timestamp_ms: timestamp,
+        price,
+        quantity,
         aggressor_side: if maker { -1 } else { 1 },
     })
 }
@@ -55,16 +63,25 @@ mod tests {
         let mut sell = buy;
         sell["m"] = json!(true);
         sell["X"] = json!("BLOCK");
-        assert_eq!(parse_option_trade_event(&sell, SYMBOL).unwrap().aggressor_side, -1);
+        assert_eq!(
+            parse_option_trade_event(&sell, SYMBOL)
+                .unwrap()
+                .aggressor_side,
+            -1
+        );
     }
 
     #[test]
     fn rejects_wrong_identity_float_boolean_and_negative_amount() {
         let good = json!({"e":"trade","s":SYMBOL,"X":"MARKET","m":false,"t":7,"T":12345,"p":"42.10","q":"0.01"});
         for (field, invalid) in [
-            ("s", json!("OTHER")), ("X", json!("UNKNOWN")),
-            ("m", json!(0)), ("t", json!(true)),
-            ("T", json!(-1)), ("p", json!(2.5)), ("q", json!("0")),
+            ("s", json!("OTHER")),
+            ("X", json!("UNKNOWN")),
+            ("m", json!(0)),
+            ("t", json!(true)),
+            ("T", json!(-1)),
+            ("p", json!(2.5)),
+            ("q", json!("0")),
         ] {
             let mut row = good.clone();
             row[field] = invalid;
