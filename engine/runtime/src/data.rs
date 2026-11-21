@@ -351,8 +351,14 @@ impl Runtime {
         } else if original["action"] == "archive_import" {
             self.archive_import_job(tenant_id, &original["payload"])
                 .await
-        } else {
+        } else if original["action"] == "backfill" {
             self.backfill_job(tenant_id, &original["payload"]).await
+        } else {
+            // A legacy publish_catalog job may still exist in the durable
+            // queue. Never reinterpret retired job types as public backfills.
+            Err(RuntimeError::Conflict(
+                "已停用的旧式 Catalog 发布任务；拒绝执行，请使用 Nautilus 原生数据导入任务。".into(),
+            ))
         };
         let (status, body) = match result {
             Ok(value) => ("completed", value),
