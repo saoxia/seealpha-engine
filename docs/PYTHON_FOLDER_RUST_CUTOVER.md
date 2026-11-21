@@ -74,3 +74,9 @@ The current connected container does not have `cargo` or `rustc`, and its git re
 - Independent fixes (Decimal report string scale, coordinator atomicity) are **not** blockers to deleting replaced Python source.
 - Remaining impact: the opt-in legacy Python runtime may still import this module. That import graph could not be enumerated using the available GitHub connector search; do **not** claim the legacy Python entrypoint remains operational after its removal. The primary Rust runtime does not import `engine/portfolio/targets.py`.
 - No Cargo or legacy-Python test run has been observed in this editing session.
+
+## Complete directory retirement: `engine/market_data/quality/` (2026-11-21)
+
+Removed the legacy Python quality directory (`validate_data.py`, `monitor.py`, `__init__.py`) and its duplicate non-workspace Rust crate. The active `market_data/quality` crate owns closed OHLCV/Trade validation, strict maker flag parsing, inclusive catalog gap computation and read-only service status observation (`monitor::observe_status`, `monitor::read_monitor`). The monitor requires caller-supplied process supervision evidence; it never starts a source or modifies market data. Legacy Python Engine imports of the retired module are intentionally unsupported until their containing folders are cut over.
+
+This is a directory-level source retirement, **not** proof of feature-for-feature compatibility or green CI. In particular, native supervisor wiring and full catalog coverage checks should be iterated separately. Decimal/precision cleanup is independent and does not block retirement. Cargo commands were not run in this connector environment.

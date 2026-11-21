@@ -22,7 +22,6 @@ members = [
 # Do not include them in the native Rust workspace.
 exclude = [
     "engine/market_data/repair/rust_converter",
-    "engine/market_data/quality/rust",
     "engine/market_data/sources/binance_shared/rust",
 ]
 
