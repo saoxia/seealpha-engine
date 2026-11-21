@@ -257,6 +257,15 @@ mod tests {
         assert_eq!(first["response"]["status"], "unknown");
         assert_eq!(first["replay"], false);
         assert_eq!(first["response"]["order"], serde_json::Value::Null);
+        // Native pending intent must not fall through the legacy signed-REST
+        // reconciliation path (and must never treat it as a settled fill).
+        assert!(runtime.reconcile_order(
+            "tenant1", "account1", "00000000-0000-0000-0000-000000000001",
+            "sandbox", "private-key", "private-secret", "http://127.0.0.1:18767", "",
+        ).is_err());
+        let mut external = command(base.clone());
+        external.venue_base = "https://fapi.binance.com".into();
+        assert!(runtime.execute_order(external).is_err());
         let second = runtime.execute_order(command(base.clone())).unwrap();
         assert_eq!(second["replay"], true);
         let stored = runtime.ledger.registered_order_intent(
