@@ -1,8 +1,8 @@
 //! Binance Options EAPI order parameter construction.
 //!
 //! This module only builds and validates deterministic wire parameters.
-//! The legacy VenueClient still owns the durable intent guard, signing,
-//! transport, and confirmation policy. Do not submit from this crate.
+//! No production sender is connected. Durable intent, signing, transport,
+//! and exchange confirmation must be implemented and validated separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptionsOrderFieldError {
     MissingLimitPrice,
@@ -33,7 +33,7 @@ pub struct OptionsOrderFields<'a> {
 }
 
 /// Keep exact prior field order and values for signed EAPI requests.
-/// This is not an order-admission decision: persistent admission stays in Venue.
+/// This is not an order-admission decision or permission to submit.
 pub fn build_options_order_pairs(
     fields: &OptionsOrderFields<'_>,
 ) -> Result<Vec<(String, String)>, OptionsOrderFieldError> {
@@ -66,7 +66,7 @@ pub fn build_options_order_pairs(
 }
 
 /// The only EAPI order resource supported by the current Options order path.
-/// Transport and request signing remain with the existing VenueClient.
+/// Transport and request signing are not implemented by this crate.
 pub const EAPI_ORDER_PATH: &str = "/eapi/v1/order";
 
 /// Binance Options uses `clientOrderId` for signed order GET/DELETE.
