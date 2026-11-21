@@ -2,7 +2,7 @@
 
 本 crate 目前负责 **Options /eapi 用户成交证据、账户快照规范化及订单参数规则及行权证据规范化**，不发送交易请求，也不持有凭据；由原 `engine/connection/binance` 的签名只读查询调用。
 
-- `normalize_option_trades` 保留交易所成交 ID、订单归属、精确小数字符串、手续费符号和时间；非目标订单被过滤，字段缺失、合约身份不符或重复成交即拒绝当作已确认成交。
+- `normalize_option_trades` 保留交易所成交 ID、订单归属、精确小数字符串、手续费符号和时间；`trades_page::collect_option_order_trades` 保留有界 32 页分页、游标前进、全页必须继续和重复执行 ID 失败关闭；旧 Venue 仅注入签名只读 GET 回调。
 - `normalize_options_account_snapshot` 将已签名 EAPI 账户与持仓的两份只读回复规范化为原 Runtime 快照契约；`option_position_quantities` 与 `option_asset_quantities` 保持 Options 独立持仓方向、保证金优先级和缺失数据失败关闭；不新增余额估值或就绪判定。
 - `build_options_order_pairs` 只生成现有 EAPI LIMIT 委托的确定性签名参数；`options_lookup_pairs` 负责 EAPI GET/DELETE 按 `clientOrderId` 查询的参数及稳定字段顺序，所有操作均不联网、不持有交易凭据。
 - `normalize_option_exercises` 验证 EAPI 签名行权记录的合约、交易所 ID、精度、时间和去重，不根据行权金额虚构资金流。
