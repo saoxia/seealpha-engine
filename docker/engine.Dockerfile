@@ -1,6 +1,6 @@
 # Build from the repository root:
 #   docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
-FROM rust:1.100-slim AS build
+FROM rust:1.100-slim-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY market_data ./market_data
