@@ -74,6 +74,12 @@ jobs:
           components: rustfmt, clippy
       # Run compilation first so pre-existing workspace formatting debt does not
       # prevent us from observing type/borrow-checker failures in the PR.
+      - name: Diagnose Cargo.lock synchronization (temporary)
+        run: |
+          cargo metadata --format-version 1 --no-deps > /dev/null || true
+          echo "=== Cargo.lock changes ==="
+          git diff -- Cargo.lock
+          echo "=== End of lockfile changes ==="
       - name: Compile check
         run: cargo check --workspace --all-targets --locked
       # Existing base branch contains unrelated rustfmt debt; retain visibility
