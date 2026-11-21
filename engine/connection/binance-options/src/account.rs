@@ -7,6 +7,24 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use crate::OptionsEvidenceError;
 
+pub const EAPI_ACCOUNT_PATH: &str = "/eapi/v1/account";
+pub const EAPI_POSITION_PATH: &str = "/eapi/v1/position";
+
+/// Read the two independent Options account resources through the caller's
+/// signed GET transport. This crate never signs, sends writes or stores keys.
+/// Failure of either read stops the sequence and cannot yield a partial snapshot.
+pub fn collect_options_account_snapshot<E, F>(
+    mut signed_get: F,
+) -> Result<Value, E>
+where
+    E: From<OptionsEvidenceError>,
+    F: FnMut(&'static str) -> Result<Value, E>,
+{
+    let account = signed_get(EAPI_ACCOUNT_PATH)?;
+    let positions = signed_get(EAPI_POSITION_PATH)?;
+    normalize_options_account_snapshot(&account, &positions).map_err(E::from)
+}
+
 /// Preserve the exact historical JSON contract consumed by Runtime/Ledger:
 /// "product", "balances", "positions", "observed_at".
 ///
@@ -101,6 +119,50 @@ fn field<'a>(item: &'a Value, alternatives: &[&str]) -> Option<&'a Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_account_reads_follow_eapi_order_and_preserve_snapshot() {
+        let mut paths = Vec::new();
+        let result = collect_options_account_snapshot::<OptionsEvidenceError, _>(|path| {
+            paths.push(path);
+            match path {
+                EAPI_ACCOUNT_PATH => Ok(json!([{"asset":"USDT","marginBalance":"1.25"}])),
+                EAPI_POSITION_PATH => Ok(json!([{"symbol":"BTC-271231-90000-C","quantity":"2"}])),
+                _ => panic!("unexpected route"),
+            }
+        }).unwrap();
+        assert_eq!(paths, [EAPI_ACCOUNT_PATH, EAPI_POSITION_PATH]);
+        assert_eq!(result["product"], "options");
+        assert_eq!(result["balances"][0]["marginBalance"], "1.25");
+        assert_eq!(result["positions"][0]["quantity"], "2");
+        assert!(result["observed_at"].is_null());
+    }
+
+    #[test]
+    fn failed_first_read_never_queries_positions_or_returns_partial_evidence() {
+        let mut calls = 0;
+        let result = collect_options_account_snapshot::<OptionsEvidenceError, _>(|_| {
+            calls += 1;
+            Err(OptionsEvidenceError::Unconfirmed)
+        });
+        assert_eq!(result, Err(OptionsEvidenceError::Unconfirmed));
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn failed_second_read_and_invalid_body_fail_closed() {
+        let mut calls = 0;
+        let result = collect_options_account_snapshot::<OptionsEvidenceError, _>(|_| {
+            calls += 1;
+            if calls == 1 { Ok(json!([])) } else { Err(OptionsEvidenceError::Unconfirmed) }
+        });
+        assert_eq!(result, Err(OptionsEvidenceError::Unconfirmed));
+        assert_eq!(calls, 2);
+        let malformed = collect_options_account_snapshot::<OptionsEvidenceError, _>(|path| {
+            if path == EAPI_ACCOUNT_PATH { Ok(json!({})) } else { Ok(json!([])) }
+        });
+        assert_eq!(malformed, Err(OptionsEvidenceError::Unconfirmed));
+    }
 
     #[test]
     fn preserves_options_position_sides_and_quantity_fallbacks() {
