@@ -61,9 +61,7 @@ pub fn run_allocated_backtest_with_curve(
     let mut resolved = Vec::with_capacity(publications.len());
     for publication in publications {
         if publication.holding.symbol != symbol {
-            return Err(BacktestError::Portfolio(
-                "策略发布了未授权的品种。".into(),
-            ));
+            return Err(BacktestError::Portfolio("策略发布了未授权的品种。".into()));
         }
         let quantity = publication
             .holding
@@ -405,7 +403,11 @@ mod tests {
         wrong.holding.symbol = "BTCUSDT".into();
         assert!(matches!(
             run_allocated_backtest_with_curve(
-                &bars, &[valid.clone(), wrong], "ETHUSDT", Decimal::from(1000), Decimal::from(10),
+                &bars,
+                &[valid.clone(), wrong],
+                "ETHUSDT",
+                Decimal::from(1000),
+                Decimal::from(10),
             ),
             Err(BacktestError::Portfolio(_))
         ));
@@ -413,7 +415,11 @@ mod tests {
         bad.allocation = Decimal::ZERO;
         assert!(matches!(
             run_allocated_backtest_with_curve(
-                &bars, &[bad], "ETHUSDT", Decimal::from(1000), Decimal::from(10),
+                &bars,
+                &[bad],
+                "ETHUSDT",
+                Decimal::from(1000),
+                Decimal::from(10),
             ),
             Err(BacktestError::Portfolio(_))
         ));
