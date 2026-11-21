@@ -1,3 +1,5 @@
+> **历史快照（2026-11-20，非当前目录或启动说明）。** 本文的 `engine/`、`crates/` 与 `python -m engine` 路径属于迁移前状态；当前仓库采用根目录 Rust Cargo workspace，旧 `engine/` 已退役。当前布局和启动方式请以 [README](../README.md) 与 [ARCHITECTURE](ARCHITECTURE.md) 为准。以下保留作为迁移审计记录，不应执行其中的旧命令。
+
 # Engine 领域目录布局（2026-11-20）
 
 当前代码在 `crates/`。本页保留迁出前的 Python 目录对照。运行结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。HTTP v2 契约文件没有改动。行情门禁、滚动合成、删除快照和特征预热在 `crates/seealpha-feed`。旧 `tests/feed` 与 `tests/pipeline` 的对照见 [TEST_MAP_FEED_PIPELINE.md](TEST_MAP_FEED_PIPELINE.md)。
