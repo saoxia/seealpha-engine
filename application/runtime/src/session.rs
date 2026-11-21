@@ -15,6 +15,8 @@ use std::path::PathBuf;
 pub enum PackageBody {
     Directory(PathBuf),
     Archive(Vec<u8>),
+    /// Built-in Rust evaluator; no Python interpreter or package files.
+    NativeEma,
 }
 
 #[derive(Debug, Clone)]
@@ -121,86 +123,103 @@ impl Runtime {
             })
             .collect::<Vec<_>>();
         for strategy in &request.strategies {
-            let temp = match &strategy.package {
-                PackageBody::Archive(bytes) => Some(write_temp(bytes)?),
-                PackageBody::Directory(_) => None,
-            };
-            let directory = match &strategy.package {
-                PackageBody::Directory(path) => Some(path.as_path()),
-                PackageBody::Archive(_) => None,
-            };
-            let archive = temp.as_deref();
-            let host_command = HostCommand {
-                python: &self.python,
-                host: &self.host,
-                package_dir: directory,
-                archive_path: archive,
-                parameters: &strategy.parameters,
-                symbol: &request.snapshot.symbol,
-                interval: &request.snapshot.interval,
-                bars: &host_bars,
-                op: "run",
-            };
-            // Archive strategies are account-issued and must match the trusted
-            // Ledger bytes and parameters, not merely a request-supplied ZIP.
-            let issued = if let PackageBody::Archive(bytes) = &strategy.package {
-                let load = self
-                    .ledger
-                    .strategies(&request.tenant_id, &request.account_id)
-                    .map_err(map_ledger)?
-                    .into_iter()
-                    .find(|load| load.issuance_id == strategy.member_id)
-                    .ok_or_else(|| {
-                        RuntimeError::Conflict("模拟策略没有对应账户的可信下发记录。".into())
-                    })?;
-                let stored_parameters: Value = serde_json::from_str(&load.parameters_json)
-                    .map_err(|_| RuntimeError::Conflict("已下发策略参数记录损坏。".into()))?;
-                if load.archive.as_slice() != bytes.as_slice()
-                    || stored_parameters != strategy.parameters
-                {
+            let run = if matches!(&strategy.package, PackageBody::NativeEma) {
+                // Native dispatch is development-only until the issuance and
+                // immutable package authorization protocol supports Rust packages.
+                let tenant = self.require_active(&request.tenant_id)?;
+                if tenant.purpose != "development" {
                     return Err(RuntimeError::Conflict(
-                        "模拟策略包或参数与可信下发记录不一致。".into(),
+                        "正式租户不能直接执行未下发的 Rust 示例策略。".into(),
                     ));
                 }
-                Some(load)
-            } else {
-                None
-            };
-            let tenant = self.require_active(&request.tenant_id)?;
-            if issued.is_none() && tenant.purpose != "development" {
-                return Err(RuntimeError::Conflict(
-                    "正式租户不允许执行未下发的目录策略。".into(),
-                ));
-            }
-            self.track_start();
-            let outcome = if let Some(load) = &issued {
-                run_issued_host(
-                    &host_command,
-                    IssuedStrategy {
-                        tenant_id: &load.tenant_id,
-                        account_id: &load.account_id,
-                        issuance_id: &load.issuance_id,
-                        grant_purpose: &load.grant_purpose,
-                        code_key: &load.code_key,
-                        version: &load.version,
-                        entry_point: &load.entry_point,
-                        package_hash: &load.package_hash,
-                    },
-                    AccountScope {
-                        tenant_id: &request.tenant_id,
-                        account_id: &request.account_id,
-                        purpose: &tenant.purpose,
-                    },
+                seealpha_strategy::native_ema::run_native_ema(
+                    &strategy.parameters,
+                    &request.snapshot.symbol,
+                    &host_bars,
                 )
+                .map_err(map_strategy)?
             } else {
-                // Development sample directory path; never permitted to send orders.
-                run_host(&host_command)
+                let temp = match &strategy.package {
+                    PackageBody::Archive(bytes) => Some(write_temp(bytes)?),
+                    PackageBody::Directory(_) | PackageBody::NativeEma => None,
+                };
+                let directory = match &strategy.package {
+                    PackageBody::Directory(path) => Some(path.as_path()),
+                    PackageBody::Archive(_) | PackageBody::NativeEma => None,
+                };
+                let archive = temp.as_deref();
+                let host_command = HostCommand {
+                    python: &self.python,
+                    host: &self.host,
+                    package_dir: directory,
+                    archive_path: archive,
+                    parameters: &strategy.parameters,
+                    symbol: &request.snapshot.symbol,
+                    interval: &request.snapshot.interval,
+                    bars: &host_bars,
+                    op: "run",
+                };
+                // Archive strategies are account-issued and must match the trusted
+                // Ledger bytes and parameters, not merely a request-supplied ZIP.
+                let issued = if let PackageBody::Archive(bytes) = &strategy.package {
+                    let load = self
+                        .ledger
+                        .strategies(&request.tenant_id, &request.account_id)
+                        .map_err(map_ledger)?
+                        .into_iter()
+                        .find(|load| load.issuance_id == strategy.member_id)
+                        .ok_or_else(|| {
+                            RuntimeError::Conflict("模拟策略没有对应账户的可信下发记录。".into())
+                        })?;
+                    let stored_parameters: Value = serde_json::from_str(&load.parameters_json)
+                        .map_err(|_| RuntimeError::Conflict("已下发策略参数记录损坏。".into()))?;
+                    if load.archive.as_slice() != bytes.as_slice()
+                        || stored_parameters != strategy.parameters
+                    {
+                        return Err(RuntimeError::Conflict(
+                            "模拟策略包或参数与可信下发记录不一致。".into(),
+                        ));
+                    }
+                    Some(load)
+                } else {
+                    None
+                };
+                let tenant = self.require_active(&request.tenant_id)?;
+                if issued.is_none() && tenant.purpose != "development" {
+                    return Err(RuntimeError::Conflict(
+                        "正式租户不允许执行未下发的目录策略。".into(),
+                    ));
+                }
+                self.track_start();
+                let outcome = if let Some(load) = &issued {
+                    run_issued_host(
+                        &host_command,
+                        IssuedStrategy {
+                            tenant_id: &load.tenant_id,
+                            account_id: &load.account_id,
+                            issuance_id: &load.issuance_id,
+                            grant_purpose: &load.grant_purpose,
+                            code_key: &load.code_key,
+                            version: &load.version,
+                            entry_point: &load.entry_point,
+                            package_hash: &load.package_hash,
+                        },
+                        AccountScope {
+                            tenant_id: &request.tenant_id,
+                            account_id: &request.account_id,
+                            purpose: &tenant.purpose,
+                        },
+                    )
+                } else {
+                    // Development sample directory path; never permitted to send orders.
+                    run_host(&host_command)
+                };
+                self.track_end();
+                if let Some(path) = &temp {
+                    let _ = std::fs::remove_file(path);
+                }
+                outcome.map_err(map_strategy)?
             };
-            self.track_end();
-            if let Some(path) = &temp {
-                let _ = std::fs::remove_file(path);
-            }
-            let run = outcome.map_err(map_strategy)?;
             let limit = decimal_field(&run.prepared, "risk_limit")?;
             let allocation = allocation_field(&run.prepared)?;
             risk_limit = Some(match risk_limit {
@@ -336,6 +355,7 @@ fn session_fingerprint(request: &PaperRequest, bars: &[Bar]) -> String {
         let digest = match &strategy.package {
             PackageBody::Archive(bytes) => sha256_hex(bytes),
             PackageBody::Directory(path) => digest_dir(path).unwrap_or_default(),
+            PackageBody::NativeEma => "native:ema_crossover:v1".to_string(),
         };
         hasher.update(digest.as_bytes());
     }
@@ -483,6 +503,94 @@ mod tests {
         let replay = runtime.run_paper(request).unwrap();
         assert_eq!(replay["replay"], true);
         assert_eq!(runtime.ledger.order_count("dev", "paper").unwrap(), orders);
+        let _ = std::fs::remove_dir_all(state);
+    }
+
+    #[test]
+    fn rust_ema_paper_session_requires_no_python_and_is_idempotent() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let state = std::env::temp_dir().join(format!(
+            "seealpha-native-paper-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let config = Config {
+            host: "127.0.0.1".into(),
+            port: 0,
+            auth_mode: crate::AuthMode::None,
+            token: String::new(),
+            state_dir: state.clone(),
+            project: root,
+            tenant_id: None,
+            tenant_purpose: None,
+            research_signing_key: None,
+            research_mcp_enabled: false,
+            venue_base: None,
+            python: PathBuf::from("/nonexistent/python"),
+        };
+        let runtime = Runtime::open(&config).unwrap();
+        runtime.ensure_tenant("dev", "development", "active").unwrap();
+        let request = PaperRequest {
+            tenant_id: "dev".into(),
+            account_id: "native-paper".into(),
+            snapshot: snapshot(),
+            strategies: vec![StrategyInput {
+                member_id: "native-ema".into(),
+                package: PackageBody::NativeEma,
+                parameters: json!({}),
+            }],
+            request_id: Some("native-ema-request".into()),
+        };
+        let report = runtime.run_paper(request.clone()).unwrap();
+        assert_eq!(report["exchange_orders"], 0);
+        assert_eq!(report["venue"], "paper");
+        let pubs = report["publications"].as_array().unwrap();
+        assert!(pubs.iter().any(|item| item["quantity"] == "1"));
+        assert!(pubs.iter().any(|item| item["quantity"] == "0"));
+        let before = runtime.ledger.order_count("dev", "native-paper").unwrap();
+        assert!(before > 0);
+        assert_eq!(runtime.run_paper(request).unwrap()["replay"], true);
+        assert_eq!(runtime.ledger.order_count("dev", "native-paper").unwrap(), before);
+        let _ = std::fs::remove_dir_all(state);
+    }
+
+    #[test]
+    fn native_ema_rejects_production_tenant_without_issuance() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let state = std::env::temp_dir().join(format!(
+            "seealpha-native-deny-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let config = Config {
+            host: "127.0.0.1".into(),
+            port: 0,
+            auth_mode: crate::AuthMode::None,
+            token: String::new(),
+            state_dir: state.clone(),
+            project: root,
+            tenant_id: None,
+            tenant_purpose: None,
+            research_signing_key: None,
+            research_mcp_enabled: false,
+            venue_base: None,
+            python: PathBuf::from("/nonexistent/python"),
+        };
+        let runtime = Runtime::open(&config).unwrap();
+        runtime.ensure_tenant("prod", "production", "active").unwrap();
+        let result = runtime.run_paper(PaperRequest {
+            tenant_id: "prod".into(),
+            account_id: "a".into(),
+            snapshot: snapshot(),
+            strategies: vec![StrategyInput {
+                member_id: "native-ema".into(),
+                package: PackageBody::NativeEma,
+                parameters: json!({}),
+            }],
+            request_id: Some("deny-native".into()),
+        });
+        assert!(result.is_err());
+        assert_eq!(runtime.ledger.order_count("prod", "a").unwrap(), 0);
         let _ = std::fs::remove_dir_all(state);
     }
 

@@ -418,7 +418,7 @@ mod tests {
             id: 7, timestamp_ms: 0, price: Decimal::from(10),
             quantity: Decimal::ONE, quote: Decimal::from(10), buyer_maker: false,
         };
-        assert_eq!(aggregate_trades(&[valid.clone()], 0).unwrap_err(), "invalid interval");
+        assert_eq!(aggregate_trades(std::slice::from_ref(&valid), 0).unwrap_err(), "invalid interval");
         let mut bad = valid.clone();
         bad.price = Decimal::ZERO;
         assert_eq!(aggregate_trades(&[bad, valid.clone()], 60_000).unwrap_err(), "invalid trade");

@@ -14,6 +14,30 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 
 行情读取不会隐式启动采集器。模拟会话把公开行情送进流水线，再交给策略宿主；差额记在 `venue=paper`。仓库包含部分实盘订单与账户签名查询实现，但 Rust 功能等价和交易所端到端验收尚未完成，不能据此启用实盘部署。
 
+## 原生 Rust 策略模拟（开发模式）
+
+纯 Rust EMA 示例已经可以通过现有纸面会话接口显式调用，**不需要安装 Python 或启动 Python 策略宿主**。示例请求需同时设置 `use_sample: true` 和 `native_sample: true`：
+
+```json
+{
+  "symbol": "ETHUSDT",
+  "interval": "1m",
+  "product": "spot",
+  "use_sample": true,
+  "native_sample": true,
+  "parameters": {
+    "fast_period": 8,
+    "slow_period": 21,
+    "allocation": "1",
+    "risk_limit": "1"
+  }
+}
+```
+
+发送至 `POST /tenants/{tenant_id}/accounts/{account_id}/paper/sessions`（原有认证与版本请求头不变）。该选项只对 development 租户开放，返回结果仍通过 Rust 组合净额、风险额度与模拟 Ledger；不提交真实交易所订单。未设置 `native_sample` 时，现有 Python 示例调用行为不变。
+
+注意：**这不是整个 Engine 零 Python 迁移完成的声明**。生产策略包下发仍使用 Python 包格式和宿主；该增量提供的是一个明确隔离的纯 Rust 策略模拟路径，后续需要迁移发行协议、容器与测试。变更未完成 Cargo / Docker 实际验证前，不应部署到生产环境。
+
 ## Python 边界与退役范围
 
 `engine/` 旧运行时、`core/market/` 旧市场模型、旧 option 投影、历史 Python Engine/feed/pipeline 测试和失效的 Legacy CI 已退役。对应的 Rust 能力位于 `market_data/`、`accounting/`、`application/`、`interfaces/` 等 Workspace 模块中，但不宣称与旧 Python 行为完全等价。旧代码仍可从 Git 历史查阅。
