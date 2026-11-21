@@ -9,3 +9,4 @@ license = "Apache-2.0"
 rust_decimal = "1"
 sha2 = "0.10"
 thiserror = "2"
+rusqlite = { version = "0.37", features = ["bundled"] }
