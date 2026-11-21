@@ -32,6 +32,17 @@ The complete legacy directory file inventory and all import sites **must be dete
 
 This is **real application-layer integration**, but it does not route this historical paper replay through `Coordinator::report_holding` (that remains a separate persisted coordinator API). The legacy Python Engine, Python strategy host, and user-authored Python packages are unchanged. A focused Rust integration test now constructs an isolated Python strategy package that publishes weight=0.5 with allocation=2, runs through the real strategy host, native paper replay and ledger, and checks one paper fill, no exchange orders and idempotent request replay. The test has been **added but not executed**. Same-fixture legacy Python versus Rust parity remains required.
 
+## Bar-synchronous paper execution correction
+
+The original ordered publication replay in `portfolio/core/src/lib.rs` produces a simulated fill after **each** publication, even if two members publish offsetting targets at the same bar close. The already-native historical replay groups publications by bar; paper sessions now follow the same principle via `IndexedHoldingPublication` and `replay_holdings_by_bar`.
+
+- Strategy publications carry the original `bar_index` and close price. A batch with mixed symbols, decreasing bar index, or inconsistent same-bar prices fails closed.
+- A member's latest target persists across bars; repeated publications by that member on one bar use the final one. The entire batch is validated before generating any fills.
+- At each bar close, calculate the signed net of the latest member targets and emit **at most one** delta fill after the existing risk clipping and quantity increment rules. A fully offsetting simultaneous pair generates no paper fill.
+- New tests cover same-bar offsets, full hedging, repeated member publications, cross-bar continuation, inconsistent evidence and invalid allocation.
+
+The change affects the Rust Engine's paper-session accounting semantics and must be compared against expected production behavior. Tests are committed but **not executed**; do not merge before cargo checks and regression review. The legacy Python Engine remains intact.
+
 ## Subsequent directories
 
 - `engine/market_data/repair/`: existing Rust repair decisions and planning are partial; legacy Catalog reads/writes and orchestration remain.
