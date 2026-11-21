@@ -1,7 +1,7 @@
 //! Strategy-issued native historical replay. Reads an exact, closed, contiguous
-//! local catalog window and feeds it to the restricted Python strategy host.
+//! local catalog window and executes an authorized built-in Rust strategy.
 //! Rust owns cash/position matching, risk limits, ledger and equity accounting.
-use crate::{Runtime, RuntimeError, map_ledger, map_strategy, write_archive};
+use crate::{Runtime, RuntimeError, map_ledger, map_strategy};
 use rust_decimal::Decimal;
 use seealpha_backtest::{
     AllocatedPublishedTarget, HistoryBar, report_json, run_allocated_backtest_with_curve,
