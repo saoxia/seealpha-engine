@@ -2,13 +2,13 @@
 
 ## 当前实现与代码入口
 
-本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `engine/apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `engine/strategy/`，研究授权 crate 位于 `engine/research/`，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。旧版 Python Engine、原 `core/` 和 `python/strategy_host/` 属于迁移历史。当前的 `engine/` 是 Rust 源码汇总目录，**不得把旧 Python 代码恢复为运行时依赖**。
+本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `engine/apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `engine/strategy/`，研究授权与范围校验位于 `engine/gateway/api/src/research/`，已合并进 `seealpha-http` crate，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。旧版 Python Engine、原 `core/` 和 `python/strategy_host/` 属于迁移历史。当前的 `engine/` 是 Rust 源码汇总目录，**不得把旧 Python 代码恢复为运行时依赖**。
 
 当前架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，代码导航见 [docs/architecture/MODULE_MAP.md](docs/architecture/MODULE_MAP.md)。如文档相互矛盾，以当前 Rust 代码和测试为实际实现依据，同时修订不一致的现行说明。
 
 ## 边界和安全
 
-- `engine/interfaces/api/http` 持有 HTTP v2 与研究协议边界；`engine/application/runtime` 负责编排；行情、策略、组合、账本、回测与交易所连接分别归属对应领域 crate。
+- `engine/gateway/api` 持有 HTTP v2 与 Research HTTP 路由，`engine/gateway/mcp` 持有 Research MCP 协议处理；`engine/runtime` 负责编排；行情、策略、组合、账本、回测与交易所连接分别归属对应领域 crate。
 - 不在没有明确授权和匹配测试时更改 HTTP v2、租户隔离、数据格式、持久化状态、订单幂等、真实账户安全门禁或生产部署。
 - 订单必须先登记请求意图；外部请求未知结果不得盲目再次发送；只有被核验的真实成交证据能更新已成交事实；模拟成交必须与真实成交分离。
 - 行情读取、策略订阅、回测不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据。

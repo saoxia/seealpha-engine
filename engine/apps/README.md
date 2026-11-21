@@ -4,4 +4,4 @@
 - Binance 数据源的独立维护进程入口在 [market_data/sources/binance/src/bin](../market_data/sources/binance/src/bin/)；对应 crate 的 `Cargo.toml` 显式列出 binary name。
 - `backtest_cli`、`api_server`、`mcp_server` 仅为可能的未来拆分方向，目前没有对应可执行目标。
 
-服务当前路由仍由 `interfaces/api/http` 负责；不要假定 MCP、WebSocket 或 gRPC 已部署独立服务。
+服务当前路由仍由 `gateway/api` 负责；不要假定 MCP、WebSocket 或 gRPC 已部署独立服务。

@@ -9,24 +9,23 @@
 | `engine/market_data/` | 行情采集、数据质量、历史 Catalog、Feed、数据处理 |
 | `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
 | `engine/portfolio/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
-| `engine/accounting/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
+| `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
 | `engine/connectivity/` | 交易所协议与外部请求/状态适配 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
-| `engine/research/` | 研究签名授权与作用域校验；由 `application/research/` 原样迁入，Cargo 包名保持 `seealpha-research` |
 
 ## 规划中的业务领域（当前无同名源码目录）
 
 | 规划目录 | 目标职责 | 当前归属 |
 | --- | --- | --- |
-| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/core/`、`engine/application/runtime/`、`engine/connectivity/venue/` |
-| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/application/runtime/`、`engine/connectivity/venue/`、`engine/accounting/ledger/` |
+| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/`、`engine/runtime/`、`engine/connectivity/venue/` |
+| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/connectivity/venue/`、`engine/ledger/` |
 
 不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
 
 ## 应用和对外边界
 
-- `engine/application/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
-- `engine/interfaces/`：HTTP v2、Research v1/MCP-compatible 接口与输入输出、认证
+- `engine/runtime/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
+- `engine/gateway/`：对外协议入口；`api/` 为 HTTP API crate，内部 `src/research/` 负责研究签名授权与范围校验；`mcp/` 为复用现有 HTTP 服务的 MCP 协议模块，不增加独立进程或监听端口
 - `engine/apps/`：Engine 主程序和其他可执行入口
 
 ## 工程设施与资产

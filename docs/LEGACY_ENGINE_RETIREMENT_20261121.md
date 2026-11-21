@@ -1,6 +1,6 @@
 # Legacy Engine Python retirement (2026-11-21)
 
-This cleanup removes the dormant `engine/` package and obsolete Python market helpers (`core/market/`, `core/option_records.py`, `core/paths.py`). Rust crates already own the application-level responsibilities: `market_data/market`, `market_data/catalog`, `accounting/ledger`, `application/runtime`, `alpha/strategy`, `interfaces/api/http`.
+This cleanup removes the dormant `engine/` package and obsolete Python market helpers (`core/market/`, `core/option_records.py`, `core/paths.py`). Rust crates already own the application-level responsibilities: `market_data/market`, `market_data/catalog`, `accounting/ledger`, `application/runtime`, `alpha/strategy`, `gateway/api`.
 
 Removed Python tests under `tests/engine/`, `tests/feed/`, `tests/pipeline/`, the obsolete Nautilus parity fixture script, historical Python benchmark runner, unused HTTP smoke script, `nautilus_support.py`, and the nonfunctional `legacy-python-parity.yml` workflow. Historical sources remain in Git history. The Rust tests are not asserted to cover every deleted legacy test case.
 

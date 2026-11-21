@@ -8,11 +8,10 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 | [strategy](strategy/) | 策略、信号与目标发布 |
 | [portfolio](portfolio/) | 组合、资金与目标仓位 |
 | [connectivity](connectivity/) | 交易所通信 |
-| [accounting](accounting/) | 账户与账本事实 |
+| [ledger](ledger/) | 账户与账本事实及持久化 |
 | [backtest](backtest/) | 历史回放与模拟 |
-| [research](research/) | 研究授权 |
-| [application](application/) | 跨领域用例编排 |
-| [interfaces](interfaces/) | HTTP 与研究接口 |
+| [runtime](runtime/) | 跨领域用例编排 |
+| [gateway](gateway/) | HTTP API、MCP 网关与研究授权 |
 | [apps](apps/) | 可执行入口 |
 
 规划中的 `risk/` 和 `execution/` 暂未独立实现，不创建空目录。详见 [领域布局](../docs/architecture/DOMAIN_LAYOUT.md) 和 [代码导航](../docs/architecture/MODULE_MAP.md)。
