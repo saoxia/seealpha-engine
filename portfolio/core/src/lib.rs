@@ -259,13 +259,19 @@ mod tests {
     #[test]
     fn target_holding_matches_legacy_weight_and_quantity_semantics() {
         let weight = TargetHolding::new("ETHUSDT", None, Some(Decimal::new(-25, 2))).unwrap();
-        assert_eq!(weight.signed_quantity(Decimal::from(8)).unwrap(), Decimal::from(-2));
+        assert_eq!(
+            weight.signed_quantity(Decimal::from(8)).unwrap(),
+            Decimal::from(-2)
+        );
         assert_eq!(
             weight.signed_quantity(Decimal::ZERO).unwrap_err(),
             TargetHoldingError::Allocation
         );
         let absolute = TargetHolding::new("ETHUSDT", Some(Decimal::new(125, 2)), None).unwrap();
-        assert_eq!(absolute.signed_quantity(Decimal::from(8)).unwrap(), Decimal::new(125, 2));
+        assert_eq!(
+            absolute.signed_quantity(Decimal::from(8)).unwrap(),
+            Decimal::new(125, 2)
+        );
         assert_eq!(
             absolute.signed_quantity(Decimal::ZERO).unwrap_err(),
             TargetHoldingError::Allocation
