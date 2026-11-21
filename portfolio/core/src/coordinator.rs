@@ -1,7 +1,8 @@
 //! Offline portfolio coordination. No venue I/O or trading authorization.
 //! Orders are intents: callers must durably pre-register any external command.
 use crate::{
-    MemberTarget, PortfolioError, execution_delta, net_signed_quantity, quantize_toward_zero,
+    MemberTarget, PortfolioError, TargetHolding, TargetHoldingError, execution_delta,
+    net_signed_quantity, quantize_toward_zero,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::Signed;
@@ -122,6 +123,8 @@ pub enum CoordinatorError {
     Frozen,
     #[error(transparent)]
     Portfolio(#[from] PortfolioError),
+    #[error(transparent)]
+    Target(#[from] TargetHoldingError),
 }
 fn valid_qty(x: Decimal) -> bool {
     x >= Decimal::ZERO
@@ -151,6 +154,23 @@ impl Coordinator {
         self.members.entry(id.to_owned()).or_default();
         Ok(())
     }
+    /// Resolve a strategy's absolute or weighted holding in Rust before
+    /// publishing it to the coordinator. This replaces Python-side sizing
+    /// for callers adopting this entrypoint, without changing venue I/O.
+    ///
+    /// Validation and risk-exit checks finish before any state mutation.
+    pub fn report_holding(
+        &mut self,
+        id: &str,
+        holding: &TargetHolding,
+        allocation: Decimal,
+        risk_exit: bool,
+    ) -> Result<(), CoordinatorError> {
+        self.ensure_active()?;
+        let signed = holding.signed_quantity(allocation)?;
+        self.report_target(id, signed, risk_exit)
+    }
+
     pub fn report_target(
         &mut self,
         id: &str,
@@ -257,13 +277,15 @@ impl Coordinator {
     }
     pub fn flatten(&mut self, member: &str) -> Result<(), CoordinatorError> {
         self.ensure_active()?;
-        self.orders.retain(|_, o| o.member_id != member);
+        // Validate membership before discarding any resting orders. A failed
+        // request must never partially mutate the coordinator's state.
         let book = self
             .members
             .get_mut(member)
             .ok_or(CoordinatorError::NotFound)?;
         book.explicit = Some(Decimal::ZERO);
         book.risk_exit = true;
+        self.orders.retain(|_, o| o.member_id != member);
         Ok(())
     }
     fn ensure_active(&self) -> Result<(), CoordinatorError> {

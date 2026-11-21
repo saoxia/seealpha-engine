@@ -188,6 +188,10 @@ pub struct HoldingPublication {
 pub enum HoldingReplayError {
     #[error("mixed instruments cannot be netted into one position")]
     MixedInstruments,
+    #[error("bar indices must be nondecreasing")]
+    BarOrder,
+    #[error("same-bar publications must share a positive close price")]
+    BarPrice,
     #[error(transparent)]
     Target(#[from] TargetHoldingError),
     #[error(transparent)]
@@ -221,6 +225,83 @@ pub fn replay_holdings(
         });
     }
     replay_targets(&resolved, position, risk_limit, increment).map_err(Into::into)
+}
+
+/// One target publication with its source bar index. All publications from
+/// the same bar are netted before a paper trade can occur.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedHoldingPublication {
+    pub bar_index: usize,
+    pub publication: HoldingPublication,
+}
+
+/// Replay bar-synchronous strategy targets without artificial same-bar churn.
+///
+/// Validate the entire batch before creating fills. Input must be in
+/// nondecreasing bar order, with exactly the same close for a shared bar.
+/// Within a bar, the last target from each member wins.
+pub fn replay_holdings_by_bar(
+    publications: &[IndexedHoldingPublication],
+    position: Decimal,
+    risk_limit: Decimal,
+    increment: Decimal,
+) -> Result<(Vec<PaperFill>, Decimal), HoldingReplayError> {
+    use std::collections::BTreeMap;
+
+    let mut symbol: Option<&str> = None;
+    let mut previous_bar: Option<usize> = None;
+    let mut batch_price: Option<Decimal> = None;
+    let mut members = BTreeMap::<String, Decimal>::new();
+    let mut net_publications = Vec::new();
+
+    let flush = |members: &BTreeMap<String, Decimal>,
+                 price: Decimal,
+                 output: &mut Vec<TargetPublication>|
+     -> Result<(), HoldingReplayError> {
+        let mut net = Decimal::ZERO;
+        for quantity in members.values() {
+            net = net.checked_add(*quantity).ok_or(PortfolioError::Overflow)?;
+        }
+        output.push(TargetPublication {
+            member_id: "__bar_aggregate__".into(),
+            quantity: net,
+            price,
+        });
+        Ok(())
+    };
+
+    for item in publications {
+        let p = &item.publication;
+        match symbol {
+            Some(first) if first != p.holding.symbol => {
+                return Err(HoldingReplayError::MixedInstruments);
+            }
+            None => symbol = Some(&p.holding.symbol),
+            _ => {}
+        }
+        if previous_bar.is_some_and(|prior| item.bar_index < prior) {
+            return Err(HoldingReplayError::BarOrder);
+        }
+        if p.price <= Decimal::ZERO {
+            return Err(HoldingReplayError::BarPrice);
+        }
+        if previous_bar == Some(item.bar_index) && batch_price != Some(p.price) {
+            return Err(HoldingReplayError::BarPrice);
+        }
+        // Resolve even if the member will be overwritten later in the bar:
+        // an invalid earlier publication must not be silently accepted.
+        let quantity = p.holding.signed_quantity(p.allocation)?;
+        if previous_bar.is_some_and(|prior| prior != item.bar_index) {
+            flush(&members, batch_price.expect("nonempty previous bar"), &mut net_publications)?;
+        }
+        previous_bar = Some(item.bar_index);
+        batch_price = Some(p.price);
+        members.insert(p.member_id.clone(), quantity);
+    }
+    if let Some(price) = batch_price {
+        flush(&members, price, &mut net_publications)?;
+    }
+    replay_targets(&net_publications, position, risk_limit, increment).map_err(Into::into)
 }
 
 /// Walk absolute target publications in time order and emit paper deltas.

@@ -2,7 +2,7 @@ use crate::{Runtime, RuntimeError, map_ledger, map_strategy};
 use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
-use seealpha_portfolio::{PaperFill, TargetPublication, replay_targets};
+use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
 use seealpha_strategy::{
     AccountScope, HostCommand, IssuedStrategy, Publication, StrategyBar, digest_dir, run_host,
     run_issued_host, sha256_hex,
@@ -202,12 +202,13 @@ impl Runtime {
             }
             let run = outcome.map_err(map_strategy)?;
             let limit = decimal_field(&run.prepared, "risk_limit")?;
+            let allocation = allocation_field(&run.prepared)?;
             risk_limit = Some(match risk_limit {
                 Some(current) => current.min(limit),
                 None => limit,
             });
             for publication in run.publications {
-                tagged.push((strategy.member_id.clone(), publication));
+                tagged.push((strategy.member_id.clone(), publication, allocation));
             }
         }
         let risk_limit =
@@ -220,23 +221,35 @@ impl Runtime {
         });
         let mut publications = Vec::with_capacity(tagged.len());
         let mut views = Vec::with_capacity(tagged.len());
-        for (member, publication) in &tagged {
+        for (member, publication, allocation) in &tagged {
             let price = klines
                 .get(publication.bar_index)
                 .ok_or_else(|| RuntimeError::Conflict("策略公布了无效的 K 线位置。".into()))?
                 .close;
-            let quantity = publication
-                .quantity
-                .parse::<Decimal>()
-                .map_err(|_| RuntimeError::Conflict("目标数量无效。".into()))?;
-            publications.push(TargetPublication {
-                member_id: member.clone(),
-                quantity,
-                price,
+            let quantity = if publication.quantity.is_empty() {
+                None
+            } else {
+                Some(publication.quantity.parse::<Decimal>()
+                    .map_err(|_| RuntimeError::Conflict("目标数量无效。".into()))?)
+            };
+            let weight = publication.weight.as_deref().map(|value| {
+                value.parse::<Decimal>()
+                    .map_err(|_| RuntimeError::Conflict("目标权重无效。".into()))
+            }).transpose()?;
+            let holding = TargetHolding::new(&request.snapshot.symbol, quantity, weight)
+                .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
+            publications.push(IndexedHoldingPublication {
+                bar_index: publication.bar_index,
+                publication: HoldingPublication {
+                    member_id: member.clone(),
+                    holding,
+                    allocation: *allocation,
+                    price,
+                },
             });
             views.push(publication_view(publication));
         }
-        let (fills, ending) = replay_targets(
+        let (fills, ending) = replay_holdings_by_bar(
             &publications,
             starting_position,
             risk_limit,
@@ -342,12 +355,33 @@ fn decimal_field(value: &Value, field: &str) -> Result<Decimal, RuntimeError> {
         .map_err(|_| RuntimeError::Conflict("策略风险额度无效。".into()))
 }
 
+fn allocation_field(value: &Value) -> Result<Decimal, RuntimeError> {
+    let allocation = value
+        .get("allocation")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RuntimeError::Conflict("策略缺少分配数量。".into()))?
+        .parse::<Decimal>()
+        .map_err(|_| RuntimeError::Conflict("策略分配数量无效。".into()))?;
+    if allocation <= Decimal::ZERO {
+        return Err(RuntimeError::Conflict("策略分配数量无效。".into()));
+    }
+    Ok(allocation)
+}
+
 fn publication_view(publication: &Publication) -> Value {
-    json!({
-        "symbol": publication.symbol,
-        "quantity": publication.quantity,
-        "bar_index": publication.bar_index,
-    })
+    if let Some(weight) = &publication.weight {
+        json!({
+            "symbol": publication.symbol,
+            "weight": weight,
+            "bar_index": publication.bar_index,
+        })
+    } else {
+        json!({
+            "symbol": publication.symbol,
+            "quantity": publication.quantity,
+            "bar_index": publication.bar_index,
+        })
+    }
 }
 
 fn fill_view(fill: &PaperFill) -> Value {
@@ -450,6 +484,119 @@ mod tests {
         assert_eq!(replay["replay"], true);
         assert_eq!(runtime.ledger.order_count("dev", "paper").unwrap(), orders);
         let _ = std::fs::remove_dir_all(state);
+    }
+
+    #[test]
+    fn weighted_python_host_paper_session_is_native_and_idempotent() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let state = std::env::temp_dir().join(format!(
+            "seealpha-weighted-paper-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let package = state.join("weighted_strategy");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("seealpha-package.json"),
+            r#"{"format":1,"name":"weighted_paper","version":"1.0","entry_point":"strategy:WeightedStrategy"}"#,
+        ).unwrap();
+        std::fs::write(
+            package.join("strategy.py"),
+            r#"from decimal import Decimal
+
+def prepare(parameters):
+    return {"symbol": "ETHUSDT", "allocation": "2", "risk_limit": "5"}
+
+class WeightedStrategy:
+    def __init__(self, config):
+        self.sent = False
+    def on_start(self):
+        pass
+    def on_bar(self, bar):
+        if not self.sent:
+            self.publish(symbol="ETHUSDT", weight=Decimal("0.5"))
+            self.sent = True
+"#,
+        ).unwrap();
+        let config = Config {
+            host: "127.0.0.1".into(),
+            port: 0,
+            auth_mode: crate::AuthMode::None,
+            token: String::new(),
+            state_dir: state.join("ledger"),
+            project: root,
+            tenant_id: None,
+            tenant_purpose: None,
+            research_signing_key: None,
+            research_mcp_enabled: false,
+            venue_base: None,
+            python: PathBuf::from("python3"),
+        };
+        let runtime = Runtime::open(&config).unwrap();
+        runtime.ensure_tenant("dev", "development", "active").unwrap();
+        let request = PaperRequest {
+            tenant_id: "dev".into(),
+            account_id: "weighted-paper".into(),
+            snapshot: snapshot(),
+            strategies: vec![StrategyInput {
+                member_id: "weighted".into(),
+                package: PackageBody::Directory(package),
+                parameters: json!({}),
+            }],
+            request_id: Some("weighted-request".into()),
+        };
+        let report = runtime.run_paper(request.clone()).unwrap();
+        assert_eq!(report["venue"], "paper");
+        assert_eq!(report["exchange_orders"], 0);
+        assert_eq!(report["publications"][0]["weight"], "0.5");
+        assert!(report["publications"][0].get("quantity").is_none());
+        assert_eq!(report["ending_position"].as_str().unwrap().parse::<Decimal>().unwrap(), Decimal::ONE);
+        assert_eq!(report["paper_fills"].as_array().unwrap().len(), 1);
+        assert_eq!(report["paper_fills"][0]["side"], "buy");
+        assert_eq!(report["paper_fills"][0]["quantity"].as_str().unwrap().parse::<Decimal>().unwrap(), Decimal::ONE);
+        let before = runtime.ledger.order_count("dev", "weighted-paper").unwrap();
+        assert_eq!(before, 1);
+        let repeated = runtime.run_paper(request).unwrap();
+        assert_eq!(repeated["replay"], true);
+        assert_eq!(runtime.ledger.order_count("dev", "weighted-paper").unwrap(), before);
+        let _ = std::fs::remove_dir_all(state);
+    }
+
+    #[test]
+    fn publication_view_preserves_quantity_and_weight_protocols() {
+        let quantity = Publication {
+            symbol: "ETHUSDT".into(),
+            quantity: "1.25".into(),
+            weight: None,
+            bar_index: 2,
+        };
+        let weight = Publication {
+            symbol: "ETHUSDT".into(),
+            quantity: String::new(),
+            weight: Some("-0.5".into()),
+            bar_index: 2,
+        };
+        assert_eq!(publication_view(&quantity),
+            json!({"symbol":"ETHUSDT","quantity":"1.25","bar_index":2}));
+        assert_eq!(publication_view(&weight),
+            json!({"symbol":"ETHUSDT","weight":"-0.5","bar_index":2}));
+    }
+
+    #[test]
+    fn paper_allocation_validation_rejects_zero_missing_and_invalid() {
+        assert_eq!(allocation_field(&json!({"allocation":"2.5"})).unwrap(),
+            Decimal::new(25, 1));
+        for prepared in [
+            json!({}),
+            json!({"allocation":"0"}),
+            json!({"allocation":"-1"}),
+            json!({"allocation":"not-a-decimal"}),
+        ] {
+            assert!(allocation_field(&prepared).is_err());
+        }
     }
 
     fn snapshot() -> MarketSnapshot {
