@@ -4,6 +4,12 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 
 > **不兼容变更 / 未测试**：原 Python ZIP 策略包、Python 目录策略和 NautilusTrader Python Strategy 不再执行。已有策略不会自动转换为 Rust；需要以当前支持的 Rust 内置策略清单重新下发。此分支按要求没有执行编译、测试、Docker 构建或端到端验收，不应据此判断生产就绪。真实交易所订单、衍生品和历史数据功能的完整等价性也未得到证明。
 
+## 技术定位：构建在 NautilusTrader 之上
+
+SeeAlpha 的目标是复用 NautilusTrader 的原生交易所连接、事件与订单生命周期、行情、通用执行/风控和回测能力；SeeAlpha 只增加租户/授权、组合预算、不可变交易证据及确有缺口的产品功能。**不另建一套通用交易引擎或适配器框架。**
+
+**当前实现尚未达到这一目标。** 现有 Rust Workspace 尚未直接依赖 NautilusTrader；`engine/connectivity/venue` 中仍存在自研 Binance REST 连接器，`engine/market_data/sources/binance` 也存在自研接入。这些属于待迁移代码，不能被解释为已经原生集成。先做版本锁定、功能差异审计与离线等价验证，再收缩、替换重复实现；本次架构约束不改变下单行为或开放真实交易。详见 [Nautilus 原生能力优先复用及迁移门禁](docs/architecture/NAUTILUS_REUSE.md)。
+
 ## 源码与工程结构
 
 业务源码统一放在 [engine/](engine/)。`docker/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 `engine/` 并列。Rust 测试放在各 crate 的 `src/` 或 `tests/`，不再保留空的根级 Python `tests/`。根目录 `Cargo.toml` 管理全部 16 个 Rust Workspace 成员。

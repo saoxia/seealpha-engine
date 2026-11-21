@@ -1,3 +1,11 @@
+//! Legacy SeeAlpha Binance REST connector (migration-only, NOT the target architecture).
+//!
+//! NautilusTrader is the upstream owner for supported Spot/Futures connectivity,
+//! execution and order lifecycle. Do not extend this crate with duplicate
+//! general-purpose Binance functionality. Retain existing compatibility and
+//! fail-closed order-safety behavior until version-pinned parity is verified.
+//! See docs/architecture/NAUTILUS_REUSE.md.
+//!
 //! Signed Binance REST connector.
 //!
 //! Callers pass the base URL. Nothing in this crate selects a production host.

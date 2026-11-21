@@ -10,9 +10,13 @@
 | `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
 | `engine/portfolio/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
 | `engine/accounting/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
-| `engine/connectivity/` | 交易所协议与外部请求/状态适配 |
+| `engine/connectivity/` | **迁移中的旧 Binance 自研连接层**；目标直接复用 NautilusTrader 原生交易所客户端，仅保留证实缺失的薄扩展，不建立第二套通用适配器 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
 | `engine/research/` | 研究签名授权与作用域校验；由 `application/research/` 原样迁入，Cargo 包名保持 `seealpha-research` |
+
+## 原生能力归属约束
+
+NautilusTrader 的通用数据、交易所协议、订单/执行、回测与事件模型是优先选择；SeeAlpha 领域目录只保留业务增量。领域名不等于允许重复开发同名引擎。历史自研实现须在锁定版本的上游能力核验、离线行为对照和安全恢复验收后逐步退役。当前尚无 NautilusTrader crate 依赖，也不新增空 `integration`、`adapters` 或第二套 `VenueAdapter` Trait。详见 [Nautilus 复用边界](NAUTILUS_REUSE.md)。
 
 ## 规划中的业务领域（当前无同名源码目录）
 

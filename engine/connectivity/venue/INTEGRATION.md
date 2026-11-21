@@ -1,5 +1,7 @@
 # seealpha-venue：订单安全门禁与集成契约
 
+> **迁移状态（2026-11-21）**：本 crate 是旧 Binance 自研 REST 实现，不是 SeeAlpha 长期目标。Spot/Futures 的通用接入应复用 NautilusTrader 锁定版本；本文件仅记录遗留安全约束，不能作为继续自建通用连接器的授权。参见 [Nautilus 复用边界](../../../docs/architecture/NAUTILUS_REUSE.md)。当前并未完成 Nautilus Rust 原生依赖接入或实盘等价验证。
+
 > 仅本 crate 的独立增量。**没有接入 Runtime/Ledger，也未开启实盘。**
 > Cargo、Clippy、跨 crate、Python 对照与端到端验收尚未实际执行，不能标为通过。
 

@@ -6,6 +6,17 @@
 
 当前架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，代码导航见 [docs/architecture/MODULE_MAP.md](docs/architecture/MODULE_MAP.md)。如文档相互矛盾，以当前 Rust 代码和测试为实际实现依据，同时修订不一致的现行说明。
 
+## NautilusTrader 优先原则（所有新开发和重构均须遵守）
+
+SeeAlpha 是 **NautilusTrader 之上的业务扩展层**，不是另一个通用交易引擎。在添加行情、交易所协议、订单状态、执行、风控、回测、Catalog 或模型能力之前：
+
+1. 首先在**锁定的 NautilusTrader 版本及源码**核对已提供的可调用 Rust API、产品覆盖、执行语义、限制与许可证，不能以 nightly/最新文档代替当前版本证据。
+2. 原生已经提供且满足需求的功能直接调用；不得重新编写交易所 REST/WS、签名、订单生命周期、通用撮合、通用数据模型、重连/对账等同类实现；也不得为了“未来扩展”创建通用 Adapter Trait、多余 façade、包装 crate 或空目录。
+3. 原生功能存在局部缺口时，只实现经过验证的**最小差异**，保持单一权威订单/成交/持仓状态；将原因、上游版本、退出条件及复用计划记录在 [Nautilus 复用边界](docs/architecture/NAUTILUS_REUSE.md)。
+4. SeeAlpha 独有的租户隔离、授权、组合级风险预算、不可变订单意图、审计、行情证据完整性可以保留，但它们不能变相重建 Nautilus 的通用引擎。
+5. 旧 `engine/connectivity/venue` 是迁移中的 Binance 自研实现，**不是目标连接架构**。禁止在该处继续扩展 Nautilus 已覆盖的 Spot/期货常规协议能力；不能在原生接入并通过对照测试前直接删除旧代码或启用实盘。
+6. 对于任何“自研 vs 原生”争议，优先减少总代码和运行状态来源，而不是追求目录层次。改变后用离线/合成证据验证，不宣称未运行的测试通过。
+
 ## 边界和安全
 
 - `engine/interfaces/api/http` 持有 HTTP v2 与研究协议边界；`engine/application/runtime` 负责编排；行情、策略、组合、账本、回测与交易所连接分别归属对应领域 crate。
