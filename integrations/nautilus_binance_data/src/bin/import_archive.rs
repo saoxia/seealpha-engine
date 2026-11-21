@@ -499,7 +499,7 @@ mod tests {
         let (archive, hash) = fixture_archive(&name, csv);
         let req = Request::parse("futures_um", "aggTrades", "BTCUSDT", day, &hash, 8, 8).unwrap();
         assert!(scan(&archive, &req, |_| Ok(())).is_err());
-        verify_zip_hash(&archive, &hash, 8, 8).unwrap();
+        verify_zip_hash(&archive, &hash).unwrap();
         fs::remove_file(archive).unwrap();
     }
 
