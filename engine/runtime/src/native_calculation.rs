@@ -2,7 +2,7 @@
 //! native, separately persisted derived rollup cache. No exchange IO.
 use crate::{Runtime, RuntimeError};
 use seealpha_catalog::CatalogBar;
-use seealpha_feed::persisted_rollup::{MinuteBar, PersistentRollups};
+use seealpha_catalog::persisted_rollup::{MinuteBar, PersistentRollups};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 

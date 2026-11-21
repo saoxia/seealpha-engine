@@ -6,7 +6,7 @@
 
 | 目录 | 职责与实施状态 |
 | --- | --- |
-| `engine/pipeline/` | 整个行情服务：Nautilus 实时节点、补充数据源、数据完整性验证、Feed/Catalog 访问 |
+| `engine/pipeline/` | 整个行情服务：Nautilus 实时节点、补充数据源、数据完整性验证、Catalog 访问 |
 | `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
 | `engine/portfolio/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
 | `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
