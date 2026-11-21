@@ -106,7 +106,7 @@ pub(super) fn check_response(
             if let Some(weight) = &publication.weight {
                 let amount = Decimal::from_str(weight)
                     .map_err(|_| invalid("目标权重必须是有限 Decimal。"))?;
-                if !(-Decimal::ONE..=Decimal::ONE).contains(&amount) {
+                if !amount.is_unit_weight() {
                     return Err(invalid("目标权重必须在 -1 到 1 之间。"));
                 }
             } else {
