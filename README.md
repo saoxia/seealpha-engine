@@ -1,6 +1,6 @@
 # SeeAlpha Engine
 
-SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。旧 Python Engine 尚保留部分源文件供后续逐目录迁移，但 `engine/market_data/` 已删除，旧运行时不再可执行；Python 策略宿主仍由 Rust Engine 单独调用。
+SeeAlpha 的独立量化引擎。**默认运行进程**是 Rust 二进制 `seealpha-engine`。旧 Python Engine 尚保留部分源文件供后续逐目录迁移，`engine/market_data/` 和 `engine/api/` 已删除，旧运行时不再可执行；Python 策略宿主仍由 Rust Engine 单独调用。
 
 Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlpha-Engine-Contract-Version: 2`。`core/engine_contracts.py` 与 `core/trading_contracts.py` 必须与 [saoxia/SeeAlpha](https://github.com/saoxia/SeeAlpha) 逐字节一致。
 
@@ -16,13 +16,13 @@ Platform 通过 HTTP v2 调用本引擎，请求和成功响应使用 `X-SeeAlph
 
 ## 尚未迁移完成的 Python 功能
 
-旧 Python Engine 仅供参考与后续逐目录删除，不再提供可运行的兼容入口。`engine/market_data/` 已从当前版本移除，原 Python API、回测及任务队列中仍存在该模块导入；这些代码不能被当作 Rust Engine 的运行时回退。过往源码可通过 Git 历史查阅，迁移清单见 [market_data Rust 退役记录](docs/RUST_MARKET_DATA_CUTOVER_20261121.md)。
+旧 Python Engine 仅供参考与后续逐目录删除，不再提供可运行的兼容入口。`engine/market_data/` 与 `engine/api/` 已从当前版本移除。旧 Python 回测和任务队列中仍存在对已删除模块的引用；这些代码不能被当作 Rust Engine 的运行时回退。`python -m engine` 只提示使用 Rust 主入口，不再启动 Python HTTP 服务。过往源码可通过 Git 历史查阅，迁移清单见 [market_data Rust 退役记录](docs/RUST_MARKET_DATA_CUTOVER_20261121.md)。
 
 ## Rust 集中迁移（功能等价尚未完成）
 
 本轮已在 Rust 原生 Engine 中补齐一批账户状态、持久化行情配置/任务、策略读侧订阅、严格历史 K 线读取和已发行策略的本地回测路径，并接入独立 Binance 产品源的显式试验性管理。新数据源在完成 REST 衔接/时钟/历史证据前始终返回 `data_ready=false`，**不会**向策略提供已就绪的实盘行情保证。
 
-旧 Python Engine 目前因 `engine/market_data/` 已删除而不再可执行。详细实现边界、未迁移功能和最终验收清单见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)。GitHub Actions 仍暂停，不应把当前 Rust 分支直接用于实盘。
+旧 Python Engine 的 `engine/api/` 已删除，HTTP 由 `interfaces/api/http/` 中的 Axum 实现承担；旧 Python Engine 不再可执行。详细实现边界、未迁移功能和最终验收清单见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)。GitHub Actions 仍暂停，不应把当前 Rust 分支直接用于实盘。
 
 ## Rust 数据底座：对齐 Python Nautilus v2 Catalog
 
