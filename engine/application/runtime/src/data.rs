@@ -504,7 +504,8 @@ impl Runtime {
         if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(bad("已验证下载记录缺少有效的 SHA-256。"));
         }
-        if download["result"]["archive"] != spec.remote_path() {
+        let archive_source = spec.remote_path();
+        if download["result"]["archive"].as_str() != Some(archive_source.as_str()) {
             return Err(bad("归档来源不匹配，拒绝导入。"));
         }
 
@@ -534,7 +535,8 @@ impl Runtime {
         if !meta.is_file() || meta.file_type().is_symlink() {
             return Err(bad("历史 ZIP 必须是普通文件。"));
         }
-        if download["result"]["path"].as_str() != Some(archive.to_string_lossy().as_ref()) {
+        let expected_path = archive.to_string_lossy().to_string();
+        if download["result"]["path"].as_str() != Some(expected_path.as_str()) {
             return Err(bad("归档路径与原始下载证明不匹配。"));
         }
 
@@ -602,7 +604,7 @@ impl Runtime {
         if report["catalog_committed"] != true
             || report["data_ready"] != false
             || report["coverage_complete"] != false
-            || report["sha256"] != sha
+            || report["sha256"].as_str() != Some(sha)
             || report["price_precision"] != payload["price_precision"]
             || report["size_precision"] != payload["size_precision"]
             || report["instrument_id"].as_str().is_none()
