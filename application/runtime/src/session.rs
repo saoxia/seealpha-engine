@@ -2,7 +2,7 @@ use crate::{Runtime, RuntimeError, map_ledger, map_strategy};
 use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
-use seealpha_portfolio::{HoldingPublication, PaperFill, TargetHolding, replay_holdings};
+use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
 use seealpha_strategy::{
     AccountScope, HostCommand, IssuedStrategy, Publication, StrategyBar, digest_dir, run_host,
     run_issued_host, sha256_hex,
@@ -238,15 +238,18 @@ impl Runtime {
             }).transpose()?;
             let holding = TargetHolding::new(&request.snapshot.symbol, quantity, weight)
                 .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
-            publications.push(HoldingPublication {
-                member_id: member.clone(),
-                holding,
-                allocation: *allocation,
-                price,
+            publications.push(IndexedHoldingPublication {
+                bar_index: publication.bar_index,
+                publication: HoldingPublication {
+                    member_id: member.clone(),
+                    holding,
+                    allocation: *allocation,
+                    price,
+                },
             });
             views.push(publication_view(publication));
         }
-        let (fills, ending) = replay_holdings(
+        let (fills, ending) = replay_holdings_by_bar(
             &publications,
             starting_position,
             risk_limit,
