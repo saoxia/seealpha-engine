@@ -6,24 +6,6 @@
 pub mod conditional;
 #[path = "account/evidence.rs"]
 pub mod evidence;
-pub mod lifecycle {
-    // Historical API compatibility while Runtime is moved off seealpha-venue.
-    pub use seealpha_execution::lifecycle::{OrderPhase, VerifiedOrderState};
-}
-pub mod option_trades {
-    // Compatibility for the previous public parsing API. Only one parser exists.
-    use super::VenueError;
-    use serde_json::Value;
-
-    pub fn normalize_option_trades(
-        symbol: &str,
-        order_id: &str,
-        rows: &[Value],
-    ) -> Result<Vec<Value>, VenueError> {
-        seealpha_binance_options::normalize_option_trades(symbol, order_id, rows)
-            .map_err(|_| VenueError::Unconfirmed)
-    }
-}
 #[path = "orders/guard.rs"]
 pub mod order_guard;
 #[path = "account/reconciliation.rs"]
