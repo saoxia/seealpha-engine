@@ -780,7 +780,7 @@ mod tests {
             registered: bool,
             outcome: Option<RecordedOutcome>,
         }
-        impl IntentJournal for MockDurable {
+        impl IntentJournal<IntentRecord, VenueError> for MockDurable {
             fn admit(&mut self, _: &IntentRecord) -> Result<Admission, VenueError> {
                 if self.registered {
                     return Ok(Admission::Seen);

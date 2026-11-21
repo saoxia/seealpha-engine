@@ -109,7 +109,7 @@ impl<'a> LedgerIntentJournal<'a> {
     }
 }
 
-impl IntentJournal for LedgerIntentJournal<'_> {
+impl IntentJournal<IntentRecord, VenueError> for LedgerIntentJournal<'_> {
     fn admit(&mut self, record: &IntentRecord) -> Result<Admission, VenueError> {
         if !self.valid_identity(record) {
             return Err(VenueError::Unconfirmed);

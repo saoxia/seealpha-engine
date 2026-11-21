@@ -47,6 +47,10 @@
 
 **安全边界：** 旧 Runtime 的 loopback-only 写入门禁未改变；已登记请求状态仍是 Unknown 优先，只有现有签名 REST 成交核查方能提供证据。尚未接入原生 Nautilus 订单事件到 SeeAlpha Ledger；这一删除**不表示生产流式恢复可用**。
 
+## 持久化执行准入协议抽离
+
+`engine/execution/src/admission.rs` 持有唯一的持久化准入、一次外部调用、确认后观察持久化失败关闭协议。旧 `orders/guard.rs` 仍管理 Binance 特有的写请求路由与 ACK 字段规则，但 `PreparedWrite::dispatch` 现在调用 `seealpha_execution::admission::dispatch_once`，不再自行实现发送重试/准入时序。Runtime 的 `LedgerIntentJournal` 直接实现通用 `IntentJournal<IntentRecord, VenueError>`；真正交易权限仍被 loopback-only 门禁限制。
+
 ## 当前原生能力与复用范围
 
 原有 `src/spot/oco.rs`（Spot OCO）、`src/usd_m/conditional.rs`（USD-M Algo）仍保留。Options 成交分页已由独立 `binance-options` 模块唯一实现。旧 `src/options/execution.rs` 仅用于离线原型的 `OptionsExecutor`、`src/options/rules.rs` 中未被运行时引用的测试辅助规则已删除；真实订单仍由 Venue/Runtime 使用预登记门禁处理，`binance-options` 保留实际使用的专属解析与 EAPI 订单参数规则。`engine/execution/src/lifecycle.rs` 提供数量严格校验、终态及单调状态迁移。仍在旧适配器的能力：
