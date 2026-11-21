@@ -80,6 +80,7 @@ jobs:
           echo "=== Cargo.lock changes ==="
           git diff -- Cargo.lock
           echo "=== End of lockfile changes ==="
+          exit 1  # temporary diagnostic; prevent slow compile before lock is committed
       - name: Compile check
         run: cargo check --workspace --all-targets --locked
       # Existing base branch contains unrelated rustfmt debt; retain visibility
