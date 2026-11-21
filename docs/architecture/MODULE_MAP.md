@@ -7,7 +7,7 @@
 | MCP 协议与研究工具 | `engine/gateway/mcp/src/research.rs` | `engine/gateway/api/src/research_v1.rs` 复用授权与任务能力；现有 `/research/mcp` 路由不变 |
 | HTTP 路由、权限和版本 | `engine/gateway/api/src/lib.rs`、`src/routes/` | `parity.rs`、`derivatives.rs`、`research_v1.rs` |
 | Engine 启动与运行配置 | `engine/apps/trading_engine/src/main.rs`、`engine/runtime/src/config.rs` | `gateway/api` |
-| Options 成交、账户证据与 EAPI 订单参数（已抽离） | `engine/connection/binance-options/src/lib.rs` | `src/account.rs`、`src/order.rs`；原 Venue 保留签名通信、持久化门禁与失败关闭 |
+| Options 成交、账户、行权证据及 EAPI 订单参数（已抽离） | `engine/connection/binance-options/src/lib.rs` | `src/account.rs`、`src/settlement.rs`、`src/order.rs`；原 Venue 保留签名通信、持久化门禁与失败关闭 |
 | Binance Spot / USD-M / Options 协议 | `engine/connection/binance/src/` | `spot/`、`usd_m/`、`options/`、`orders/`、`account/`；Cargo 包名及 Rust 公共模块路径保持不变 |
 | 订单发送、重复请求、对账 | `engine/runtime/src/orders.rs` | `order_journal.rs`、`engine/connection/binance`、`ledger` |
 | 回测协调、研究快照 | `engine/runtime/src/research.rs`、`history.rs` | `gateway/api/src/research/`、`engine/backtest` |

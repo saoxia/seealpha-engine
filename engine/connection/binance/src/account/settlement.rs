@@ -55,44 +55,11 @@ pub fn normalize_um_income(rows: &Value, symbol: &str) -> Result<Vec<Value>, Ven
     Ok(result)
 }
 
+/// Compatibility API. Options-specific parsing is now owned by the
+/// dedicated binance-options crate; original error semantics are preserved.
 pub fn normalize_option_exercises(rows: &Value, symbol: &str) -> Result<Vec<Value>, VenueError> {
-    let rows = rows.as_array().ok_or(VenueError::Unconfirmed)?;
-    let mut seen = HashSet::new();
-    let mut result = Vec::new();
-    for row in rows {
-        if row.get("symbol").and_then(Value::as_str) != Some(symbol) {
-            return Err(VenueError::Unconfirmed);
-        }
-        // The exchange exercise record is evidence of an outcome, not an
-        // instruction to generate an additional cash movement.
-        let exercise_id = row
-            .get("id")
-            .or_else(|| row.get("exerciseId"))
-            .and_then(|v| {
-                v.as_str()
-                    .map(str::to_owned)
-                    .or_else(|| v.as_u64().map(|n| n.to_string()))
-            })
-            .filter(|v| !v.is_empty())
-            .ok_or(VenueError::Unconfirmed)?;
-        for field in ["exercisePrice", "quantity", "amount", "fee"] {
-            parse_amount(row.get(field).ok_or(VenueError::Unconfirmed)?)?;
-        }
-        if row
-            .get("createDate")
-            .and_then(Value::as_i64)
-            .is_none_or(|t| t <= 0)
-        {
-            return Err(VenueError::Unconfirmed);
-        }
-        if !seen.insert(exercise_id.clone()) {
-            return Err(VenueError::Unconfirmed);
-        }
-        result.push(json!({"product":"options","symbol":symbol,
-            "exercise_id":exercise_id,"source":"binance_signed_exercise_record",
-            "raw":row,"account_exercise_confirmed":true}));
-    }
-    Ok(result)
+    seealpha_binance_options::normalize_option_exercises(rows, symbol)
+        .map_err(|_| VenueError::Unconfirmed)
 }
 impl VenueClient {
     /// Conservative, explicitly time-bounded funding collection. A full page

@@ -25,6 +25,10 @@
 
 原来 `VenueClient::place_order` 中期权专用的 LIMIT 类型、价格、TIF、`reduceOnly`、`postOnly` 和 `clientOrderId` 参数构造已迁至 `engine/connection/binance-options/src/order.rs`。签名、预登记门禁、未知结果判定和真实下单权限均仍由旧多产品 Venue 持有；此增量不创建新订单发送通道。
 
+## Options 行权证据抽离
+
+旧 `src/account/settlement.rs` 现仅保留签名 `GET /eapi/v1/exerciseRecord`、时间窗口和满页失败关闭，以及兼容公开函数；Options 行权记录解析和去重由 `binance-options/src/settlement.rs` 唯一实现，USD-M 资金费收入逻辑仍保留原位，未重新实现交易所网络能力。
+
 ## 当前原生能力与复用范围
 
 原有 `src/spot/oco.rs`（Spot OCO）、`src/usd_m/conditional.rs`（USD-M Algo）、`src/options/trades.rs`（Options 成交分页）仍保留，不重新实现。旧 `src/options/execution.rs` 仅用于离线原型的 `OptionsExecutor`、`src/options/rules.rs` 中未被运行时引用的测试辅助规则已删除；真实订单仍由 Venue/Runtime 使用预登记门禁处理，`binance-options` 保留实际使用的专属解析与 EAPI 订单参数规则。原有 `src/orders/lifecycle.rs` 提供数量严格校验、终态及单调状态迁移。新增：
