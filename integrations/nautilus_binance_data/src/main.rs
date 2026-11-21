@@ -69,7 +69,7 @@ fn instrument_ids(product: Product, symbols: &str) -> Result<Vec<InstrumentId>> 
                 && symbol
                     .bytes()
                     .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-                && (symbol.ends_with("USDT") || symbol.ends_with("USDC")),
+                ,
             "invalid or unsupported symbol: {symbol:?}"
         );
         let id = product.instrument(symbol);
@@ -214,9 +214,10 @@ mod tests {
 
     #[test]
     fn spot_and_um_use_distinct_native_instrument_ids() {
-        let spot = instrument_ids(Product::Spot, "BTCUSDT,ETHUSDT").unwrap();
+        let spot = instrument_ids(Product::Spot, "BTCUSDT,ETHBTC").unwrap();
         let um = instrument_ids(Product::UsdM, "BTCUSDT,ETHUSDT").unwrap();
         assert_eq!(spot[0].to_string(), "BTCUSDT.BINANCE");
+        assert_eq!(spot[1].to_string(), "ETHBTC.BINANCE");
         assert_eq!(um[0].to_string(), "BTCUSDT-PERP.BINANCE");
         assert_ne!(spot, um);
     }
