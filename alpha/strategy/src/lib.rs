@@ -90,6 +90,35 @@ pub struct StrategyRun {
     pub publications: Vec<Publication>,
 }
 
+/// Inspect an uploaded archive and prepare its parameters through the bounded
+/// strategy host without loading it into the resident Engine process.
+///
+/// This replaces the legacy `engine.strategies.inspect` worker. Preparing
+/// user-authored Python still requires the isolated strategy host; the caller
+/// must provide an approved host executable and interpreter.
+pub fn prepare_archive(
+    bytes: &[u8],
+    python: &Path,
+    host: &Path,
+    parameters: &Value,
+) -> Result<(PackageMetadata, Value), StrategyError> {
+    let metadata = inspect_archive(bytes)?;
+    let archive = issued::StagedArchive::create(bytes)?;
+    let command = HostCommand {
+        python,
+        host,
+        package_dir: None,
+        archive_path: Some(archive.path()),
+        parameters,
+        symbol: "",
+        interval: "1m",
+        bars: &[],
+        op: "prepare",
+    };
+    let result = run_host(&command)?;
+    Ok((metadata, result.prepared))
+}
+
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex_encode(Sha256::digest(bytes))
 }
@@ -571,6 +600,18 @@ fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepare_rejects_an_invalid_archive_before_invoking_python() {
+        let params = serde_json::json!({});
+        let result = prepare_archive(
+            b"not a ZIP",
+            Path::new("not-a-python"),
+            Path::new("not-a-host"),
+            &params,
+        );
+        assert!(matches!(result, Err(StrategyError::Package(_))));
+    }
 
     #[test]
     fn rejects_a_path_that_escapes_the_archive() {
