@@ -1,20 +1,7 @@
 //! Signed order commands. Credentials stay in the request and never enter SQLite.
 use crate::{Runtime, RuntimeError, map_ledger};
-use seealpha_venue::conditional::{UmConditionalIntent, validated_algo_view};
-use seealpha_venue::spot_oco::SpotOcoIntent;
-use seealpha_venue::{Credentials, OrderIntent, Product, VenueClient, VenueError};
+use seealpha_venue::{Credentials, Product, VenueClient};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
-const UNKNOWN: &str = "请求已登记，交易结果待核实。请刷新委托，不要重复提交。";
-const UNCONFIRMED: &str = "交易结果待核实，请刷新委托并按客户订单号核对，不要重复提交。";
-
-fn account_locks() -> &'static Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>> {
-    static LOCKS: OnceLock<Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>> = OnceLock::new();
-    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 pub struct OrderCommand {
     pub tenant_id: String,
@@ -28,12 +15,14 @@ pub struct OrderCommand {
 }
 
 impl Runtime {
+    /// Only the explicit Nautilus-native backend may stage a new order.
+    /// There is deliberately no fallback to the legacy REST sender.
+    /// Native dispatch remains disabled until durable pre-send authorization
+    /// and native execution evidence are accepted end to end.
     pub fn execute_order(&self, command: OrderCommand) -> Result<Value, RuntimeError> {
-        // Migration gate: allow synthetic loopback fixtures only. In particular,
-        // production tenant status must never authorize an external REST write.
-        // This check intentionally precedes all intent/order state mutations.
-        let loopback_only = loopback_fixture_url(&command.venue_base);
-        if !loopback_only {
+        // Preserve the existing fail-closed external-host gate. No real
+        // exchange address is reachable before production cutover.
+        if !loopback_fixture_url(&command.venue_base) {
             return Err(RuntimeError::Conflict(
                 "Rust 实盘订单发送尚未通过验收，禁止访问外部交易所。".into(),
             ));
@@ -42,333 +31,14 @@ impl Runtime {
         if tenant.purpose != "production" {
             return Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into()));
         }
-        // Explicit native backend is staged durably, never dispatched through
-        // the legacy Venue. Production/live host protection above still applies.
-        if let Some(backend) = command.values.get("execution_backend") {
-            if backend.as_str() != Some("nautilus_binance_native") {
-                return Err(RuntimeError::Unprocessable("未知的订单执行后端。".into()));
-            }
-            return crate::native_handoff::stage_native_order_command(self, &command);
-        }
-        if !matches!(command.action.as_str(), "submit" | "cancel") {
-            return Err(RuntimeError::Unprocessable(
-                "交易操作或账户环境不匹配。".into(),
-            ));
-        }
-        let values_env = command
-            .values
-            .get("environment")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if values_env != command.environment {
-            return Err(RuntimeError::Unprocessable(
-                "交易操作或账户环境不匹配。".into(),
-            ));
-        }
-        let request_id = command
-            .values
-            .get("request_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        if request_id.len() != 36 {
-            return Err(RuntimeError::Unprocessable("请求编号无效。".into()));
-        }
-        let symbol = command
-            .values
-            .get("symbol")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        if symbol.is_empty() {
-            return Err(RuntimeError::Unprocessable("合约无效。".into()));
-        }
-        let fingerprint = fingerprint(&command.action, &command.values);
-        let client_order_id = if command.action == "submit" {
-            format!("SA{}", request_id.replace('-', ""))
-        } else {
-            command
-                .values
-                .get("client_order_id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string()
-        };
-        let lock_key = format!(
-            "{}:{}:{}",
-            command.tenant_id, command.account_id, command.environment
-        );
-        let guard = account_guard(&lock_key)?;
-        let _held = guard.try_lock().map_err(|_| {
-            RuntimeError::Conflict("该账户有交易操作正在处理，请稍后核对委托。".into())
-        })?;
-        if let Some(existing) = self
-            .ledger
-            .get_order_request(&command.tenant_id, &command.account_id, &request_id)
-            .map_err(map_ledger)?
+        if command.values.get("execution_backend").and_then(Value::as_str)
+            != Some("nautilus_binance_native")
         {
-            let mut stored: Value = serde_json::from_str(&existing)
-                .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
-            if stored.get("fingerprint").and_then(Value::as_str) != Some(fingerprint.as_str()) {
-                return Err(RuntimeError::Conflict("请求编号已用于另一笔操作。".into()));
-            }
-            if let Some(object) = stored.as_object_mut() {
-                object.insert("replay".into(), Value::Bool(true));
-            }
-            return Ok(stored);
-        }
-        let mut body = json!({
-            "fingerprint": fingerprint,
-            "response": {
-                "request_id": request_id,
-                "client_order_id": client_order_id,
-                "status": "unknown",
-                "order": null,
-                "message": UNKNOWN,
-            },
-            "symbol": symbol,
-            "action": command.action,
-            "environment": command.environment,
-            "product": command.values.get("product").cloned().unwrap_or(Value::Null),
-            "records": [],
-            "ledger_synced": false,
-        });
-        // Validate the instrument and record routing before the only pre-send
-        // immutable UNKNOWN insert. Invalid inputs must not leave a send record.
-        let product = match command.values.get("product").and_then(Value::as_str) {
-            Some("futures_um") => Product::FuturesUm,
-            Some("spot") => Product::Spot,
-            Some("options") => Product::Option,
-            Some(_) => return Err(RuntimeError::Unprocessable("交易产品无效。".into())),
-            None if symbol.ends_with("-PERP") => Product::FuturesUm,
-            None if seealpha_market::options::parse_option_symbol(&symbol).is_ok() => {
-                Product::Option
-            }
-            None => Product::Spot,
-        };
-        if (product == Product::Option
-            && seealpha_market::options::parse_option_symbol(&symbol).is_err())
-            || (product == Product::Spot && symbol.contains('-'))
-            || (product == Product::FuturesUm && symbol.contains('-') && !symbol.ends_with("-PERP"))
-        {
-            return Err(RuntimeError::Unprocessable(
-                "交易合约与产品类型不匹配。".into(),
+            return Err(RuntimeError::Conflict(
+                "旧 Binance REST 订单写入已停用；请使用明确的 Nautilus 原生执行后端。".into(),
             ));
         }
-        let order_type = command
-            .values
-            .get("order_type")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_ascii_uppercase();
-        let conditional = product == Product::FuturesUm
-            && (command.values.get("algo_order").and_then(Value::as_bool) == Some(true)
-                || matches!(
-                    order_type.as_str(),
-                    "STOP"
-                        | "STOP_MARKET"
-                        | "TAKE_PROFIT"
-                        | "TAKE_PROFIT_MARKET"
-                        | "TRAILING_STOP_MARKET"
-                ));
-        let spot_oco = product == Product::Spot
-            && command.values.get("order_list").and_then(Value::as_str) == Some("oco");
-        body["order_list"] = if spot_oco { json!("oco") } else { Value::Null };
-        body["algo_order"] = json!(conditional);
-        // Persist the recovery routing BEFORE the first network write.
-        self.ledger
-            .save_order_request(
-                &command.tenant_id,
-                &command.account_id,
-                &request_id,
-                &body.to_string(),
-            )
-            .map_err(map_ledger)?;
-        let venue = VenueClient::new(&command.venue_base)
-            .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
-        let credentials = Credentials {
-            api_key: command.api_key,
-            secret: command.secret,
-        };
-        let outcome = if spot_oco && command.action == "cancel" {
-            venue.cancel_spot_oco(&credentials, &symbol, &client_order_id)
-        } else if spot_oco {
-            venue.place_spot_oco(
-                &credentials,
-                &SpotOcoIntent {
-                    symbol: symbol.clone(),
-                    side: command.values["side"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_ascii_uppercase(),
-                    quantity: command.values["quantity"].as_str().unwrap_or("").into(),
-                    list_client_order_id: client_order_id.clone(),
-                    above_type: command.values["above_type"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_ascii_uppercase(),
-                    below_type: command.values["below_type"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_ascii_uppercase(),
-                    above_price: command.values["above_price"].as_str().map(str::to_owned),
-                    above_stop_price: command.values["above_stop_price"]
-                        .as_str()
-                        .map(str::to_owned),
-                    below_price: command.values["below_price"].as_str().map(str::to_owned),
-                    below_stop_price: command.values["below_stop_price"]
-                        .as_str()
-                        .map(str::to_owned),
-                    above_time_in_force: command.values["above_time_in_force"]
-                        .as_str()
-                        .map(str::to_owned),
-                    below_time_in_force: command.values["below_time_in_force"]
-                        .as_str()
-                        .map(str::to_owned),
-                },
-            )
-        } else if conditional && command.action == "cancel" {
-            venue.cancel_um_conditional(&credentials, &symbol, &client_order_id)
-        } else if conditional {
-            venue.place_um_conditional(
-                &credentials,
-                &UmConditionalIntent {
-                    symbol: symbol.clone(),
-                    client_algo_id: client_order_id.clone(),
-                    side: command.values["side"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_ascii_uppercase(),
-                    order_type: order_type.clone(),
-                    quantity: command.values["quantity"].as_str().map(str::to_owned),
-                    trigger_price: command.values["trigger_price"].as_str().map(str::to_owned),
-                    limit_price: command.values["price"].as_str().map(str::to_owned),
-                    activate_price: command.values["activate_price"].as_str().map(str::to_owned),
-                    callback_rate: command.values["callback_rate"].as_str().map(str::to_owned),
-                    position_side: command.values["position_side"]
-                        .as_str()
-                        .unwrap_or("BOTH")
-                        .to_ascii_uppercase(),
-                    working_type: command.values["working_type"]
-                        .as_str()
-                        .unwrap_or("CONTRACT_PRICE")
-                        .to_ascii_uppercase(),
-                    time_in_force: command.values["time_in_force"]
-                        .as_str()
-                        .unwrap_or("GTC")
-                        .to_ascii_uppercase(),
-                    reduce_only: command.values["reduce_only"].as_bool().unwrap_or(false),
-                    close_position: command.values["close_position"].as_bool().unwrap_or(false),
-                },
-            )
-        } else if command.action == "cancel" {
-            venue.cancel_order(&credentials, product, &symbol, &client_order_id)
-        } else {
-            venue.place_order(
-                &credentials,
-                &OrderIntent {
-                    product,
-                    symbol: symbol.clone(),
-                    side: command
-                        .values
-                        .get("side")
-                        .and_then(Value::as_str)
-                        .unwrap_or("buy")
-                        .into(),
-                    order_type: command
-                        .values
-                        .get("order_type")
-                        .and_then(Value::as_str)
-                        .unwrap_or("limit")
-                        .into(),
-                    quantity: command
-                        .values
-                        .get("quantity")
-                        .and_then(Value::as_str)
-                        .unwrap_or("0")
-                        .into(),
-                    price: command
-                        .values
-                        .get("price")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    client_order_id: client_order_id.clone(),
-                    reduce_only: command
-                        .values
-                        .get("reduce_only")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    time_in_force: command
-                        .values
-                        .get("time_in_force")
-                        .and_then(Value::as_str)
-                        .unwrap_or("GTC")
-                        .into(),
-                },
-            )
-        };
-        match outcome {
-            Ok(order) => {
-                body["response"]["status"] = json!("completed");
-                body["response"]["order"] = order.clone();
-                body["response"]["message"] = json!(format!(
-                    "交易所订单状态：{}",
-                    order["status"].as_str().unwrap_or("NEW")
-                ));
-                self.ledger
-                    .upsert_order_row(
-                        &command.tenant_id,
-                        &command.account_id,
-                        &command.environment,
-                        &client_order_id,
-                        &order.to_string(),
-                    )
-                    .map_err(map_ledger)?;
-                // Acknowledged or newly opened venue orders are NOT fills.
-                // We must only journal exchange-authored trade IDs from the
-                // authenticated trade-history or user-stream reconciliation.
-                // The previous placeholder fill-{client_order_id} fabricated
-                // executions for NEW and PARTIALLY_FILLED orders.
-                body["records"] = json!([]);
-                self.ledger
-                    .add_event(
-                        &command.tenant_id,
-                        &command.account_id,
-                        "order_acknowledged",
-                        &json!({"client_order_id": client_order_id,
-                            "status": order["status"],
-                            "executed_qty_reported": order["filled"],
-                            "fills_verified": false})
-                        .to_string(),
-                    )
-                    .map_err(map_ledger)?;
-            }
-            Err(VenueError::Rejected(message)) => {
-                body["response"]["status"] = json!("completed");
-                body["response"]["message"] = json!(message);
-            }
-            Err(VenueError::SpotReduceOnly) => {
-                body["response"]["status"] = json!("completed");
-                body["response"]["message"] = json!("现货不支持 Reduce Only。");
-            }
-            Err(VenueError::Unconfirmed)
-            | Err(VenueError::Credentials)
-            | Err(VenueError::Symbol) => {
-                body["response"]["message"] = json!(UNCONFIRMED);
-            }
-        }
-        drop(credentials);
-        // The pre-send request is immutable. Store the confirmed send result as
-        // a separate append-only projection for idempotent GET/replay.
-        self.ledger
-            .append_order_request_view(
-                &command.tenant_id,
-                &command.account_id,
-                &request_id,
-                &body.to_string(),
-            )
-            .map_err(map_ledger)?;
-        Ok(body)
+        crate::native_handoff::stage_native_order_command(self, &command)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -571,22 +241,6 @@ fn loopback_fixture_url(value: &str) -> bool {
         .and_then(|rest| rest.split(['/', '?', '#']).next())
         .and_then(|authority| authority.parse::<std::net::SocketAddr>().ok())
         .is_some_and(|address| address.ip().is_loopback())
-}
-
-fn fingerprint(action: &str, values: &Value) -> String {
-    let payload = json!([action, values]);
-    let text = serde_json::to_string(&payload).unwrap_or_default();
-    hex_encode(Sha256::digest(text.as_bytes()))
-}
-
-fn account_guard(key: &str) -> Result<std::sync::Arc<Mutex<()>>, RuntimeError> {
-    let mut locks = account_locks()
-        .lock()
-        .map_err(|_| RuntimeError::Conflict("该账户有交易操作正在处理，请稍后核对委托。".into()))?;
-    Ok(locks
-        .entry(key.to_string())
-        .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
-        .clone())
 }
 
 pub(super) fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
