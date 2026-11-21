@@ -3,10 +3,10 @@ use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
 use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
-use seealpha_strategy::executor::{DevelopmentPythonExecutor, ExecutionInput, NativeEmaExecutor, StrategyExecutor};
+use seealpha_strategy::executor::{DevelopmentPythonExecutor, ExecutionInput, IssuedPythonExecutor, NativeEmaExecutor, StrategyExecutor};
 use seealpha_strategy::{
-    AccountScope, HostCommand, IssuedStrategy, Publication, StrategyBar, digest_dir,
-    run_issued_host, sha256_hex,
+    AccountScope, IssuedStrategy, Publication, StrategyBar, digest_dir,
+    sha256_hex,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -151,17 +151,6 @@ impl Runtime {
                     PackageBody::Archive(_) | PackageBody::NativeEma => None,
                 };
                 let archive = temp.as_deref();
-                let host_command = HostCommand {
-                    python: &self.python,
-                    host: &self.host,
-                    package_dir: directory,
-                    archive_path: archive,
-                    parameters: &strategy.parameters,
-                    symbol: &request.snapshot.symbol,
-                    interval: &request.snapshot.interval,
-                    bars: &host_bars,
-                    op: "run",
-                };
                 // Archive strategies are account-issued and must match the trusted
                 // Ledger bytes and parameters, not merely a request-supplied ZIP.
                 let issued = if let PackageBody::Archive(bytes) = &strategy.package {
@@ -195,9 +184,17 @@ impl Runtime {
                 }
                 self.track_start();
                 let outcome = if let Some(load) = &issued {
-                    run_issued_host(
-                        &host_command,
-                        IssuedStrategy {
+                    // Authorization is still required at both boundaries:
+                    // the runtime verified trusted Ledger bytes/parameters;
+                    // the adapter verifies archive digest and immutable grant.
+                    let archive_path = archive.ok_or_else(|| {
+                        RuntimeError::Conflict("已下发策略缺少归档。".into())
+                    })?;
+                    IssuedPythonExecutor {
+                        python: &self.python,
+                        host: &self.host,
+                        archive_path,
+                        issued: IssuedStrategy {
                             tenant_id: &load.tenant_id,
                             account_id: &load.account_id,
                             issuance_id: &load.issuance_id,
@@ -207,12 +204,18 @@ impl Runtime {
                             entry_point: &load.entry_point,
                             package_hash: &load.package_hash,
                         },
-                        AccountScope {
+                        scope: AccountScope {
                             tenant_id: &request.tenant_id,
                             account_id: &request.account_id,
                             purpose: &tenant.purpose,
                         },
-                    )
+                    }
+                    .execute(ExecutionInput {
+                        parameters: &strategy.parameters,
+                        symbol: &request.snapshot.symbol,
+                        interval: &request.snapshot.interval,
+                        bars: &host_bars,
+                    })
                 } else {
                     // Development directory only: authorization above ensures
                     // no account-issued package is routed through this adapter.
