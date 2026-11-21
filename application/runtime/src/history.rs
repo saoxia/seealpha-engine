@@ -178,14 +178,28 @@ impl Runtime {
                 if p.symbol != symbol || p.bar_index >= history.len() {
                     return Err(invalid("策略发布了未授权的品种或时间索引。"));
                 }
-                let amount = p
-                    .quantity
-                    .parse::<Decimal>()
-                    .map_err(|_| invalid("策略目标数量无效。"))?;
+                let quantity = if p.quantity.is_empty() {
+                    None
+                } else {
+                    Some(
+                        p.quantity
+                            .parse::<Decimal>()
+                            .map_err(|_| invalid("策略目标数量无效。"))?,
+                    )
+                };
+                let weight = p
+                    .weight
+                    .as_deref()
+                    .map(|value| {
+                        value
+                            .parse::<Decimal>()
+                            .map_err(|_| invalid("策略目标权重无效。"))
+                    })
+                    .transpose()?;
                 publications.push(AllocatedPublishedTarget {
                     member_id: strategy.issuance_id.clone(),
                     bar_index: p.bar_index,
-                    holding: TargetHolding::new(symbol, Some(amount), None)
+                    holding: TargetHolding::new(symbol, quantity, weight)
                         .map_err(|e| invalid(&e.to_string()))?,
                     allocation,
                 });
