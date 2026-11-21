@@ -509,11 +509,15 @@ impl Ledger {
 mod tests {
     use super::*;
     fn book() -> Ledger {
-        let stamp = now_ms();
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // Tests run concurrently; process ID + millisecond timestamps alone
+        // can point two tests at the same SQLite file and cause lock failures.
+        static NEXT_DB: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "seealpha-parity-{}-{}.db",
+            "seealpha-parity-{}-{}-{}.db",
             std::process::id(),
-            stamp
+            now_ms(),
+            NEXT_DB.fetch_add(1, Ordering::Relaxed)
         ));
         Ledger::open(&path).unwrap()
     }
