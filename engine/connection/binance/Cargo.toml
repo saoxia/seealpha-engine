@@ -6,6 +6,7 @@ publish = false
 license = "Apache-2.0"
 
 [dependencies]
+seealpha-binance-options = { path = "../binance-options" }
 hmac = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots"] }
 serde = { version = "1", features = ["derive"] }

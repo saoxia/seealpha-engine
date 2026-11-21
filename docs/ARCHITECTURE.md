@@ -42,6 +42,8 @@ strategy portfolio   backtest
 此次源码整体移动，仅同步更新 Workspace、Docker、CI、相对测试路径及当前架构说明，不改变公开 API、交易行为、真实账户门禁或持久化格式。
 
 
+已开始把期权专有成交证据校验抽离至 `engine/connection/binance-options`；旧 `engine/connection/binance` 仍持有 Spot、USD-M 与 Options 的实际网络接口，当前不代表订单执行完成 Nautilus 接管。
+
 ## 典型流向
 
 **行情**：授权的持久化配置 → 数据源采集/核验 → Feed/Catalog → 只读消费者（研究、回测、策略）。数据读取不能偷偷启动生产者，也不能将缺失的真实成交/盘口数据伪造为已验证事实。
