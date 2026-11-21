@@ -105,50 +105,6 @@ fn mirror_confirmed_minutes(
     Ok(processed)
 }
 
-#[cfg(test)]
-mod native_mirror_tests {
-    use super::*;
-
-    fn candle(start: i64, complete: bool) -> String {
-        json!({"symbol":"ETHUSDT","interval":"1m",
-            "start_ms":start,"end_ms":start+60_000,
-            "open":"10","high":"11","low":"9","close":"10","volume":"2",
-            "is_closed":true,"is_complete":complete}).to_string()
-    }
-
-    #[test]
-    fn mirror_stops_at_gap_then_advances_after_repair() {
-        let db = Connection::open_in_memory().unwrap();
-        db.execute_batch("CREATE TABLE candles(interval TEXT,start_ms INTEGER,end_ms INTEGER,value TEXT);").unwrap();
-        for start in [0,120_000] {
-            db.execute("INSERT INTO candles VALUES ('1m',?1,?2,?3)",
-                params![start,start+60_000,candle(start,true)]).unwrap();
-        }
-        let mut derived = PersistentRollups::memory().unwrap();
-        let mut cursor = None;
-        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",180_000,&mut cursor).unwrap(),1);
-        assert_eq!(cursor,Some(60_000));
-        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),Some(60_000));
-        db.execute("INSERT INTO candles VALUES ('1m',60000,120000,?1)",
-            [candle(60_000,true)]).unwrap();
-        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",180_000,&mut cursor).unwrap(),2);
-        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),Some(180_000));
-    }
-
-    #[test]
-    fn mirror_does_not_accept_incomplete_or_future_minutes() {
-        let db = Connection::open_in_memory().unwrap();
-        db.execute_batch("CREATE TABLE candles(interval TEXT,start_ms INTEGER,end_ms INTEGER,value TEXT);").unwrap();
-        db.execute("INSERT INTO candles VALUES ('1m',0,60000,?1)",
-            [candle(0,false)]).unwrap();
-        let mut derived = PersistentRollups::memory().unwrap();
-        let mut cursor = None;
-        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",60000,&mut cursor).unwrap(),0);
-        assert_eq!(cursor,None);
-        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),None);
-    }
-}
-
 fn execute() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if !(6..=7).contains(&args.len()) {
@@ -291,5 +247,49 @@ fn main() -> std::process::ExitCode {
             eprintln!("Native calculation failed closed: {error}");
             std::process::ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod native_mirror_tests {
+    use super::*;
+
+    fn candle(start: i64, complete: bool) -> String {
+        json!({"symbol":"ETHUSDT","interval":"1m",
+            "start_ms":start,"end_ms":start+60_000,
+            "open":"10","high":"11","low":"9","close":"10","volume":"2",
+            "is_closed":true,"is_complete":complete}).to_string()
+    }
+
+    #[test]
+    fn mirror_stops_at_gap_then_advances_after_repair() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE candles(interval TEXT,start_ms INTEGER,end_ms INTEGER,value TEXT);").unwrap();
+        for start in [0,120_000] {
+            db.execute("INSERT INTO candles VALUES ('1m',?1,?2,?3)",
+                params![start,start+60_000,candle(start,true)]).unwrap();
+        }
+        let mut derived = PersistentRollups::memory().unwrap();
+        let mut cursor = None;
+        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",180_000,&mut cursor).unwrap(),1);
+        assert_eq!(cursor,Some(60_000));
+        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),Some(60_000));
+        db.execute("INSERT INTO candles VALUES ('1m',60000,120000,?1)",
+            [candle(60_000,true)]).unwrap();
+        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",180_000,&mut cursor).unwrap(),2);
+        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),Some(180_000));
+    }
+
+    #[test]
+    fn mirror_does_not_accept_incomplete_or_future_minutes() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE candles(interval TEXT,start_ms INTEGER,end_ms INTEGER,value TEXT);").unwrap();
+        db.execute("INSERT INTO candles VALUES ('1m',0,60000,?1)",
+            [candle(0,false)]).unwrap();
+        let mut derived = PersistentRollups::memory().unwrap();
+        let mut cursor = None;
+        assert_eq!(mirror_confirmed_minutes(&db,&mut derived,"ETHUSDT",60000,&mut cursor).unwrap(),0);
+        assert_eq!(cursor,None);
+        assert_eq!(derived.checkpoint("ETHUSDT").unwrap(),None);
     }
 }
