@@ -102,3 +102,28 @@ cargo test -p seealpha-portfolio --locked
 cargo test --workspace --locked
 python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
+
+## TargetHolding migration slice (2026-11-21)
+
+The native `seealpha-portfolio` crate now exposes `TargetHolding::new` and
+`TargetHolding::signed_quantity`, mirroring the legacy
+`engine/portfolio/targets.py` contract for absolute signed quantity or bounded
+weight-based quantity. A target must specify exactly one of `quantity` and
+`weight`; weight must be between -1 and 1 (inclusive), and the allocation
+must be strictly positive even when an absolute quantity is supplied. Rust
+`Decimal` is inherently finite and uses checked multiplication.
+
+These functions are an incremental parity primitive, **not** a claim that
+the legacy strategy publishing / coordinator / HTTP routes have been
+replaced end-to-end. No production entrypoint is changed and the legacy
+Python module remains available until differential tests and owner-approved
+retirement. The new Rust tests exercise valid and invalid quantities, but
+have not been executed in the GitHub editing environment. Before cutover run:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test -p seealpha-portfolio --locked
+cargo test --workspace --locked
+python3 -m unittest discover -s tests -t . -p '*_test.py' -v
+```
