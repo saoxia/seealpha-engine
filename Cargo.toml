@@ -4,7 +4,6 @@ resolver = "2"
 exclude = ["integrations/nautilus_binance_data"]
 members = [
     "engine/market_data/quality",
-    "engine/market_data/converter",
     "engine/market_data/catalog",
     "engine/market_data/sources/binance",
     "engine/market_data/market",

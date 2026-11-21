@@ -181,7 +181,7 @@ impl Runtime {
         let action = field(payload, "action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
-        if !matches!(action, "backfill" | "publish_catalog" | "archive_fetch" | "archive_import") {
+        if !matches!(action, "backfill" | "archive_fetch" | "archive_import") {
             return Err(RuntimeError::Conflict(
                 "该历史任务尚未完成 Rust 等价迁移。".into(),
             ));
@@ -234,28 +234,6 @@ impl Runtime {
             let day = field(payload, "day")?;
             ArchiveSpec::new(product, dataset, symbol, day)
                 .map_err(|_| bad("Binance 历史 ZIP 归档参数无效。"))?;
-            let normalized = payload.clone();
-            let id = hash_job(tenant_id, &normalized);
-            return self
-                .ledger
-                .queue_data_job(tenant_id, &id, action, &normalized)
-                .map_err(map_ledger);
-        }
-        if action == "publish_catalog" {
-            let product = field(payload, "product")?;
-            let symbol = field(payload, "symbol")?;
-            let interval = field(payload, "interval")?;
-            if !matches!(product, "spot" | "futures_um")
-                || !valid_symbol(product, symbol)
-                || interval_ms(interval).is_err()
-            {
-                return Err(bad("原生 Catalog 发布参数无效。"));
-            }
-            for precision in ["price_precision", "size_precision"] {
-                if payload[precision].as_u64().is_none_or(|n| n > 16) {
-                    return Err(bad("原生发布必须提供来自 Instrument 的价格/数量精度。"));
-                }
-            }
             let normalized = payload.clone();
             let id = hash_job(tenant_id, &normalized);
             return self
@@ -362,10 +340,7 @@ impl Runtime {
                 "任务已领取、取消或需要人工核验。".into(),
             ));
         }
-        let result = if original["action"] == "publish_catalog" {
-            self.publish_catalog_job(tenant_id, &original["payload"])
-                .await
-        } else if original["action"] == "archive_fetch" {
+        let result = if original["action"] == "archive_fetch" {
             self.archive_fetch_job(tenant_id, &original["payload"]).await
         } else if original["action"] == "archive_import" {
             self.archive_import_job(tenant_id, &original["payload"]).await
@@ -616,79 +591,6 @@ impl Runtime {
         report["source_job_id"] = json!(download_id);
         report["allow_new_risk"] = json!(false);
         Ok(report)
-    }
-
-    async fn publish_catalog_job(
-        &self,
-        tenant: &str,
-        payload: &Value,
-    ) -> Result<Value, RuntimeError> {
-        let product = field(payload, "product")?;
-        let symbol = field(payload, "symbol")?;
-        let interval = field(payload, "interval")?;
-        let base = self
-            .ledger
-            .policies(tenant)
-            .map_err(map_ledger)?
-            .into_iter()
-            .find(|item| item["product"] == product && item["symbol"] == symbol)
-            .and_then(|policy| {
-                policy["base_level"]
-                    .as_str()
-                    .map(|base| if base == "auto" { "1m" } else { base }.to_owned())
-            })
-            .ok_or_else(|| bad("Catalog 发布必须引用已保存的产品源配置。"))?;
-        let source_root = crate::sources::source_root(&self.project, product)?;
-        let pair = source_root
-            .join(symbol)
-            .join(&base)
-            .canonicalize()
-            .map_err(|_| bad("原始行情数据卷不可用。"))?;
-        if !pair.starts_with(&source_root) || !pair.join("collection.sqlite").is_file() {
-            return Err(bad("没有已验证的原始成交 journal。"));
-        }
-        let catalog = self
-            .native_catalog()?
-            .ok_or_else(|| bad("尚未挂载 Python Nautilus v2 Catalog，禁止隐式创建数据目录。"))?;
-        let bin = std::env::var("ENGINE_CATALOG_PUBLISH_BIN")
-            .unwrap_or_else(|_| "binance-native-catalog-publish".into());
-        let precision = field(payload, "price_precision")
-            .ok()
-            .map(str::to_owned)
-            .or_else(|| payload["price_precision"].as_u64().map(|n| n.to_string()))
-            .ok_or_else(|| bad("价格精度无效。"))?;
-        let quantity = field(payload, "size_precision")
-            .ok()
-            .map(str::to_owned)
-            .or_else(|| payload["size_precision"].as_u64().map(|n| n.to_string()))
-            .ok_or_else(|| bad("数量精度无效。"))?;
-        let args = vec![
-            product.to_owned(),
-            symbol.to_owned(),
-            pair.to_string_lossy().to_string(),
-            catalog.root().to_string_lossy().to_string(),
-            interval.to_owned(),
-            precision,
-            quantity,
-        ];
-        let output = tokio::task::spawn_blocking(move || {
-            std::process::Command::new(bin)
-                .args(args)
-                .stdin(std::process::Stdio::null())
-                .output()
-        })
-        .await
-        .map_err(|_| bad("Rust Catalog 发布子进程未能返回结果。"))?
-        .map_err(|_| bad("Rust Catalog 发布子进程无法启动。"))?;
-        if !output.status.success() {
-            let details = String::from_utf8_lossy(&output.stderr);
-            return Err(bad(&format!(
-                "Rust Catalog 发布失败，未推进检查点：{}",
-                details.chars().take(300).collect::<String>()
-            )));
-        }
-        serde_json::from_slice::<Value>(&output.stdout)
-            .map_err(|_| bad("Rust Catalog 发布记录损坏，拒绝推进任务状态。"))
     }
 
     async fn backfill_job(&self, tenant_id: &str, payload: &Value) -> Result<Value, RuntimeError> {

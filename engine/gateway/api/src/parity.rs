@@ -32,10 +32,6 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions/{issuance_id}",
             delete(strategy_unsubscribe))
         .route("/market/strategy-subscriptions",get(strategy_status))
-        .route("/tenants/{tenant_id}/data/control/source/{product}/calculate/{symbol}/start",
-            post(calc_start))
-        .route("/tenants/{tenant_id}/data/control/source/{product}/calculate/{symbol}/stop",
-            post(calc_stop))
         .route("/tenants/{tenant_id}/data/control/source/{product}/start",post(source_start))
         .route("/tenants/{tenant_id}/data/control/source/{product}/stop",post(source_stop))
         .route("/tenants/{tenant_id}/data/control/source/{product}",get(source_status))
@@ -264,28 +260,6 @@ async fn strategy_status(State(state): State<AppState>) -> Result<Json<Value>, A
     ))
 }
 
-async fn calc_start(
-    State(state): State<AppState>,
-    Path((tenant, product, symbol)): Path<(String, String, String)>,
-) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .start_native_calculation(&tenant, &product, &symbol)
-            .map_err(AppError::from)?,
-    ))
-}
-async fn calc_stop(
-    State(state): State<AppState>,
-    Path((tenant, product, symbol)): Path<(String, String, String)>,
-) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .stop_native_calculation(&tenant, &product, &symbol)
-            .map_err(AppError::from)?,
-    ))
-}
 async fn source_start(
     State(state): State<AppState>,
     Path((tenant, product)): Path<(String, String)>,

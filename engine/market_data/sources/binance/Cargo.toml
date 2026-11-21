@@ -6,23 +6,11 @@ edition = "2024"
 publish = false
 
 [dependencies]
-serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
-futures-util = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util"] }
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
-fs2 = "0.4"
-rusqlite = { version = "0.37", features = ["bundled"] }
-rust_decimal = "1"
 chrono = "0.4"
 sha2 = "0.10"
-seealpha-market = { path = "../../market" }
-seealpha-catalog = { path = "../../catalog" }
-seealpha-feed = { path = "../../feed" }
 zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }
-csv = "=1.4.0"
-arrow-array = "60"
-arrow-schema = "60"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 
 [lib]
@@ -35,27 +23,3 @@ path = "src/bin/trade_archive_fetch.rs"
 [[bin]]
 name = "binance-manifest-inspect"
 path = "src/bin/manifest_inspect.rs"
-
-[[bin]]
-name = "binance-native-source"
-path = "src/bin/native_source.rs"
-
-[[bin]]
-name = "binance-native-calculation"
-path = "src/bin/native_calculation.rs"
-
-[[bin]]
-name = "binance-journal-replay"
-path = "src/bin/native_replay.rs"
-
-[[bin]]
-name = "binance-native-catalog-publish"
-path = "src/bin/native_catalog_publish.rs"
-
-[[bin]]
-name = "binance-trade-archive-bars"
-path = "src/bin/trade_archive_bars.rs"
-
-[[bin]]
-name = "binance-trade-feature-publish"
-path = "src/bin/trade_feature_publish.rs"
