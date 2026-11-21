@@ -23,8 +23,8 @@ alpha    portfolio   backtest
 
 上图表示主要调用/协作关系，不是完整 Cargo 依赖图。以各 crate 的 `Cargo.toml` 为编译依赖的准确来源。
 
-- **接口**：`interfaces/api/http` 负责认证、版本头、请求校验及 HTTP 响应；按 `src/routes/` 分功能维护，现有 `parity`、`derivatives` 和 `research_v1` 路由继续保留。
-- **应用编排**：`application/runtime` 负责业务用例、授权范围、纸面会话、订单恢复和异步作业。订单命令位于 `orders.rs`，历史研究/回测协调位于 `research.rs`；其他模块按既有功能分文件。
+- **接口**：`interfaces/api/http` 负责认证、版本头、请求校验及 HTTP 响应；按 `src/routes/` 分功能维护，`parity`、`derivatives` 和 `research_v1` 也统一存放到该目录，路由和模块名不变。
+- **应用编排**：`application/runtime` 负责业务用例、授权范围、纸面会话、订单恢复和异步作业。订单命令位于 `src/use_cases/orders.rs`，历史研究/回测协调位于 `src/use_cases/research.rs`；账户、组合、策略会话等用例位于 `src/use_cases/`；Catalog、行情数据、来源管理、成交核验、后台任务等支撑组件位于 `src/services/`。此处仅移动物理文件，Rust 模块名和 API 不变。
 - **领域能力**：`alpha/strategy`、`portfolio/core`、`backtest/core` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
 - **交易事实**：`accounting/ledger` 持有 SQLite 状态、请求意图、成交和对账证据；`connectivity/venue` 持有交易所协议及交易请求适配。二者不可用简单的 HTTP 传输成功代替实际成交事实。
 - **行情**：`market_data/market` 提供市场模型及公共读取，`sources/binance` 提供 Binance 数据源与明确命名的多个进程入口（`src/bin/`）；`feed` 持有数据门禁、汇总和计算；`catalog` 处理历史数据持久化；`quality` 和 `converter` 是辅助组件。

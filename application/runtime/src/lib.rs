@@ -1,25 +1,43 @@
 //! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
+#[path = "use_cases/accounts.rs"]
 mod accounts;
+#[path = "use_cases/basket.rs"]
 mod basket;
+#[path = "use_cases/basket_phase.rs"]
 mod basket_phase;
 #[allow(dead_code)] // Staged: order sender remains disabled until risk/evidence gate is wired.
+#[path = "services/order_journal.rs"]
 mod order_journal;
+#[path = "use_cases/portfolio.rs"]
 mod portfolio;
 pub use portfolio::{NativePortfolioEvent, NativePortfolioResult, NativePortfolioState};
+#[path = "services/catalog.rs"]
 mod catalog;
+#[path = "services/native_calculation.rs"]
 mod native_calculation;
 mod config;
+#[path = "services/data.rs"]
 mod data;
+#[path = "services/evidence.rs"]
 mod evidence;
+#[path = "services/fills.rs"]
 mod fills;
+#[path = "services/history.rs"]
 mod history;
+#[path = "services/verified_replay.rs"]
 mod verified_replay;
 pub use verified_replay::VerifiedHistoryWindow;
+#[path = "services/inspection.rs"]
 mod inspection;
+#[path = "services/jobs.rs"]
 mod jobs;
+#[path = "use_cases/session.rs"]
 mod session;
+#[path = "services/sources.rs"]
 mod sources;
+#[path = "use_cases/orders.rs"]
 mod orders;
+#[path = "use_cases/research.rs"]
 mod research;
 pub use orders::OrderCommand;
 

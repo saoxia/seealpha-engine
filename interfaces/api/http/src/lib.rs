@@ -1,7 +1,10 @@
 //! HTTP v2 boundary. Every response carries `X-SeeAlpha-Engine-Contract-Version: 2`.
 //! Live exchange routes refuse before any credential is stored.
+#[path = "routes/derivatives.rs"]
 mod derivatives;
+#[path = "routes/parity.rs"]
 mod parity;
+#[path = "routes/research_v1.rs"]
 mod research_v1;
 #[path = "routes/system.rs"]
 mod system_routes;
