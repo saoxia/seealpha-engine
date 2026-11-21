@@ -4,7 +4,7 @@
 //! connects, submits an order, reads a real account, or installs an executor
 //! in the SeeAlpha production Runtime.
 use nautilus_binance::{
-    common::enums::{BinanceEnvironment, BinanceProductType},
+    common::enums::BinanceEnvironment,
     config::{
         BinanceDataClientConfig, BinanceExecutionClientConfig,
         BinanceInstrumentProviderConfig,
@@ -18,15 +18,22 @@ use nautilus_live::{
 };
 use nautilus_model::{
     data::{NautilusDataType, NautilusRecordType},
-    enums::OmsType,
-    identifiers::{AccountId, TraderId},
+    identifiers::TraderId,
 };
 use nautilus_persistence::config::{DataCatalogConfig, RotationConfig, StreamingConfig};
+use seealpha_nautilus_binance_data::native_execution::{
+    resolve_native_target, OrderCapability, PositionMode,
+};
 
 #[tokio::test]
 async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_connecting() {
+    let target = resolve_native_target(
+        "futures_um", "BTCUSDT-PERP", "BINANCE-UM-OFFLINE-001",
+        PositionMode::Hedge, OrderCapability::StandardSingle,
+    ).expect("validated Nautilus USD-M target");
+    assert_eq!(target.instrument.to_string(), "BTCUSDT-PERP.BINANCE");
     let data_config = BinanceDataClientConfig {
-        product_type: BinanceProductType::UsdM,
+        product_type: target.product,
         environment: BinanceEnvironment::Testnet,
         instrument_provider: BinanceInstrumentProviderConfig {
             load_all: false,
@@ -36,14 +43,14 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
         ..Default::default()
     };
     let exec_config = BinanceExecutionClientConfig {
-        account_id: AccountId::from("BINANCE-UM-OFFLINE-001"),
-        product_type: BinanceProductType::UsdM,
+        account_id: target.account,
+        product_type: target.product,
         environment: BinanceEnvironment::Testnet,
         api_key: Some("offline-fixture-key".into()),
         api_secret: Some("offline-fixture-secret".into()),
         use_ws_trading: false,
         // Dual-side accounts must not be silently modeled as Netting.
-        oms_type: Some(OmsType::Hedging),
+        oms_type: Some(target.oms),
         ..Default::default()
     };
     data_config.validate().expect("rc9 data config valid");
@@ -144,8 +151,13 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
 async fn rc9_live_node_wires_native_spot_execution_without_connecting() {
     // The cutover must reuse Nautilus' own Spot execution factory rather than
     // spawning a second SeeAlpha REST order sender.
+    let target = resolve_native_target(
+        "spot", "BTCUSDT", "BINANCE-SPOT-OFFLINE-001",
+        PositionMode::Spot, OrderCapability::StandardSingle,
+    ).expect("validated Nautilus Spot target");
+    assert_eq!(target.instrument.to_string(), "BTCUSDT.BINANCE");
     let data_config = BinanceDataClientConfig {
-        product_type: BinanceProductType::Spot,
+        product_type: target.product,
         environment: BinanceEnvironment::Testnet,
         instrument_provider: BinanceInstrumentProviderConfig {
             load_all: false,
@@ -155,13 +167,13 @@ async fn rc9_live_node_wires_native_spot_execution_without_connecting() {
         ..Default::default()
     };
     let exec_config = BinanceExecutionClientConfig {
-        account_id: AccountId::from("BINANCE-SPOT-OFFLINE-001"),
-        product_type: BinanceProductType::Spot,
+        account_id: target.account,
+        product_type: target.product,
         environment: BinanceEnvironment::Testnet,
         api_key: Some("offline-fixture-key".into()),
         api_secret: Some("offline-fixture-secret".into()),
         use_ws_trading: false,
-        oms_type: Some(OmsType::Hedging),
+        oms_type: Some(target.oms),
         ..Default::default()
     };
     data_config.validate().expect("native Spot data configuration");
