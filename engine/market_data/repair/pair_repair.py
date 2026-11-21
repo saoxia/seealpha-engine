@@ -53,7 +53,7 @@ def local_klines(catalog, symbol, level, start_ms, end_ms, *, market="futures_um
     return buckets
 
 
-async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, market="futures_um"):
+async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, market="futures_um", local=None, source=None):
     """Fetch public pages; Rust is the sole authority for repair evidence validation."""
     rows = []
     cursor = start_ms
@@ -79,6 +79,12 @@ async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, 
         raise ValueError("Rust repair validator unavailable; build seealpha-repair-verify or configure SEEALPHA_REPAIR_VERIFY_BINARY")
     request = {"interval": level, "product": market, "start_ms": start_ms,
                "end_ms": end_ms, "available_ms": available_ms, "rows": rows}
+    if local is not None:
+        if source is None:
+            raise ValueError("Rust comparison requires a data source")
+        request["source"] = source
+        request["local"] = {str(stamp): {"values": [str(value) for value in item["values"]],
+                                       "complete": item["complete"]} for stamp, item in local.items()}
     try:
         result = await asyncio.to_thread(subprocess.run, [str(binary)], input=json.dumps(request),
                                          capture_output=True, text=True, check=False, timeout=30)
@@ -90,17 +96,14 @@ async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, 
         verified = json.loads(result.stdout)
         if not isinstance(verified, list) or len(verified) != len(rows):
             raise ValueError("Rust repair validator returned an invalid result")
+        if local is not None and any(type(row.get("different")) is not bool for row in verified):
+            raise ValueError("Rust validator omitted native difference verdict")
         return [{"start_ms": row["start_ms"], "end_ms": row["end_ms"],
                  "values": [Decimal(value) for value in row["values"]],
-                 "count": row["count"]} for row in verified]
+                 "count": row["count"], **({"different": row["different"]} if local is not None else {})}
+                for row in verified]
     except (KeyError, TypeError, json.JSONDecodeError, InvalidOperation) as exc:
         raise ValueError("Rust repair validator returned malformed evidence") from exc
-
-
-def differs(local, remote, source):
-    if local is None:
-        return not (source in {"tick", "1s"} and remote["count"] == 0 and remote["values"][4] == 0)
-    return local["values"] != remote["values"] or not local["complete"]
 
 
 async def scan_day(rest, catalog, symbol, source, start_ms, end_ms, available_ms, *, market="futures_um"):
@@ -109,11 +112,12 @@ async def scan_day(rest, catalog, symbol, source, start_ms, end_ms, available_ms
 
     async def descend(level_index, left, right):
         level = SCAN_PATH[level_index]
-        remote = await remote_klines(rest, symbol, level, left, right, available_ms, market=market)
         local = await asyncio.to_thread(local_klines, catalog, symbol, level, left, right, market=market)
+        remote = await remote_klines(rest, symbol, level, left, right, available_ms,
+                                    market=market, local=local, source=source)
         found = False
         for item in remote:
-            if not differs(local.get(item["start_ms"]), item, source):
+            if not item["different"]:
                 continue
             found = True
             if level == "1m":
