@@ -1621,6 +1621,7 @@ dependencies = [
  "seealpha-binance-options",
  "seealpha-binance-wire",
  "seealpha-execution",
+ "seealpha-portfolio",
  "serde",
  "serde_json",
  "sha2",
