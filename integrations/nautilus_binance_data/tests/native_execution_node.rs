@@ -96,23 +96,13 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
     streaming.promote_on_close = true;
     streaming.validate().expect("native event Catalog configuration");
 
-    // LiveNode with streaming enabled currently panics while dropping its
-    // Tokio worker runtime in this offline build-only harness (rc9).
-    // Verify the native streaming builder API without constructing/disposing
-    // a streaming-enabled node. Do not disguise a lifecycle failure.
-    let _streaming_builder = LiveNode::builder(
-        TraderId::from("SEEALPHA-OFFLINE-STREAM-001"),
-        Environment::Live,
-    )
-    .expect("native streaming builder")
-    .with_streaming_config(streaming);
-
-    let node = LiveNode::builder(
+    let mut node = LiveNode::builder(
         TraderId::from("SEEALPHA-OFFLINE-001"),
         Environment::Live,
     )
     .expect("rc9 native node builder")
     .with_name("SEEALPHA-USD-M-EXEC-OFFLINE".to_owned())
+    .with_streaming_config(streaming)
     .with_exec_engine_config(LiveExecutionEngineConfig {
         open_check_interval_secs: Some(10.0),
         position_check_interval_secs: Some(30.0),
@@ -135,7 +125,9 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
     .build()
     .expect("rc9 LiveNode must construct without connecting");
 
-    // Only construct and drop. NEVER invoke node.run() or add a trading strategy.
+    // Explicit release is NautilusTrader's documented close path.
+    // Never call node.run(), connect(), submit_order() or any real private API.
+    node.dispose();
     drop(node);
     let _ = std::fs::remove_dir_all(root);
 }
