@@ -390,12 +390,13 @@ impl Runtime {
         // Derived 1m rollups are a repairable cache, never authoritative
         // Catalog evidence. Failure must not recast a committed import as
         // uncommitted or elevate the live data/venue readiness gate.
-        if interval == "1m" && matches!(product_name, "spot" | "futures_um") {
-            if let Err(err) = self.persist_native_minute_rollups(
+        if interval == "1m"
+            && matches!(product_name, "spot" | "futures_um")
+            && let Err(err) = self.persist_native_minute_rollups(
                 tenant, product_name, symbol, &native,
-            ) {
-                eprintln!("native derived rollup cache requires repair: {err}");
-            }
+            )
+        {
+            eprintln!("native derived rollup cache requires repair: {err}");
         }
         Ok(published)
     }
