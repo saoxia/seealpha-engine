@@ -160,6 +160,52 @@ mod tests {
     }
 
     #[test]
+    fn issued_executor_rejects_valid_but_unauthorized_archive_before_python() {
+        use std::io::{Cursor, Write};
+
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("seealpha-package.json", options).unwrap();
+        writer.write_all(br#"{"format":1,"name":"alpha_strategy","version":"1.0","entry_point":"strategy:Strategy"}"#).unwrap();
+        writer.start_file("strategy.py", options).unwrap();
+        writer.write_all(b"class Strategy: pass").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let digest = crate::sha256_hex(&bytes);
+        let archive = crate::issued::StagedArchive::create(&bytes).unwrap();
+        let parameters = json!({});
+        let mismatched_hash = "a".repeat(64);
+        assert_ne!(digest, mismatched_hash);
+        let issued = IssuedStrategy {
+            tenant_id: "tenant-1",
+            account_id: "account-1",
+            issuance_id: "issue-1",
+            grant_purpose: "production",
+            code_key: "alpha_strategy",
+            version: "1.0",
+            entry_point: "strategy:Strategy",
+            package_hash: &mismatched_hash,
+        };
+        let executor = IssuedPythonExecutor {
+            python: Path::new("/absent/python"),
+            host: Path::new("/absent/host.py"),
+            archive_path: archive.path(),
+            issued,
+            scope: AccountScope {
+                tenant_id: "tenant-1",
+                account_id: "account-1",
+                purpose: "production",
+            },
+        };
+        let result = executor.execute(ExecutionInput {
+            parameters: &parameters,
+            symbol: "ETHUSDT",
+            interval: "1m",
+            bars: &[],
+        });
+        assert!(matches!(result, Err(StrategyError::Package(_))));
+    }
+
+    #[test]
     fn development_python_adapter_fails_closed_without_host() {
         let executor = DevelopmentPythonExecutor {
             python: Path::new("/absent/python3"),
