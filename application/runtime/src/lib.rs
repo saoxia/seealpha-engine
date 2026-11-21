@@ -26,7 +26,7 @@ pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
 
 use seealpha_ledger::{Ledger, LedgerError, StrategyLoad, Tenant};
-use seealpha_strategy::{self, HostCommand, inspect_archive};
+use seealpha_strategy::{self, native_manifest::inspect_native_manifest};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -296,53 +296,31 @@ impl Runtime {
                 "策略下发缺少账户、编号或版本。".into(),
             ));
         }
-        let metadata = inspect_archive(archive).map_err(map_strategy)?;
+        // Only a known compiled-in Rust strategy may be admitted. Arbitrary
+        // uploaded Python archives are not executable in the native runtime.
+        let metadata = inspect_native_manifest(archive).map_err(map_strategy)?;
         if metadata.digest != package_hash
             || metadata.name != code_key
             || metadata.version != version
+            || metadata.entry_point != entry_point
         {
             return Err(RuntimeError::Conflict("策略包与下发记录不一致。".into()));
         }
-        if metadata.entry_point != entry_point {
-            return Err(RuntimeError::Conflict(
-                "策略包入口与下发记录不一致。".into(),
-            ));
-        }
-        // Integration admission: authenticate the immutable package envelope before
-        // invoking the only retained Python execution boundary.
-        seealpha_strategy::authorize_issued(
+        seealpha_strategy::native_manifest::authorize_native_manifest(
+            archive,
             seealpha_strategy::IssuedStrategy {
-                tenant_id,
-                account_id,
-                issuance_id,
-                grant_purpose,
-                code_key,
-                version,
-                entry_point,
-                package_hash,
+                tenant_id, account_id, issuance_id, grant_purpose, code_key,
+                version, entry_point, package_hash,
             },
             seealpha_strategy::AccountScope {
-                tenant_id,
-                account_id,
-                purpose: &tenant.purpose,
+                tenant_id, account_id, purpose: &tenant.purpose,
             },
-            &metadata,
-        )
-        .map_err(map_strategy)?;
-        let path = write_archive(archive)?;
-        let prepared = seealpha_strategy::run_host(&HostCommand {
-            python: &self.python,
-            host: &self.host,
-            package_dir: None,
-            archive_path: Some(&path),
+        ).map_err(map_strategy)?;
+        let prepared = seealpha_strategy::native_ema::run_native_ema(
             parameters,
-            symbol: code_key,
-            interval: "1m",
-            bars: &[],
-            op: "prepare",
-        })
-        .map_err(map_strategy)?;
-        let _ = std::fs::remove_file(&path);
+            "ETHUSDT",
+            &[],
+        ).map_err(map_strategy)?;
         let load = StrategyLoad {
             tenant_id: tenant_id.to_string(),
             account_id: account_id.to_string(),

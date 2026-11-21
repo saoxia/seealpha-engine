@@ -3,7 +3,7 @@ use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
 use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
-use seealpha_strategy::executor::{DevelopmentPythonExecutor, ExecutionInput, IssuedPythonExecutor, NativeEmaExecutor, StrategyExecutor};
+use seealpha_strategy::executor::{ExecutionInput, IssuedNativeEmaExecutor, NativeEmaExecutor, StrategyExecutor};
 use seealpha_strategy::{
     AccountScope, IssuedStrategy, Publication, StrategyBar, digest_dir,
     sha256_hex,
@@ -142,103 +142,65 @@ impl Runtime {
                 })
                     .map_err(map_strategy)?
             } else {
-                let temp = match &strategy.package {
-                    PackageBody::Archive(bytes) => Some(write_temp(bytes)?),
-                    PackageBody::Directory(_) | PackageBody::NativeEma => None,
-                };
-                let directory = match &strategy.package {
-                    PackageBody::Directory(path) => Some(path.as_path()),
-                    PackageBody::Archive(_) | PackageBody::NativeEma => None,
-                };
-                let archive = temp.as_deref();
-                // Archive strategies are account-issued and must match the trusted
-                // Ledger bytes and parameters, not merely a request-supplied ZIP.
-                let issued = if let PackageBody::Archive(bytes) = &strategy.package {
-                    let load = self
-                        .ledger
-                        .strategies(&request.tenant_id, &request.account_id)
-                        .map_err(map_ledger)?
-                        .into_iter()
-                        .find(|load| load.issuance_id == strategy.member_id)
-                        .ok_or_else(|| {
-                            RuntimeError::Conflict("模拟策略没有对应账户的可信下发记录。".into())
-                        })?;
-                    let stored_parameters: Value = serde_json::from_str(&load.parameters_json)
-                        .map_err(|_| RuntimeError::Conflict("已下发策略参数记录损坏。".into()))?;
-                    if load.archive.as_slice() != bytes.as_slice()
-                        || stored_parameters != strategy.parameters
-                    {
+                match &strategy.package {
+                    PackageBody::Archive(bytes) => {
+                        // The archived artifact is a native JSON manifest, not a
+                        // Python ZIP. Require identical bytes and parameters from
+                        // trusted account issuance before strategy execution.
+                        let load = self.ledger
+                            .strategies(&request.tenant_id, &request.account_id)
+                            .map_err(map_ledger)?
+                            .into_iter()
+                            .find(|record| record.issuance_id == strategy.member_id)
+                            .ok_or_else(|| RuntimeError::Conflict(
+                                "模拟策略没有对应账户的可信下发记录。".into()
+                            ))?;
+                        let stored_parameters: Value =
+                            serde_json::from_str(&load.parameters_json).map_err(|_| {
+                                RuntimeError::Conflict("已下发策略参数记录损坏。".into())
+                            })?;
+                        if load.archive.as_slice() != bytes.as_slice()
+                            || stored_parameters != strategy.parameters
+                        {
+                            return Err(RuntimeError::Conflict(
+                                "模拟策略包或参数与可信下发记录不一致。".into()
+                            ));
+                        }
+                        let tenant = self.require_active(&request.tenant_id)?;
+                        self.track_start();
+                        let outcome = IssuedNativeEmaExecutor {
+                            manifest: bytes,
+                            issued: IssuedStrategy {
+                                tenant_id: &load.tenant_id,
+                                account_id: &load.account_id,
+                                issuance_id: &load.issuance_id,
+                                grant_purpose: &load.grant_purpose,
+                                code_key: &load.code_key,
+                                version: &load.version,
+                                entry_point: &load.entry_point,
+                                package_hash: &load.package_hash,
+                            },
+                            scope: AccountScope {
+                                tenant_id: &request.tenant_id,
+                                account_id: &request.account_id,
+                                purpose: &tenant.purpose,
+                            },
+                        }.execute(ExecutionInput {
+                            parameters: &strategy.parameters,
+                            symbol: &request.snapshot.symbol,
+                            interval: &request.snapshot.interval,
+                            bars: &host_bars,
+                        });
+                        self.track_end();
+                        outcome.map_err(map_strategy)?
+                    }
+                    PackageBody::Directory(_) => {
                         return Err(RuntimeError::Conflict(
-                            "模拟策略包或参数与可信下发记录不一致。".into(),
+                            "Python 目录策略已退役；请下发受支持的 Rust 策略清单。".into()
                         ));
                     }
-                    Some(load)
-                } else {
-                    None
-                };
-                let tenant = self.require_active(&request.tenant_id)?;
-                if issued.is_none() && tenant.purpose != "development" {
-                    return Err(RuntimeError::Conflict(
-                        "正式租户不允许执行未下发的目录策略。".into(),
-                    ));
+                    PackageBody::NativeEma => unreachable!(),
                 }
-                self.track_start();
-                let outcome = if let Some(load) = &issued {
-                    // Authorization is still required at both boundaries:
-                    // the runtime verified trusted Ledger bytes/parameters;
-                    // the adapter verifies archive digest and immutable grant.
-                    let archive_path = archive.ok_or_else(|| {
-                        RuntimeError::Conflict("已下发策略缺少归档。".into())
-                    })?;
-                    IssuedPythonExecutor {
-                        python: &self.python,
-                        host: &self.host,
-                        archive_path,
-                        issued: IssuedStrategy {
-                            tenant_id: &load.tenant_id,
-                            account_id: &load.account_id,
-                            issuance_id: &load.issuance_id,
-                            grant_purpose: &load.grant_purpose,
-                            code_key: &load.code_key,
-                            version: &load.version,
-                            entry_point: &load.entry_point,
-                            package_hash: &load.package_hash,
-                        },
-                        scope: AccountScope {
-                            tenant_id: &request.tenant_id,
-                            account_id: &request.account_id,
-                            purpose: &tenant.purpose,
-                        },
-                    }
-                    .execute(ExecutionInput {
-                        parameters: &strategy.parameters,
-                        symbol: &request.snapshot.symbol,
-                        interval: &request.snapshot.interval,
-                        bars: &host_bars,
-                    })
-                } else {
-                    // Development directory only: authorization above ensures
-                    // no account-issued package is routed through this adapter.
-                    let package_dir = directory.ok_or_else(|| {
-                        RuntimeError::Conflict("未下发的策略必须使用开发目录。".into())
-                    })?;
-                    DevelopmentPythonExecutor {
-                        python: &self.python,
-                        host: &self.host,
-                        package_dir,
-                    }
-                    .execute(ExecutionInput {
-                        parameters: &strategy.parameters,
-                        symbol: &request.snapshot.symbol,
-                        interval: &request.snapshot.interval,
-                        bars: &host_bars,
-                    })
-                };
-                self.track_end();
-                if let Some(path) = &temp {
-                    let _ = std::fs::remove_file(path);
-                }
-                outcome.map_err(map_strategy)?
             };
             let limit = decimal_field(&run.prepared, "risk_limit")?;
             let allocation = allocation_field(&run.prepared)?;
@@ -350,20 +312,6 @@ impl Runtime {
     }
 }
 
-fn write_temp(bytes: &[u8]) -> Result<PathBuf, RuntimeError> {
-    let path = std::env::temp_dir().join(format!(
-        "seealpha-run-{}-{}.zip",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0)
-    ));
-    std::fs::write(&path, bytes)
-        .map_err(|_| RuntimeError::BadRequest("策略包无法写入。".into()))?;
-    Ok(path)
-}
-
 fn session_fingerprint(request: &PaperRequest, bars: &[Bar]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(request.snapshot.symbol.as_bytes());
@@ -472,61 +420,6 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn sample_strategy_publishes_targets_without_exchange_orders() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let state = std::env::temp_dir().join(format!(
-            "seealpha-runtime-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let config = Config {
-            host: "127.0.0.1".into(),
-            port: 0,
-            auth_mode: crate::AuthMode::None,
-            token: String::new(),
-            state_dir: state.clone(),
-            project: root.clone(),
-            tenant_id: None,
-            tenant_purpose: None,
-            research_signing_key: None,
-            research_mcp_enabled: false,
-            venue_base: None,
-            python: PathBuf::from("python3"),
-        };
-        let runtime = Runtime::open(&config).unwrap();
-        runtime
-            .ensure_tenant("dev", "development", "active")
-            .unwrap();
-        let request = PaperRequest {
-            tenant_id: "dev".into(),
-            account_id: "paper".into(),
-            snapshot: snapshot(),
-            strategies: vec![StrategyInput {
-                member_id: "ema".into(),
-                package: PackageBody::Directory(root.join("packages/ema_crossover")),
-                parameters: json!({}),
-            }],
-            request_id: Some("sample-paper".into()),
-        };
-        let report = runtime.run_paper(request.clone()).unwrap();
-        assert_eq!(report["exchange_orders"], 0);
-        assert_eq!(report["venue"], "paper");
-        assert!(report["kline_count"].as_u64().unwrap() >= 60);
-        let publications = report["publications"].as_array().unwrap();
-        assert!(publications.iter().any(|item| item["quantity"] == "1"));
-        assert!(publications.iter().any(|item| item["quantity"] == "0"));
-        let orders = runtime.ledger.order_count("dev", "paper").unwrap();
-        assert!(orders >= 1);
-        let replay = runtime.run_paper(request).unwrap();
-        assert_eq!(replay["replay"], true);
-        assert_eq!(runtime.ledger.order_count("dev", "paper").unwrap(), orders);
-        let _ = std::fs::remove_dir_all(state);
-    }
-
-    #[test]
     fn rust_ema_paper_session_requires_no_python_and_is_idempotent() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let state = std::env::temp_dir().join(format!(
@@ -611,85 +504,6 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(runtime.ledger.order_count("prod", "a").unwrap(), 0);
-        let _ = std::fs::remove_dir_all(state);
-    }
-
-    #[test]
-    fn weighted_python_host_paper_session_is_native_and_idempotent() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let state = std::env::temp_dir().join(format!(
-            "seealpha-weighted-paper-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let package = state.join("weighted_strategy");
-        std::fs::create_dir_all(&package).unwrap();
-        std::fs::write(
-            package.join("seealpha-package.json"),
-            r#"{"format":1,"name":"weighted_paper","version":"1.0","entry_point":"strategy:WeightedStrategy"}"#,
-        ).unwrap();
-        std::fs::write(
-            package.join("strategy.py"),
-            r#"from decimal import Decimal
-
-def prepare(parameters):
-    return {"symbol": "ETHUSDT", "allocation": "2", "risk_limit": "5"}
-
-class WeightedStrategy:
-    def __init__(self, config):
-        self.sent = False
-    def on_start(self):
-        pass
-    def on_bar(self, bar):
-        if not self.sent:
-            self.publish(symbol="ETHUSDT", weight=Decimal("0.5"))
-            self.sent = True
-"#,
-        ).unwrap();
-        let config = Config {
-            host: "127.0.0.1".into(),
-            port: 0,
-            auth_mode: crate::AuthMode::None,
-            token: String::new(),
-            state_dir: state.join("ledger"),
-            project: root,
-            tenant_id: None,
-            tenant_purpose: None,
-            research_signing_key: None,
-            research_mcp_enabled: false,
-            venue_base: None,
-            python: PathBuf::from("python3"),
-        };
-        let runtime = Runtime::open(&config).unwrap();
-        runtime.ensure_tenant("dev", "development", "active").unwrap();
-        let request = PaperRequest {
-            tenant_id: "dev".into(),
-            account_id: "weighted-paper".into(),
-            snapshot: snapshot(),
-            strategies: vec![StrategyInput {
-                member_id: "weighted".into(),
-                package: PackageBody::Directory(package),
-                parameters: json!({}),
-            }],
-            request_id: Some("weighted-request".into()),
-        };
-        let report = runtime.run_paper(request.clone()).unwrap();
-        assert_eq!(report["venue"], "paper");
-        assert_eq!(report["exchange_orders"], 0);
-        assert_eq!(report["publications"][0]["weight"], "0.5");
-        assert!(report["publications"][0].get("quantity").is_none());
-        assert_eq!(report["ending_position"].as_str().unwrap().parse::<Decimal>().unwrap(), Decimal::ONE);
-        assert_eq!(report["paper_fills"].as_array().unwrap().len(), 1);
-        assert_eq!(report["paper_fills"][0]["side"], "buy");
-        assert_eq!(report["paper_fills"][0]["quantity"].as_str().unwrap().parse::<Decimal>().unwrap(), Decimal::ONE);
-        let before = runtime.ledger.order_count("dev", "weighted-paper").unwrap();
-        assert_eq!(before, 1);
-        let repeated = runtime.run_paper(request).unwrap();
-        assert_eq!(repeated["replay"], true);
-        assert_eq!(runtime.ledger.order_count("dev", "weighted-paper").unwrap(), before);
         let _ = std::fs::remove_dir_all(state);
     }
 
