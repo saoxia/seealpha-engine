@@ -32,8 +32,8 @@ legacy live-order code is made available as a fallback.
 | --- | --- |
 | `auth.py` | `application/research/src/lib.rs` (signed grants) and `scope.rs` (tenant/task/dataset checks) |
 | `mcp.py` | `gateway/mcp/src/research.rs` (native research MCP route) |
-| `basket_research_session.py`, `issued_basket.py` | `portfolio/core/`, `alpha/strategy/` and `application/runtime/` own native basket, issued strategy and offline replay workflows; Python callback parity **not** asserted |
-| `research_native.py` | `backtest/core/`, `market_data/market/`, and `application/runtime/src/verified_replay.rs`; detailed Nautilus L2/Greeks parity **not** asserted |
+| `basket_research_session.py`, `issued_basket.py` | `portfolio/`, `alpha/strategy/` and `application/runtime/` own native basket, issued strategy and offline replay workflows; Python callback parity **not** asserted |
+| `research_native.py` | `backtest/`, `market_data/market/`, and `application/runtime/src/verified_replay.rs`; detailed Nautilus L2/Greeks parity **not** asserted |
 | `candidate_package.py`, `candidate_template.py`, `python_candidate.py` | `alpha/strategy/src/lib.rs` provides native archive inspection and host policy, and `application/research/src/scope.rs` validates the research envelope. The native research candidate **submission endpoint is currently unavailable** |
 | `snapshots.py` | `application/research/src/scope.rs` validates snapshot ownership, bounds and evidence. Native HTTP snapshot create/read endpoints **currently return unavailable**; there is no claim of native Parquet export parity |
 | `__init__.py` | No native functionality |

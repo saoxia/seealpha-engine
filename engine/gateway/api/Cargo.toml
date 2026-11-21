@@ -10,7 +10,7 @@ axum = "0.8"
 base64 = "0.22"
 http-body-util = "0.1"
 rust_decimal = "1"
-seealpha-backtest = { path = "../../backtest/core" }
+seealpha-backtest = { path = "../../backtest" }
 seealpha-catalog = { path = "../../market_data/catalog" }
 seealpha-ledger = { path = "../../ledger" }
 seealpha-market = { path = "../../market_data/market" }

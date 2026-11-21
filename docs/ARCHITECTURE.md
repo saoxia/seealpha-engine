@@ -27,10 +27,10 @@ strategy portfolio   backtest
 
 - **对外网关**：`engine/gateway/api` 负责认证、版本头、请求校验及 HTTP 响应；按 `src/routes/` 分功能维护，现有 `parity`、`derivatives` 和 `research_v1` 路由继续保留；`engine/gateway/mcp` 独立保存 MCP 协议实现，但仍由同一个 HTTP 进程挂载 `/research/mcp`。
 - **应用编排**：`engine/runtime` 负责业务用例、授权范围、纸面会话、订单恢复和异步作业。订单命令位于 `orders.rs`，历史研究/回测协调位于 `research.rs`；其他模块按既有功能分文件。
-- **领域能力**：`engine/strategy`、`engine/portfolio/core`、`engine/backtest/core` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
+- **领域能力**：`engine/strategy`、`engine/portfolio`、`engine/backtest` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
 - **交易事实**：`engine/ledger` 持有 SQLite 状态、请求意图、成交和对账证据；`engine/connectivity/venue` 持有交易所协议及交易请求适配。二者不可用简单的 HTTP 传输成功代替实际成交事实。
 - **行情**：`engine/market_data/market` 提供市场模型及公共读取，`sources/binance` 提供 Binance 数据源与明确命名的多个进程入口（`src/bin/`）；`feed` 持有数据门禁、汇总和计算；`catalog` 处理历史数据持久化；`quality` 和 `converter` 是辅助组件。
-- **研究授权**：`engine/research` 管理研究操作授权和作用域；用例编排仍在 `engine/runtime`，历史回放仍在 `engine/backtest/core`。
+- **研究授权**：`engine/research` 管理研究操作授权和作用域；用例编排仍在 `engine/runtime`，历史回放仍在 `engine/backtest`。
 - **独立程序**：`engine/apps/trading_engine` 编译为 `seealpha-engine`，负责创建 Runtime、HTTP 服务以及显式 smoke 入口。
 
 ## 一级目录原则
