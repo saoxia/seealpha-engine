@@ -3,6 +3,7 @@
 mod cleanup;
 mod model;
 mod reader;
+mod repair;
 mod records;
 mod writer;
 
@@ -15,6 +16,7 @@ pub use model::{
     interval_ms,
 };
 pub use reader::{BarGap, RecordKind};
+pub use repair::missing_bar_windows;
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
