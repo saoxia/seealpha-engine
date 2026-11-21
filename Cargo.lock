@@ -1612,24 +1612,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "seealpha-venue"
-version = "0.1.0"
-dependencies = [
- "axum",
- "reqwest",
- "rust_decimal",
- "seealpha-binance-options",
- "seealpha-binance-wire",
- "seealpha-execution",
- "seealpha-portfolio",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
