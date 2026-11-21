@@ -41,6 +41,28 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 
 > **已识别的旧代码问题**：现存 `src/trade_archive.rs` 对原始 Trade CSV 的列数假设为 Spot 8 列、USD-M 7 列，而 Binance 官方 `trades` 归档格式分别为 7 列和 6 列；Spot 自 2025-01-01 起时间戳还采用微秒。因此该旧聚合工具不可直接作为新下载文件的已验证导入器。本次新 CLI 只验证 ZIP 哈希与容器结构，**不调用**该解析器，也不声称已经得到完整的历史 Tick。
 
+## 已接入 Runtime 的显式归档任务
+
+现有 HTTP API 的 `POST /tenants/{tenant_id}/data/control/job/start` 可接收以下 payload。该接口会入队并通过**现有**任务执行机制调用同一个 ZIP 下载 CLI，没有第二套调度器。
+
+```json
+{
+  "payload": {
+    "action": "archive_fetch",
+    "product": "spot",
+    "symbol": "ETHUSDT",
+    "dataset": "trades",
+    "day": "2026-11-20"
+  }
+}
+```
+
+管理员须配置 `ENGINE_ARCHIVE_ROOT`，并提前创建 `<archive-root>/<tenant_id>/`。服务端只使用该受控路径，从请求体拒绝自定义目录；任务状态保存于已有的租户任务日志。下载完成只表示官方 SHA-256 ZIP 验证成功；回执强制 `data_ready=false`、`allow_new_risk=false` 和 `catalog_committed=false`。无自动交易和原生 Catalog 导入。
+
+## 原生 NautilusTrader Rust 节点的初步代码
+
+参见 [integrations/nautilus_binance_data/README.md](../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。当前不在 Engine Runtime 或 Docker 中启动；需要先通过独立 CI、精度与 Catalog parity、数据缺口验证后再切换和删除旧自研实现。
+
 ## 待完成，不能误认作已实现
 
 1. 在当前 Rust Runtime 真正启用并锁定 NautilusTrader `nautilus-binance` 数据客户端，替换实验性 `ws.rs` / `native_source.rs` 的通用连接逻辑。不得以新增 SeeAlpha 自定义 Adapter Trait 代替复用。

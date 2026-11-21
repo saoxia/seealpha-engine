@@ -78,3 +78,7 @@ These commands are **required but were not run** in this editing environment:
 `cargo`/`rustc` are unavailable, and the GitHub Actions workflows remain
 paused. Therefore **do not merge or enable production READY** solely on the
 strength of these new, unexecuted tests.
+
+## Native Nautilus live prototype
+
+A standalone Rust-native `nautilus-binance` `LiveNode` implementation now lives at [`integrations/nautilus_binance_data`](../../../../integrations/nautilus_binance_data). It is excluded from the existing Rust workspace until its independent upstream-dependency CI and protocol parity tests pass. It configures only native Binance **data** clients, source trade subscriptions, bounded native recent-trade requests, and Nautilus's own Feather/Parquet streaming. No execution client or strategy is registered. It is **not deployed nor the default process**, and the Runtime readiness gate is unchanged.
