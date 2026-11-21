@@ -54,6 +54,12 @@ impl Runtime {
         if record["environment"] != environment {
             return Err(error("订单和账户环境不匹配。"));
         }
+        if record["intent"]["execution_backend"] == "nautilus_binance_native" {
+            // A Nautilus order report is not a signed user-trade response.
+            // Never permit the legacy REST verifier to project native orders
+            // into fills or invent the old request-response envelope.
+            return Err(error("原生执行成交核验尚未接线，禁止回退旧 Venue 取证。"));
+        }
         let symbol = record["symbol"]
             .as_str()
             .ok_or_else(|| error("订单合约无效。"))?
