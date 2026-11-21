@@ -194,6 +194,15 @@ impl Runtime {
         {
             return Err(RuntimeError::BadRequest("订单身份或环境不一致。".into()));
         }
+        // Native execution orders cannot be reconciled by the legacy
+        // signed-REST adapter. Native execution reports must carry verified
+        // account/order ownership and be admitted separately to Ledger.
+        // Conflict means retry/manual review, never a legacy GET fallback.
+        if intent["execution_backend"] == "nautilus_binance_native" {
+            return Err(RuntimeError::Conflict(
+                "原生执行订单的认证对账尚未接线，禁止回退旧连接器。".into(),
+            ));
+        }
         let symbol = intent["symbol"]
             .as_str()
             .ok_or_else(|| RuntimeError::BadRequest("订单交易对无效。".into()))?;
