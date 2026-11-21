@@ -13,6 +13,12 @@
 
 `tests/native_execution_node.rs` 在现有固定版本的 NautilusTrader v2.0.0rc9 下构造一套完整的 USD-M `LiveNode` 配置：原生 DataClient + ExecutionClient 工厂、显式 Hedging OMS、Native LiveExecutionEngine 检查间隔及 `with_reconciliation(true)`。测试只执行 `build()` 并销毁节点；不会 `run()`、访问交易所、发送订单或安装到 Engine Runtime。这是调用契约验证，不是恢复、账户安全或实盘验收。
 
+## 使用 Nautilus 原生执行记录持久化（离线配置验证）
+
+NautilusTrader v2.0.0rc9 在 `NautilusRecordType` 中已有订单提交、接受、拒绝、取消、成交、冲销以及 `OrderStatusReport`、`FillReport`、`PositionStatusReport`、`AccountState`；`StreamingConfig.record_types` 可选择这些原生记录，写入 Nautilus 自带 Feather/Parquet Catalog。新增的离线 `LiveNode` 测试同时配置 `data_types=TradeTick` 与原生执行 `record_types`，不创建自定义执行事件 JSON/SQLite/Parquet 写入器。
+
+测试仅验证 **配置与节点构建**，并没有让 `LiveNode` 实际运行，因而**不宣称已写出任何执行记录**，也不代表记录已进入 SeeAlpha Ledger。后续必须实现 Catalog 读取、订单归属、去重、签名成交明细对照及 Ledger 事务投影；订单 ACK 不得冒充 `OrderFilled` 或经 `import_verified_fills` 直接入账。
+
 ## NautilusTrader rc9 原生执行能力接线检查（尚未启用交易）
 
 当前模块增加离线 factory 契约测试：使用 **rc9 / Rust 0.68.0** 原生 `BinanceExecutionClientFactory` 和 `BinanceExecutionClientConfig`，验证 Spot 使用 Hedging OMS，USD-M 的 Netting/Hedging 选择及配置合法性。测试只构造原生执行客户端，不调用连接、下单、撤单或真实私有接口；运行时继续只启动匿名行情客户端。

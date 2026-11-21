@@ -17,9 +17,11 @@ use nautilus_live::{
     node::LiveNode,
 };
 use nautilus_model::{
+    data::{NautilusDataType, NautilusRecordType},
     enums::OmsType,
     identifiers::{AccountId, TraderId},
 };
+use nautilus_persistence::config::{DataCatalogConfig, RotationConfig, StreamingConfig};
 
 #[tokio::test]
 async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_connecting() {
@@ -47,12 +49,60 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
     data_config.validate().expect("rc9 data config valid");
     exec_config.validate().expect("rc9 execution config valid");
 
+    // Native execution records belong in Nautilus' own writer and Catalog.
+    // SeeAlpha never creates a parallel OrderFilled serialization format.
+    // These are offline-only temporary paths, unrelated to Engine tenant data.
+    let root = std::env::temp_dir().join(format!(
+        "seealpha-nautilus-exec-config-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    let feather = root.join("feather");
+    let catalog = root.join("catalog");
+    std::fs::create_dir_all(&feather).expect("test Feather path");
+    std::fs::create_dir_all(&catalog).expect("test Catalog path");
+
+    let mut streaming = StreamingConfig::new(
+        feather.to_string_lossy().into_owned(),
+        Some(DataCatalogConfig::new(
+            catalog.to_string_lossy().into_owned(),
+            None,
+            None,
+        )),
+        1_000,
+        false,
+        RotationConfig::NoRotation,
+    );
+    streaming.data_types = Some(vec![NautilusDataType::TradeTick]);
+    // Order ACK, rejection and fill are separate native event families.
+    // OrderFilled alone is not sufficient to mark the SeeAlpha Ledger synced.
+    streaming.record_types = Some(vec![
+        NautilusRecordType::AccountState,
+        NautilusRecordType::OrderSubmitted,
+        NautilusRecordType::OrderAccepted,
+        NautilusRecordType::OrderRejected,
+        NautilusRecordType::OrderCanceled,
+        NautilusRecordType::OrderExpired,
+        NautilusRecordType::OrderFilled,
+        NautilusRecordType::OrderFillVoided,
+        NautilusRecordType::OrderStatusReport,
+        NautilusRecordType::FillReport,
+        NautilusRecordType::PositionStatusReport,
+    ]);
+    streaming.promotion_interval_ms = None;
+    streaming.promote_on_close = true;
+    streaming.validate().expect("native event Catalog configuration");
+
     let node = LiveNode::builder(
         TraderId::from("SEEALPHA-OFFLINE-001"),
         Environment::Live,
     )
     .expect("rc9 native node builder")
     .with_name("SEEALPHA-USD-M-EXEC-OFFLINE".to_owned())
+    .with_streaming_config(streaming)
     .with_exec_engine_config(LiveExecutionEngineConfig {
         open_check_interval_secs: Some(10.0),
         position_check_interval_secs: Some(30.0),
@@ -77,4 +127,5 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
 
     // Only construct and drop. NEVER invoke node.run() or add a trading strategy.
     drop(node);
+    let _ = std::fs::remove_dir_all(root);
 }
