@@ -2,7 +2,7 @@
 
 ## 当前实现与代码入口
 
-本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `engine/apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `engine/strategy/`，研究授权 crate 位于 `engine/research/`，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。旧版 Python Engine、原 `core/` 和 `python/strategy_host/` 属于迁移历史。当前的 `engine/` 是 Rust 源码汇总目录，**不得把旧 Python 代码恢复为运行时依赖**。
+本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `engine/apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `engine/strategy/`，研究授权与范围校验位于 `engine/gateway/api/src/research/`，已合并进 `seealpha-http` crate，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。旧版 Python Engine、原 `core/` 和 `python/strategy_host/` 属于迁移历史。当前的 `engine/` 是 Rust 源码汇总目录，**不得把旧 Python 代码恢复为运行时依赖**。
 
 当前架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，代码导航见 [docs/architecture/MODULE_MAP.md](docs/architecture/MODULE_MAP.md)。如文档相互矛盾，以当前 Rust 代码和测试为实际实现依据，同时修订不一致的现行说明。
 

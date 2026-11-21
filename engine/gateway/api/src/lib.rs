@@ -2,6 +2,7 @@
 //! Live exchange routes refuse before any credential is stored.
 mod derivatives;
 mod parity;
+pub mod research;
 mod research_v1;
 #[path = "routes/system.rs"]
 mod system_routes;

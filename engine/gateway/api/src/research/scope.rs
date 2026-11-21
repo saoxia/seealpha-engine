@@ -4,7 +4,7 @@
 //! Runtime owns persistence and the source of trusted task/tenant context.
 //! Nothing here issues an authorization or starts a job.
 
-use crate::{Grant, ResearchError, require_op};
+use super::{Grant, ResearchError, require_op};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -240,7 +240,7 @@ fn valid_dataset(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Grant;
+    use crate::research::Grant;
     use serde_json::json;
 
     fn grant() -> Grant {

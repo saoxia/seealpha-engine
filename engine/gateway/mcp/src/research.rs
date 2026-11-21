@@ -10,7 +10,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use seealpha_research::Grant;
+use crate::research::Grant;
 use serde_json::{Value, json};
 
 pub(super) const MCP_VERSION: &str = "2025-11-25";

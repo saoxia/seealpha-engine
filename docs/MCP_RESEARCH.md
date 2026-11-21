@@ -5,7 +5,7 @@ SeeAlpha Engine 在现有独立 `/research/v1/*` HTTP Research API 之外，可�
 AI 研究客户端发现和调用 Engine 研究工具，**不是交易管理 API，也不替代 Platform**。
 
 MCP 协议与工具映射源码位于 `engine/gateway/mcp/`，HTTP API crate 位于 `engine/gateway/api/`。
-两个目录独立，但当前仍共享 HTTP 监听、授权和研究任务能力，不代表部署了第二个服务。
+两个目录独立，但当前仍共享 HTTP 监听、授权和研究任务能力，不代表部署了第二个服务。Research Grant 的验证与作用域校验统一在 `engine/gateway/api/src/research/`，MCP 不复制授权逻辑。
 
 ## 默认关闭与部署约束
 

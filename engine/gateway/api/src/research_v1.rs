@@ -10,7 +10,7 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use rust_decimal::Decimal;
-use seealpha_research::{Grant, require_op, verify_research_grant};
+use crate::research::{Grant, require_op, verify_research_grant};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -541,7 +541,7 @@ mod tests {
             "tenant_id":"42","task_id":task_id,"not_before":now-10,"expires_at":now+600,
             "ops":ops,"datasets":datasets,"strategies":["account:a"]
         });
-        seealpha_research::sign_research_grant("research-signing-key-0123456789abcdef", &claims)
+        crate::research::sign_research_grant("research-signing-key-0123456789abcdef", &claims)
             .unwrap()
     }
     async fn request(

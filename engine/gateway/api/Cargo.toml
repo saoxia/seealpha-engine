@@ -8,18 +8,19 @@ license = "Apache-2.0"
 [dependencies]
 axum = "0.8"
 base64 = "0.22"
+hmac = "0.12"
 http-body-util = "0.1"
 rust_decimal = "1"
 seealpha-backtest = { path = "../../backtest" }
 seealpha-catalog = { path = "../../market_data/catalog" }
 seealpha-ledger = { path = "../../ledger" }
 seealpha-market = { path = "../../market_data/market" }
-seealpha-research = { path = "../../research" }
 seealpha-runtime = { path = "../../runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 subtle = "2"
+thiserror = "2"
 tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["limit"] }

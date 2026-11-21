@@ -12,7 +12,6 @@
 | `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
 | `engine/connectivity/` | 交易所协议与外部请求/状态适配 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
-| `engine/research/` | 研究签名授权与作用域校验；由 `application/research/` 原样迁入，Cargo 包名保持 `seealpha-research` |
 
 ## 规划中的业务领域（当前无同名源码目录）
 
@@ -26,7 +25,7 @@
 ## 应用和对外边界
 
 - `engine/runtime/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
-- `engine/gateway/`：对外协议入口；`api/` 为 HTTP API crate，`mcp/` 为复用现有 HTTP 服务的 MCP 协议模块，不增加独立进程或监听端口
+- `engine/gateway/`：对外协议入口；`api/` 为 HTTP API crate，内部 `src/research/` 负责研究签名授权与范围校验；`mcp/` 为复用现有 HTTP 服务的 MCP 协议模块，不增加独立进程或监听端口
 - `engine/apps/`：Engine 主程序和其他可执行入口
 
 ## 工程设施与资产
