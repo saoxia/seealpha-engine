@@ -139,3 +139,61 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
     drop(node);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn rc9_live_node_wires_native_spot_execution_without_connecting() {
+    // The cutover must reuse Nautilus' own Spot execution factory rather than
+    // spawning a second SeeAlpha REST order sender.
+    let data_config = BinanceDataClientConfig {
+        product_type: BinanceProductType::Spot,
+        environment: BinanceEnvironment::Testnet,
+        instrument_provider: BinanceInstrumentProviderConfig {
+            load_all: false,
+            load_ids: Some(vec!["BTCUSDT.BINANCE".to_owned()]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let exec_config = BinanceExecutionClientConfig {
+        account_id: AccountId::from("BINANCE-SPOT-OFFLINE-001"),
+        product_type: BinanceProductType::Spot,
+        environment: BinanceEnvironment::Testnet,
+        api_key: Some("offline-fixture-key".into()),
+        api_secret: Some("offline-fixture-secret".into()),
+        use_ws_trading: false,
+        oms_type: Some(OmsType::Hedging),
+        ..Default::default()
+    };
+    data_config.validate().expect("native Spot data configuration");
+    exec_config.validate().expect("native Spot execution configuration");
+    let node = LiveNode::builder(
+        TraderId::from("SEEALPHA-SPOT-OFFLINE-001"),
+        Environment::Live,
+    )
+    .expect("native Spot node builder")
+    .with_name("SEEALPHA-SPOT-EXEC-OFFLINE".to_owned())
+    .with_exec_engine_config(LiveExecutionEngineConfig {
+        open_check_interval_secs: Some(10.0),
+        position_check_interval_secs: Some(30.0),
+        ..Default::default()
+    })
+    .with_risk_engine_config(LiveRiskEngineConfig::default())
+    .add_data_client(
+        None,
+        Box::new(BinanceDataClientFactory::new()),
+        Box::new(data_config),
+    )
+    .expect("native Spot data client registration")
+    .add_exec_client(
+        None,
+        Box::new(BinanceExecutionClientFactory::new()),
+        Box::new(exec_config),
+    )
+    .expect("native Spot execution client registration")
+    .with_reconciliation(true)
+    .build()
+    .expect("native Spot LiveNode build without connecting");
+
+    // No run(), connect(), submit_order() or exchange credentials.
+    drop(node);
+}
