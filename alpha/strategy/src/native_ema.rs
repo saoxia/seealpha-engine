@@ -136,3 +136,129 @@ mod tests {
         assert_eq!(flat.bar_index, 5);
     }
 }
+
+
+/// Run the bundled EMA strategy entirely inside Rust. No interpreter or external
+/// strategy host is needed. This is an opt-in native strategy entrypoint; the
+/// existing Python package protocol remains independently supported.
+pub fn run_native_ema(
+    parameters: &serde_json::Value,
+    symbol: &str,
+    bars: &[super::StrategyBar],
+) -> Result<super::StrategyRun, super::StrategyError> {
+    use serde_json::{Value, json};
+    let bad = || super::StrategyError::Package("Rust EMA 策略参数无效。".into());
+    let supplied = parameters.as_object().ok_or_else(bad)?;
+    if supplied.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "symbol" | "fast_period" | "slow_period" | "allocation" | "risk_limit"
+        )
+    }) {
+        return Err(bad());
+    }
+    let strategy_symbol = supplied.get("symbol").and_then(Value::as_str).unwrap_or("ETHUSDT");
+    if strategy_symbol.to_ascii_uppercase() != "ETHUSDT" || symbol != "ETHUSDT" {
+        return Err(bad());
+    }
+    let period = |key: &str, default: usize| -> Result<usize, super::StrategyError> {
+        match supplied.get(key) {
+            None => Ok(default),
+            Some(Value::Number(n)) => n.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(bad),
+            Some(Value::String(s)) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) =>
+                s.parse::<usize>().map_err(|_| bad()),
+            _ => Err(bad()),
+        }
+    };
+    let number = |key: &str, default: &str| -> Result<Decimal, super::StrategyError> {
+        let text = match supplied.get(key) {
+            None => default.to_string(),
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Number(n)) => n.to_string(),
+            _ => return Err(bad()),
+        };
+        let amount = text.parse::<Decimal>().map_err(|_| bad())?;
+        if amount <= Decimal::ZERO || amount.scale() > 8 || amount.mantissa().unsigned_abs().to_string().len() > 30 {
+            return Err(bad());
+        }
+        Ok(amount)
+    };
+    let fast = period("fast_period", 8)?;
+    let slow = period("slow_period", 21)?;
+    let allocation = number("allocation", "1")?;
+    let risk_limit = match supplied.get("risk_limit") {
+        Some(_) => number("risk_limit", "1")?,
+        None => allocation,
+    };
+    let mut evaluator = EmaCrossover::new(fast, slow, allocation).map_err(|error| {
+        super::StrategyError::Package(error.to_string())
+    })?;
+    let mut publications = Vec::new();
+    for bar in bars {
+        let close = bar.close.parse::<f64>().map_err(|_| bad())?;
+        if let Some(target) = evaluator
+            .on_close(close)
+            .map_err(|error| super::StrategyError::Failed(error.to_string()))?
+        {
+            publications.push(super::Publication {
+                symbol: symbol.into(),
+                quantity: target.quantity.to_string(),
+                weight: None,
+                bar_index: target.bar_index,
+            });
+        }
+    }
+    Ok(super::StrategyRun {
+        prepared: json!({
+            "symbol": "ETHUSDT",
+            "fast_period": fast,
+            "slow_period": slow,
+            "allocation": allocation.to_string(),
+            "risk_limit": risk_limit.to_string(),
+        }),
+        publications,
+    })
+}
+
+
+#[cfg(test)]
+mod native_runner_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn bar(close: &str) -> crate::StrategyBar {
+        crate::StrategyBar {
+            open_time_ms: 0,
+            open: close.into(),
+            high: close.into(),
+            low: close.into(),
+            close: close.into(),
+            volume: "1".into(),
+        }
+    }
+
+    #[test]
+    fn native_runner_publishes_without_a_python_host() {
+        let bars = ["1", "1", "1", "10", "10", "0"].map(bar);
+        let run = run_native_ema(
+            &json!({"fast_period": 2, "slow_period": 3, "allocation": "1.25"}),
+            "ETHUSDT",
+            &bars,
+        )
+        .unwrap();
+        assert_eq!(run.prepared["risk_limit"], "1.25");
+        assert_eq!(run.publications.len(), 2);
+        assert_eq!(run.publications[0].bar_index, 3);
+        assert_eq!(run.publications[0].quantity, "1.25");
+        assert_eq!(run.publications[1].bar_index, 5);
+        assert_eq!(run.publications[1].quantity, "0");
+    }
+
+    #[test]
+    fn rejects_unknown_parameters_and_invalid_bars() {
+        assert!(run_native_ema(&json!({"credential": "x"}), "ETHUSDT", &[]).is_err());
+        assert!(run_native_ema(&json!({"fast_period": true}), "ETHUSDT", &[]).is_err());
+        assert!(run_native_ema(&json!({}), "BTCUSDT", &[]).is_err());
+        assert!(run_native_ema(&json!({}), "ETHUSDT", &[bar("NaN")]).is_err());
+    }
+}
