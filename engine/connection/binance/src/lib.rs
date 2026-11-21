@@ -283,7 +283,7 @@ impl VenueClient {
             Ok(value) => {
                 // Do not rely on order_view's presentation fallback for
                 // authority: the signed response must itself bind identity.
-                let expected_symbol = venue_symbol(symbol)?;
+                let expected_symbol = venue_symbol(&symbol)?;
                 if value["clientOrderId"].as_str() != Some(client_order_id)
                     || value["symbol"].as_str() != Some(expected_symbol.as_str())
                     || value["orderId"].is_null()
