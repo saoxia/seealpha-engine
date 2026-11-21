@@ -4,11 +4,12 @@ FROM rust:1.100-slim-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY market_data ./market_data
-COPY alpha ./alpha
+COPY strategy ./strategy
 COPY portfolio ./portfolio
 COPY backtest ./backtest
 COPY accounting ./accounting
 COPY connectivity ./connectivity
+COPY research ./research
 COPY application ./application
 COPY interfaces ./interfaces
 COPY apps ./apps

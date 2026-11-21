@@ -2,7 +2,7 @@
 
 ## 当前实现与代码入口
 
-本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `alpha/strategy`，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。以前的 `engine/`、`core/`、`python/strategy_host/` 目录属于迁移历史，**不得在没有单独需求和验证的情况下恢复成运行时依赖**。
+本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `strategy/`，研究授权 crate 位于 `research/`，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。以前的 `engine/`、`core/`、`python/strategy_host/` 目录属于迁移历史，**不得在没有单独需求和验证的情况下恢复成运行时依赖**。
 
 当前架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，代码导航见 [docs/architecture/MODULE_MAP.md](docs/architecture/MODULE_MAP.md)。如文档相互矛盾，以当前 Rust 代码和测试为实际实现依据，同时修订不一致的现行说明。
 
@@ -13,7 +13,8 @@
 - 订单必须先登记请求意图；外部请求未知结果不得盲目再次发送；只有被核验的真实成交证据能更新已成交事实；模拟成交必须与真实成交分离。
 - 行情读取、策略订阅、回测不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据。
 - 不触碰真实账户、真实下单、生产密钥、旧数据重建、生产状态卷或数据库迁移。使用合成/离线数据验证重构。
-- `execution` 和 `risk` 是跨现有 crate 的逻辑领域，参见 `docs/architecture/`；不存在同名独立 crate。
+- `execution` 和 `risk` 是跨现有 crate 的逻辑领域，参见 `docs/architecture/`；不存在同名独立 crate，不创建空实现。
+- 一级领域清单与状态见 `docs/architecture/DOMAIN_LAYOUT.md`。
 
 ## 目录调整规范
 

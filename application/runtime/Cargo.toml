@@ -13,7 +13,7 @@ seealpha-binance-market-data-source = { path = "../../market_data/sources/binanc
 seealpha-market = { path = "../../market_data/market" }
 seealpha-portfolio = { path = "../../portfolio/core" }
 seealpha-backtest = { path = "../../backtest/core" }
-seealpha-strategy = { path = "../../alpha/strategy" }
+seealpha-strategy = { path = "../../strategy" }
 seealpha-venue = { path = "../../connectivity/venue" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

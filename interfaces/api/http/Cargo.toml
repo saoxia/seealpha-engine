@@ -14,7 +14,7 @@ seealpha-backtest = { path = "../../../backtest/core" }
 seealpha-catalog = { path = "../../../market_data/catalog" }
 seealpha-ledger = { path = "../../../accounting/ledger" }
 seealpha-market = { path = "../../../market_data/market" }
-seealpha-research = { path = "../../../application/research" }
+seealpha-research = { path = "../../../research" }
 seealpha-runtime = { path = "../../../application/runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
