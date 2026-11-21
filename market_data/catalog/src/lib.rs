@@ -3,8 +3,8 @@
 mod cleanup;
 mod model;
 mod reader;
-mod repair;
 mod records;
+mod repair;
 mod writer;
 
 use std::path::PathBuf;
