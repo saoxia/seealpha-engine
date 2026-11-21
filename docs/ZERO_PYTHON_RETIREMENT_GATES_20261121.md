@@ -1,9 +1,9 @@
 # Rust-only Python retirement cutover (2026-11-21)
 
-> **Status: code changes made on an unmerged draft branch; untested and unverified.**
+> **Status: PR #130 merged to `main` on 2026-11-21; migration parity remains untested and unverified.**
 > This is a breaking change, not verified Rust parity with the former Python Engine.
 
-## Code changes in this branch
+## Changes introduced by PR #130
 
 - Strategy issuance now validates exact native JSON manifest bytes instead of Python ZIP packages.
 - The native manifest permits only a known precompiled Rust EMA implementation; it checks issuance metadata, SHA-256, tenant, account and purpose.
@@ -27,9 +27,9 @@ Store exactly those manifest bytes (including any trailing newline) in the trust
 - The Rust workspace still contains historical Rust adapter definitions or test fixtures referencing Python. They are not evidence of an operational Python interpreter in the default image.
 - Native EMA does not implement arbitrary NautilusTrader Python strategies.
 - No tests, compilation, lint, build, container or Platform end-to-end validation was performed, at user request.
-- A full repository-wide inventory of tracked Python files cannot be certified from the available file-by-file GitHub connector interface. File removals listed here are confirmed, but **zero tracked `.py` cannot be proven**.
+- The follow-up cleanup removes the leftover `tests/__init__.py` marker and adds CI enforcement against tracked `.py`, `.pyi` and `.pyw` files. This is a future regression gate, not evidence of completed execution or a comprehensive audited tree at the time of writing.
 - Live-order and historical/derivatives parity limitations in `docs/RUST_CUTOVER_AUDIT_20261121.md` remain.
 
 ## Deployment guidance
 
-Do not merge or deploy as a transparent compatible upgrade. Existing issued Python packages require a separate migration strategy, and production order/data functionality remains subject to existing safety gates. If old packages are needed, revert this draft change or retrieve the Python host from Git history; do not silently reinterpret Python bytecode as native strategy manifests.
+Do not deploy this merged change as a transparent compatible upgrade. Existing issued Python packages require a separate migration strategy, and production order/data functionality remains subject to existing safety gates. If old packages are needed, revert this draft change or retrieve the Python host from Git history; do not silently reinterpret Python bytecode as native strategy manifests.
