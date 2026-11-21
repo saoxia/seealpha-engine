@@ -127,3 +127,17 @@ cargo test -p seealpha-portfolio --locked
 cargo test --workspace --locked
 python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
+
+## Native holding publication to paper replay
+
+`replay_holdings` now resolves each `HoldingPublication` (member, symbol,
+quantity-or-weight, allocation, price) into a `TargetPublication` before
+calling the established Rust netting, risk clipping and paper-fill replay.
+The input batch is rejected if symbols differ or any allocation/target is
+invalid. It is a **single-instrument paper** entry point: do not use it for
+multi-instrument baskets, live order submission, or venue reconciliation.
+
+Tests cover opposing long/short weight publications and reject mixed
+instruments or invalid allocations. This entry point is not yet wired to
+HTTP strategy-host output or the live coordinator; keep legacy Python until
+full integration, equivalence and owner-approved retirement.
