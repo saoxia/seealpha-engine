@@ -101,17 +101,16 @@ pub(super) async fn paper_session(
     if body.native_sample && !body.use_sample {
         return Err(AppError::bad_request("native_sample 只能与 use_sample 一起使用。"));
     }
+    if body.use_sample && !body.native_sample {
+        return Err(AppError::bad_request("Python 示例策略已退役；请显式设置 native_sample=true。"));
+    }
     let strategies = if body.use_sample {
         if tenant.purpose == "production" {
             return Err(AppError::forbidden("正式租户不能使用示例策略。"));
         }
         vec![StrategyInput {
             member_id: "ema_crossover".into(),
-            package: if body.native_sample {
-                PackageBody::NativeEma
-            } else {
-                PackageBody::Directory(state.config.sample_package())
-            },
+            package: PackageBody::NativeEma,
             parameters: if body.parameters.is_null() {
                 json!({})
             } else {
