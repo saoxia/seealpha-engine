@@ -206,14 +206,18 @@ impl Runtime {
                 (product, dataset),
                 ("spot", "trades") | ("futures_um", "aggTrades")
             ) {
-                return Err(bad("不能把不同粒度的历史成交导入实时兼容的 Nautilus Catalog。"));
+                return Err(bad(
+                    "不能把不同粒度的历史成交导入实时兼容的 Nautilus Catalog。",
+                ));
             }
             // The caller must supply precisions independently confirmed from
             // the Nautilus Instrument. ZIP display width is NOT the precision.
-            let price_precision = payload["price_precision"].as_u64()
+            let price_precision = payload["price_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的价格精度。"))?;
-            let size_precision = payload["size_precision"].as_u64()
+            let size_precision = payload["size_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("缺少经 Nautilus Instrument 确认的数量精度。"))?;
             let normalized = json!({
@@ -223,7 +227,8 @@ impl Runtime {
                 "size_precision": size_precision
             });
             let id = hash_job(tenant_id, &normalized);
-            return self.ledger
+            return self
+                .ledger
                 .queue_data_job(tenant_id, &id, action, &normalized)
                 .map_err(map_ledger);
         }
@@ -341,9 +346,11 @@ impl Runtime {
             ));
         }
         let result = if original["action"] == "archive_fetch" {
-            self.archive_fetch_job(tenant_id, &original["payload"]).await
+            self.archive_fetch_job(tenant_id, &original["payload"])
+                .await
         } else if original["action"] == "archive_import" {
-            self.archive_import_job(tenant_id, &original["payload"]).await
+            self.archive_import_job(tenant_id, &original["payload"])
+                .await
         } else {
             self.backfill_job(tenant_id, &original["payload"]).await
         };
@@ -393,7 +400,8 @@ impl Runtime {
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err(bad("历史归档租户目录必须是真实目录，禁止符号链接。"));
         }
-        let tenant_root = tenant_path.canonicalize()
+        let tenant_root = tenant_path
+            .canonicalize()
             .map_err(|_| bad("历史归档租户目录不可访问。"))?;
         if !tenant_root.is_dir() || !tenant_root.starts_with(&root) {
             return Err(bad("历史归档租户隔离校验未通过。"));
@@ -427,11 +435,15 @@ impl Runtime {
         }
         let mut report: Value = serde_json::from_slice(&output.stdout)
             .map_err(|_| bad("归档下载回执不是有效 JSON。"))?;
-        let obj = report.as_object_mut()
+        let obj = report
+            .as_object_mut()
             .ok_or_else(|| bad("归档下载回执结构无效。"))?;
         if obj.get("verified") != Some(&json!(true))
             || obj.get("catalog_committed") != Some(&json!(false))
-            || obj.get("sha256").and_then(Value::as_str).is_none_or(|s| s.len() != 64)
+            || obj
+                .get("sha256")
+                .and_then(Value::as_str)
+                .is_none_or(|s| s.len() != 64)
         {
             return Err(bad("归档下载回执缺少完整性证据。"));
         }
@@ -471,7 +483,9 @@ impl Runtime {
             (product, dataset),
             ("spot", "trades") | ("futures_um", "aggTrades")
         ) {
-            return Err(bad("当前 Nautilus Catalog 只接受与实时 TradeTick 同粒度的数据。"));
+            return Err(bad(
+                "当前 Nautilus Catalog 只接受与实时 TradeTick 同粒度的数据。",
+            ));
         }
         let spec = ArchiveSpec::new(product, dataset, symbol, day)
             .map_err(|_| bad("归档来源参数无效。"))?;
@@ -489,12 +503,11 @@ impl Runtime {
         let root = std::path::PathBuf::from(volume)
             .canonicalize()
             .map_err(|_| bad("历史归档根目录不可用。"))?;
-        let tenant_root = crate::sources::native_tenant_product_root(
-            &root.to_string_lossy(), tenant, product,
-        )?
-        .parent()
-        .ok_or_else(|| bad("租户归档路径无效。"))?
-        .to_path_buf();
+        let tenant_root =
+            crate::sources::native_tenant_product_root(&root.to_string_lossy(), tenant, product)?
+                .parent()
+                .ok_or_else(|| bad("租户归档路径无效。"))?
+                .to_path_buf();
         let mut archive = tenant_root.join(product);
         for component in [dataset, symbol] {
             archive.push(component);
@@ -505,8 +518,7 @@ impl Runtime {
             }
         }
         archive.push(spec.archive_name());
-        let meta = std::fs::symlink_metadata(&archive)
-            .map_err(|_| bad("历史 ZIP 尚未下载。"))?;
+        let meta = std::fs::symlink_metadata(&archive).map_err(|_| bad("历史 ZIP 尚未下载。"))?;
         if !meta.is_file() || meta.file_type().is_symlink() {
             return Err(bad("历史 ZIP 必须是普通文件。"));
         }
@@ -517,16 +529,17 @@ impl Runtime {
 
         let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
             .map_err(|_| bad("未配置原生 Nautilus Catalog 根目录。"))?;
-        let catalog = crate::sources::native_tenant_product_root(
-            &catalog_base, tenant, product,
-        )?;
+        let catalog = crate::sources::native_tenant_product_root(&catalog_base, tenant, product)?;
         // The existing source supervisor is authoritative for its children.
         // Do not write historical files while the native live writer is active.
         {
-            let mut processes = self.source_processes.lock()
+            let mut processes = self
+                .source_processes
+                .lock()
                 .map_err(|_| bad("行情进程管理锁不可用。"))?;
             if let Some(child) = processes.get_mut(&format!("{tenant}:{product}"))
-                && child.try_wait()
+                && child
+                    .try_wait()
                     .map_err(|_| bad("行情数据源进程状态不明。"))?
                     .is_none()
             {
@@ -549,11 +562,13 @@ impl Runtime {
             archive.to_string_lossy().into_owned(),
             catalog.to_string_lossy().into_owned(),
             sha.to_owned(),
-            payload["price_precision"].as_u64()
+            payload["price_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("原生 Instrument 价格精度无效。"))?
                 .to_string(),
-            payload["size_precision"].as_u64()
+            payload["size_precision"]
+                .as_u64()
                 .filter(|v| *v <= 16)
                 .ok_or_else(|| bad("原生 Instrument 数量精度无效。"))?
                 .to_string(),
@@ -571,7 +586,9 @@ impl Runtime {
             return Err(RuntimeError::Conflict(format!(
                 "Nautilus 历史 Tick 导入失败，可能已有局部 Parquet 需核验：{}",
                 String::from_utf8_lossy(&output.stderr)
-                    .chars().take(300).collect::<String>()
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
             )));
         }
         let mut report: Value = serde_json::from_slice(&output.stdout)
@@ -895,18 +912,10 @@ mod tests {
     }
     #[test]
     fn archive_job_inputs_are_validated_before_enqueue() {
-        assert!(ArchiveSpec::new(
-            "spot", "trades", "BTCUSDT", "2026-11-20",
-        ).is_ok());
-        assert!(ArchiveSpec::new(
-            "futures_um", "aggTrades", "ETHUSDT", "2026-11-20",
-        ).is_ok());
-        assert!(ArchiveSpec::new(
-            "options", "trades", "BTCUSDT", "2026-11-20",
-        ).is_err());
-        assert!(ArchiveSpec::new(
-            "spot", "trades", "../BTCUSDT", "2026-11-20",
-        ).is_err());
+        assert!(ArchiveSpec::new("spot", "trades", "BTCUSDT", "2026-11-20",).is_ok());
+        assert!(ArchiveSpec::new("futures_um", "aggTrades", "ETHUSDT", "2026-11-20",).is_ok());
+        assert!(ArchiveSpec::new("options", "trades", "BTCUSDT", "2026-11-20",).is_err());
+        assert!(ArchiveSpec::new("spot", "trades", "../BTCUSDT", "2026-11-20",).is_err());
     }
     #[test]
     fn deterministic_job_id_is_tenant_scoped() {

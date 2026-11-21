@@ -1,9 +1,8 @@
-//! Bounded, side-effect-free Binance market source policy kernel.
+//! SeeAlpha-owned Binance public ZIP downloader and native source policy validation.
 //!
-//! This is an offline Rust candidate, NOT yet called by the running collectors.
-//! It preserves the existing manifest v1 and source-specific validation rules.
-//! The policy kernel itself is side-effect-free. The separate archive_fetch
-//! module performs explicitly requested offline public-data downloads only.
+//! All live Spot/USD-M WebSocket, REST-trade and Tick persistence functions
+//! are delegated to the separate NautilusTrader Rust integration. No second
+//! venue transport, local raw Tick Journal, or custom Parquet writer exists.
 use std::collections::BTreeSet;
 
 pub mod archive_fetch;
@@ -322,5 +321,4 @@ mod tests {
             .is_err()
         );
     }
-
 }

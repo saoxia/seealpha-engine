@@ -321,9 +321,8 @@ impl Runtime {
         // uncommitted or elevate the live data/venue readiness gate.
         if interval == "1m"
             && matches!(product_name, "spot" | "futures_um")
-            && let Err(err) = self.persist_native_minute_rollups(
-                tenant, product_name, symbol, &native,
-            )
+            && let Err(err) =
+                self.persist_native_minute_rollups(tenant, product_name, symbol, &native)
         {
             eprintln!("native derived rollup cache requires repair: {err}");
         }

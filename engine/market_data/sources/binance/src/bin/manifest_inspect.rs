@@ -3,9 +3,7 @@
 use std::fs;
 use std::process::ExitCode;
 
-use seealpha_binance_market_data_source::{
-    MAX_MANIFEST_BYTES, Product, parse_manifest,
-};
+use seealpha_binance_market_data_source::{MAX_MANIFEST_BYTES, Product, parse_manifest};
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
