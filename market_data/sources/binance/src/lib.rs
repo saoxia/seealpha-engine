@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub mod calc;
+pub mod trade_archive;
 pub mod protocol;
 pub mod store;
 pub mod ws;

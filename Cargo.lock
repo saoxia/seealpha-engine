@@ -1642,6 +1642,7 @@ dependencies = [
 name = "seealpha-binance-market-data-source"
 version = "0.1.0"
 dependencies = [
+ "csv",
  "fs2",
  "futures-util",
  "reqwest",
@@ -1653,6 +1654,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+ "zip 2.6.1",
 ]
 
 [[package]]
