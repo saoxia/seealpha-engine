@@ -42,6 +42,11 @@ impl Runtime {
         if tenant.purpose != "production" {
             return Err(RuntimeError::Conflict("开发租户不能向交易所下单。".into()));
         }
+        // Explicit native backend is staged durably, never dispatched through
+        // the legacy Venue. Production/live host protection above still applies.
+        if command.values["execution_backend"] == "nautilus_binance_native" {
+            return crate::native_handoff::stage_native_order_command(self, &command);
+        }
         if !matches!(command.action.as_str(), "submit" | "cancel") {
             return Err(RuntimeError::Unprocessable(
                 "交易操作或账户环境不匹配。".into(),
