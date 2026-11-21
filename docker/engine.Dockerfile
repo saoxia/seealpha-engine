@@ -1,6 +1,6 @@
 # Build from the repository root:
 #   docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
-FROM rust:1.100-slim AS build
+FROM rust:1.100-slim-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY market_data ./market_data
@@ -15,9 +15,13 @@ COPY apps ./apps
 COPY benchmarks ./benchmarks
 RUN cargo build --locked --release -p seealpha-engine -p seealpha-binance-market-data-source --bins
 
-FROM python:3.15-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
-    ENGINE_PROJECT=/app ENGINE_PYTHON=python \
+# Default deployment: a Rust runtime without Python interpreter, host, or strategy packages.
+# Python strategy execution is opt-in via docker/engine-python.Dockerfile.
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+ENV ENGINE_PROJECT=/app \
     ENGINE_HOST=127.0.0.1 ENGINE_PORT=8766 \
     ENGINE_STATE=/app/.local/state/engine
 WORKDIR /app
@@ -25,9 +29,6 @@ COPY --from=build /src/target/release/seealpha-engine /usr/local/bin/seealpha-en
 COPY --from=build /src/target/release/binance-native-source /usr/local/bin/binance-native-source
 COPY --from=build /src/target/release/binance-native-calculation /usr/local/bin/binance-native-calculation
 COPY --from=build /src/target/release/binance-native-catalog-publish /usr/local/bin/binance-native-catalog-publish
-COPY python/strategy_host ./python/strategy_host
-COPY packages ./packages
-# Platform's Python contract source stays in the repository for compatibility
-# checks. The production Rust Engine image runs only user Python strategies.
+# Intentionally no Python interpreter or Python strategy files.
 EXPOSE 8766
 CMD ["seealpha-engine"]

@@ -99,38 +99,75 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Build standalone Engine image
-        run: docker build -f docker/engine.Dockerfile -t seealpha-engine:ci .
-      - name: Verify native image contains only Python strategy code
+      - name: Build Rust-only Engine image
+        run: docker build -f docker/engine.Dockerfile -t seealpha-engine:native .
+      - name: Verify native image needs no Python
         run: |
-          docker run --rm --entrypoint sh seealpha-engine:ci -ec '
-            test ! -e /app/api
-            test ! -e /app/web
-            test ! -e /app/migrations
-            test ! -e /app/engine
-            test ! -e /app/core
+          docker run --rm --entrypoint sh seealpha-engine:native -ec '
             test -x /usr/local/bin/seealpha-engine
-            test -f /app/python/strategy_host/host.py
-            unexpected="$(find /app -type f -name "*.py" \
-              ! -path "/app/python/strategy_host/*" \
-              ! -path "/app/packages/*" -print)"
+            test ! -e /app/python
+            test ! -e /app/packages
+            test ! -e /app/core
+            test -z "$(command -v python3 || true)"
+            unexpected="$(find /app -type f -name "*.py" -print)"
             if [ -n "$unexpected" ]; then
-              echo "Non-strategy Python found in native Engine image:"
-              printf "%s\n" "$unexpected"
+              echo "Python code found in Rust-only Engine image:"
+              printf "%s\\n" "$unexpected"
               exit 1
             fi
           '
-      - name: Verify isolated Python strategy host remains runnable
+      - name: Build optional Python strategy adapter image
+        run: docker build -f docker/engine-python.Dockerfile -t seealpha-engine:python .
+      - name: Verify optional Python host remains runnable
         run: |
-          printf '{}' | docker run --rm -i --entrypoint python seealpha-engine:ci \
+          docker run --rm --entrypoint sh seealpha-engine:python -ec '
+            test -x /usr/local/bin/seealpha-engine
+            test -f /app/python/strategy_host/host.py
+            test -f /app/packages/ema_crossover/strategy.py
+            command -v python3
+          '
+          printf '{}' | docker run --rm -i --entrypoint python3 seealpha-engine:python \
             -I /app/python/strategy_host/host.py > "$RUNNER_TEMP/strategy-host-response.json"
           python3 -c 'import json,sys; result=json.load(open(sys.argv[1])); assert result.get("ok") is False' "$RUNNER_TEMP/strategy-host-response.json"
+      - name: Execute bundled EMA Python sample in optional adapter
+        run: |
+          python3 - <<'PY' > "$RUNNER_TEMP/ema-host-request.json"
+          import json
+          prices = [100] * 30 + [200] * 30 + [50] * 30
+          bars = [
+              {
+                  "open_time_ms": index * 60000,
+                  "open": str(price), "high": str(price),
+                  "low": str(price), "close": str(price),
+                  "volume": "1",
+              }
+              for index, price in enumerate(prices)
+          ]
+          print(json.dumps({
+              "op": "run", "package_dir": "/app/packages/ema_crossover",
+              "parameters": {}, "symbol": "ETHUSDT",
+              "interval": "1m", "bars": bars,
+          }))
+          PY
+          docker run --rm -i --entrypoint python3 seealpha-engine:python \
+            -I /app/python/strategy_host/host.py \
+            < "$RUNNER_TEMP/ema-host-request.json" \
+            > "$RUNNER_TEMP/ema-host-response.json"
+          python3 - "$RUNNER_TEMP/ema-host-response.json" <<'PY'
+          import json
+          import sys
+          result = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert result.get("ok") is True, result
+          targets = [item.get("quantity") for item in result["publications"]]
+          assert "1" in targets and "0" in targets, result
+          assert all("bar_index" in item for item in result["publications"]), result
+          PY
       - name: Local synthetic HTTP smoke (no exchange credentials)
         run: |
           docker run -d --name seealpha-engine-ci -p 127.0.0.1:18766:8766 \
             -e ENGINE_HOST=0.0.0.0 -e ENGINE_AUTH_MODE=token -e ENGINE_TOKEN=ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef \
             -e ENGINE_TENANT_ID=42 -e ENGINE_TENANT_PURPOSE=development \
-            seealpha-engine:ci
+            seealpha-engine:native
           trap 'docker logs seealpha-engine-ci || true; docker rm -f seealpha-engine-ci || true' EXIT
           for i in $(seq 1 50); do
             if curl -fsS --max-time 2 -H 'Authorization: Bearer ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef' http://127.0.0.1:18766/health > /tmp/engine-health.json; then
