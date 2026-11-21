@@ -1,7 +1,7 @@
 //! Native SeeAlpha Engine process.
 //!
 //! `seealpha-engine` serves HTTP v2. `seealpha-engine smoke` reads public
-//! Binance market data and runs the sample Python strategy on a paper book.
+//! Binance market data and runs the built-in Rust EMA on a paper book.
 use seealpha_http::{AppState, serve};
 use seealpha_market::{BinanceSource, LoadQuery, Product};
 use seealpha_runtime::{
@@ -106,7 +106,7 @@ async fn run_smoke(state: AppState) -> Result<(), std::io::Error> {
             snapshot,
             strategies: vec![StrategyInput {
                 member_id: "ema_crossover".into(),
-                package: PackageBody::Directory(state.config.sample_package()),
+                package: PackageBody::NativeEma,
                 parameters: json!({}),
             }],
             request_id: None,
