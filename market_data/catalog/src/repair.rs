@@ -136,6 +136,42 @@ pub fn validate_venue_klines(
     Ok(())
 }
 
+/// A saved candle's OHLCV evidence and whether its constituent windows are complete.
+/// The legacy repair path sends decimal text, which the native bridge parses
+/// before invoking this comparison; no floating-point conversion is permitted.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalKline {
+    pub values: [rust_decimal::Decimal; 5],
+    pub complete: bool,
+}
+
+/// Decide whether a verified venue candle needs repair, replacing the legacy
+/// Python `differs` predicate. A missing all-zero slice is not a mismatch
+/// for the tick/second source, but incomplete saved bars always are.
+pub fn venue_kline_differs(
+    local: Option<&LocalKline>,
+    remote: &VenueKline,
+    source: &str,
+) -> bool {
+    match local {
+        Some(saved) => {
+            let observed = [
+                remote.bar.open,
+                remote.bar.high,
+                remote.bar.low,
+                remote.bar.close,
+                remote.bar.volume,
+            ];
+            !saved.complete || saved.values != observed
+        }
+        None => {
+            !((source == "tick" || source == "1s")
+                && remote.trade_count == 0
+                && remote.bar.volume.is_zero())
+        }
+    }
+}
+
 #[cfg(test)]
 mod venue_tests {
     use super::*;
@@ -235,4 +271,30 @@ mod venue_tests {
             validate_venue_klines(&[row], "1m", 0, 60_000, 0, crate::MarketProduct::Spot).is_err()
         );
     }
+    #[test]
+    fn native_repair_difference_preserves_legacy_zero_trade_exception() {
+        let mut remote = candle(0, 60_000);
+        let complete = LocalKline {
+            values: [
+                Decimal::from(10),
+                Decimal::from(12),
+                Decimal::from(9),
+                Decimal::from(11),
+                Decimal::from(2),
+            ],
+            complete: true,
+        };
+        assert!(!venue_kline_differs(Some(&complete), &remote, "1m"));
+        assert!(venue_kline_differs(None, &remote, "1m"));
+        assert!(venue_kline_differs(None, &remote, "tick"));
+        remote.trade_count = 0;
+        remote.bar.volume = Decimal::ZERO;
+        assert!(!venue_kline_differs(None, &remote, "tick"));
+        assert!(!venue_kline_differs(None, &remote, "1s"));
+        assert!(venue_kline_differs(None, &remote, "1m"));
+        assert!(venue_kline_differs(Some(&complete), &remote, "tick"));
+        let incomplete = LocalKline { complete: false, ..complete };
+        assert!(venue_kline_differs(Some(&incomplete), &remote, "1m"));
+    }
+
 }
