@@ -582,13 +582,18 @@ mod tests {
     use std::fs;
 
     fn runtime(venue_base: Option<String>) -> (Runtime, std::path::PathBuf) {
+        // Distinct SQLite state per parallel test: clock timestamps alone are
+        // not a safe uniqueness guarantee at high concurrency.
+        static NEXT_TEST_ROOT: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "seealpha-accounts-{}-{}",
+            "seealpha-accounts-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_TEST_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("state")).unwrap();
         let config = Config {
