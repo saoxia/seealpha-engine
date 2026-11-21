@@ -8,6 +8,7 @@ pub mod clock;
 pub mod exercise;
 pub mod funding;
 pub mod options;
+pub mod option_stream;
 mod pipeline;
 
 pub use binance::{BinanceSource, MemorySource};
