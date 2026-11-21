@@ -176,7 +176,7 @@ impl VenueClient {
         let path = match intent.product {
             Product::FuturesUm => "/fapi/v1/order",
             Product::Spot => "/api/v3/order",
-            Product::Option => "/eapi/v1/order",
+            Product::Option => seealpha_binance_options::order::EAPI_ORDER_PATH,
         };
         let canonical_symbol = venue_symbol(&intent.symbol)?;
         let pairs = if intent.product == Product::Option {
@@ -242,20 +242,17 @@ impl VenueClient {
         let path = match product {
             Product::FuturesUm => "/fapi/v1/order",
             Product::Spot => "/api/v3/order",
-            Product::Option => "/eapi/v1/order",
+            Product::Option => seealpha_binance_options::order::EAPI_ORDER_PATH,
         };
-        let pairs = vec![
-            ("symbol".to_string(), venue_symbol(symbol)?),
-            (
-                if product == Product::Option {
-                    "clientOrderId"
-                } else {
-                    "origClientOrderId"
-                }
-                .to_string(),
-                client_order_id.to_string(),
-            ),
-        ];
+        let symbol = venue_symbol(symbol)?;
+        let pairs = if product == Product::Option {
+            seealpha_binance_options::order::options_lookup_pairs(&symbol, client_order_id)
+        } else {
+            vec![
+                ("symbol".to_string(), symbol),
+                ("origClientOrderId".to_string(), client_order_id.to_string()),
+            ]
+        };
         let value = self.signed(credentials, "DELETE", path, &pairs)?;
         Ok(order_view(&value, client_order_id))
     }
@@ -271,25 +268,22 @@ impl VenueClient {
         let path = match product {
             Product::FuturesUm => "/fapi/v1/order",
             Product::Spot => "/api/v3/order",
-            Product::Option => "/eapi/v1/order",
+            Product::Option => seealpha_binance_options::order::EAPI_ORDER_PATH,
         };
-        let pairs = vec![
-            ("symbol".to_string(), venue_symbol(symbol)?),
-            (
-                if product == Product::Option {
-                    "clientOrderId"
-                } else {
-                    "origClientOrderId"
-                }
-                .to_string(),
-                client_order_id.to_string(),
-            ),
-        ];
+        let symbol = venue_symbol(symbol)?;
+        let pairs = if product == Product::Option {
+            seealpha_binance_options::order::options_lookup_pairs(&symbol, client_order_id)
+        } else {
+            vec![
+                ("symbol".to_string(), symbol.clone()),
+                ("origClientOrderId".to_string(), client_order_id.to_string()),
+            ]
+        };
         match self.signed(credentials, "GET", path, &pairs) {
             Ok(value) => {
                 // Do not rely on order_view's presentation fallback for
                 // authority: the signed response must itself bind identity.
-                let expected_symbol = venue_symbol(symbol)?;
+                let expected_symbol = venue_symbol(&symbol)?;
                 if value["clientOrderId"].as_str() != Some(client_order_id)
                     || value["symbol"].as_str() != Some(expected_symbol.as_str())
                     || value["orderId"].is_null()
