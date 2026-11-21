@@ -184,10 +184,9 @@ impl VenueClient {
                     "observed_at":value.get("updateTime").cloned().unwrap_or(Value::Null)}))
             }
             Product::Option => {
-                let account = self.signed(credentials, "GET", "/eapi/v1/account", &[])?;
-                let positions = self.signed(credentials, "GET", "/eapi/v1/position", &[])?;
-                seealpha_binance_options::normalize_options_account_snapshot(&account, &positions)
-                    .map_err(|_| VenueError::Unconfirmed)
+                seealpha_binance_options::account::collect_options_account_snapshot(|path| {
+                    self.signed(credentials, "GET", path, &[])
+                })
             }
         }
     }
