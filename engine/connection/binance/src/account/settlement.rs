@@ -55,12 +55,6 @@ pub fn normalize_um_income(rows: &Value, symbol: &str) -> Result<Vec<Value>, Ven
     Ok(result)
 }
 
-/// Compatibility API. Options-specific parsing is now owned by the
-/// dedicated binance-options crate; original error semantics are preserved.
-pub fn normalize_option_exercises(rows: &Value, symbol: &str) -> Result<Vec<Value>, VenueError> {
-    seealpha_binance_options::normalize_option_exercises(rows, symbol)
-        .map_err(|_| VenueError::Unconfirmed)
-}
 impl VenueClient {
     /// Conservative, explicitly time-bounded funding collection. A full page
     /// is treated as incomplete instead of silently dropping later records.
@@ -132,7 +126,8 @@ impl VenueClient {
         if rows.len() >= 1000 {
             return Err(VenueError::Unconfirmed);
         }
-        let normalized = normalize_option_exercises(&value, &symbol)?;
+        let normalized = seealpha_binance_options::normalize_option_exercises(&value, &symbol)
+            .map_err(|_| VenueError::Unconfirmed)?;
         if normalized.iter().any(|r| {
             r["raw"]["createDate"]
                 .as_i64()
@@ -157,6 +152,8 @@ mod tests {
     #[test]
     fn public_exercise_without_exchange_identity_is_not_settlement() {
         let row = json!([{"symbol":"BTC-271231-90000-C","amount":"1"}]);
-        assert!(normalize_option_exercises(&row, "BTC-271231-90000-C").is_err());
+        assert!(seealpha_binance_options::normalize_option_exercises(
+            &row, "BTC-271231-90000-C"
+        ).is_err());
     }
 }
