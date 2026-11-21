@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+// Stored for a future authenticated native actor; current Runtime intentionally
+// never reads credentials or makes private exchange requests.
+#[allow(dead_code)]
 #[derive(Clone)]
 struct NativeCredentials {
     api_key: String,

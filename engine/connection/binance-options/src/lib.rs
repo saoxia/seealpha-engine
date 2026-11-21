@@ -27,12 +27,28 @@ pub fn parse_trade_id(value: &Value) -> Result<u64, OptionsEvidenceError> {
         .or_else(|| value.as_str().and_then(|v| v.parse::<u64>().ok()))
         .ok_or(OptionsEvidenceError::Unconfirmed)
 }
+/// Parse exchange identifiers without lossy floating-point conversions.
+pub(crate) fn parse_order_id_text(value: &str) -> Result<u64, OptionsEvidenceError> {
+    value.parse::<u64>().ok().filter(|id| *id > 0)
+        .ok_or(OptionsEvidenceError::Unconfirmed)
+}
+
+pub(crate) fn parse_order_id_value(value: &Value) -> Result<u64, OptionsEvidenceError> {
+    parse_trade_id(value).and_then(|id| {
+        (id > 0).then_some(id).ok_or(OptionsEvidenceError::Unconfirmed)
+    })
+}
+
+pub(crate) fn parse_decimal_str(value: &str) -> Result<Decimal, OptionsEvidenceError> {
+    Decimal::from_str(value).map_err(|_| OptionsEvidenceError::Unconfirmed)
+}
+
 fn decimal<'a>(row: &'a Value, key: &str) -> Result<(&'a str, Decimal), OptionsEvidenceError> {
     let raw = row
         .get(key)
         .and_then(Value::as_str)
         .ok_or(OptionsEvidenceError::Unconfirmed)?;
-    let amount = Decimal::from_str(raw).map_err(|_| OptionsEvidenceError::Unconfirmed)?;
+    let amount = parse_decimal_str(raw)?;
     Ok((raw, amount))
 }
 pub fn normalize_option_trades(
@@ -40,16 +56,17 @@ pub fn normalize_option_trades(
     order_id: &str,
     rows: &[Value],
 ) -> Result<Vec<Value>, OptionsEvidenceError> {
-    let expected_order = order_id
-        .parse::<u64>()
-        .map_err(|_| OptionsEvidenceError::Unconfirmed)?;
+    let expected_order = parse_order_id_text(order_id)?;
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     for row in rows {
         if row.get("symbol").and_then(Value::as_str) != Some(symbol) {
             return Err(OptionsEvidenceError::Unconfirmed);
         }
-        if parse_trade_id(row.get("orderId").ok_or(OptionsEvidenceError::Unconfirmed)?) != Ok(expected_order) {
+        let observed_order = parse_order_id_value(
+            row.get("orderId").ok_or(OptionsEvidenceError::Unconfirmed)?
+        )?;
+        if observed_order != expected_order {
             continue;
         }
         let id = parse_trade_id(row.get("id").ok_or(OptionsEvidenceError::Unconfirmed)?)?;
@@ -123,5 +140,14 @@ mod tests {
             )
             .is_err()
         );
+        let mut malformed = rows[0].clone();
+        malformed["orderId"] = json!(false);
+        assert_eq!(
+            normalize_option_trades("BTC-271231-90000-C", "10", &[malformed]),
+            Err(OptionsEvidenceError::Unconfirmed)
+        );
+        assert_eq!(parse_order_id_value(&json!("42")).unwrap(), 42);
+        assert!(parse_order_id_value(&json!(0)).is_err());
+        assert!(parse_order_id_value(&json!(1.5)).is_err());
     }
 }

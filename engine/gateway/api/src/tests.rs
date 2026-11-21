@@ -250,7 +250,7 @@ use super::*;
         assert_eq!(status, StatusCode::CONFLICT);
         let rendered = body.to_string();
         assert!(!rendered.contains("secret-one"));
-        assert!(rendered.contains("交易网关未配置"));
+        assert!(rendered.contains("Nautilus 原生账户及成交证据读取尚未接入"));
     }
 
     #[tokio::test]

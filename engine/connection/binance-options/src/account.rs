@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use crate::OptionsEvidenceError;
 
-pub const EAPI_ACCOUNT_PATH: &str = "/eapi/v1/account";
+pub const EAPI_ACCOUNT_PATH: &str = "/eapi/v1/marginAccount";
 pub const EAPI_POSITION_PATH: &str = "/eapi/v1/position";
 
 /// Read the two independent Options account resources through the caller's
@@ -34,10 +34,13 @@ pub fn normalize_options_account_snapshot(
     account: &Value,
     positions: &Value,
 ) -> Result<Value, OptionsEvidenceError> {
+    // Official marginAccount response uses an "asset" array.
+    // Accept the previous envelopes only for offline compatibility.
     let balances = account
+        .get("asset")
+        .or_else(|| account.get("balances"))
+        .unwrap_or(account)
         .as_array()
-        .or_else(|| account.get("balances").and_then(Value::as_array))
-        .or_else(|| account.get("asset").and_then(Value::as_array))
         .ok_or(OptionsEvidenceError::Unconfirmed)?;
     let positions = positions
         .as_array()
@@ -68,9 +71,16 @@ pub fn option_position_quantities(
         let raw = field(item, &["quantity", "positionAmt"])
             .ok_or(OptionsEvidenceError::Unconfirmed)?;
         let amount = decimal(raw)?;
-        let side = field(item, &["positionSide"])
+        let side = item.get("side")
             .and_then(Value::as_str)
-            .unwrap_or("BOTH");
+            .filter(|v| matches!(*v, "LONG" | "SHORT"))
+            .ok_or(OptionsEvidenceError::Unconfirmed)?;
+        // Options quantities are signed; do not infer a futures-style BOTH.
+        if (side == "LONG" && amount < Decimal::ZERO)
+            || (side == "SHORT" && amount > Decimal::ZERO)
+        {
+            return Err(OptionsEvidenceError::Unconfirmed);
+        }
         let key = format!("{symbol}:{side}");
         if result.insert(key, amount).is_some() {
             return Err(OptionsEvidenceError::Unconfirmed);
@@ -126,8 +136,8 @@ mod tests {
         let result = collect_options_account_snapshot::<OptionsEvidenceError, _>(|path| {
             paths.push(path);
             match path {
-                EAPI_ACCOUNT_PATH => Ok(json!([{"asset":"USDT","marginBalance":"1.25"}])),
-                EAPI_POSITION_PATH => Ok(json!([{"symbol":"BTC-271231-90000-C","quantity":"2"}])),
+                EAPI_ACCOUNT_PATH => Ok(json!({"asset":[{"asset":"USDT","marginBalance":"1.25"}]})),
+                EAPI_POSITION_PATH => Ok(json!([{"symbol":"BTC-271231-90000-C","side":"LONG","quantity":"2"}])),
                 _ => panic!("unexpected route"),
             }
         }).unwrap();
@@ -167,8 +177,8 @@ mod tests {
     #[test]
     fn preserves_options_position_sides_and_quantity_fallbacks() {
         let snapshot = json!({"positions":[
-            {"symbol":"BTC-271231-90000-C","positionSide":"LONG","quantity":"1.250"},
-            {"symbol":"BTC-271231-90000-C","positionSide":"SHORT","positionAmt":"-0.50"}
+            {"symbol":"BTC-271231-90000-C","side":"LONG","quantity":"1.250"},
+            {"symbol":"BTC-271231-90000-C","side":"SHORT","positionAmt":"-0.50"}
         ]});
         let amounts = option_position_quantities(&snapshot).unwrap();
         assert_eq!(amounts["BTC-271231-90000-C:LONG"], Decimal::new(1250, 3));
@@ -189,12 +199,12 @@ mod tests {
     #[test]
     fn options_duplicate_or_malformed_account_evidence_fails_closed() {
         let bad_positions = json!({"positions":[
-            {"symbol":"ETH-271231-1000-P","quantity":"1"},
-            {"symbol":"ETH-271231-1000-P","quantity":"2"}
+            {"symbol":"ETH-271231-1000-P","side":"LONG","quantity":"1"},
+            {"symbol":"ETH-271231-1000-P","side":"LONG","quantity":"2"}
         ]});
         assert_eq!(option_position_quantities(&bad_positions), Err(OptionsEvidenceError::Unconfirmed));
         assert_eq!(
-            option_position_quantities(&json!({"positions":[{"symbol":"X","quantity":"NaN"}]})),
+            option_position_quantities(&json!({"positions":[{"symbol":"X","side":"LONG","quantity":"NaN"}]})),
             Err(OptionsEvidenceError::Unconfirmed)
         );
         assert_eq!(
@@ -208,6 +218,22 @@ mod tests {
             option_asset_quantities(&json!({"balances":[{"asset":"USDT"}]})),
             Err(OptionsEvidenceError::Unconfirmed)
         );
+    }
+
+    #[test]
+    fn invalid_position_directions_fail_closed() {
+        for position in [
+            json!({"symbol":"BTC-271231-90000-C","quantity":"1"}),
+            json!({"symbol":"BTC-271231-90000-C","positionSide":"LONG","quantity":"1"}),
+            json!({"symbol":"BTC-271231-90000-C","side":"BOTH","quantity":"1"}),
+            json!({"symbol":"BTC-271231-90000-C","side":"SHORT","quantity":"1"}),
+            json!({"symbol":"BTC-271231-90000-C","side":"LONG","quantity":"-1"}),
+        ] {
+            assert_eq!(
+                option_position_quantities(&json!({"positions":[position]})),
+                Err(OptionsEvidenceError::Unconfirmed)
+            );
+        }
     }
 
     #[test]
