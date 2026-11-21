@@ -288,7 +288,12 @@ impl VenueClient {
                 // Do not rely on order_view's presentation fallback for
                 // authority: the signed response must itself bind identity.
                 let expected_symbol = venue_symbol(&symbol)?;
-                if value["clientOrderId"].as_str() != Some(client_order_id)
+                if product == Product::Option {
+                    seealpha_binance_options::order::validate_options_order_reply(
+                        &value, &expected_symbol, client_order_id,
+                    )
+                    .map_err(|_| VenueError::Unconfirmed)?;
+                } else if value["clientOrderId"].as_str() != Some(client_order_id)
                     || value["symbol"].as_str() != Some(expected_symbol.as_str())
                     || value["orderId"].is_null()
                 {

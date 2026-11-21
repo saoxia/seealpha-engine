@@ -81,9 +81,48 @@ pub fn options_lookup_pairs(symbol: &str, client_order_id: &str) -> Vec<(String,
     ]
 }
 
+
+/// Validate the exchange-authored identity before a signed Options order GET
+/// can be treated as evidence. Presentation fallbacks are not authoritative.
+pub fn validate_options_order_reply(
+    reply: &serde_json::Value,
+    symbol: &str,
+    client_order_id: &str,
+) -> Result<(), crate::OptionsEvidenceError> {
+    if reply.get("clientOrderId").and_then(serde_json::Value::as_str)
+        != Some(client_order_id)
+        || reply.get("symbol").and_then(serde_json::Value::as_str) != Some(symbol)
+        || reply.get("orderId").is_none_or(serde_json::Value::is_null)
+    {
+        return Err(crate::OptionsEvidenceError::Unconfirmed);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_order_reply_must_bind_symbol_client_and_exchange_order_id() {
+        use serde_json::json;
+        let symbol = "BTC-271231-90000-C";
+        let client = "SA123";
+        let valid = json!({"symbol":symbol,"clientOrderId":client,"orderId":42,"status":"NEW"});
+        assert_eq!(validate_options_order_reply(&valid,symbol,client),Ok(()));
+        for invalid in [
+            json!({"symbol":"ETH-271231-90000-C","clientOrderId":client,"orderId":42}),
+            json!({"symbol":symbol,"clientOrderId":"different","orderId":42}),
+            json!({"symbol":symbol,"clientOrderId":client}),
+            json!({"symbol":symbol,"clientOrderId":client,"orderId":null}),
+        ] {
+            assert_eq!(
+                validate_options_order_reply(&invalid,symbol,client),
+                Err(crate::OptionsEvidenceError::Unconfirmed)
+            );
+        }
+    }
+
 
     fn fields<'a>(price: Option<&'a str>, order_type: &'a str, time_in_force: &'a str) -> OptionsOrderFields<'a> {
         OptionsOrderFields {
