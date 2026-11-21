@@ -81,10 +81,10 @@ jobs:
       - name: Format (existing workspace debt; advisory)
         continue-on-error: true
         run: cargo fmt --all --check
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
       - name: Test
         run: cargo test --workspace --locked --no-fail-fast
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
       - name: Release build
         run: cargo build --workspace --locked --release
       - name: Strategy package tests
