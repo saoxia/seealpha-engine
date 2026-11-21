@@ -483,6 +483,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(state);
     }
 
+    #[test]
+    fn publication_view_preserves_quantity_and_weight_protocols() {
+        let quantity = Publication {
+            symbol: "ETHUSDT".into(),
+            quantity: "1.25".into(),
+            weight: None,
+            bar_index: 2,
+        };
+        let weight = Publication {
+            symbol: "ETHUSDT".into(),
+            quantity: String::new(),
+            weight: Some("-0.5".into()),
+            bar_index: 2,
+        };
+        assert_eq!(publication_view(&quantity),
+            json!({"symbol":"ETHUSDT","quantity":"1.25","bar_index":2}));
+        assert_eq!(publication_view(&weight),
+            json!({"symbol":"ETHUSDT","weight":"-0.5","bar_index":2}));
+    }
+
+    #[test]
+    fn paper_allocation_validation_rejects_zero_missing_and_invalid() {
+        assert_eq!(allocation_field(&json!({"allocation":"2.5"})).unwrap(),
+            Decimal::new(25, 1));
+        for prepared in [
+            json!({}),
+            json!({"allocation":"0"}),
+            json!({"allocation":"-1"}),
+            json!({"allocation":"not-a-decimal"}),
+        ] {
+            assert!(allocation_field(&prepared).is_err());
+        }
+    }
+
     fn snapshot() -> MarketSnapshot {
         let mut closes = Vec::new();
         closes.extend(std::iter::repeat_n(100, 30));
