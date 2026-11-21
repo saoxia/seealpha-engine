@@ -20,6 +20,12 @@ The complete legacy directory file inventory and all import sites **must be dete
 4. Validate `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo build --workspace --locked --release`, the focused Python legacy tests, and side-by-side offline parity tests. GitHub Actions are currently paused: no green check may be assumed.
 5. Only after route/storage/failure parity and explicit owner approval, remove the obsolete Python files, imports, scripts and dependencies. Verify no remaining reference and measure Python LOC deleted. Never share writeable live state or automatically retry unknown exchange orders.
 
+## Native coordinator integration (follow-up)
+
+`portfolio/core/src/coordinator.rs` now exposes `Coordinator::report_holding` to accept a validated `TargetHolding`, explicit allocation and risk-exit intent. The Rust coordinator computes signed quantity and applies existing risk-exit rules; invalid allocation or risk-exit attempts leave its state unchanged. Regression tests live in `portfolio/core/tests/coordinator_holdings.rs`.
+
+**Not cut over:** no legacy Python caller or HTTP/application caller has yet been rewired to this new method. It is an opt-in Rust entrypoint, not a proven end-to-end replacement for the legacy coordinator. The legacy directory still requires full file/call-site inventory and cross-language replay parity. No Python code is removed in this batch.
+
 ## Subsequent directories
 
 - `engine/market_data/repair/`: existing Rust repair decisions and planning are partial; legacy Catalog reads/writes and orchestration remain.
