@@ -26,7 +26,7 @@
 ## 应用和对外边界
 
 - `engine/runtime/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
-- `engine/interfaces/`：HTTP v2、Research v1/MCP-compatible 接口与输入输出、认证
+- `engine/gateway/`：对外协议入口；`api/` 为 HTTP API crate，`mcp/` 为复用现有 HTTP 服务的 MCP 协议模块，不增加独立进程或监听端口
 - `engine/apps/`：Engine 主程序和其他可执行入口
 
 ## 工程设施与资产

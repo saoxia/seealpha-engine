@@ -18,7 +18,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 - `engine/backtest/`：历史回放与回测
 - `engine/research/`：研究授权和范围校验；研究任务编排仍在 Runtime
 - `engine/runtime/`：Runtime、租户和交易会话编排
-- `engine/interfaces/`：HTTP v2 和研究接口
+- `engine/gateway/`：对外 HTTP API 与 MCP 协议入口（独立源码目录，同一 HTTP 服务）
 - `engine/apps/`：Engine 二进制入口
 
 `engine/risk/`（风险管理）和 `engine/execution/`（订单管理与执行）是规划领域，当前相关实现仍分布于 Portfolio、Runtime、Venue 和 Ledger；**尚无对应一级源码目录或独立 crate**，不会创建空模块。`packages/` 保留 Rust 原生策略清单示例，`benchmarks/`、`docker/`、`docs/`、`.github/` 保留工程职责。完整清单见 [一级业务领域布局](docs/architecture/DOMAIN_LAYOUT.md)。

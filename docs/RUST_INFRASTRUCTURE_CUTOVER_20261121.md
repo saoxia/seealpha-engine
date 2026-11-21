@@ -15,9 +15,9 @@
 | --- | --- | --- |
 | SQLite 任务信封、租户隔离、可重启记录 | `accounting/ledger/` 的任务持久化；`application/runtime/src/jobs.rs`、`data.rs` | 不承诺迁移旧版 JSON `*.record.json` 或完整旧记录格式 |
 | 回测提交、幂等 ID、状态转移和结果 | `application/runtime/src/jobs.rs` 的 `schedule_backtest_job`、`execute_backtest_job`；Rust HTTP `parity.rs` | 使用原生回测路径而非旧 Python `engine.backtesting.worker` |
-| 数据作业排队、查询、取消和人工重试 | `application/runtime/src/data.rs`；`interfaces/api/http/src/parity.rs` | 部分旧数据维护操作明确拒绝，不伪装成功 |
-| Worker 设置持久化与查询 | `accounting/ledger/` 和 `interfaces/api/http/src/lib.rs` | 当前 Rust HTTP 任务调度以单一全局 `Semaphore(1)` 串行执行；配置的 `max_workers` 不等于实际并行度 |
-| 启动恢复 | `Runtime::open_book` 将未完成数据任务恢复为 interrupted；`interfaces/api/http/src/lib.rs` 仅恢复已持久排队的研究任务 | 不自动重试执行状态未知的任务 |
+| 数据作业排队、查询、取消和人工重试 | `application/runtime/src/data.rs`；`gateway/api/src/parity.rs` | 部分旧数据维护操作明确拒绝，不伪装成功 |
+| Worker 设置持久化与查询 | `accounting/ledger/` 和 `gateway/api/src/lib.rs` | 当前 Rust HTTP 任务调度以单一全局 `Semaphore(1)` 串行执行；配置的 `max_workers` 不等于实际并行度 |
+| 启动恢复 | `Runtime::open_book` 将未完成数据任务恢复为 interrupted；`gateway/api/src/lib.rs` 仅恢复已持久排队的研究任务 | 不自动重试执行状态未知的任务 |
 | 策略隔离 | `alpha/strategy/` 的隔离宿主执行路径 | 不等同旧 Python 子进程组取消、杀进程及超时监督语义 |
 
 ## 安全边界

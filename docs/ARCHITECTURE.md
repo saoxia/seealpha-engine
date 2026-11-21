@@ -9,7 +9,7 @@
 ```text
 engine/apps/trading_engine
         |
-interfaces/api/http  (HTTP v2、Research v1/MCP-compatible routes)
+gateway/api  (HTTP v2、Research v1/MCP-compatible routes)
         |
 runtime  (租户、账户、策略、纸面会话、数据任务、订单恢复)
    |        |          |
@@ -25,7 +25,7 @@ strategy portfolio   backtest
 
 上图表示主要调用/协作关系，不是完整 Cargo 依赖图。以各 crate 的 `Cargo.toml` 为编译依赖的准确来源。
 
-- **接口**：`engine/interfaces/api/http` 负责认证、版本头、请求校验及 HTTP 响应；按 `src/routes/` 分功能维护，现有 `parity`、`derivatives` 和 `research_v1` 路由继续保留。
+- **对外网关**：`engine/gateway/api` 负责认证、版本头、请求校验及 HTTP 响应；按 `src/routes/` 分功能维护，现有 `parity`、`derivatives` 和 `research_v1` 路由继续保留；`engine/gateway/mcp` 独立保存 MCP 协议实现，但仍由同一个 HTTP 进程挂载 `/research/mcp`。
 - **应用编排**：`engine/runtime` 负责业务用例、授权范围、纸面会话、订单恢复和异步作业。订单命令位于 `orders.rs`，历史研究/回测协调位于 `research.rs`；其他模块按既有功能分文件。
 - **领域能力**：`engine/strategy`、`engine/portfolio/core`、`engine/backtest/core` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
 - **交易事实**：`engine/ledger` 持有 SQLite 状态、请求意图、成交和对账证据；`engine/connectivity/venue` 持有交易所协议及交易请求适配。二者不可用简单的 HTTP 传输成功代替实际成交事实。
@@ -37,7 +37,7 @@ strategy portfolio   backtest
 
 顶层区分**业务源码**与**工程资源**：`engine/` 包含全部 Rust 业务领域、应用运行时、接口与可执行入口；`docker/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 Cargo Workspace 配置保留根目录；测试位于各 Rust crate 内。
 
-已实现业务领域：`engine/market_data/`、`engine/strategy/`、`engine/portfolio/`、`engine/ledger/`、`engine/connectivity/`、`engine/backtest/`、`engine/research/`。`engine/risk/` 与 `engine/execution/` 仍是逻辑领域，没有独立空 crate。`engine/runtime/`、`engine/interfaces/`、`engine/apps/` 为运行与交付层。详见 [领域布局](architecture/DOMAIN_LAYOUT.md)。
+已实现业务领域：`engine/market_data/`、`engine/strategy/`、`engine/portfolio/`、`engine/ledger/`、`engine/connectivity/`、`engine/backtest/`、`engine/research/`。`engine/risk/` 与 `engine/execution/` 仍是逻辑领域，没有独立空 crate。`engine/runtime/`、`engine/gateway/`、`engine/apps/` 为运行与交付层。详见 [领域布局](architecture/DOMAIN_LAYOUT.md)。
 
 此次源码整体移动，仅同步更新 Workspace、Docker、CI、相对测试路径及当前架构说明，不改变公开 API、交易行为、真实账户门禁或持久化格式。
 
