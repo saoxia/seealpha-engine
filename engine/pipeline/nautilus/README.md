@@ -1,6 +1,6 @@
 # 当前执行架构（2026-11-22 目录切换）
 
-旧 `engine/connection/binance` / `seealpha-venue` 已从仓库和 Runtime Cargo 依赖移除；Spot / USD-M 原生执行方向仅保留此独立 NautilusTrader 0.68.0 工厂。**注意这只是源代码依赖切换，不表示功能完全迁移：** Runtime 的 `execute_order` 仍只有 Ledger 原生意图登记、不连接原生下单命令；原生执行事件只支持 Ledger 未验证隔离表，尚无实际原生执行事件生产者。旧账户签名查询、历史订单/成交及结算查询接口已经显式 fail-closed，不能再提供私有数据，旧订单无法从原网络查询恢复。Options 没有被 Spot/USD-M 原生执行工厂取代。
+旧 `engine/connection/binance` / `seealpha-venue` 以及未被其他 crate 使用的 `engine/connection/binance-wire` 均已从仓库和 Cargo workspace 移除；Spot / USD-M 原生执行方向仅保留此独立 NautilusTrader 0.68.0 工厂。**注意这只是源代码依赖切换，不表示功能完全迁移：** Runtime 的 `execute_order` 仍只有 Ledger 原生意图登记、不连接原生下单命令；原生执行事件只支持 Ledger 未验证隔离表，尚无实际原生执行事件生产者。旧账户签名查询、历史订单/成交及结算查询接口已经显式 fail-closed，不能再提供私有数据，旧订单无法从原网络查询恢复。Options 没有被 Spot/USD-M 原生执行工厂取代。
 
 **不得启用实盘交易。** 删除目录的请求不等于安全生产验收，也不等于原生账户、成交取证已实现。本次按用户要求未运行 Cargo 编译和测试。下文关于旧目录尚在或不得删除的历史迁移描述是过去阶段的记录，以本节当前状态为准。
 
@@ -21,7 +21,7 @@
 
 ## 替换旧 Venue 的明确目标（2026-11-22）
 
-**最终目标不是把旧 `engine/connection/binance` 重新拆成一套自研 Binance 下单客户端。** Spot 和 USD-M 标准订单必须接入固定版本 NautilusTrader `BinanceExecutionClientFactory`、`LiveNode` 以及 Nautilus 原生 ExecutionEngine/RiskEngine；现有 `binance-wire` 不能成为第二条下单通道。
+**最终目标不是把旧 `engine/connection/binance` 重新拆成一套自研 Binance 下单客户端。** Spot 和 USD-M 标准订单必须接入固定版本 NautilusTrader `BinanceExecutionClientFactory`、`LiveNode` 以及 Nautilus 原生 ExecutionEngine/RiskEngine；遗留 `binance-wire` 已清理，不再保留第二条自研 Binance 签名/REST 下单通道。
 
 当前新增 Spot LiveNode 离线构建契约，与已有 USD-M Hedging 离线构建契约并列；二者**均不运行节点、不触网、不提交订单、不接入生产 Runtime**。接管顺序及验收条件：
 
@@ -31,7 +31,7 @@
 4. 单独核验 Spot OCO、USD-M Algo、订单替换和撤单竞争的原生支持情况。不支持时明确拒绝，不通过普通订单进行功能降级。
 5. 在 mock/sandbox 逐项验证重启恢复、断线重连、顺序错乱、重复报告、部分成交、双向仓位、限额和风控拒绝，解决 rc9 Streaming LiveNode 停止/销毁问题，完成 CI 后再考虑独立受控灰度。
 
-Options 不属于现有 Nautilus 原生 Binance Spot/USD-M 执行覆盖范围；另行选择独立的 Nautilus ExecutionClient 适配器或受控 Options 网关，**不能**用 Spot/USD-M 原生工厂替代 EAPI。旧 Venue 和 `binance-wire` 的最终删除依赖上述能力实际切换，不以目录清理作为完成标准。
+Options 不属于现有 Nautilus 原生 Binance Spot/USD-M 执行覆盖范围；另行选择独立的 Nautilus ExecutionClient 适配器或受控 Options 网关，**不能**用 Spot/USD-M 原生工厂替代 EAPI。旧 Venue 和未使用的 `binance-wire` 已清理，但上述原生执行能力仍未完成实际切换；目录清理不构成生产验收。
 
 ## 原生执行路由身份约束（2026-11-22）
 

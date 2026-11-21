@@ -11,7 +11,6 @@ members = [
     "engine/execution",
     "engine/ledger",
     "engine/strategy",
-    "engine/connection/binance-wire",
     "engine/connection/binance-options",
     "engine/backtest",
     "engine/runtime",

@@ -1462,16 +1462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "seealpha-binance-wire"
-version = "0.1.0"
-dependencies = [
- "hmac",
- "reqwest",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "seealpha-catalog"
 version = "0.1.0"
 dependencies = [
