@@ -35,7 +35,7 @@ strategy portfolio   backtest
 
 ## 一级目录原则
 
-顶层区分**业务源码**、**持久化数据**与**工程资源**：`engine/` 包含全部 Rust 业务领域、应用运行时、接口与可执行入口；`docker/`、`benchmarks/`、`packages/`、`docs/`、`.github/` 与 Cargo Workspace 配置保留根目录；测试位于各 Rust crate 内。
+顶层区分**业务源码**、**持久化数据**与**工程资源**：`engine/` 包含全部 Rust 业务领域、应用运行时、接口与可执行入口；`docker/`、`benchmarks/`、`docs/`、`.github/` 与 Cargo Workspace 配置保留根目录；测试位于各 Rust crate 内。
 
 已实现业务领域：`engine/pipeline/`、`engine/strategy/`、`engine/portfolio/`、`engine/ledger/`、`engine/connection/`、`engine/backtest/`。`engine/risk/` 与 `engine/execution/` 仍是逻辑领域，没有独立空 crate。`engine/runtime/`、`engine/gateway/`、`engine/apps/` 为运行与交付层。详见 [领域布局](architecture/DOMAIN_LAYOUT.md)。
 
