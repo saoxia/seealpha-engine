@@ -6,8 +6,10 @@
 pub mod conditional;
 #[path = "account/evidence.rs"]
 pub mod evidence;
-#[path = "orders/lifecycle.rs"]
-pub mod lifecycle;
+pub mod lifecycle {
+    // Historical API compatibility while Runtime is moved off seealpha-venue.
+    pub use seealpha_execution::lifecycle::{OrderPhase, VerifiedOrderState};
+}
 #[path = "options/trades.rs"]
 pub mod option_trades;
 #[path = "orders/guard.rs"]
@@ -43,6 +45,12 @@ pub enum VenueError {
     Rejected(String),
     #[error("交易结果待核实，请刷新委托并按客户订单号核对，不要重复提交。")]
     Unconfirmed,
+}
+
+impl From<seealpha_execution::OrderStateError> for VenueError {
+    fn from(_: seealpha_execution::OrderStateError) -> Self {
+        Self::Unconfirmed
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
