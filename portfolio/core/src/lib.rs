@@ -24,6 +24,63 @@ pub enum PortfolioError {
     Overflow,
 }
 
+/// A strategy's absolute holding request. Exactly one of quantity or weight
+/// must be set. A weight is relative to a positive allocation, not equity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetHolding {
+    pub symbol: String,
+    pub quantity: Option<Decimal>,
+    pub weight: Option<Decimal>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum TargetHoldingError {
+    #[error("目标持仓需要数量或权重其中之一")]
+    Selection,
+    #[error("目标权重必须在 -1 到 1 之间")]
+    Weight,
+    #[error("分配数量必须大于零")]
+    Allocation,
+    #[error("decimal overflow")]
+    Overflow,
+}
+
+impl TargetHolding {
+    pub fn new(
+        symbol: impl Into<String>,
+        quantity: Option<Decimal>,
+        weight: Option<Decimal>,
+    ) -> Result<Self, TargetHoldingError> {
+        if quantity.is_some() == weight.is_some() {
+            return Err(TargetHoldingError::Selection);
+        }
+        if weight.is_some_and(|value| value < -Decimal::ONE || value > Decimal::ONE) {
+            return Err(TargetHoldingError::Weight);
+        }
+        Ok(Self {
+            symbol: symbol.into(),
+            quantity,
+            weight,
+        })
+    }
+
+    /// Validate allocation even for an absolute-quantity target to match the
+    /// legacy contract. Decimal cannot represent NaN or infinity.
+    pub fn signed_quantity(&self, allocation: Decimal) -> Result<Decimal, TargetHoldingError> {
+        if allocation <= Decimal::ZERO {
+            return Err(TargetHoldingError::Allocation);
+        }
+        match (self.quantity, self.weight) {
+            (Some(quantity), None) => Ok(quantity),
+            (None, Some(weight)) if weight >= -Decimal::ONE && weight <= Decimal::ONE => weight
+                .checked_mul(allocation)
+                .ok_or(TargetHoldingError::Overflow),
+            (None, Some(_)) => Err(TargetHoldingError::Weight),
+            _ => Err(TargetHoldingError::Selection),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberTarget {
     pub member_id: String,
@@ -177,6 +234,53 @@ mod tests {
             signed_quantity: Decimal::from(quantity),
             risk_exit: false,
         }
+    }
+
+    #[test]
+    fn target_holding_rejects_missing_or_ambiguous_values() {
+        assert_eq!(
+            TargetHolding::new("ETHUSDT", None, None).unwrap_err(),
+            TargetHoldingError::Selection
+        );
+        assert_eq!(
+            TargetHolding::new("ETHUSDT", Some(Decimal::ONE), Some(Decimal::ONE)).unwrap_err(),
+            TargetHoldingError::Selection
+        );
+        assert_eq!(
+            TargetHolding::new("ETHUSDT", None, Some(Decimal::new(1001, 3))).unwrap_err(),
+            TargetHoldingError::Weight
+        );
+        assert_eq!(
+            TargetHolding::new("ETHUSDT", None, Some(Decimal::new(-1001, 3))).unwrap_err(),
+            TargetHoldingError::Weight
+        );
+    }
+
+    #[test]
+    fn target_holding_matches_legacy_weight_and_quantity_semantics() {
+        let weight = TargetHolding::new("ETHUSDT", None, Some(Decimal::new(-25, 2))).unwrap();
+        assert_eq!(weight.signed_quantity(Decimal::from(8)).unwrap(), Decimal::from(-2));
+        assert_eq!(
+            weight.signed_quantity(Decimal::ZERO).unwrap_err(),
+            TargetHoldingError::Allocation
+        );
+        let absolute = TargetHolding::new("ETHUSDT", Some(Decimal::new(125, 2)), None).unwrap();
+        assert_eq!(absolute.signed_quantity(Decimal::from(8)).unwrap(), Decimal::new(125, 2));
+        assert_eq!(
+            absolute.signed_quantity(Decimal::ZERO).unwrap_err(),
+            TargetHoldingError::Allocation
+        );
+        let flat = TargetHolding::new("ETHUSDT", None, Some(Decimal::ZERO)).unwrap();
+        assert_eq!(flat.signed_quantity(Decimal::ONE).unwrap(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn target_holding_rejects_decimal_multiplication_overflow() {
+        let holding = TargetHolding::new("ETHUSDT", None, Some(Decimal::new(9, 1))).unwrap();
+        assert_eq!(
+            holding.signed_quantity(Decimal::MAX).unwrap_err(),
+            TargetHoldingError::Overflow
+        );
     }
 
     #[test]
