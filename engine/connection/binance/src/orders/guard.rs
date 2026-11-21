@@ -13,8 +13,6 @@ pub enum WriteAction {
     ModifyOrder,
     CancelReplace,
     NewOco,
-    NewOto,
-    NewOtoco,
     CancelList,
     NewUmAlgo,
     CancelUmAlgo,
@@ -44,12 +42,6 @@ impl WriteAction {
             }
             (Self::NewOco, Product::Spot) => {
                 Some(("POST", "/api/v3/orderList/oco", "listClientOrderId"))
-            }
-            (Self::NewOto, Product::Spot) => {
-                Some(("POST", "/api/v3/orderList/oto", "listClientOrderId"))
-            }
-            (Self::NewOtoco, Product::Spot) => {
-                Some(("POST", "/api/v3/orderList/otoco", "listClientOrderId"))
             }
             (Self::CancelList, Product::Spot) => {
                 Some(("DELETE", "/api/v3/orderList", "listClientOrderId"))
@@ -258,17 +250,11 @@ impl PreparedWrite {
     fn ack_matches(&self, v: &Value) -> bool {
         let id = self.record.client_order_id.as_str();
         match self.record.action {
-            WriteAction::NewOco | WriteAction::NewOto | WriteAction::NewOtoco => {
-                let kind = match self.record.action {
-                    WriteAction::NewOco => "OCO",
-                    WriteAction::NewOto => "OTO",
-                    _ => "OTOCO",
-                };
-                let expected = if kind == "OTOCO" { 3 } else { 2 };
+            WriteAction::NewOco => {
                 v["listClientOrderId"].as_str() == Some(id)
-                    && v["contingencyType"].as_str() == Some(kind)
+                    && v["contingencyType"].as_str() == Some("OCO")
                     && v["orderListId"].as_u64().is_some()
-                    && v["orders"].as_array().is_some_and(|a| a.len() == expected)
+                    && v["orders"].as_array().is_some_and(|a| a.len() == 2)
             }
             WriteAction::NewUmAlgo => {
                 v["clientAlgoId"].as_str() == Some(id) && v["algoId"].as_u64().is_some()

@@ -32,8 +32,6 @@ pub mod reconciliation;
 pub mod settlement;
 #[path = "spot/oco.rs"]
 pub mod spot_oco;
-#[path = "spot/oto.rs"]
-pub mod spot_oto;
 #[path = "orders/trades.rs"]
 pub mod trades;
 #[path = "orders/user_stream.rs"]
