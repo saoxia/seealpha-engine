@@ -1647,18 +1647,15 @@ dependencies = [
  "chrono",
  "csv",
  "fs2",
- "futures-util",
  "reqwest",
  "rusqlite",
  "rust_decimal",
  "seealpha-catalog",
  "seealpha-feed",
  "seealpha-market",
- "serde",
  "serde_json",
  "sha2",
  "tokio",
- "tokio-tungstenite",
  "zip 2.6.1",
 ]
 

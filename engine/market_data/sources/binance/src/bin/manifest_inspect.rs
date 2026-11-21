@@ -4,7 +4,7 @@ use std::fs;
 use std::process::ExitCode;
 
 use seealpha_binance_market_data_source::{
-    MAX_MANIFEST_BYTES, Product, cold_start_shards, parse_manifest,
+    MAX_MANIFEST_BYTES, Product, parse_manifest,
 };
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,14 +22,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw = fs::read(&args[2])?;
     let policies = parse_manifest(&raw, product)?;
     let active = policies.iter().filter(|p| p.realtime_enabled).count();
-    let shards = cold_start_shards(&policies, product);
     let response = serde_json::json!({
         "product": product.as_str(),
         "manifest_version": 1,
         "policies": policies.len(),
         "active": active,
-        "socket_capacity": product.socket_capacity(),
-        "cold_start_shard_sizes": shards.iter().map(Vec::len).collect::<Vec<_>>(),
         "no_side_effects": true,
     });
     println!("{}", response);

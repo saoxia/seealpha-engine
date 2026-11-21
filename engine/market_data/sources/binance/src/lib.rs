@@ -1,24 +1,19 @@
 //! Bounded, side-effect-free Binance market source policy kernel.
 //!
-//! This is an offline Rust candidate, NOT yet called by the running collectors.
-//! It preserves the existing manifest v1 and source-specific validation rules.
+//! Validates existing v1 source policy manifests for Nautilus subscriptions.
+//! Live WebSocket, REST trades and Catalog operations belong to NautilusTrader.
 //! The policy kernel itself is side-effect-free. The separate archive_fetch
 //! module performs explicitly requested offline public-data downloads only.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 pub mod archive_fetch;
 pub mod calc;
 pub mod trade_archive;
 pub mod trade_features;
-pub mod protocol;
-pub mod store;
-pub mod ws;
 
 use serde_json::Value;
 
 pub const MAX_MANIFEST_BYTES: usize = 5 * 1024 * 1024;
-pub const FUTURES_SPOT_STREAM_CAPACITY: usize = 128;
-pub const OPTIONS_STREAM_CAPACITY: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Product {
@@ -45,13 +40,6 @@ impl Product {
         }
     }
 
-    pub fn socket_capacity(self) -> usize {
-        if self == Self::Options {
-            OPTIONS_STREAM_CAPACITY
-        } else {
-            FUTURES_SPOT_STREAM_CAPACITY
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -235,58 +223,6 @@ pub fn parse_manifest(bytes: &[u8], product: Product) -> Result<Vec<LivePolicy>,
     Ok(policies)
 }
 
-/// Reconciliation from a committed policy generation to another. Identical
-/// base levels keep the existing collector, as in the Python source batches;
-/// removing/disabling/changing base levels stops the old worker first.
-#[derive(Debug, Default, Eq, PartialEq)]
-pub struct ReconcilePlan {
-    pub stop: Vec<String>,
-    pub start: Vec<String>,
-    pub keep: Vec<String>,
-}
-
-pub fn reconcile(current: &[LivePolicy], next: &[LivePolicy]) -> ReconcilePlan {
-    let existing: BTreeMap<&str, &str> = current
-        .iter()
-        .filter(|p| p.realtime_enabled)
-        .map(|p| (p.symbol.as_str(), p.base_level.as_str()))
-        .collect();
-    let desired: BTreeMap<&str, &str> = next
-        .iter()
-        .filter(|p| p.realtime_enabled)
-        .map(|p| (p.symbol.as_str(), p.base_level.as_str()))
-        .collect();
-    let mut plan = ReconcilePlan::default();
-    for (symbol, level) in &existing {
-        if desired.get(symbol).copied() != Some(*level) {
-            plan.stop.push((*symbol).to_owned());
-        } else {
-            plan.keep.push((*symbol).to_owned());
-        }
-    }
-    for (symbol, level) in &desired {
-        if existing.get(symbol).copied() != Some(*level) {
-            plan.start.push((*symbol).to_owned());
-        }
-    }
-    plan
-}
-
-/// Deterministic cold-start socket group sizing. Existing live socket
-/// assignments are managed separately to avoid reconnection churn.
-pub fn cold_start_shards(policies: &[LivePolicy], product: Product) -> Vec<Vec<String>> {
-    let mut enabled: Vec<String> = policies
-        .iter()
-        .filter(|p| p.realtime_enabled)
-        .map(|p| p.symbol.clone())
-        .collect();
-    enabled.sort_unstable();
-    enabled
-        .chunks(product.socket_capacity())
-        .map(|chunk| chunk.to_vec())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,10 +249,6 @@ mod tests {
         .unwrap();
         assert_eq!(out[0].symbol, "ETHUSDT");
         assert_eq!(out[1].symbol, "BTCUSDC");
-        assert_eq!(
-            cold_start_shards(&out, Product::FuturesUm),
-            vec![vec!["ETHUSDT"]]
-        );
     }
     #[test]
     fn spot_is_distinct_and_accepts_non_usdt_symbols() {
@@ -394,75 +326,5 @@ mod tests {
             .is_err()
         );
     }
-    #[test]
-    fn reconciliation_stops_before_restarting_changed_base() {
-        let previous = vec![
-            LivePolicy {
-                symbol: "ETHUSDT".into(),
-                base_level: "tick".into(),
-                realtime_enabled: true,
-            },
-            LivePolicy {
-                symbol: "BTCUSDT".into(),
-                base_level: "1m".into(),
-                realtime_enabled: true,
-            },
-        ];
-        let next = vec![
-            LivePolicy {
-                symbol: "ETHUSDT".into(),
-                base_level: "1m".into(),
-                realtime_enabled: true,
-            },
-            LivePolicy {
-                symbol: "BTCUSDT".into(),
-                base_level: "1m".into(),
-                realtime_enabled: false,
-            },
-            LivePolicy {
-                symbol: "SOLUSDT".into(),
-                base_level: "tick".into(),
-                realtime_enabled: true,
-            },
-        ];
-        assert_eq!(
-            reconcile(&previous, &next),
-            ReconcilePlan {
-                stop: vec!["BTCUSDT".into(), "ETHUSDT".into()],
-                start: vec!["ETHUSDT".into(), "SOLUSDT".into()],
-                keep: vec![],
-            }
-        );
-    }
-    #[test]
-    fn shard_limits_are_product_specific() {
-        let policies: Vec<_> = (0..260)
-            .map(|i| LivePolicy {
-                symbol: format!("TEST{i:04}USDT"),
-                base_level: "tick".into(),
-                realtime_enabled: true,
-            })
-            .collect();
-        assert_eq!(
-            cold_start_shards(&policies, Product::FuturesUm)
-                .iter()
-                .map(Vec::len)
-                .collect::<Vec<_>>(),
-            vec![128, 128, 4]
-        );
-        assert_eq!(
-            cold_start_shards(&policies, Product::Spot)
-                .iter()
-                .map(Vec::len)
-                .collect::<Vec<_>>(),
-            vec![128, 128, 4]
-        );
-        assert_eq!(
-            cold_start_shards(&policies, Product::Options)
-                .iter()
-                .map(Vec::len)
-                .collect::<Vec<_>>(),
-            vec![64, 64, 64, 64, 4]
-        );
-    }
+
 }

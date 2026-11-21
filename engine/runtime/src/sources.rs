@@ -133,16 +133,15 @@ impl Runtime {
             ));
         }
         let source = source_product(product)?;
+        // The legacy Binance WS client has been removed. A verified,
+        // explicitly configured Nautilus data binary is now mandatory.
         let native_binary = std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
             .ok()
-            .filter(|path| !path.is_empty());
-        let root = if native_binary.is_some() {
-            let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
-                .map_err(|_| bad("未配置 Nautilus Catalog 管理根目录。"))?;
-            native_tenant_product_root(&catalog_base, tenant, product)?
-        } else {
-            source_root(&self.project, product)?
-        };
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| bad("旧 Binance WebSocket 采集器已移除；必须配置 Nautilus 原生行情二进制。"))?;
+        let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
+            .map_err(|_| bad("未配置 Nautilus Catalog 管理根目录。"))?;
+        let root = native_tenant_product_root(&catalog_base, tenant, product)?;
         if !root.is_dir() {
             return Err(bad("数据源根目录不是现有目录。"));
         }
@@ -175,24 +174,12 @@ impl Runtime {
             .source_state_dir
             .join(format!("source-{safe_tenant}-{product}.json"));
         atomic_manifest(&manifest_path, &manifest)?;
-        // A native Nautilus client is used only when the maintainer
-        // explicitly installs/points at its verified binary; otherwise the
-        // existing experimental collector remains unchanged.
-        let mut command = if let Some(binary) = native_binary.as_deref() {
-            let symbols = enabled_native_symbols(&manifest, source)?;
-            let feather_base = std::env::var("ENGINE_NATIVE_NAUTILUS_FEATHER_ROOT")
-                .map_err(|_| bad("未配置 Nautilus Feather 管理根目录。"))?;
-            let feather = native_tenant_product_root(&feather_base, tenant, product)?;
-            let mut command = Command::new(binary);
-            command.arg(product).arg(symbols).arg(feather).arg(&root);
-            command
-        } else {
-            let binary = std::env::var("ENGINE_SOURCE_BIN")
-                .unwrap_or_else(|_| "binance-native-source".to_string());
-            let mut command = Command::new(binary);
-            command.arg(product).arg(&manifest_path).arg(&root);
-            command
-        };
+        let symbols = enabled_native_symbols(&manifest, source)?;
+        let feather_base = std::env::var("ENGINE_NATIVE_NAUTILUS_FEATHER_ROOT")
+            .map_err(|_| bad("未配置 Nautilus Feather 管理根目录。"))?;
+        let feather = native_tenant_product_root(&feather_base, tenant, product)?;
+        let mut command = Command::new(native_binary);
+        command.arg(product).arg(symbols).arg(feather).arg(&root);
         let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -204,7 +191,7 @@ impl Runtime {
         Ok(json!({"tenant_id":tenant,"product":product,"pid":pid,
             "status":"experimental_degraded","data_ready":false,
             "allow_new_risk":false,"exchange_orders":0,"root":root,"manifest":manifest_path,
-            "backend":if native_binary.is_some() {"nautilus_native_data"} else {"legacy_experimental"},
+            "backend":"nautilus_native_data",
             "message":"源仍处于 DEGRADED，未完成历史衔接与数据质量验收。"}))
     }
 
@@ -325,16 +312,6 @@ impl Runtime {
         let mut child = processes
             .remove(&key)
             .ok_or_else(|| bad("没有本进程管理的对应原生数据源。"))?;
-        // Preserve legacy collector stop semantics. Only the explicitly
-        // selected Nautilus writer needs a graceful Feather -> Parquet flush.
-        if !std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
-            .is_ok_and(|value| !value.is_empty())
-        {
-            child.kill().map_err(|_| bad("无法终止实验性数据源进程。"))?;
-            child.wait().map_err(|_| bad("实验性数据源退出状态未知。"))?;
-            return Ok(json!({"tenant_id":tenant,"product":product,
-                "status":"stopped","data_ready":false}));
-        }
         // SIGKILL bypasses Nautilus LiveNode's Feather -> Parquet flush and
         // leaves recoverable partial files. Prefer SIGTERM and retain the child
         // on failed/timed-out shutdown; never report a catalog commit here.
@@ -392,25 +369,13 @@ impl Runtime {
         } else {
             (false, None)
         };
-        let product_root = source_root(&self.project, product).ok();
-        let mut symbols = Vec::new();
-        if let Some(root) = product_root {
-            for policy in self.ledger.policies(tenant).map_err(map_ledger)? {
-                if policy["product"] != product {
-                    continue;
-                }
-                let symbol = policy["symbol"].as_str().unwrap_or("");
-                let base = policy["base_level"].as_str().unwrap_or("1m");
-                let path = root
-                    .join(symbol)
-                    .join(if base == "auto" { "1m" } else { base })
-                    .join("status.json");
-                let evidence = fs::read(path)
-                    .ok()
-                    .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok());
-                symbols.push(json!({"symbol":symbol,"evidence":evidence}));
-            }
-        }
+        // Never read legacy collection.sqlite/status.json as evidence for
+        // the Nautilus source. Keep API shape but expose no unverified proof.
+        let symbols = self.ledger.policies(tenant).map_err(map_ledger)?
+            .into_iter()
+            .filter(|policy| policy["product"] == product)
+            .map(|policy| json!({"symbol":policy["symbol"],"evidence":null}))
+            .collect::<Vec<_>>();
         // Process/socket connectivity is never a substitute for exchange
         // confirmed readiness; nothing here allows new directional risk.
         Ok(json!({"tenant_id":tenant,"product":product,"pid":pid,
