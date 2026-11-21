@@ -59,6 +59,8 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 
 管理员须配置 `ENGINE_ARCHIVE_ROOT`，并提前创建 `<archive-root>/<tenant_id>/`。服务端只使用该受控路径，从请求体拒绝自定义目录；任务状态保存于已有的租户任务日志。下载完成只表示官方 SHA-256 ZIP 验证成功；回执强制 `data_ready=false`、`allow_new_risk=false` 和 `catalog_committed=false`。无自动交易和原生 Catalog 导入。
 
+新增：只有管理员同时设置 `ENGINE_EXPERIMENTAL_SOURCE=1` 与 `ENGINE_NATIVE_NAUTILUS_SOURCE_BIN`，并准备受控的 Nautilus Feather/Catalog 租户目录时，现有 Runtime Source Supervisor 才会调用独立原生节点。此为显式实验切换，**非默认生产切换**；路径验证阻止租户间符号链接跳转，停止使用 SIGTERM 而非强制 SIGKILL。原生节点不会报告 READY，旧 SQLite K 线计算器不可直接消费它。
+
 ## 原生 NautilusTrader Rust 节点的初步代码
 
 参见 [integrations/nautilus_binance_data/README.md](../../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。当前不在 Engine Runtime 或 Docker 中启动；需要先通过独立 CI、精度与 Catalog parity、数据缺口验证后再切换和删除旧自研实现。
