@@ -35,7 +35,7 @@
 
 ## Options 行权证据抽离
 
-旧 `src/account/settlement.rs` 现仅保留签名 `GET /eapi/v1/exerciseRecord`、时间窗口和满页失败关闭，以及兼容公开函数；Options 行权记录解析和去重由 `binance-options/src/settlement.rs` 唯一实现，USD-M 资金费收入逻辑仍保留原位，未重新实现交易所网络能力。
+旧 `src/account/settlement.rs` 现仅保留签名 `GET /eapi/v1/exerciseRecord`、时间窗口和满页失败关闭；原 `normalize_option_exercises` 兼容转发已移除，直接调用 `binance-options/src/settlement.rs` 的唯一行权记录解析和去重实现，USD-M 资金费收入逻辑仍保留原位，未重新实现交易所网络能力。
 
 ## 执行领域状态机从连接器抽离
 
