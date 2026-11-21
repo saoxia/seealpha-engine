@@ -2,7 +2,8 @@
 //!
 //! This is an offline Rust candidate, NOT yet called by the running collectors.
 //! It preserves the existing manifest v1 and source-specific validation rules.
-//! No trading, I/O, network subscription, or storage mutation is performed here.
+//! The policy kernel itself is side-effect-free. The separate archive_fetch
+//! module performs explicitly requested offline public-data downloads only.
 use std::collections::{BTreeMap, BTreeSet};
 
 pub mod archive_fetch;
