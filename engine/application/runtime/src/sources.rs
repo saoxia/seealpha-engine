@@ -322,12 +322,44 @@ impl Runtime {
         let mut child = processes
             .remove(&key)
             .ok_or_else(|| bad("没有本进程管理的对应原生数据源。"))?;
-        child
-            .kill()
-            .map_err(|_| bad("无法终止数据源进程，需检查其写入锁。"))?;
-        child.wait().map_err(|_| bad("数据源停止结果待核验。"))?;
+        // SIGKILL bypasses Nautilus LiveNode's Feather -> Parquet flush and
+        // leaves recoverable partial files. Prefer SIGTERM and retain the child
+        // on failed/timed-out shutdown; never report a catalog commit here.
+        let already_exited = child
+            .try_wait()
+            .map_err(|_| bad("数据源进程状态未知。"))?
+            .is_some();
+        if !already_exited {
+            let signal = Command::new("/bin/kill")
+                .arg("-TERM")
+                .arg(child.id().to_string())
+                .status();
+            if !signal.is_ok_and(|result| result.success()) {
+                processes.insert(key, child);
+                return Err(bad("无法向原生数据源发送 SIGTERM，保留进程管理状态。"));
+            }
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(30))
+                .ok_or_else(|| bad("数据源关闭截止时间无效。"))?;
+            loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    Ok(None) => {
+                        processes.insert(key, child);
+                        return Err(bad("数据源仍在完成退出/写入，不能报告成功关闭。"));
+                    }
+                    Err(_) => {
+                        processes.insert(key, child);
+                        return Err(bad("数据源停止状态待验证，保留进程管理状态。"));
+                    }
+                }
+            }
+        }
         Ok(json!({"tenant_id":tenant,"product":product,
-            "status":"stopped","data_ready":false}))
+            "status":"stopped","data_ready":false,"catalog_committed":false}))
     }
 
     pub fn native_source_status(&self, tenant: &str, product: &str) -> Result<Value, RuntimeError> {
