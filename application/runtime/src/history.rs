@@ -6,8 +6,8 @@ use rust_decimal::Decimal;
 use seealpha_backtest::{
     AllocatedPublishedTarget, HistoryBar, report_json, run_allocated_backtest_with_curve,
 };
-use seealpha_portfolio::TargetHolding;
 use seealpha_market::{check_symbol, interval_ms};
+use seealpha_portfolio::TargetHolding;
 use seealpha_strategy::{AccountScope, HostCommand, IssuedStrategy, StrategyBar, run_issued_host};
 use serde_json::{Value, json};
 
@@ -192,9 +192,14 @@ impl Runtime {
             }
         }
         let risk = risk.ok_or_else(|| invalid("该账户没有已下发的策略。"))?;
-        let (result, curve) =
-            run_allocated_backtest_with_curve(&history, &publications, symbol, starting_balance, risk)
-                .map_err(|e| invalid(&e.to_string()))?;
+        let (result, curve) = run_allocated_backtest_with_curve(
+            &history,
+            &publications,
+            symbol,
+            starting_balance,
+            risk,
+        )
+        .map_err(|e| invalid(&e.to_string()))?;
         let mut body = report_json(symbol, quote, &result);
         body["equity_curve"] = json!(curve);
         body["product"] = json!(product);
