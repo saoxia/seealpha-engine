@@ -36,8 +36,6 @@ impl Product {
             Self::Options => "options",
         }
     }
-
-}
 }
 
 #[derive(Debug)]
