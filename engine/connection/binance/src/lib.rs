@@ -17,9 +17,7 @@ pub mod spot_oco;
 #[path = "orders/trades.rs"]
 pub mod trades;
 
-use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
-use sha2::Sha256;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -75,66 +73,29 @@ pub struct Credentials {
     pub secret: String,
 }
 
-/// Signed Binance requests must never leak API keys to a configurable
-/// arbitrary HTTPS origin. Loopback is reserved for local test/proxy adapters.
+/// Centralized signed-wire host validation; preserves historical Venue errors.
 fn checked_gateway(base: &str) -> Result<String, VenueError> {
-    let url = reqwest::Url::parse(base)
-        .map_err(|_| VenueError::Rejected("交易网关 URL 无效。".into()))?;
-    if !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !matches!(url.path(), "" | "/")
-    {
-        return Err(VenueError::Rejected(
-            "交易网关包含不允许的路径或用户信息。".into(),
-        ));
-    }
-    let host = url
-        .host_str()
-        .ok_or_else(|| VenueError::Rejected("交易网关域名无效。".into()))?;
-    let official = matches!(
-        host,
-        "api.binance.com" | "fapi.binance.com" | "eapi.binance.com"
-    );
-    let sandbox = matches!(host, "testnet.binancefuture.com" | "testnet.binance.vision");
-    let local = matches!(host, "127.0.0.1" | "localhost" | "::1");
-    if (url.scheme() == "https" && (official || sandbox) && url.port().is_none())
-        || (url.scheme() == "http" && local && url.port().is_some())
-    {
-        return Ok(base.trim_end_matches('/').to_owned());
-    }
-    Err(VenueError::Rejected(
-        "交易所签名请求仅允许 Binance 官方域名或带端口的本地网关。".into(),
-    ))
+    seealpha_binance_wire::checked_gateway(base).map_err(|error| match error {
+        seealpha_binance_wire::GatewayError::InvalidUrl => {
+            VenueError::Rejected("交易网关 URL 无效。".into())
+        }
+        seealpha_binance_wire::GatewayError::InvalidComponents => {
+            VenueError::Rejected("交易网关包含不允许的路径或用户信息。".into())
+        }
+        seealpha_binance_wire::GatewayError::InvalidHost => {
+            VenueError::Rejected("交易网关域名无效。".into())
+        }
+        _ => VenueError::Rejected("交易所签名请求仅允许 Binance 官方域名或带端口的本地网关。".into()),
+    })
 }
 fn route_gateway<'a>(base: &'a str, path: &str) -> Result<&'a str, VenueError> {
-    let host = reqwest::Url::parse(base)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_owned))
-        .ok_or_else(|| VenueError::Rejected("交易网关 URL 无效。".into()))?;
-    if matches!(
-        host.as_str(),
-        "api.binance.com" | "fapi.binance.com" | "eapi.binance.com"
-    ) {
-        // Static official hosts have equal lifetime to 'base', but avoid
-        // returning a temporary URL string by selecting a static literal.
-        return Ok(match path.split('/').nth(1).unwrap_or("") {
-            "api" => "https://api.binance.com",
-            "fapi" => "https://fapi.binance.com",
-            "eapi" => "https://eapi.binance.com",
-            _ => return Err(VenueError::Symbol),
-        });
-    }
-    if (host == "testnet.binancefuture.com" && path.starts_with("/fapi/"))
-        || (host == "testnet.binance.vision" && path.starts_with("/api/"))
-        || matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
-    {
-        return Ok(base);
-    }
-    Err(VenueError::Rejected(
-        "沙盒交易网关与订单产品不匹配，拒绝跨市场发送密钥。".into(),
-    ))
+    seealpha_binance_wire::route_gateway(base, path).map_err(|error| match error {
+        seealpha_binance_wire::GatewayError::InvalidRoute => VenueError::Symbol,
+        seealpha_binance_wire::GatewayError::InvalidUrl => {
+            VenueError::Rejected("交易网关 URL 无效。".into())
+        }
+        _ => VenueError::Rejected("沙盒交易网关与订单产品不匹配，拒绝跨市场发送密钥。".into()),
+    })
 }
 
 pub struct VenueClient {
@@ -456,7 +417,7 @@ impl VenueClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_millis() as i64)
             .unwrap_or(0);
-        let mut query = encode_pairs(pairs);
+        let mut query = seealpha_binance_wire::encode_pairs(pairs);
         if !query.is_empty() {
             query.push('&');
         }
@@ -542,9 +503,7 @@ impl VenueClient {
 }
 
 pub fn sign_payload(secret: &str, payload: &str) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
-    mac.update(payload.as_bytes());
-    hex_encode(mac.finalize().into_bytes())
+    seealpha_binance_wire::sign_payload(secret, payload)
 }
 
 pub fn venue_symbol(symbol: &str) -> Result<String, VenueError> {
@@ -577,27 +536,6 @@ fn check_credentials(credentials: &Credentials) -> Result<(), VenueError> {
     Ok(())
 }
 
-fn encode_pairs(pairs: &[(String, String)]) -> String {
-    pairs
-        .iter()
-        .map(|(key, value)| format!("{}={}", encode(key), encode(value)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn encode(value: &str) -> String {
-    let mut out = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
 fn snapshot_view(value: &Value) -> Value {
     json!({
         "balances": value.get("assets").cloned().unwrap_or_else(|| json!([])),
@@ -623,16 +561,6 @@ fn order_view(value: &Value, client_order_id: &str) -> Value {
         "reduce_only": value.get("reduceOnly").and_then(Value::as_bool).unwrap_or(false),
         "open": value.get("status").and_then(Value::as_str).is_some_and(|status| matches!(status, "NEW" | "ACCEPTED" | "PARTIALLY_FILLED")),
     })
-}
-
-fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.as_ref().len() * 2);
-    for byte in bytes.as_ref() {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 #[cfg(test)]
