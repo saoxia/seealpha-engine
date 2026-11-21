@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn rust_ema_paper_session_requires_no_python_and_is_idempotent() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let state = std::env::temp_dir().join(format!(
             "seealpha-native-paper-{}-{}",
             std::process::id(),
@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn native_ema_rejects_production_tenant_without_issuance() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let state = std::env::temp_dir().join(format!(
             "seealpha-native-deny-{}-{}",
             std::process::id(),

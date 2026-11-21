@@ -4,20 +4,22 @@
 
 | 要找的行为 | 首选位置 | 关联边界 |
 | --- | --- | --- |
-| HTTP 路由、权限和版本 | `interfaces/api/http/src/lib.rs`、`src/routes/` | `parity.rs`、`derivatives.rs`、`research_v1.rs` |
-| Engine 启动与运行配置 | `apps/trading_engine/src/main.rs`、`application/runtime/src/config.rs` | `interfaces/api/http` |
-| 订单发送、重复请求、对账 | `application/runtime/src/orders.rs` | `order_journal.rs`、`connectivity/venue`、`accounting/ledger` |
-| 回测协调、研究快照 | `application/runtime/src/research.rs`、`history.rs` | `research`、`backtest/core` |
-| 策略授权与原生策略 | `strategy/src/` | `application/runtime/src/session.rs` |
-| 研究授权与操作范围校验 | `research/src/` | `application/runtime/src/research.rs` |
-| 目标持仓、篮子、风险裁剪 | `portfolio/core/src/` | `application/runtime/src/basket*.rs` |
-| 账户、订单和成交持久化 | `accounting/ledger/src/` | `application/runtime/src/accounts.rs` |
-| Binance 行情进程入口 | `market_data/sources/binance/src/bin/` | 同 crate 的 `lib.rs`、`protocol.rs`、`store.rs` |
-| Feed 门禁、汇总、数据会话 | `market_data/feed/src/` | `remaining.rs` 的测试在 `remaining/tests.rs` |
-| 历史 Catalog 读取、写入和修复 | `market_data/catalog/src/` | `market_data/converter`、`quality` |
-| 独立撮合和验证回放 | `backtest/core/src/` | `application/runtime/src/verified_replay.rs` |
+| HTTP 路由、权限和版本 | `engine/interfaces/api/http/src/lib.rs`、`src/routes/` | `parity.rs`、`derivatives.rs`、`research_v1.rs` |
+| Engine 启动与运行配置 | `engine/apps/trading_engine/src/main.rs`、`engine/application/runtime/src/config.rs` | `interfaces/api/http` |
+| 订单发送、重复请求、对账 | `engine/application/runtime/src/orders.rs` | `order_journal.rs`、`engine/connectivity/venue`、`accounting/ledger` |
+| 回测协调、研究快照 | `engine/application/runtime/src/research.rs`、`history.rs` | `research`、`engine/backtest/core` |
+| 策略授权与原生策略 | `engine/strategy/src/` | `engine/application/runtime/src/session.rs` |
+| 研究授权与操作范围校验 | `engine/research/src/` | `engine/application/runtime/src/research.rs` |
+| 目标持仓、篮子、风险裁剪 | `engine/portfolio/core/src/` | `application/runtime/src/basket*.rs` |
+| 账户、订单和成交持久化 | `engine/accounting/ledger/src/` | `engine/application/runtime/src/accounts.rs` |
+| Binance 行情进程入口 | `engine/market_data/sources/binance/src/bin/` | 同 crate 的 `lib.rs`、`protocol.rs`、`store.rs` |
+| Feed 门禁、汇总、数据会话 | `engine/market_data/feed/src/` | `remaining.rs` 的测试在 `remaining/tests.rs` |
+| 历史 Catalog 读取、写入和修复 | `engine/market_data/catalog/src/` | `market_data/converter`、`quality` |
+| 独立撮合和验证回放 | `backtest/core/src/` | `engine/application/runtime/src/verified_replay.rs` |
 
 详细的一级目录所有权及 Risk/Execution 规划见 [领域布局](DOMAIN_LAYOUT.md)。
+
+表中 `src/routes/` 等局部路径是模块内的相对路径，完整 Rust 引擎源码均在 `engine/` 下。
 
 ## 组织原则
 
