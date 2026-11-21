@@ -395,3 +395,6 @@ mod tests {
         assert!(parse_buyer_maker(" TRUE ").unwrap());
     }
 }
+
+/// File-only quality observations for the native source supervisor.
+pub mod monitor;
