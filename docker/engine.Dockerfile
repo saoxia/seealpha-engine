@@ -17,7 +17,6 @@ ENV ENGINE_PROJECT=/app \
     ENGINE_STATE=/app/.local/state/engine
 WORKDIR /app
 COPY --from=build /src/target/release/seealpha-engine /usr/local/bin/seealpha-engine
-COPY --from=build /src/target/release/binance-native-source /usr/local/bin/binance-native-source
 COPY --from=build /src/target/release/binance-trade-archive-fetch /usr/local/bin/binance-trade-archive-fetch
 COPY --from=build /src/target/release/binance-native-calculation /usr/local/bin/binance-native-calculation
 COPY --from=build /src/target/release/binance-native-catalog-publish /usr/local/bin/binance-native-catalog-publish

@@ -46,7 +46,7 @@ mkdir -p /data/nautilus-feather/42/spot /data/nautilus-catalog/42/spot
 
 调用已经存在的 `/tenants/{tenant_id}/data/control/source/{product}/start` 路由时，Supervisor 将现有租户已启用的 Spot / USD-M 行情策略转换为原生 Nautilus 的多交易对订阅（实验节点每次最多 100 个交易对）；不新增第二套订阅数据库和自动调度。停止路径向子进程发送 `SIGTERM`，以支持 Nautilus 优雅关闭与 Parquet 提交；停止仍不代表历史完整性已核验。旧 SQLite K 线计算器无法直接消费该模式，故被显式禁用。
 
-**未启用以上环境变量时**，原有实验性 `binance-native-source` 行为保持不变。此原生入口默认不在生产镜像里；外部二进制须由维护者手动验证后部署。所有状态仍是 `DEGRADED`，禁止策略直接将连接状态作为完整行情数据就绪证据。
+**未启用以上环境变量时**，Runtime 拒绝启动该数据源；旧的 `binance-native-source` 已清理，不提供回退选项。此原生入口默认不在生产镜像中，须由维护者手动验证后部署。所有状态仍是 `DEGRADED`，禁止策略直接将连接状态当作完整行情证据。
 
 
 ## 离线历史 ZIP 导入
