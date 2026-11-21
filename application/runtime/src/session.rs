@@ -3,7 +3,7 @@ use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
 use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
-use seealpha_strategy::executor::{DevelopmentPythonExecutor, ExecutionInput, IssuedPythonExecutor, NativeEmaExecutor, StrategyExecutor};
+use seealpha_strategy::executor::{ExecutionInput, IssuedNativeEmaExecutor, NativeEmaExecutor, StrategyExecutor};
 use seealpha_strategy::{
     AccountScope, IssuedStrategy, Publication, StrategyBar, digest_dir,
     sha256_hex,
@@ -142,103 +142,65 @@ impl Runtime {
                 })
                     .map_err(map_strategy)?
             } else {
-                let temp = match &strategy.package {
-                    PackageBody::Archive(bytes) => Some(write_temp(bytes)?),
-                    PackageBody::Directory(_) | PackageBody::NativeEma => None,
-                };
-                let directory = match &strategy.package {
-                    PackageBody::Directory(path) => Some(path.as_path()),
-                    PackageBody::Archive(_) | PackageBody::NativeEma => None,
-                };
-                let archive = temp.as_deref();
-                // Archive strategies are account-issued and must match the trusted
-                // Ledger bytes and parameters, not merely a request-supplied ZIP.
-                let issued = if let PackageBody::Archive(bytes) = &strategy.package {
-                    let load = self
-                        .ledger
-                        .strategies(&request.tenant_id, &request.account_id)
-                        .map_err(map_ledger)?
-                        .into_iter()
-                        .find(|load| load.issuance_id == strategy.member_id)
-                        .ok_or_else(|| {
-                            RuntimeError::Conflict("模拟策略没有对应账户的可信下发记录。".into())
-                        })?;
-                    let stored_parameters: Value = serde_json::from_str(&load.parameters_json)
-                        .map_err(|_| RuntimeError::Conflict("已下发策略参数记录损坏。".into()))?;
-                    if load.archive.as_slice() != bytes.as_slice()
-                        || stored_parameters != strategy.parameters
-                    {
+                match &strategy.package {
+                    PackageBody::Archive(bytes) => {
+                        // The archived artifact is a native JSON manifest, not a
+                        // Python ZIP. Require identical bytes and parameters from
+                        // trusted account issuance before strategy execution.
+                        let load = self.ledger
+                            .strategies(&request.tenant_id, &request.account_id)
+                            .map_err(map_ledger)?
+                            .into_iter()
+                            .find(|record| record.issuance_id == strategy.member_id)
+                            .ok_or_else(|| RuntimeError::Conflict(
+                                "模拟策略没有对应账户的可信下发记录。".into()
+                            ))?;
+                        let stored_parameters: Value =
+                            serde_json::from_str(&load.parameters_json).map_err(|_| {
+                                RuntimeError::Conflict("已下发策略参数记录损坏。".into())
+                            })?;
+                        if load.archive.as_slice() != bytes.as_slice()
+                            || stored_parameters != strategy.parameters
+                        {
+                            return Err(RuntimeError::Conflict(
+                                "模拟策略包或参数与可信下发记录不一致。".into()
+                            ));
+                        }
+                        let tenant = self.require_active(&request.tenant_id)?;
+                        self.track_start();
+                        let outcome = IssuedNativeEmaExecutor {
+                            manifest: bytes,
+                            issued: IssuedStrategy {
+                                tenant_id: &load.tenant_id,
+                                account_id: &load.account_id,
+                                issuance_id: &load.issuance_id,
+                                grant_purpose: &load.grant_purpose,
+                                code_key: &load.code_key,
+                                version: &load.version,
+                                entry_point: &load.entry_point,
+                                package_hash: &load.package_hash,
+                            },
+                            scope: AccountScope {
+                                tenant_id: &request.tenant_id,
+                                account_id: &request.account_id,
+                                purpose: &tenant.purpose,
+                            },
+                        }.execute(ExecutionInput {
+                            parameters: &strategy.parameters,
+                            symbol: &request.snapshot.symbol,
+                            interval: &request.snapshot.interval,
+                            bars: &host_bars,
+                        });
+                        self.track_end();
+                        outcome.map_err(map_strategy)?
+                    }
+                    PackageBody::Directory(_) => {
                         return Err(RuntimeError::Conflict(
-                            "模拟策略包或参数与可信下发记录不一致。".into(),
+                            "Python 目录策略已退役；请下发受支持的 Rust 策略清单。".into()
                         ));
                     }
-                    Some(load)
-                } else {
-                    None
-                };
-                let tenant = self.require_active(&request.tenant_id)?;
-                if issued.is_none() && tenant.purpose != "development" {
-                    return Err(RuntimeError::Conflict(
-                        "正式租户不允许执行未下发的目录策略。".into(),
-                    ));
+                    PackageBody::NativeEma => unreachable!(),
                 }
-                self.track_start();
-                let outcome = if let Some(load) = &issued {
-                    // Authorization is still required at both boundaries:
-                    // the runtime verified trusted Ledger bytes/parameters;
-                    // the adapter verifies archive digest and immutable grant.
-                    let archive_path = archive.ok_or_else(|| {
-                        RuntimeError::Conflict("已下发策略缺少归档。".into())
-                    })?;
-                    IssuedPythonExecutor {
-                        python: &self.python,
-                        host: &self.host,
-                        archive_path,
-                        issued: IssuedStrategy {
-                            tenant_id: &load.tenant_id,
-                            account_id: &load.account_id,
-                            issuance_id: &load.issuance_id,
-                            grant_purpose: &load.grant_purpose,
-                            code_key: &load.code_key,
-                            version: &load.version,
-                            entry_point: &load.entry_point,
-                            package_hash: &load.package_hash,
-                        },
-                        scope: AccountScope {
-                            tenant_id: &request.tenant_id,
-                            account_id: &request.account_id,
-                            purpose: &tenant.purpose,
-                        },
-                    }
-                    .execute(ExecutionInput {
-                        parameters: &strategy.parameters,
-                        symbol: &request.snapshot.symbol,
-                        interval: &request.snapshot.interval,
-                        bars: &host_bars,
-                    })
-                } else {
-                    // Development directory only: authorization above ensures
-                    // no account-issued package is routed through this adapter.
-                    let package_dir = directory.ok_or_else(|| {
-                        RuntimeError::Conflict("未下发的策略必须使用开发目录。".into())
-                    })?;
-                    DevelopmentPythonExecutor {
-                        python: &self.python,
-                        host: &self.host,
-                        package_dir,
-                    }
-                    .execute(ExecutionInput {
-                        parameters: &strategy.parameters,
-                        symbol: &request.snapshot.symbol,
-                        interval: &request.snapshot.interval,
-                        bars: &host_bars,
-                    })
-                };
-                self.track_end();
-                if let Some(path) = &temp {
-                    let _ = std::fs::remove_file(path);
-                }
-                outcome.map_err(map_strategy)?
             };
             let limit = decimal_field(&run.prepared, "risk_limit")?;
             let allocation = allocation_field(&run.prepared)?;
@@ -348,20 +310,6 @@ impl Runtime {
             .map_err(map_ledger)?;
         Ok(report)
     }
-}
-
-fn write_temp(bytes: &[u8]) -> Result<PathBuf, RuntimeError> {
-    let path = std::env::temp_dir().join(format!(
-        "seealpha-run-{}-{}.zip",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0)
-    ));
-    std::fs::write(&path, bytes)
-        .map_err(|_| RuntimeError::BadRequest("策略包无法写入。".into()))?;
-    Ok(path)
 }
 
 fn session_fingerprint(request: &PaperRequest, bars: &[Bar]) -> String {
