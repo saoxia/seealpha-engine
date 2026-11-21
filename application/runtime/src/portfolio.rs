@@ -3,6 +3,7 @@
 use crate::{Runtime, RuntimeError, map_ledger};
 use rust_decimal::Decimal;
 use seealpha_portfolio::{
+    TargetHolding,
     coordinator::{Bar, Command, Coordinator, VirtualFill, VirtualKind, VirtualOrder},
     coordinator_snapshot::{decode_coordinator, encode_coordinator},
 };
@@ -12,6 +13,12 @@ pub enum NativePortfolioEvent {
     PublishTarget {
         member: String,
         quantity: Decimal,
+        risk_exit: bool,
+    },
+    PublishHolding {
+        member: String,
+        holding: TargetHolding,
+        allocation: Decimal,
         risk_exit: bool,
     },
     AcceptOrder {
@@ -143,6 +150,19 @@ impl Runtime {
                 quantity,
                 risk_exit,
             } => coordinator.report_target(&member, quantity, risk_exit),
+            NativePortfolioEvent::PublishHolding {
+                member,
+                holding,
+                allocation,
+                risk_exit,
+            } => {
+                if holding.symbol != instrument {
+                    return Err(RuntimeError::Conflict(
+                        "portfolio target instrument mismatch".into(),
+                    ));
+                }
+                coordinator.report_holding(&member, &holding, allocation, risk_exit)
+            }
             NativePortfolioEvent::AcceptOrder { order, armed_at } => {
                 coordinator.accept_order(order, armed_at)
             }
