@@ -214,7 +214,9 @@ pub fn replay_holdings(
         }
         resolved.push(TargetPublication {
             member_id: publication.member_id.clone(),
-            quantity: publication.holding.signed_quantity(publication.allocation)?,
+            quantity: publication
+                .holding
+                .signed_quantity(publication.allocation)?,
             price: publication.price,
         });
     }
@@ -369,8 +371,13 @@ mod tests {
         second.member_id = "b".into();
         second.holding.symbol = "BTCUSDT".into();
         assert_eq!(
-            replay_holdings(&[first.clone(), second], Decimal::ZERO, Decimal::from(10), Decimal::ONE)
-                .unwrap_err(),
+            replay_holdings(
+                &[first.clone(), second],
+                Decimal::ZERO,
+                Decimal::from(10),
+                Decimal::ONE
+            )
+            .unwrap_err(),
             HoldingReplayError::MixedInstruments
         );
         let mut bad = first;
