@@ -65,12 +65,9 @@ fn aggregate(request: AggregateRequest) -> Result<HashMap<String, AggregatedRow>
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let buckets = aggregate_saved_klines(
-        &saved,
-        &request.source_interval,
-        &request.target_interval,
-    )
-    .map_err(|error| error.to_string())?;
+    let buckets =
+        aggregate_saved_klines(&saved, &request.source_interval, &request.target_interval)
+            .map_err(|error| error.to_string())?;
     Ok(buckets
         .into_iter()
         .map(|bucket| {
@@ -229,14 +226,12 @@ fn run() -> Result<(), String> {
     }
     let value: Value = serde_json::from_str(&payload).map_err(|_| "交易所证据 JSON 无效")?;
     if value.get("mode").and_then(Value::as_str) == Some("aggregate") {
-        let request = serde_json::from_value::<AggregateRequest>(value)
-            .map_err(|_| "本地聚合请求无效")?;
+        let request =
+            serde_json::from_value::<AggregateRequest>(value).map_err(|_| "本地聚合请求无效")?;
         let result = aggregate(request)?;
-        return serde_json::to_writer(io::stdout(), &result)
-            .map_err(|_| "写入聚合结果失败".into());
+        return serde_json::to_writer(io::stdout(), &result).map_err(|_| "写入聚合结果失败".into());
     }
-    let request = serde_json::from_value::<Request>(value)
-        .map_err(|_| "交易所证据 JSON 无效")?;
+    let request = serde_json::from_value::<Request>(value).map_err(|_| "交易所证据 JSON 无效")?;
     let result = validate(request)?;
     serde_json::to_writer(io::stdout(), &result).map_err(|_| "写入校验结果失败".into())
 }
