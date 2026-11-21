@@ -27,9 +27,19 @@ pub struct AggBar {
     pub trade_count: u64,
 }
 
-pub fn aggregate_trades(trades: &[Trade], interval_ms: i64) -> Vec<AggBar> {
+/// Validate every source row before last-ID-wins de-duplication, then aggregate.
+pub fn aggregate_trades(trades: &[Trade], interval_ms: i64) -> Result<Vec<AggBar>, &'static str> {
+    if interval_ms <= 0 {
+        return Err("invalid interval");
+    }
     let mut last: BTreeMap<i64, &Trade> = BTreeMap::new();
     for trade in trades {
+        if trade.id < 0 || trade.timestamp_ms < 0
+            || trade.price <= Decimal::ZERO || trade.quantity <= Decimal::ZERO
+            || trade.quote < Decimal::ZERO
+        {
+            return Err("invalid trade");
+        }
         last.insert(trade.id, trade);
     }
     let mut ordered: Vec<&Trade> = last.into_values().collect();
@@ -52,15 +62,17 @@ pub fn aggregate_trades(trades: &[Trade], interval_ms: i64) -> Vec<AggBar> {
         slot.high = slot.high.max(trade.price);
         slot.low = slot.low.min(trade.price);
         slot.close = trade.price;
-        slot.volume += trade.quantity;
-        slot.quote_volume += trade.quote;
-        slot.trade_count += 1;
+        slot.volume = slot.volume.checked_add(trade.quantity).ok_or("volume overflow")?;
+        slot.quote_volume = slot.quote_volume.checked_add(trade.quote).ok_or("quote overflow")?;
+        slot.trade_count = slot.trade_count.checked_add(1).ok_or("count overflow")?;
         if !trade.buyer_maker {
-            slot.taker_buy_volume += trade.quantity;
-            slot.taker_buy_quote_volume += trade.quote;
+            slot.taker_buy_volume = slot.taker_buy_volume
+                .checked_add(trade.quantity).ok_or("buy volume overflow")?;
+            slot.taker_buy_quote_volume = slot.taker_buy_quote_volume
+                .checked_add(trade.quote).ok_or("buy quote overflow")?;
         }
     }
-    buckets.into_values().collect()
+    Ok(buckets.into_values().collect())
 }
 
 #[derive(Clone, Debug)]
@@ -384,13 +396,13 @@ mod tests {
                 buyer_maker: false,
             },
         ];
-        let minutes = aggregate_trades(&rows, 60_000);
+        let minutes = aggregate_trades(&rows, 60_000).unwrap();
         assert_eq!(minutes[0].volume, Decimal::from(3));
         assert_eq!(minutes[0].quote_volume, Decimal::from(320));
         assert_eq!(minutes[0].taker_buy_volume, Decimal::from(2));
         assert_eq!(minutes[0].taker_buy_quote_volume, Decimal::from(220));
         assert_eq!(minutes[0].trade_count, 2);
-        let five = aggregate_trades(&rows, 300_000);
+        let five = aggregate_trades(&rows, 300_000).unwrap();
         assert_eq!(five[0].trade_count, 3);
         assert_eq!(five[0].volume, Decimal::from(6));
         assert_eq!(five[0].quote_volume, Decimal::from(635));
@@ -398,6 +410,22 @@ mod tests {
         assert_eq!(five[0].open, Decimal::from(100));
         assert_eq!(five[0].close, Decimal::from(105));
         assert_eq!(five[0].high, Decimal::from(110));
+    }
+
+    #[test]
+    fn rejects_invalid_trade_before_deduplicating_and_zero_interval() {
+        let valid = Trade {
+            id: 7, timestamp_ms: 0, price: Decimal::from(10),
+            quantity: Decimal::ONE, quote: Decimal::from(10), buyer_maker: false,
+        };
+        assert_eq!(aggregate_trades(&[valid.clone()], 0).unwrap_err(), "invalid interval");
+        let mut bad = valid.clone();
+        bad.price = Decimal::ZERO;
+        assert_eq!(aggregate_trades(&[bad, valid.clone()], 60_000).unwrap_err(), "invalid trade");
+        bad = valid.clone();
+        bad.timestamp_ms = -1;
+        assert_eq!(aggregate_trades(&[bad], 60_000).unwrap_err(), "invalid trade");
+        assert_eq!(aggregate_trades(&[valid], 60_000).unwrap().len(), 1);
     }
 
     #[test]
@@ -416,7 +444,7 @@ mod tests {
         }
         let direct: Decimal = rows.iter().map(|row| row.quantity).sum();
         for interval in [1_000, 60_000, 300_000, 900_000] {
-            let bars = aggregate_trades(&rows, interval);
+            let bars = aggregate_trades(&rows, interval).unwrap();
             let total: Decimal = bars.iter().map(|bar| bar.volume).sum();
             assert_eq!(total, direct);
         }

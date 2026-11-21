@@ -86,3 +86,11 @@ This is a directory-level source retirement, **not** proof of feature-for-featur
 The checked-in tree contained only `__init__.py` in each directory. Both namespace markers are removed as a follow-up clean-up after native Rust feed and pipeline orchestration landed under `market_data/feed/` and `market_data/market/src/pipeline.rs`. The five former Python pipeline forwarders were already removed in an earlier change. **This batch removes no remaining Python business logic** and does not assert that every legacy entry point is compatible with Rust. No live data or exchange state is touched.
 
 Validation: exact tree inventory and diff checked through GitHub; no local Rust/Python test execution in this connector session.
+
+## Calculation folder: staged Rust cutover (2026-11-21)
+
+- Inventory: `engine/market_data/calculation/` has five tracked Python files: `aggregation.py`, `bar_features.py`, `feature_source.py`, the `pair_calculation.py` import alias and `__init__.py`.
+- The import-only `pair_calculation.py` alias was retired. Native feed and market pipeline functions are in `market_data/feed/src/features.rs` and `market_data/market/src/pipeline.rs`.
+- Native feed Trade aggregation now rejects invalid intervals, negative timestamps/IDs, nonpositive prices/quantities, negative quote values and arithmetic overflow, checking rows before last-ID-wins de-duplication. Added a focused regression test.
+- **Not a complete folder replacement**: legacy SQLite rollup persistence, daily Parquet feature materialization and the legacy ZIP/BarDataWrangler adapter are still in `aggregation.py`, `bar_features.py` and `feature_source.py`. Keep those files until native dataflow/storage integration exists; native source reading and feature publication are distinct from arithmetic helpers. Legacy imports of the retired alias are unsupported.
+- Cargo tests are unexecuted in this connector session; no production data or live order flow was changed. Decimal-scale optimization remains a separate task.
