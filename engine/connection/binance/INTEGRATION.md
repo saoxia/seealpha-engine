@@ -4,7 +4,7 @@
 
 ## 当前目录归属
 
-`engine/exchanges/binance/` 是 **Binance 私有 REST 订单与账户适配器**；Binance 行情采集仍在 `engine/market_data/`，不在这里复制 NautilusTrader 能力。Cargo 包名 `seealpha-venue`、`seealpha_venue::*` 公共模块路径保持不变。
+`engine/connection/binance/` 是 **Binance 私有 REST 订单与账户适配器**；Binance 行情采集仍在 `engine/market_data/`，不在这里复制 NautilusTrader 能力。Cargo 包名 `seealpha-venue`、`seealpha_venue::*` 公共模块路径保持不变。
 
 | 物理目录 | 职责 |
 | --- | --- |
