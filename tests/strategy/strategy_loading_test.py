@@ -95,6 +95,53 @@ class StrategyLoadingTest(unittest.TestCase):
                 with self.assertRaises(PackageError):
                     run_strategy(InvalidStrategy, {}, "ETHUSDT", "1m", bars([100]))
 
+    def test_versioned_host_protocol_round_trip(self):
+        result = run_host({
+            "protocol_version": 1,
+            "op": "prepare",
+            "package_dir": str(PACKAGE),
+            "parameters": {},
+            "symbol": "ETHUSDT",
+            "interval": "1m",
+            "bars": [],
+        })
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["protocol_version"], 1)
+        self.assertEqual(result["publications"], [])
+
+    def test_host_rejects_unknown_and_boolean_protocol_versions(self):
+        for version in (2, True, "1"):
+            with self.subTest(version=version):
+                result = run_host({
+                    "protocol_version": version,
+                    "op": "prepare",
+                    "package_dir": str(PACKAGE),
+                    "parameters": {},
+                })
+                self.assertFalse(result["ok"], result)
+                self.assertIn("版本", result["error"])
+                self.assertNotIn("protocol_version", result)
+
+    def test_versioned_host_rejects_unknown_fields_and_ops(self):
+        base = {
+            "protocol_version": 1,
+            "op": "prepare",
+            "package_dir": str(PACKAGE),
+            "parameters": {},
+            "bars": [],
+        }
+        for override in (
+            {"orders": []},
+            {"op": "submit_order"},
+            {"archive_path": "/tmp/other.zip"},
+            {"package_dir": None},
+            {"op": "prepare", "bars": [{"close": "100"}]},
+        ):
+            with self.subTest(override=override):
+                result = run_host({**base, **override})
+                self.assertFalse(result["ok"], result)
+                self.assertEqual(result["protocol_version"], 1)
+
     def test_unknown_parameter_is_rejected(self):
         result = run_host({
             "op": "prepare",

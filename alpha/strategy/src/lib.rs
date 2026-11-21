@@ -7,7 +7,9 @@ pub mod executor;
 mod host_policy;
 mod host_process;
 mod issued;
+pub mod protocol;
 pub mod native_ema;
+pub mod native_manifest;
 
 pub use issued::{AccountScope, IssuedStrategy, authorize_issued, run_issued_host};
 
@@ -365,6 +367,7 @@ pub fn run_host(command: &HostCommand<'_>) -> Result<StrategyRun, StrategyError>
     };
     let pinned_archive = staged.as_ref().map(issued::StagedArchive::path);
     let request = serde_json::json!({
+        "protocol_version": protocol::STRATEGY_IPC_VERSION,
         "op": command.op,
         "package_dir": command.package_dir,
         "archive_path": pinned_archive,
