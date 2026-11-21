@@ -21,6 +21,11 @@ impl Decimal {
     pub(crate) fn scale(self) -> u32 {
         self.scale
     }
+
+    /// Compare exactly with ±1 without relying on scale-sensitive PartialOrd.
+    pub(crate) fn is_unit_weight(self) -> bool {
+        self.mantissa.abs() <= 10_i128.pow(self.scale)
+    }
 }
 
 impl PartialOrd for Decimal {
@@ -93,6 +98,12 @@ mod tests {
         assert!(Decimal::from_str("0.00000001").unwrap() > Decimal::ZERO);
         assert!(Decimal::from_str("-0.1").unwrap() < Decimal::ZERO);
         assert!(Decimal::from_str("-0").unwrap() == Decimal::ZERO);
+        for weight in ["-1", "-1.0000", "-0.5", "0", "0.9999", "1.0"] {
+            assert!(Decimal::from_str(weight).unwrap().is_unit_weight());
+        }
+        for weight in ["-1.0001", "1.0001", "2", "10.0"] {
+            assert!(!Decimal::from_str(weight).unwrap().is_unit_weight());
+        }
         for value in [
             "NaN",
             "inf",
