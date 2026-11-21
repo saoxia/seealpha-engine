@@ -192,12 +192,22 @@ fn parse_record(request: &Request, record: &StringRecord) -> Result<Parsed> {
     // Nautilus live data uses *Instrument* precision, not the ZIP's padded
     // decimal display width. Conversion must be exact: extra non-zero digits
     // beyond this precision are an error, never silently rounded.
-    let price = Price::from_decimal_dp(
-        rust_decimal::Decimal::from_str(field(1)?)?, request.price_precision,
-    ).map_err(anyhow::Error::msg)?;
-    let size = Quantity::from_decimal_dp(
-        rust_decimal::Decimal::from_str(field(2)?)?, request.size_precision,
-    ).map_err(anyhow::Error::msg)?;
+    let price_decimal = rust_decimal::Decimal::from_str(field(1)?)?;
+    let size_decimal = rust_decimal::Decimal::from_str(field(2)?)?;
+    // Upstream from_decimal_dp can round values. An archive import must
+    // preserve the exact economics of every exchange fill instead.
+    ensure!(
+        price_decimal.normalize().scale() <= u32::from(request.price_precision),
+        "trade price cannot be represented exactly at Instrument precision"
+    );
+    ensure!(
+        size_decimal.normalize().scale() <= u32::from(request.size_precision),
+        "trade quantity cannot be represented exactly at Instrument precision"
+    );
+    let price = Price::from_decimal_dp(price_decimal, request.price_precision)
+        .map_err(anyhow::Error::msg)?;
+    let size = Quantity::from_decimal_dp(size_decimal, request.size_precision)
+        .map_err(anyhow::Error::msg)?;
     ensure!(price.as_f64() > 0.0 && !size.is_zero(), "non-positive price or size");
 
     let (first_raw_id, last_raw_id, raw_time, maker) = match request.dataset {
@@ -346,6 +356,22 @@ fn import(request: &Request, archive: &Path, catalog_root: &Path) -> Result<serd
         &catalog_root.canonicalize()?.to_string_lossy(),
         None, None, None, None,
     )?;
+
+    // Nautilus's checked writer deliberately treats an identical file name
+    // as an idempotent skip, not an error. Fail closed on existing interval
+    // overlap to prevent a repeated or partially recovered ZIP from being
+    // falsely reported as newly imported.
+    let existing = catalog.query_files(
+        &nautilus_model::data::NautilusDataType::TradeTick.into(),
+        Some(vec![request.instrument_id.to_string()]),
+        validated.first_ts.map(UnixNanos::new),
+        validated.last_ts.map(UnixNanos::new),
+    )?;
+    ensure!(
+        existing.is_empty(),
+        "historical Tick interval overlaps existing Nautilus Catalog files: {existing:?}"
+    );
+
     let mut batch: Vec<TradeTick> = Vec::with_capacity(BATCH_SIZE);
     let mut file_paths = Vec::new();
     let written = scan(archive, request, |tick| {
