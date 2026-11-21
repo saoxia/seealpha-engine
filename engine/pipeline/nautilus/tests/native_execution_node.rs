@@ -4,7 +4,7 @@
 //! connects, submits an order, reads a real account, or installs an executor
 //! in the SeeAlpha production Runtime.
 use nautilus_binance::{
-    common::enums::{BinanceEnvironment, BinanceProductType},
+    common::enums::BinanceEnvironment,
     config::{
         BinanceDataClientConfig, BinanceExecutionClientConfig,
         BinanceInstrumentProviderConfig,
