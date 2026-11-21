@@ -80,8 +80,8 @@ async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, 
     request = {"interval": level, "product": market, "start_ms": start_ms,
                "end_ms": end_ms, "available_ms": available_ms, "rows": rows}
     try:
-        result = subprocess.run([str(binary)], input=json.dumps(request),
-                                capture_output=True, text=True, check=False, timeout=30)
+        result = await asyncio.to_thread(subprocess.run, [str(binary)], input=json.dumps(request),
+                                         capture_output=True, text=True, check=False, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError("Rust repair validator failed to execute") from exc
     if result.returncode != 0:
