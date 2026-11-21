@@ -2,6 +2,8 @@
 //! Catalog directory. No rewriting into SQLite or implicit subscriptions.
 mod cleanup;
 mod model;
+/// Rebuildable SQLite cache of derived bars retained for Runtime compatibility.
+pub mod persisted_rollup;
 mod reader;
 mod records;
 mod repair;

@@ -1471,9 +1471,10 @@ dependencies = [
  "chrono",
  "fs2",
  "parquet",
+ "rusqlite",
  "rust_decimal",
- "serde",
  "serde_json",
+ "serde",
  "sha2",
  "thiserror",
 ]
@@ -1495,16 +1496,6 @@ version = "0.1.0"
 dependencies = [
  "rust_decimal",
  "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "seealpha-feed"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "rust_decimal",
- "sha2",
  "thiserror",
 ]
 
@@ -1571,7 +1562,9 @@ dependencies = [
 name = "seealpha-quality"
 version = "0.1.0"
 dependencies = [
+ "rust_decimal",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -1584,14 +1577,13 @@ dependencies = [
  "seealpha-binance-market-data-source",
  "seealpha-catalog",
  "seealpha-execution",
- "seealpha-feed",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-portfolio",
  "seealpha-strategy",
  "seealpha-venue",
- "serde",
  "serde_json",
+ "serde",
  "sha2",
  "thiserror",
  "tokio",

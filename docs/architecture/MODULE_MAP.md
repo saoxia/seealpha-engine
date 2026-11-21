@@ -17,8 +17,8 @@
 | 账户、订单和成交持久化 | `engine/ledger/src/` | `engine/runtime/src/accounts.rs` |
 | Binance 实时行情入口（实验性） | `engine/pipeline/nautilus/src/main.rs` | 由 `engine/runtime/src/sources.rs` 显式启动，独立编译 |
 | Binance 官方历史 ZIP | `engine/pipeline/sources/binance/src/bin/` | `engine/pipeline/nautilus/src/bin/import_archive.rs` 原生 Catalog 导入 |
-| Feed 门禁、汇总、数据会话（待精简） | `engine/pipeline/access/feed/src/` | `remaining.rs` 的测试在 `remaining/tests.rs`；不是当前实时采集入口 |
-| 历史 Catalog 读取、写入和修复 | `engine/pipeline/access/catalog/src/` | 质量校验在 `engine/pipeline/integrity/`；原生 Catalog 替代尚待验收 |
+| 来源完整性、READY 与实时交付门禁 | `engine/pipeline/integrity/src/readiness.rs`、`session.rs` | 保留来源证明、时钟、新风险禁入与恢复安全测试；尚未接入生产 READY 协调器 |
+| 历史 Catalog 及派生分钟K线缓存 | `engine/pipeline/access/catalog/src/` | `persisted_rollup.rs` 仍由 Runtime 使用；原生 Catalog 替代尚待验收 |
 | 独立撮合和验证回放 | `backtest/src/` | `engine/runtime/src/verified_replay.rs` |
 
 持久化行情文件放在 Git 忽略的根级 `data/` 或外部数据卷，见 [数据目录约定](DATA_LAYOUT.md)。
