@@ -133,7 +133,16 @@ impl Runtime {
             ));
         }
         let source = source_product(product)?;
-        let root = source_root(&self.project, product)?;
+        let native_binary = std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
+            .ok()
+            .filter(|path| !path.is_empty());
+        let root = if native_binary.is_some() {
+            let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
+                .map_err(|_| bad("未配置 Nautilus Catalog 管理根目录。"))?;
+            native_tenant_product_root(&catalog_base, tenant, product)?
+        } else {
+            source_root(&self.project, product)?
+        };
         if !root.is_dir() {
             return Err(bad("数据源根目录不是现有目录。"));
         }
@@ -169,19 +178,13 @@ impl Runtime {
         // A native Nautilus client is used only when the maintainer
         // explicitly installs/points at its verified binary; otherwise the
         // existing experimental collector remains unchanged.
-        let native_binary = std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
-            .ok()
-            .filter(|path| !path.is_empty());
         let mut command = if let Some(binary) = native_binary.as_deref() {
             let symbols = enabled_native_symbols(&manifest, source)?;
             let feather_base = std::env::var("ENGINE_NATIVE_NAUTILUS_FEATHER_ROOT")
                 .map_err(|_| bad("未配置 Nautilus Feather 管理根目录。"))?;
-            let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
-                .map_err(|_| bad("未配置 Nautilus Catalog 管理根目录。"))?;
             let feather = native_tenant_product_root(&feather_base, tenant, product)?;
-            let catalog = native_tenant_product_root(&catalog_base, tenant, product)?;
             let mut command = Command::new(binary);
-            command.arg(product).arg(symbols).arg(feather).arg(catalog);
+            command.arg(product).arg(symbols).arg(feather).arg(&root);
             command
         } else {
             let binary = std::env::var("ENGINE_SOURCE_BIN")
@@ -409,6 +412,52 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nautilus_native_symbols_reuse_only_active_validated_policies() {
+        let policies = vec![
+            json!({"product":"spot","symbol":"ETHUSDT","base_level":"1m","realtime_enabled":true}),
+            json!({"product":"spot","symbol":"BTCUSDT","base_level":"1m","realtime_enabled":false}),
+        ];
+        let manifest = manifest_bytes(&policies, Product::Spot).unwrap();
+        assert_eq!(enabled_native_symbols(&manifest, Product::Spot).unwrap(), "ETHUSDT");
+    }
+
+    #[test]
+    fn nautilus_root_is_tenant_and_market_scoped() {
+        let dir = std::env::temp_dir().join(format!(
+            "seealpha-native-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let dir_string = dir.to_string_lossy().into_owned();
+        std::fs::create_dir_all(dir.join("tenant1").join("spot")).unwrap();
+        let got = native_tenant_product_root(&dir_string, "tenant1", "spot").unwrap();
+        assert_eq!(got, dir.join("tenant1").join("spot"));
+        assert!(native_tenant_product_root(&dir_string, "../tenant1", "spot").is_err());
+        assert!(native_tenant_product_root(&dir_string, "tenant2", "spot").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nautilus_root_rejects_cross_tenant_symlinks() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "seealpha-native-symlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("tenant1").join("spot")).unwrap();
+        symlink(dir.join("tenant1"), dir.join("tenant2")).unwrap();
+        assert!(native_tenant_product_root(
+            &dir.to_string_lossy(), "tenant2", "spot"
+        ).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn source_manifest_rejects_invalid_policy_before_starting_any_process() {
         let policies = vec![
