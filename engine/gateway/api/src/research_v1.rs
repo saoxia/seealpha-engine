@@ -497,13 +497,17 @@ mod tests {
     use tower::ServiceExt;
 
     fn state() -> AppState {
+        // Isolate parallel HTTP tests even when the wall clock has coarse resolution.
+        static NEXT_TEST_ROOT: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "research-http-{}-{}",
+            "research-http-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_TEST_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&root).unwrap();
         let config = Config {
