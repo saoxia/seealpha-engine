@@ -2,7 +2,7 @@ use crate::{Runtime, RuntimeError, map_ledger, map_strategy};
 use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
-use seealpha_portfolio::{PaperFill, TargetPublication, replay_targets};
+use seealpha_portfolio::{HoldingPublication, PaperFill, TargetHolding, replay_holdings};
 use seealpha_strategy::{
     AccountScope, HostCommand, IssuedStrategy, Publication, StrategyBar, digest_dir, run_host,
     run_issued_host, sha256_hex,
@@ -202,12 +202,13 @@ impl Runtime {
             }
             let run = outcome.map_err(map_strategy)?;
             let limit = decimal_field(&run.prepared, "risk_limit")?;
+            let allocation = allocation_field(&run.prepared)?;
             risk_limit = Some(match risk_limit {
                 Some(current) => current.min(limit),
                 None => limit,
             });
             for publication in run.publications {
-                tagged.push((strategy.member_id.clone(), publication));
+                tagged.push((strategy.member_id.clone(), publication, allocation));
             }
         }
         let risk_limit =
@@ -220,23 +221,32 @@ impl Runtime {
         });
         let mut publications = Vec::with_capacity(tagged.len());
         let mut views = Vec::with_capacity(tagged.len());
-        for (member, publication) in &tagged {
+        for (member, publication, allocation) in &tagged {
             let price = klines
                 .get(publication.bar_index)
                 .ok_or_else(|| RuntimeError::Conflict("策略公布了无效的 K 线位置。".into()))?
                 .close;
-            let quantity = publication
-                .quantity
-                .parse::<Decimal>()
-                .map_err(|_| RuntimeError::Conflict("目标数量无效。".into()))?;
-            publications.push(TargetPublication {
+            let quantity = if publication.quantity.is_empty() {
+                None
+            } else {
+                Some(publication.quantity.parse::<Decimal>()
+                    .map_err(|_| RuntimeError::Conflict("目标数量无效。".into()))?)
+            };
+            let weight = publication.weight.as_deref().map(|value| {
+                value.parse::<Decimal>()
+                    .map_err(|_| RuntimeError::Conflict("目标权重无效。".into()))
+            }).transpose()?;
+            let holding = TargetHolding::new(&request.snapshot.symbol, quantity, weight)
+                .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
+            publications.push(HoldingPublication {
                 member_id: member.clone(),
-                quantity,
+                holding,
+                allocation: *allocation,
                 price,
             });
             views.push(publication_view(publication));
         }
-        let (fills, ending) = replay_targets(
+        let (fills, ending) = replay_holdings(
             &publications,
             starting_position,
             risk_limit,
@@ -342,12 +352,33 @@ fn decimal_field(value: &Value, field: &str) -> Result<Decimal, RuntimeError> {
         .map_err(|_| RuntimeError::Conflict("策略风险额度无效。".into()))
 }
 
+fn allocation_field(value: &Value) -> Result<Decimal, RuntimeError> {
+    let allocation = value
+        .get("allocation")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RuntimeError::Conflict("策略缺少分配数量。".into()))?
+        .parse::<Decimal>()
+        .map_err(|_| RuntimeError::Conflict("策略分配数量无效。".into()))?;
+    if allocation <= Decimal::ZERO {
+        return Err(RuntimeError::Conflict("策略分配数量无效。".into()));
+    }
+    Ok(allocation)
+}
+
 fn publication_view(publication: &Publication) -> Value {
-    json!({
-        "symbol": publication.symbol,
-        "quantity": publication.quantity,
-        "bar_index": publication.bar_index,
-    })
+    if let Some(weight) = &publication.weight {
+        json!({
+            "symbol": publication.symbol,
+            "weight": weight,
+            "bar_index": publication.bar_index,
+        })
+    } else {
+        json!({
+            "symbol": publication.symbol,
+            "quantity": publication.quantity,
+            "bar_index": publication.bar_index,
+        })
+    }
 }
 
 fn fill_view(fill: &PaperFill) -> Value {
