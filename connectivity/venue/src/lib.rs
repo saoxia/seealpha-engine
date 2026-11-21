@@ -3,6 +3,7 @@
 //! Callers pass the base URL. Nothing in this crate selects a production host.
 //! Credentials are used only to build the request and are not returned or logged.
 pub mod conditional;
+pub mod evidence;
 pub mod lifecycle;
 pub mod option_trades;
 pub mod options;
