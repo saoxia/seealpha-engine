@@ -16,7 +16,7 @@ pub use model::{
     interval_ms,
 };
 pub use reader::{BarGap, RecordKind};
-pub use repair::missing_bar_windows;
+pub use repair::{VenueKline, missing_bar_windows, validate_venue_klines};
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
