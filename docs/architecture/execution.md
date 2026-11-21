@@ -2,8 +2,8 @@
 
 **当前是逻辑业务边界，不是独立的 Rust crate。**
 
-- `engine/application/runtime/src/orders.rs`：请求门禁、订单命令、按请求 ID 对账和账本同步编排。
-- `engine/application/runtime/src/order_journal.rs`：订单意图预登记与外部发送控制。
+- `engine/runtime/src/orders.rs`：请求门禁、订单命令、按请求 ID 对账和账本同步编排。
+- `engine/runtime/src/order_journal.rs`：订单意图预登记与外部发送控制。
 - `engine/connectivity/venue/src/`：交易所订单协议、条件单、撤单与外部观察接口。
 - `engine/ledger/src/order_intents.rs`、`order_reconciliation_tasks.rs`、`verified_fills.rs`：不可变意图、恢复任务与真实成交证据。
 

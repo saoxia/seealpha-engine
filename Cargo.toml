@@ -13,7 +13,7 @@ members = [
     "engine/strategy",
     "engine/connectivity/venue",
     "engine/backtest/core",
-    "engine/application/runtime",
+    "engine/runtime",
     "engine/interfaces/api/http",
     "engine/apps/trading_engine",
     "benchmarks/rust",
