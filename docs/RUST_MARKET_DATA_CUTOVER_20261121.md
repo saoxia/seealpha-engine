@@ -30,4 +30,4 @@ cargo test --workspace --locked
 cargo build --workspace --locked --release
 ```
 
-Python tests that import `engine.market_data` and `docker/engine-legacy.Dockerfile` are now obsolete and require separate removal or migration as the remaining legacy engine directories are retired. Do not use the legacy Python Engine after this cutover.
+The obsolete `docker/engine-legacy.Dockerfile` has been removed because it copied deleted Rust helper sources. Existing Python tests and surviving legacy Engine modules that import `engine.market_data` are still present for their own directory-by-directory cutovers, **not** executable compatibility paths. Do not run the legacy Python Engine after this cutover.
