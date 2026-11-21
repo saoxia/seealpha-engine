@@ -363,7 +363,7 @@ impl Runtime {
             previous = Some(row.open_time_ms);
             native.push(row);
         }
-        if let Some(catalog) = self.native_catalog()? {
+        let published = if let Some(catalog) = self.native_catalog()? {
             let path = catalog
                 .append_bars(
                     symbol,
@@ -375,18 +375,29 @@ impl Runtime {
                 )
                 .map_err(error)?;
             // Never return an absolute local path to untrusted clients.
-            Ok(json!({"imported":bars.len(),"verified":true,
+            json!({"imported":bars.len(),"verified":true,
                 "backend":"nautilus_v2_parquet",
                 "file":path.strip_prefix(catalog.root()).ok()
                     .map(|p|p.to_string_lossy().to_string()),
-                "exchange_orders":0}))
+                "exchange_orders":0})
         } else {
             self.ledger
                 .import_verified_catalog_bars(tenant, product_name, symbol, interval, bars)
                 .map_err(map_ledger)?;
-            Ok(json!({"imported":bars.len(),"verified":true,
-                "backend":"engine_sqlite_compat","exchange_orders":0}))
+            json!({"imported":bars.len(),"verified":true,
+                "backend":"engine_sqlite_compat","exchange_orders":0})
+        };
+        // Derived 1m rollups are a repairable cache, never authoritative
+        // Catalog evidence. Failure must not recast a committed import as
+        // uncommitted or elevate the live data/venue readiness gate.
+        if interval == "1m" && matches!(product_name, "spot" | "futures_um") {
+            if let Err(err) = self.persist_native_minute_rollups(
+                tenant, product_name, symbol, &native,
+            ) {
+                eprintln!("native derived rollup cache requires repair: {err}");
+            }
         }
+        Ok(published)
     }
     /// Generic native Parquet data for instruments, TradeTick, QuoteTick,
     /// funding, depth, greeks, statuses and custom features. Requires an

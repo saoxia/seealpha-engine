@@ -7,6 +7,7 @@ mod order_journal;
 mod portfolio;
 pub use portfolio::{NativePortfolioEvent, NativePortfolioResult, NativePortfolioState};
 mod catalog;
+mod native_calculation;
 mod config;
 mod data;
 mod evidence;
