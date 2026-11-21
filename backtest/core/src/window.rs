@@ -39,7 +39,7 @@ impl HistoryWindow {
         if start_ms >= end_ms {
             return Err("开始时间必须早于结束时间。结束时间不包含在区间内。");
         }
-        if end_ms - start_ms > MAX_WINDOW_MS {
+        if end_ms.checked_sub(start_ms).is_none_or(|duration| duration > MAX_WINDOW_MS) {
             return Err("单次回测区间不能超过 366 天。");
         }
         Ok(Self { start_ms, end_ms, interval })
