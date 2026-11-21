@@ -15,7 +15,7 @@ seealpha-catalog = { path = "../../../market_data/catalog" }
 seealpha-ledger = { path = "../../../ledger" }
 seealpha-market = { path = "../../../market_data/market" }
 seealpha-research = { path = "../../../research" }
-seealpha-runtime = { path = "../../../application/runtime" }
+seealpha-runtime = { path = "../../../runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

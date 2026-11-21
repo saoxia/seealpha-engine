@@ -18,14 +18,14 @@
 
 | 规划目录 | 目标职责 | 当前归属 |
 | --- | --- | --- |
-| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/core/`、`engine/application/runtime/`、`engine/connectivity/venue/` |
-| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/application/runtime/`、`engine/connectivity/venue/`、`engine/ledger/` |
+| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/core/`、`engine/runtime/`、`engine/connectivity/venue/` |
+| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/connectivity/venue/`、`engine/ledger/` |
 
 不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
 
 ## 应用和对外边界
 
-- `engine/application/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
+- `engine/runtime/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
 - `engine/interfaces/`：HTTP v2、Research v1/MCP-compatible 接口与输入输出、认证
 - `engine/apps/`：Engine 主程序和其他可执行入口
 

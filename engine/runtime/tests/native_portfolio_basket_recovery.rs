@@ -16,7 +16,7 @@ fn config(state: PathBuf) -> Config {
         auth_mode: AuthMode::None,
         token: String::new(),
         state_dir: state,
-        project: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
+        project: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
         tenant_id: None,
         tenant_purpose: None,
         research_signing_key: None,

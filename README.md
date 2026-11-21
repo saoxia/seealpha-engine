@@ -17,7 +17,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 - `engine/connectivity/`：交易所连接
 - `engine/backtest/`：历史回放与回测
 - `engine/research/`：研究授权和范围校验；研究任务编排仍在 Runtime
-- `engine/application/`：Runtime、租户和交易会话编排
+- `engine/runtime/`：Runtime、租户和交易会话编排
 - `engine/interfaces/`：HTTP v2 和研究接口
 - `engine/apps/`：Engine 二进制入口
 
