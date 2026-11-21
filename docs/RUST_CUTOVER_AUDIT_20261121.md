@@ -60,3 +60,24 @@ docker build -f docker/engine-legacy.Dockerfile -t seealpha-engine:legacy-ci .
 ```
 
 两份运行时应在独立临时数据根目录、离线行情夹具、无交易密钥环境中比较 HTTP、历史数据、策略目标、订单净额和异常行为。任何属于真实订单的未知执行结果都只能走交易所查询与对账，不能因为改用 Rust 而自动重试。
+
+## Rust allocated-target historical replay adapter (follow-up)
+
+The `seealpha-backtest` crate provides
+`run_allocated_backtest_with_curve`, which validates instrument identity,
+resolves `TargetHolding` quantity/weight against an explicit per-member
+allocation, and feeds the **existing** bar-synchronous Rust netting and
+equity-curve engine. The issued-catalog history path in
+`application/runtime/src/history.rs` now routes the strategy host's existing
+absolute quantities through this native adapter, with the issued strategy's
+prepared allocation. This is a Rust-only accounting path change: the isolated
+Python host continues to execute user-authored Python strategies, and its
+current publication contract remains absolute quantity only.
+
+The adapter can represent weights in native Rust, but the Python strategy
+publication API has **not** been expanded to accept weights; do not claim
+end-to-end weighted Python strategy support or remove the legacy host. No
+live-order or external exchange pathways are modified. These changes require
+CI compilation, unit tests, local issued-strategy replay, error parity,
+and proof that existing absolute-quantity reports remain unchanged before
+merging or retiring any Python module.
