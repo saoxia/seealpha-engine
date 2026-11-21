@@ -325,6 +325,16 @@ impl Runtime {
         let mut child = processes
             .remove(&key)
             .ok_or_else(|| bad("没有本进程管理的对应原生数据源。"))?;
+        // Preserve legacy collector stop semantics. Only the explicitly
+        // selected Nautilus writer needs a graceful Feather -> Parquet flush.
+        if std::env::var("ENGINE_NATIVE_NAUTILUS_SOURCE_BIN")
+            .is_err_or(|value| value.is_empty())
+        {
+            child.kill().map_err(|_| bad("无法终止实验性数据源进程。"))?;
+            child.wait().map_err(|_| bad("实验性数据源退出状态未知。"))?;
+            return Ok(json!({"tenant_id":tenant,"product":product,
+                "status":"stopped","data_ready":false}));
+        }
         // SIGKILL bypasses Nautilus LiveNode's Feather -> Parquet flush and
         // leaves recoverable partial files. Prefer SIGTERM and retain the child
         // on failed/timed-out shutdown; never report a catalog commit here.
