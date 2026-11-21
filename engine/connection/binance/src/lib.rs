@@ -34,8 +34,6 @@ pub mod settlement;
 pub mod spot_oco;
 #[path = "orders/trades.rs"]
 pub mod trades;
-#[path = "orders/user_stream.rs"]
-pub mod user_stream;
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
