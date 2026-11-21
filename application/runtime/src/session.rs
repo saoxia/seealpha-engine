@@ -3,8 +3,9 @@ use rust_decimal::Decimal;
 use seealpha_ledger::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
 use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
+use seealpha_strategy::executor::{DevelopmentPythonExecutor, ExecutionInput, NativeEmaExecutor, StrategyExecutor};
 use seealpha_strategy::{
-    AccountScope, HostCommand, IssuedStrategy, Publication, StrategyBar, digest_dir, run_host,
+    AccountScope, HostCommand, IssuedStrategy, Publication, StrategyBar, digest_dir,
     run_issued_host, sha256_hex,
 };
 use serde_json::{Value, json};
@@ -132,12 +133,14 @@ impl Runtime {
                         "正式租户不能直接执行未下发的 Rust 示例策略。".into(),
                     ));
                 }
-                seealpha_strategy::native_ema::run_native_ema(
-                    &strategy.parameters,
-                    &request.snapshot.symbol,
-                    &host_bars,
-                )
-                .map_err(map_strategy)?
+                NativeEmaExecutor
+                    .execute(ExecutionInput {
+                    parameters: &strategy.parameters,
+                    symbol: &request.snapshot.symbol,
+                    interval: &request.snapshot.interval,
+                    bars: &host_bars,
+                })
+                    .map_err(map_strategy)?
             } else {
                 let temp = match &strategy.package {
                     PackageBody::Archive(bytes) => Some(write_temp(bytes)?),
@@ -211,8 +214,22 @@ impl Runtime {
                         },
                     )
                 } else {
-                    // Development sample directory path; never permitted to send orders.
-                    run_host(&host_command)
+                    // Development directory only: authorization above ensures
+                    // no account-issued package is routed through this adapter.
+                    let package_dir = directory.ok_or_else(|| {
+                        RuntimeError::Conflict("未下发的策略必须使用开发目录。".into())
+                    })?;
+                    DevelopmentPythonExecutor {
+                        python: &self.python,
+                        host: &self.host,
+                        package_dir,
+                    }
+                    .execute(ExecutionInput {
+                        parameters: &strategy.parameters,
+                        symbol: &request.snapshot.symbol,
+                        interval: &request.snapshot.interval,
+                        bars: &host_bars,
+                    })
                 };
                 self.track_end();
                 if let Some(path) = &temp {
