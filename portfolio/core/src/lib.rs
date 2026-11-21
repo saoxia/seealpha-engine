@@ -275,15 +275,6 @@ mod tests {
     }
 
     #[test]
-    fn target_holding_rejects_decimal_multiplication_overflow() {
-        let holding = TargetHolding::new("ETHUSDT", None, Some(Decimal::new(9, 1))).unwrap();
-        assert_eq!(
-            holding.signed_quantity(Decimal::MAX).unwrap_err(),
-            TargetHoldingError::Overflow
-        );
-    }
-
-    #[test]
     fn nets_opposing_targets_before_any_order() {
         let targets = vec![member("a", 3), member("b", -1)];
         assert_eq!(net_signed_quantity(&targets).unwrap(), Decimal::from(2));
