@@ -144,7 +144,7 @@ jobs:
               for index, price in enumerate(prices)
           ]
           print(json.dumps({
-              "op": "run", "package_dir": "/app/packages/ema_crossover",
+              "protocol_version": 1, "op": "run", "package_dir": "/app/packages/ema_crossover",
               "parameters": {}, "symbol": "ETHUSDT",
               "interval": "1m", "bars": bars,
           }))
@@ -158,6 +158,7 @@ jobs:
           import sys
           result = json.load(open(sys.argv[1], encoding="utf-8"))
           assert result.get("ok") is True, result
+          assert result.get("protocol_version") == 1, result
           targets = [item.get("quantity") for item in result["publications"]]
           assert "1" in targets and "0" in targets, result
           assert all("bar_index" in item for item in result["publications"]), result
