@@ -2,6 +2,14 @@
 
 > 当前实现说明，基于 2026-11-21 `main` 的 Rust workspace。与此前的 Python/NautilusTrader 迁移记录不同，本文件描述**仓库中实际存在的模块**。新增目录拆分只改变源码组织，不代表行为等价或生产验收通过。
 
+## 架构原则与已知偏差
+
+**目标：NautilusTrader 承担通用交易内核，SeeAlpha 只承载增量业务。** 不能因为目录归属在 `connectivity`、`backtest`、`portfolio` 或 `market_data` 就重复实现上游已有功能，也不新增自定义通用适配器抽象。参考 [Nautilus 复用边界](architecture/NAUTILUS_REUSE.md)。
+
+**当前事实**：此处仍是独立 Rust 运行时；Cargo workspace 没有接入 NautilusTrader crates。`engine/connectivity/venue` 是自研 Binance REST 连接器，Spot/期货等能力存在与上游重叠的实现。该旧实现只用于保持当前契约和安全限制，**不是长期目标**；禁止把架构目标、历史 Python/Nautilus 记录或新建的文档误写成已完成原生集成。
+
+把 Nautilus 接入现有 Runtime 时，需要统一权威订单/成交状态，保留租户身份、订单预登记、Unknown 只查询恢复、真实成交证据入账与风控门禁。未完成离线 parity 和跨模块测试时，不移动实盘写入口、不删除旧保护、不改变部署默认值。
+
 ## 入口与依赖方向
 
 以下源码路径均以仓库根目录的 `engine/` 为前缀（示意图内部省略部分共同前缀）。

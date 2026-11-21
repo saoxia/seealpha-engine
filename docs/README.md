@@ -9,6 +9,7 @@
 | 领域与文件导航 | [architecture/MODULE_MAP](architecture/MODULE_MAP.md) |
 | 一级领域与目录规划 | [architecture/DOMAIN_LAYOUT](architecture/DOMAIN_LAYOUT.md) |
 | 执行与订单边界 | [architecture/execution](architecture/execution.md) |
+| Nautilus 原生复用原则及迁移门禁 | [architecture/NAUTILUS_REUSE](architecture/NAUTILUS_REUSE.md) |
 | 风险边界 | [architecture/risk](architecture/risk.md) |
 | 行情的配置/采集/读取设计目标 | [MARKET_DATA_ARCHITECTURE](MARKET_DATA_ARCHITECTURE.md) |
 | Platform HTTP 集成背景 | [PLATFORM_INTEGRATION](PLATFORM_INTEGRATION.md)（含过时 Python 命令，勿当作现行启动说明） |

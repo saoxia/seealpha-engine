@@ -21,6 +21,13 @@
 
 表中 `src/routes/` 等局部路径是模块内的相对路径，完整 Rust 引擎源码均在 `engine/` 下。
 
+## 复用与迁移导航
+
+- **当前实际运行代码**：`engine/connectivity/venue` 的 `VenueClient` 和 `engine/application/runtime/src/orders.rs` 的直接调用仍为旧 Binance 自研链路；不是 Nautilus 原生执行。
+- **当前原生复用缺口**：Spot、USD-M、行情 WS/REST、订单/成交报告及一般回放等，应首先核对锁定版本 Nautilus 的实现并替代自研，而不是按交易所增加另一组适配器文件。
+- **确需扩展**：Binance Options 等上游尚未提供完整 live client 的产品面及 SeeAlpha 专属多租户/持久化证据逻辑；仅实现经审计的差异。
+- **迁移规则和验证门禁**：[NAUTILUS_REUSE](NAUTILUS_REUSE.md)。未通过等价验证前不能将目标状态写成实际实现。
+
 ## 组织原则
 
 1. 顶层保留领域归属，Cargo crate 名称不因改目录而改变。
