@@ -24,22 +24,14 @@ FIELDS = ("open", "high", "low", "close", "volume")
 
 
 def local_klines(catalog, symbol, level, start_ms, end_ms, *, market="futures_um"):
-    """Read saved source bars; Rust owns OHLCV aggregation and completeness."""
-    bars = catalog.bars(bar_types=[bar_type_for(symbol, level, market)],
-                        start=start_ms * 1000000, end=end_ms * 1000000 - 1)
-    source = level
-    if not bars and level != "1m":
-        source = "1m"
-        bars = catalog.bars(bar_types=[bar_type_for(symbol, source, market)],
-                            start=start_ms * 1000000, end=end_ms * 1000000 - 1)
+    """Rust reads Nautilus v2 Catalog and aggregates OHLCV evidence."""
     binary = Path(os.environ.get("SEEALPHA_REPAIR_VERIFY_BINARY",
                                 str(Path(__file__).resolve().parents[3] / "target/release/seealpha-repair-verify")))
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("Rust repair validator unavailable; build seealpha-repair-verify or configure SEEALPHA_REPAIR_VERIFY_BINARY")
-    request = {"mode": "aggregate", "source_interval": source, "target_interval": level,
-               "saved": [{"event_ns": bar.ts_event,
-                          "values": [str(getattr(bar, field).as_decimal()) for field in FIELDS]}
-                         for bar in bars]}
+    request = {"mode": "aggregate_catalog", "root": str(catalog.path),
+               "symbol": symbol, "product": market, "target_interval": level,
+               "start_ms": start_ms, "end_ms": end_ms}
     try:
         result = subprocess.run([str(binary)], input=json.dumps(request), capture_output=True,
                                 text=True, check=False, timeout=30)

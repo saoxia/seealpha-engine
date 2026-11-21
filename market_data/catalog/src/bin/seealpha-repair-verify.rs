@@ -3,12 +3,13 @@
 use rust_decimal::Decimal;
 use seealpha_catalog::{
     CatalogBar, LocalKline, MarketProduct, SavedKline, VenueKline, aggregate_saved_klines,
-    validate_venue_klines, venue_kline_differs,
+    read_aggregated_catalog_klines, validate_venue_klines, venue_kline_differs,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{self, Read};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 #[derive(Deserialize)]
@@ -30,6 +31,44 @@ struct AggregateRequest {
     source_interval: String,
     target_interval: String,
     saved: Vec<SavedRow>,
+}
+
+#[derive(Deserialize)]
+struct AggregateCatalogRequest {
+    root: PathBuf,
+    symbol: String,
+    product: String,
+    target_interval: String,
+    start_ms: i64,
+    end_ms: i64,
+}
+
+fn aggregate_catalog(
+    request: AggregateCatalogRequest,
+) -> Result<HashMap<String, AggregatedRow>, String> {
+    let product = MarketProduct::parse(&request.product).map_err(|error| error.to_string())?;
+    let buckets = read_aggregated_catalog_klines(
+        &request.root,
+        &request.symbol,
+        product,
+        &request.target_interval,
+        request.start_ms,
+        request.end_ms,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(buckets
+        .into_iter()
+        .map(|bucket| {
+            (
+                bucket.start_ms.to_string(),
+                AggregatedRow {
+                    values: bucket.values.map(|value| value.to_string()),
+                    end: bucket.end_ms,
+                    complete: bucket.complete,
+                },
+            )
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -225,6 +264,13 @@ fn run() -> Result<(), String> {
         return Err("交易所证据超过容量限制".into());
     }
     let value: Value = serde_json::from_str(&payload).map_err(|_| "交易所证据 JSON 无效")?;
+    if value.get("mode").and_then(Value::as_str) == Some("aggregate_catalog") {
+        let request = serde_json::from_value::<AggregateCatalogRequest>(value)
+            .map_err(|_| "本地 Catalog 聚合请求无效")?;
+        let result = aggregate_catalog(request)?;
+        return serde_json::to_writer(io::stdout(), &result)
+            .map_err(|_| "写入 Catalog 聚合结果失败".into());
+    }
     if value.get("mode").and_then(Value::as_str) == Some("aggregate") {
         let request =
             serde_json::from_value::<AggregateRequest>(value).map_err(|_| "本地聚合请求无效")?;
@@ -259,6 +305,28 @@ mod tests {
             source: None,
             local: None,
         }
+    }
+
+    #[test]
+    fn catalog_read_requires_existing_directory_and_valid_product() {
+        let request = AggregateCatalogRequest {
+            root: PathBuf::from("/nonexistent-seealpha-repair-catalog"),
+            symbol: "ETHUSDT".into(),
+            product: "futures_um".into(),
+            target_interval: "1m".into(),
+            start_ms: 0,
+            end_ms: 60_000,
+        };
+        assert!(aggregate_catalog(request).is_err());
+        let invalid = AggregateCatalogRequest {
+            root: PathBuf::from("."),
+            symbol: "ETHUSDT".into(),
+            product: "unknown".into(),
+            target_interval: "1m".into(),
+            start_ms: 0,
+            end_ms: 60_000,
+        };
+        assert!(aggregate_catalog(invalid).is_err());
     }
 
     #[test]

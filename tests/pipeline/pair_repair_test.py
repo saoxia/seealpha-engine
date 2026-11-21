@@ -67,18 +67,19 @@ def test_equal_day_never_requests_smaller_periods(dataset):
     assert [request["interval"] for request in rest.requests] == ["1d"]
 
 
-def test_saved_target_is_read_without_loading_minutes_or_ticks():
+def test_saved_target_is_read_without_loading_minutes_or_ticks(tmp_path):
     from engine.market_data.repair.pair_repair import local_klines
 
+    catalog = ParquetDataCatalog(tmp_path / "saved-daily-only")
+    catalog.write_data([TestInstrumentProvider.ethusdt_perp_binance()])
     stamp = (LEFT + 86400000 - 1) * 1000000
     bar = Bar(BarType.from_str(bar_type_for("ETHUSDT", "1d")),
               *(Price.from_str(value) for value in ("10.00", "12.00", "9.00", "11.00")),
               Quantity.from_str("1440.000"), stamp, stamp)
-    class SavedBarsOnly:
-        def bars(self, *, bar_types, start, end):
-            assert bar_types == [bar_type_for("ETHUSDT", "1d")]
-            return [bar]
-    result = local_klines(SavedBarsOnly(), "ETHUSDT", "1d", LEFT, LEFT + 86400000)
+    catalog.write_data([bar])
+    # No minute, Tick, or Quote files exist. The Rust reader must prefer the
+    # saved daily source rather than inventing lower-frequency evidence.
+    result = local_klines(catalog, "ETHUSDT", "1d", LEFT, LEFT + 86400000)
     assert result[LEFT]["complete"]
     assert result[LEFT]["values"][4] == 1440
 
