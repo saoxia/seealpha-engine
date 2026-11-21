@@ -74,14 +74,6 @@ jobs:
           components: rustfmt, clippy
       # Run compilation first so pre-existing workspace formatting debt does not
       # prevent us from observing type/borrow-checker failures in the PR.
-      # Temporary migration probe; removed after the resulting lock is committed.
-      - name: Resolve pruned lockfile for review
-        run: |
-          cargo check --workspace --all-targets
-          echo '__SEEALPHA_LOCK_BEGIN__'
-          base64 -w0 Cargo.lock
-          echo
-          echo '__SEEALPHA_LOCK_END__'
       - name: Compile check
         run: cargo check --workspace --all-targets --locked
       # Existing base branch contains unrelated rustfmt debt; retain visibility
