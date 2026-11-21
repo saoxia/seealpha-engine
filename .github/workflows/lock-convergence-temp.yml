@@ -1,0 +1,20 @@
+name: Cargo lock convergence (temporary)
+on:
+  push:
+    branches:
+      - refactor/remove-legacy-binance-live-source-20261121
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - name: Resolve the existing Cargo.lock without --locked and print exact delta
+        run: |
+          cargo metadata --format-version=1 >/dev/null
+          echo '=== LOCKFILE DELTA BEGIN ==='
+          git diff -- Cargo.lock
+          echo '=== LOCKFILE DELTA END ==='
