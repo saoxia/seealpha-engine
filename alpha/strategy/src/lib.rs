@@ -9,6 +9,7 @@ mod host_process;
 mod issued;
 pub mod protocol;
 pub mod native_ema;
+pub mod native_manifest;
 
 pub use issued::{AccountScope, IssuedStrategy, authorize_issued, run_issued_host};
 
