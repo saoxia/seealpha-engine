@@ -31,6 +31,8 @@
 
 ## Options 账户仓位与余额规范化抽离
 
+Options 账户两次签名只读 GET 的顺序与路径（`/eapi/v1/account`、`/eapi/v1/position`）现在由 `binance-options/src/account.rs::collect_options_account_snapshot` 单一编排；旧 Venue 仅通过现有 `signed(..., "GET", ...)` 回调注入传输及凭据。任一步失败不会形成部分快照；实际网络签名、域名校验和凭据依然留在旧 Venue。这不代表已迁移 HTTP 客户端或取得 Runtime/Ledger 生产验收。
+
 `reconciliation::position_quantities` / `asset_quantities` 的 Options 分支已改为委托 `seealpha_binance_options::account`：保持原 `quantity/positionAmt`、`marginBalance/balance/walletBalance` 回退优先级、持仓方向及重复键校验。通用对账差额算法及 Spot、USD-M 原有证据规则不变。
 
 ## Options 行权证据抽离
