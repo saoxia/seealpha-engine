@@ -10,8 +10,8 @@ pub mod timeline;
 
 use rust_decimal::Decimal;
 use seealpha_portfolio::{
-    MemberTarget, PaperFill, TargetPublication, clip_member_targets, net_signed_quantity,
-    quantize_toward_zero, replay_targets,
+    MemberTarget, PaperFill, TargetHolding, TargetPublication, clip_member_targets,
+    net_signed_quantity, quantize_toward_zero, replay_targets,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -37,6 +37,43 @@ pub struct PublishedTarget {
     pub member_id: String,
     pub bar_index: usize,
     pub quantity: Decimal,
+}
+
+/// A weight or absolute quantity published for a single-instrument backtest.
+/// Allocation is a positive number of instrument units, not quote notional.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllocatedPublishedTarget {
+    pub member_id: String,
+    pub bar_index: usize,
+    pub holding: TargetHolding,
+    pub allocation: Decimal,
+}
+
+/// Convert quantity/weight targets before any paper fill or equity mutation.
+/// This is the native adapter for all issued-strategy target quantities.
+pub fn run_allocated_backtest_with_curve(
+    bars: &[HistoryBar],
+    publications: &[AllocatedPublishedTarget],
+    symbol: &str,
+    starting_balance: Decimal,
+    risk_limit: Decimal,
+) -> Result<(BacktestReport, Vec<Value>), BacktestError> {
+    let mut resolved = Vec::with_capacity(publications.len());
+    for publication in publications {
+        if publication.holding.symbol != symbol {
+            return Err(BacktestError::Portfolio("策略发布了未授权的品种。".into()));
+        }
+        let quantity = publication
+            .holding
+            .signed_quantity(publication.allocation)
+            .map_err(|e| BacktestError::Portfolio(e.to_string()))?;
+        resolved.push(PublishedTarget {
+            member_id: publication.member_id.clone(),
+            bar_index: publication.bar_index,
+            quantity,
+        });
+    }
+    run_backtest_with_curve(bars, &resolved, starting_balance, risk_limit)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,6 +356,73 @@ mod tests {
             report_json("ETHUSDT", "USDT", &report)["exchange_orders"],
             0
         );
+    }
+
+    #[test]
+    fn allocated_backtest_resolves_opposing_weights_at_one_bar() {
+        let bars = vec![bar(0, 100), bar(1, 110)];
+        let publications = vec![
+            AllocatedPublishedTarget {
+                member_id: "long".into(),
+                bar_index: 0,
+                holding: TargetHolding::new("ETHUSDT", None, Some(Decimal::new(75, 2))).unwrap(),
+                allocation: Decimal::from(4),
+            },
+            AllocatedPublishedTarget {
+                member_id: "short".into(),
+                bar_index: 0,
+                holding: TargetHolding::new("ETHUSDT", None, Some(Decimal::new(-25, 2))).unwrap(),
+                allocation: Decimal::from(4),
+            },
+        ];
+        let (result, curve) = run_allocated_backtest_with_curve(
+            &bars,
+            &publications,
+            "ETHUSDT",
+            Decimal::from(1000),
+            Decimal::from(10),
+        )
+        .unwrap();
+        assert_eq!(result.fills.len(), 1);
+        assert_eq!(result.fills[0].quantity, Decimal::from(2));
+        assert_eq!(result.position, Decimal::from(2));
+        assert_eq!(result.ending_balance, Decimal::from(1020));
+        assert_eq!(curve.len(), 2);
+    }
+
+    #[test]
+    fn allocated_backtest_rejects_wrong_symbol_or_invalid_allocation() {
+        let bars = vec![bar(0, 100)];
+        let valid = AllocatedPublishedTarget {
+            member_id: "a".into(),
+            bar_index: 0,
+            holding: TargetHolding::new("ETHUSDT", Some(Decimal::ONE), None).unwrap(),
+            allocation: Decimal::ONE,
+        };
+        let mut wrong = valid.clone();
+        wrong.holding.symbol = "BTCUSDT".into();
+        assert!(matches!(
+            run_allocated_backtest_with_curve(
+                &bars,
+                &[valid.clone(), wrong],
+                "ETHUSDT",
+                Decimal::from(1000),
+                Decimal::from(10),
+            ),
+            Err(BacktestError::Portfolio(_))
+        ));
+        let mut bad = valid;
+        bad.allocation = Decimal::ZERO;
+        assert!(matches!(
+            run_allocated_backtest_with_curve(
+                &bars,
+                &[bad],
+                "ETHUSDT",
+                Decimal::from(1000),
+                Decimal::from(10),
+            ),
+            Err(BacktestError::Portfolio(_))
+        ));
     }
 
     #[test]

@@ -3,8 +3,11 @@
 //! Rust owns cash/position matching, risk limits, ledger and equity accounting.
 use crate::{Runtime, RuntimeError, map_ledger, map_strategy, write_archive};
 use rust_decimal::Decimal;
-use seealpha_backtest::{HistoryBar, PublishedTarget, report_json, run_backtest_with_curve};
+use seealpha_backtest::{
+    AllocatedPublishedTarget, HistoryBar, report_json, run_allocated_backtest_with_curve,
+};
 use seealpha_market::{check_symbol, interval_ms};
+use seealpha_portfolio::TargetHolding;
 use seealpha_strategy::{AccountScope, HostCommand, IssuedStrategy, StrategyBar, run_issued_host};
 use serde_json::{Value, json};
 
@@ -163,6 +166,14 @@ impl Runtime {
                 return Err(invalid("策略风险额度无效。"));
             }
             risk = Some(risk.map_or(this_risk, |prior| prior.min(this_risk)));
+            let allocation = result.prepared["allocation"]
+                .as_str()
+                .ok_or_else(|| invalid("策略未声明有效分配数量。"))?
+                .parse::<Decimal>()
+                .map_err(|_| invalid("策略分配数量无效。"))?;
+            if allocation <= Decimal::ZERO {
+                return Err(invalid("策略分配数量无效。"));
+            }
             for p in result.publications {
                 if p.symbol != symbol || p.bar_index >= history.len() {
                     return Err(invalid("策略发布了未授权的品种或时间索引。"));
@@ -171,17 +182,24 @@ impl Runtime {
                     .quantity
                     .parse::<Decimal>()
                     .map_err(|_| invalid("策略目标数量无效。"))?;
-                publications.push(PublishedTarget {
+                publications.push(AllocatedPublishedTarget {
                     member_id: strategy.issuance_id.clone(),
                     bar_index: p.bar_index,
-                    quantity: amount,
+                    holding: TargetHolding::new(symbol, Some(amount), None)
+                        .map_err(|e| invalid(&e.to_string()))?,
+                    allocation,
                 });
             }
         }
         let risk = risk.ok_or_else(|| invalid("该账户没有已下发的策略。"))?;
-        let (result, curve) =
-            run_backtest_with_curve(&history, &publications, starting_balance, risk)
-                .map_err(|e| invalid(&e.to_string()))?;
+        let (result, curve) = run_allocated_backtest_with_curve(
+            &history,
+            &publications,
+            symbol,
+            starting_balance,
+            risk,
+        )
+        .map_err(|e| invalid(&e.to_string()))?;
         let mut body = report_json(symbol, quote, &result);
         body["equity_curve"] = json!(curve);
         body["product"] = json!(product);
