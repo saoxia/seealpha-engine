@@ -7,7 +7,7 @@ use nautilus_binance::{
     common::enums::{BinanceEnvironment, BinanceProductType},
     config::{
         BinanceDataClientConfig, BinanceExecutionClientConfig,
-        BinanceInstrumentProviderConfig, BinanceSpotMarketDataMode,
+        BinanceInstrumentProviderConfig,
     },
     factories::{BinanceDataClientFactory, BinanceExecutionClientFactory},
 };
