@@ -1,3 +1,5 @@
+> **历史恢复记录（已失效，禁止作为当前操作手册）。** 当前 `main` 分支不再包含可启动的旧 `engine/` Python 服务或 `docker/engine-legacy.Dockerfile`。本文的 `uv run python -m engine`、旧测试目录和 Legacy Docker 命令均不适用于当前仓库。恢复旧实现须从所列历史提交独立检出并进行安全评估，不能与现行 Engine 共用生产状态。当前运行方式参见 [README](../README.md)；已退役范围参见 [LEGACY_ENGINE_RETIREMENT](LEGACY_ENGINE_RETIREMENT_20261121.md)。
+
 # Python Engine recovery during Rust migration
 
 ## Why this exists
