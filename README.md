@@ -72,7 +72,7 @@ docker run --rm -p 127.0.0.1:8766:8766 \
 
 本轮已在 Rust 原生 Engine 中补齐一批账户状态、持久化行情配置/任务、策略读侧订阅、严格历史 K 线读取和已发行策略的本地回测路径，并接入独立 Binance 产品源的显式试验性管理。新数据源在完成 REST 衔接/时钟/历史证据前始终返回 `data_ready=false`，**不会**向策略提供已就绪的实盘行情保证。
 
-旧 Python Engine 的 `engine/api/` 和 `engine/infrastructure/` 已删除，HTTP 由 `interfaces/api/http/` 中的 Axum 实现承担，任务持久化与状态管理由 `application/runtime/src/jobs.rs`、`application/runtime/src/data.rs`、`accounting/ledger/` 及 Rust HTTP 任务调度代码承担；旧 Python Engine 不再可执行。详细实现边界、未迁移功能和最终验收清单见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)。GitHub Actions 仍暂停，不应把当前 Rust 分支直接用于实盘。
+旧 Python Engine 的 `engine/api/` 和 `engine/infrastructure/` 已删除，HTTP 由 `interfaces/api/http/` 中的 Axum 实现承担，任务持久化与状态管理由 `application/runtime/src/jobs.rs`、`application/runtime/src/data.rs`、`accounting/ledger/` 及 Rust HTTP 任务调度代码承担；旧 Python Engine 不再可执行。历史实现边界和待验收项目见 [Rust 集中迁移审计](docs/RUST_CUTOVER_AUDIT_20261121.md)（包含迁移过程中的旧状态记录）。当前 `.github/workflows/engine-ci.yml` 已启用 CI 配置；CI 配置存在不代表测试已经通过，Rust 的实盘验收仍需单独完成。
 
 ## Rust 数据底座：对齐 Python Nautilus v2 Catalog
 
@@ -117,7 +117,7 @@ ENGINE_STATE=/tmp/seealpha-smoke ENGINE_AUTH_MODE=none \
 docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 ```
 
-镜像包含引擎二进制、策略宿主、示例包和两份契约文件，不包含 Platform，也不包含已退役的 Python 引擎。
+默认 `docker/engine.Dockerfile` 镜像仅包含 Rust 引擎及原生数据源二进制，不安装 Python，也不复制策略宿主、Python 示例包或共享契约文件。只有可选 `docker/engine-python.Dockerfile` 镜像包含 Python 解释器、策略宿主与示例包；共享契约文件保留在源码仓库供 Platform 兼容测试使用。
 
 ## HTTP
 
