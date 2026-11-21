@@ -3,6 +3,7 @@
 //! loopback gateway and never write the secret.
 use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_venue::reconciliation::{reconcile_assets, reconcile_positions};
+use seealpha_portfolio::account_evidence::{self, AccountProduct};
 use seealpha_venue::{Credentials, Product, VenueClient, VenueError};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -478,15 +479,31 @@ impl Runtime {
         let observed = client
             .account_snapshot_product(&credentials, product)
             .map_err(|e| map_venue(e, &credentials.api_key, &credentials.secret))?;
-        let assets = reconcile_assets(product, expected, &observed)
-            .map_err(|e| map_venue(e, &credentials.api_key, &credentials.secret))?;
+        // Spot/USD-M quantity comparison is now independent of the old
+        // Binance REST adapter. The authenticated snapshot still comes from
+        // the existing read-only source until native account sync is accepted.
+        let pure_product = match product {
+            Product::Spot => Some(AccountProduct::Spot),
+            Product::FuturesUm => Some(AccountProduct::FuturesUm),
+            Product::Option => None,
+        };
+        let assets = if let Some(market) = pure_product {
+            account_evidence::reconcile_assets(market, expected, &observed)
+                .map_err(|_| RuntimeError::Conflict("账户资产证据不完整。".into()))?
+        } else {
+            reconcile_assets(product, expected, &observed)
+                .map_err(|e| map_venue(e, &credentials.api_key, &credentials.secret))?
+        };
         let positions = if product == Product::Spot {
             Vec::new()
+        } else if let Some(market) = pure_product {
+            account_evidence::reconcile_positions(market, expected, &observed)
+                .map_err(|_| RuntimeError::Conflict("账户仓位证据不完整。".into()))?
         } else {
             reconcile_positions(product, expected, &observed)
                 .map_err(|e| map_venue(e, &credentials.api_key, &credentials.secret))?
         };
-        let to_json = |diffs: Vec<seealpha_venue::reconciliation::AccountDifference>| {
+        let to_json = |diffs: Vec<account_evidence::AccountDifference>| {
             diffs
                 .into_iter()
                 .map(|d| {

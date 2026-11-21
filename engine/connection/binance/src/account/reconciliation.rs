@@ -1,39 +1,22 @@
-//! Read-only multi-product account evidence and USD-M conditional-order reconciliation.
-//! No method in this module submits a new order.
+//! Read-only account evidence and USD-M conditional-order reconciliation.
+//! Pure Spot/USD-M account comparison lives in seealpha-portfolio now.
 use crate::{Credentials, Product, VenueClient, VenueError, check_credentials, venue_symbol};
+use seealpha_portfolio::account_evidence::{self, AccountProduct};
+pub use seealpha_portfolio::account_evidence::AccountDifference;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AccountDifference {
-    pub key: String,
-    pub expected: Decimal,
-    pub observed: Decimal,
+fn account_product(product: Product) -> Result<AccountProduct, VenueError> {
+    match product {
+        Product::Spot => Ok(AccountProduct::Spot),
+        Product::FuturesUm => Ok(AccountProduct::FuturesUm),
+        Product::Option => Err(VenueError::Unconfirmed),
+    }
 }
 
-fn decimal(value: &Value) -> Result<Decimal, VenueError> {
-    let repr = value
-        .as_str()
-        .map(str::to_owned)
-        .or_else(|| {
-            if value.is_number() {
-                Some(value.to_string())
-            } else {
-                None
-            }
-        })
-        .ok_or(VenueError::Unconfirmed)?;
-    Decimal::from_str(&repr).map_err(|_| VenueError::Unconfirmed)
-}
-
-fn field<'a>(item: &'a Value, alternatives: &[&str]) -> Option<&'a Value> {
-    alternatives.iter().find_map(|key| item.get(*key))
-}
-
-/// A missing field, duplicate key or malformed amount invalidates the *whole*
-/// snapshot. Returning a partial map could silently conceal a missing position.
+/// Compatibility API. The common parser now belongs to Portfolio rather than
+/// the legacy REST adapter; Options still uses its dedicated EAPI parser.
 pub fn position_quantities(
     product: Product,
     snapshot: &Value,
@@ -42,67 +25,23 @@ pub fn position_quantities(
         return seealpha_binance_options::account::option_position_quantities(snapshot)
             .map_err(|_| VenueError::Unconfirmed);
     }
-    let positions = snapshot
-        .get("positions")
-        .and_then(Value::as_array)
-        .ok_or(VenueError::Unconfirmed)?;
-    let mut result = BTreeMap::new();
-    for item in positions {
-        let symbol = field(item, &["symbol"])
-            .and_then(Value::as_str)
-            .ok_or(VenueError::Unconfirmed)?;
-        let raw = if product == Product::FuturesUm {
-            field(item, &["positionAmt"])
-        } else {
-            return Err(VenueError::Symbol);
-        }
-        .ok_or(VenueError::Unconfirmed)?;
-        let amount = decimal(raw)?;
-        let side = field(item, &["positionSide"])
-            .and_then(Value::as_str)
-            .unwrap_or("BOTH");
-        let key = format!("{symbol}:{side}");
-        if result.insert(key, amount).is_some() {
-            return Err(VenueError::Unconfirmed);
-        }
-    }
-    Ok(result)
+    account_evidence::position_quantities(account_product(product)?, snapshot)
+        .map_err(|_| VenueError::Unconfirmed)
 }
 
-/// Compare two complete exchange-authored position snapshots. Both inputs must
-/// use the same venue product and account context; callers enforce that scope.
 pub fn reconcile_positions(
     product: Product,
     expected: &Value,
     observed: &Value,
 ) -> Result<Vec<AccountDifference>, VenueError> {
-    let left = position_quantities(product, expected)?;
-    let right = position_quantities(product, observed)?;
-    let mut result = Vec::new();
-    for (key, amount) in &left {
-        let actual = right.get(key).copied().unwrap_or(Decimal::ZERO);
-        if *amount != actual {
-            result.push(AccountDifference {
-                key: key.clone(),
-                expected: *amount,
-                observed: actual,
-            });
-        }
+    if product == Product::Option {
+        // Preserve dedicated Options handling, not Spot/USD-M coercion.
+        return Ok(compare(position_quantities(product, expected)?, position_quantities(product, observed)?));
     }
-    for (key, amount) in &right {
-        if !left.contains_key(key) && !amount.is_zero() {
-            result.push(AccountDifference {
-                key: key.clone(),
-                expected: Decimal::ZERO,
-                observed: *amount,
-            });
-        }
-    }
-    Ok(result)
+    account_evidence::reconcile_positions(account_product(product)?, expected, observed)
+        .map_err(|_| VenueError::Unconfirmed)
 }
 
-/// Asset differences must preserve product-specific wallets. Spot free/locked,
-/// USD-M wallet and options balances are intentionally not netted together.
 pub fn asset_quantities(
     product: Product,
     snapshot: &Value,
@@ -111,26 +50,8 @@ pub fn asset_quantities(
         return seealpha_binance_options::account::option_asset_quantities(snapshot)
             .map_err(|_| VenueError::Unconfirmed);
     }
-    let assets = snapshot
-        .get("balances")
-        .and_then(Value::as_array)
-        .ok_or(VenueError::Unconfirmed)?;
-    let mut result = BTreeMap::new();
-    for item in assets {
-        let asset = field(item, &["asset"])
-            .and_then(Value::as_str)
-            .ok_or(VenueError::Unconfirmed)?;
-        let amount = if product == Product::Spot {
-            decimal(field(item, &["free"]).ok_or(VenueError::Unconfirmed)?)?
-                + decimal(field(item, &["locked"]).ok_or(VenueError::Unconfirmed)?)?
-        } else {
-            decimal(field(item, &["walletBalance", "balance"]).ok_or(VenueError::Unconfirmed)?)?
-        };
-        if result.insert(asset.to_owned(), amount).is_some() {
-            return Err(VenueError::Unconfirmed);
-        }
-    }
-    Ok(result)
+    account_evidence::asset_quantities(account_product(product)?, snapshot)
+        .map_err(|_| VenueError::Unconfirmed)
 }
 
 pub fn reconcile_assets(
@@ -138,8 +59,19 @@ pub fn reconcile_assets(
     expected: &Value,
     observed: &Value,
 ) -> Result<Vec<AccountDifference>, VenueError> {
-    let left = asset_quantities(product, expected)?;
-    let right = asset_quantities(product, observed)?;
+    if product == Product::Option {
+        return Ok(compare(asset_quantities(product, expected)?, asset_quantities(product, observed)?));
+    }
+    account_evidence::reconcile_assets(account_product(product)?, expected, observed)
+        .map_err(|_| VenueError::Unconfirmed)
+}
+
+// Options compatibility until its dedicated snapshots are migrated to their
+// own Runtime account service; no second Binance Spot/USD-M parsing logic.
+fn compare(
+    left: BTreeMap<String, Decimal>,
+    right: BTreeMap<String, Decimal>,
+) -> Vec<AccountDifference> {
     let mut result = Vec::new();
     for (key, amount) in &left {
         let actual = right.get(key).copied().unwrap_or(Decimal::ZERO);
@@ -160,7 +92,7 @@ pub fn reconcile_assets(
             });
         }
     }
-    Ok(result)
+    result
 }
 
 impl VenueClient {

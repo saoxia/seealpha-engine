@@ -115,3 +115,9 @@ python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/order_journal.rs` 以及 `dispatch_reserved_basket_leg_fixture`。篮子订单阶段仍通过现有 `Runtime::preregister_reserved_basket_leg` 和 `Ledger::preregister_basket_order_intent` 进行同一事务内的账户快照版本、篮子版本及不可变意图预登记。离线回归测试现在直接核验首次登记、SQLite 重启后仅对账、旧账户快照拒绝以及注册成功仍无成交；不再模拟旧 REST 写请求。
 
 这删除了一项实际的 `seealpha-venue` Runtime 依赖，但账户与订单/成交的签名只读证据链仍在旧连接器中，不能据此删除 `engine/connection/binance`。接下来需要完成 Nautilus 原生认证执行报告/账户同步与 Ledger 原子验证，清除剩余只读依赖后再删除该目录。当前不开放原生真实下单。
+
+## Spot / USD-M 账户证据比较迁入 Portfolio（2026-11-22）
+
+从旧 `src/account/reconciliation.rs` 抽离 Spot free+locked 余额、USD-M walletBalance/balance、LONG/SHORT/BOTH 双向持仓、重复 key / 缺失金额拒绝、Decimal 精确比较至 `engine/portfolio/src/account_evidence.rs`。Runtime 的 `reconcile_account_product` 已对 Spot/USD-M 直接使用此领域模块；旧 Venue 的同名公共函数只保留向 Portfolio 委托的兼容层，Options 继续使用独立 EAPI 解析。该模块只比较已提供的快照，**不签名、不联网、也不证明快照真实**。
+
+旧 `engine/connection/binance` 仍承担签名 GET、只读订单/成交查询与核验，Nautilus 原生账户和成交证据的直接接线尚未完成。因此这次减少的是旧连接器的业务算法归属，不能据此删除旧目录或启用原生实盘。
