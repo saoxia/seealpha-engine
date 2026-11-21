@@ -11,6 +11,8 @@ pub enum EmaSignalError {
     Periods,
     #[error("EMA close must be finite")]
     NonFiniteClose,
+    #[error("EMA allocation must be positive")]
+    Allocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +45,9 @@ impl EmaCrossover {
             || fast_period >= slow_period
         {
             return Err(EmaSignalError::Periods);
+        }
+        if allocation <= Decimal::ZERO {
+            return Err(EmaSignalError::Allocation);
         }
         Ok(Self {
             fast_period,
