@@ -4,8 +4,9 @@
 
 | 要找的行为 | 首选位置 | 关联边界 |
 | --- | --- | --- |
-| HTTP 路由、权限和版本 | `engine/interfaces/api/http/src/lib.rs`、`src/routes/` | `parity.rs`、`derivatives.rs`、`research_v1.rs` |
-| Engine 启动与运行配置 | `engine/apps/trading_engine/src/main.rs`、`engine/runtime/src/config.rs` | `interfaces/api/http` |
+| MCP 协议与研究工具 | `engine/gateway/mcp/src/research.rs` | `engine/gateway/api/src/research_v1.rs` 复用授权与任务能力；现有 `/research/mcp` 路由不变 |
+| HTTP 路由、权限和版本 | `engine/gateway/api/src/lib.rs`、`src/routes/` | `parity.rs`、`derivatives.rs`、`research_v1.rs` |
+| Engine 启动与运行配置 | `engine/apps/trading_engine/src/main.rs`、`engine/runtime/src/config.rs` | `gateway/api` |
 | 订单发送、重复请求、对账 | `engine/runtime/src/orders.rs` | `order_journal.rs`、`engine/connectivity/venue`、`ledger` |
 | 回测协调、研究快照 | `engine/runtime/src/research.rs`、`history.rs` | `research`、`engine/backtest/core` |
 | 策略授权与原生策略 | `engine/strategy/src/` | `engine/runtime/src/session.rs` |

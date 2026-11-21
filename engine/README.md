@@ -12,7 +12,7 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 | [backtest](backtest/) | 历史回放与模拟 |
 | [research](research/) | 研究授权 |
 | [runtime](runtime/) | 跨领域用例编排 |
-| [interfaces](interfaces/) | HTTP 与研究接口 |
+| [gateway](gateway/) | HTTP API 与 MCP 网关 |
 | [apps](apps/) | 可执行入口 |
 
 规划中的 `risk/` 和 `execution/` 暂未独立实现，不创建空目录。详见 [领域布局](../docs/architecture/DOMAIN_LAYOUT.md) 和 [代码导航](../docs/architecture/MODULE_MAP.md)。
