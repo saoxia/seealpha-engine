@@ -18,6 +18,8 @@ seealpha-catalog = { path = "../../catalog" }
 seealpha-feed = { path = "../../feed" }
 zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }
 csv = "=1.4.0"
+arrow-array = "60"
+arrow-schema = "60"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 
 [lib]
@@ -46,3 +48,7 @@ path = "src/native_catalog_publish.rs"
 [[bin]]
 name = "binance-trade-archive-bars"
 path = "src/trade_archive_bars.rs"
+
+[[bin]]
+name = "binance-trade-feature-publish"
+path = "src/trade_feature_publish.rs"

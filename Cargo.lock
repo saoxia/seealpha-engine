@@ -1642,6 +1642,8 @@ dependencies = [
 name = "seealpha-binance-market-data-source"
 version = "0.1.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "csv",
  "fs2",
  "futures-util",
