@@ -1,0 +1,26 @@
+# SeeAlpha Engine 代码导航
+
+目标：从业务需求定位模块，而不是让目录结构复制一次业务流程。
+
+| 要找的行为 | 首选位置 | 关联边界 |
+| --- | --- | --- |
+| HTTP 路由、权限和版本 | `interfaces/api/http/src/lib.rs`、`src/routes/` | `parity.rs`、`derivatives.rs`、`research_v1.rs` |
+| Engine 启动与运行配置 | `apps/trading_engine/src/main.rs`、`application/runtime/src/config.rs` | `interfaces/api/http` |
+| 订单发送、重复请求、对账 | `application/runtime/src/orders.rs` | `order_journal.rs`、`connectivity/venue`、`accounting/ledger` |
+| 回测协调、研究快照 | `application/runtime/src/research.rs`、`history.rs` | `application/research`、`backtest/core` |
+| 策略授权与原生策略 | `alpha/strategy/src/` | `application/runtime/src/session.rs` |
+| 目标持仓、篮子、风险裁剪 | `portfolio/core/src/` | `application/runtime/src/basket*.rs` |
+| 账户、订单和成交持久化 | `accounting/ledger/src/` | `application/runtime/src/accounts.rs` |
+| Binance 行情进程入口 | `market_data/sources/binance/src/bin/` | 同 crate 的 `lib.rs`、`protocol.rs`、`store.rs` |
+| Feed 门禁、汇总、数据会话 | `market_data/feed/src/` | `remaining.rs` 的测试在 `remaining/tests.rs` |
+| 历史 Catalog 读取、写入和修复 | `market_data/catalog/src/` | `market_data/converter`、`quality` |
+| 独立撮合和验证回放 | `backtest/core/src/` | `application/runtime/src/verified_replay.rs` |
+
+## 组织原则
+
+1. 顶层保留领域归属，Cargo crate 名称不因改目录而改变。
+2. `lib.rs` 只应清晰表达模块入口与必要公共 API；体量大的 HTTP handler、测试及应用用例放入职责文件。
+3. 同一业务操作跨不同边界是正常的：Runtime 协调、Ledger 记录事实、Venue 对接外部协议，不能因为名字相似就合并安全事务。
+4. 不将测试从行为附近移到难以定位的单一大仓库测试目录：单元测试就近存放，跨 crate 场景保留在对应 `tests/`。
+5. 不改变不可见的副作用：行情消费者不启动生产者；HTTP 读取不变成下单；未知订单只通过证据对账恢复。
+6. 未实现的规划模块写在文档中，不建立空的 crate 假装存在。

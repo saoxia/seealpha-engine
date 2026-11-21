@@ -19,8 +19,9 @@ mod inspection;
 mod jobs;
 mod session;
 mod sources;
-mod trading;
-pub use trading::OrderCommand;
+mod orders;
+mod research;
+pub use orders::OrderCommand;
 
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
