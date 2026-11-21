@@ -47,7 +47,7 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
     data_config.validate().expect("rc9 data config valid");
     exec_config.validate().expect("rc9 execution config valid");
 
-    let mut node = LiveNode::builder(
+    let node = LiveNode::builder(
         TraderId::from("SEEALPHA-OFFLINE-001"),
         Environment::Live,
     )
@@ -76,8 +76,5 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
     .expect("rc9 LiveNode must construct without connecting");
 
     // Only construct and drop. NEVER invoke node.run() or add a trading strategy.
-    // Retain mut binding because LiveNode may require a mutable shutdown API
-    // in future rc9 integrations, but do not trigger it here.
-    let _ = &mut node;
     drop(node);
 }
