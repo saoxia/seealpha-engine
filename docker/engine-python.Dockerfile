@@ -6,7 +6,7 @@
 ARG ENGINE_BASE_IMAGE=seealpha-engine:native
 FROM ${ENGINE_BASE_IMAGE}
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3-minimal \
+    && apt-get install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/*
 ENV ENGINE_PYTHON=/usr/bin/python3 \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
