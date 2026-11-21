@@ -2,9 +2,9 @@
 //! The standalone Rust engine uses the library API directly.
 use rust_decimal::Decimal;
 use seealpha_catalog::{
-    CatalogBar, LocalKline, MarketProduct, SavedKline, VenueKline, aggregate_saved_klines,
-    plan_minute_repairs, read_aggregated_catalog_klines, validate_venue_klines,
-    venue_kline_differs, MinuteRepairDecision,
+    CatalogBar, LocalKline, MarketProduct, MinuteRepairDecision, SavedKline, VenueKline,
+    aggregate_saved_klines, plan_minute_repairs, read_aggregated_catalog_klines,
+    validate_venue_klines, venue_kline_differs,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
