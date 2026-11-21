@@ -182,50 +182,45 @@ impl VenueClient {
             Product::Spot => "/api/v3/order",
             Product::Option => "/eapi/v1/order",
         };
-        let mut pairs = vec![
-            ("symbol".to_string(), venue_symbol(&intent.symbol)?),
-            ("side".to_string(), intent.side.to_ascii_uppercase()),
-            ("type".to_string(), intent.order_type.to_ascii_uppercase()),
-            ("quantity".to_string(), intent.quantity.clone()),
-            (
-                if intent.product == Product::Option {
-                    "clientOrderId".to_string()
-                } else {
-                    "newClientOrderId".to_string()
+        let canonical_symbol = venue_symbol(&intent.symbol)?;
+        let pairs = if intent.product == Product::Option {
+            seealpha_binance_options::build_options_order_pairs(
+                &seealpha_binance_options::OptionsOrderFields {
+                    symbol: &canonical_symbol,
+                    side: &intent.side,
+                    order_type: &intent.order_type,
+                    quantity: &intent.quantity,
+                    price: intent.price.as_deref(),
+                    client_order_id: &intent.client_order_id,
+                    reduce_only: intent.reduce_only,
+                    time_in_force: &intent.time_in_force,
                 },
-                intent.client_order_id.clone(),
-            ),
-        ];
-        if intent.order_type.eq_ignore_ascii_case("limit") {
-            let price = intent
-                .price
-                .clone()
-                .ok_or_else(|| VenueError::Rejected("限价单需要有效价格。".into()))?;
-            pairs.push(("price".to_string(), price));
-            pairs.push(("timeInForce".to_string(), intent.time_in_force.clone()));
-        }
-        if matches!(intent.product, Product::FuturesUm | Product::Option) {
-            pairs.push((
-                "reduceOnly".to_string(),
-                if intent.reduce_only { "true" } else { "false" }.into(),
-            ));
-        }
-        if intent.product == Product::Option {
-            // Binance European Options currently defines LIMIT as the
-            // supported order type. Reject rather than guessing MARKET.
-            if !intent.order_type.eq_ignore_ascii_case("limit") {
-                return Err(VenueError::Rejected(
-                    "期权订单仅支持已核实的 LIMIT 类型。".into(),
+            )
+            .map_err(|e| VenueError::Rejected(e.message().into()))?
+        } else {
+            let mut pairs = vec![
+                ("symbol".to_string(), canonical_symbol),
+                ("side".to_string(), intent.side.to_ascii_uppercase()),
+                ("type".to_string(), intent.order_type.to_ascii_uppercase()),
+                ("quantity".to_string(), intent.quantity.clone()),
+                ("newClientOrderId".to_string(), intent.client_order_id.clone()),
+            ];
+            if intent.order_type.eq_ignore_ascii_case("limit") {
+                let price = intent
+                    .price
+                    .clone()
+                    .ok_or_else(|| VenueError::Rejected("限价单需要有效价格。".into()))?;
+                pairs.push(("price".to_string(), price));
+                pairs.push(("timeInForce".to_string(), intent.time_in_force.clone()));
+            }
+            if intent.product == Product::FuturesUm {
+                pairs.push((
+                    "reduceOnly".to_string(),
+                    if intent.reduce_only { "true" } else { "false" }.into(),
                 ));
             }
-            if !matches!(
-                intent.time_in_force.to_ascii_uppercase().as_str(),
-                "GTC" | "IOC" | "FOK" | "GTX"
-            ) {
-                return Err(VenueError::Rejected("期权订单有效期无效。".into()));
-            }
-            pairs.push(("postOnly".to_string(), "false".to_string()));
-        }
+            pairs
+        };
         let value = self.signed(credentials, "POST", path, &pairs)?;
         // A successful HTTP status without an exchange order identity is an
         // unknown result, not an accepted fill or authoritative NEW order.
