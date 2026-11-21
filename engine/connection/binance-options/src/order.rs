@@ -67,6 +67,20 @@ pub fn build_options_order_pairs(
     ])
 }
 
+/// The only EAPI order resource supported by the current Options order path.
+/// Transport and request signing remain with the existing VenueClient.
+pub const EAPI_ORDER_PATH: &str = "/eapi/v1/order";
+
+/// Binance Options uses `clientOrderId` for signed order GET/DELETE.
+/// Standard Spot / USD-M endpoints instead use `origClientOrderId`.
+/// Return exactly the original ordered payload; do not mutate or send it.
+pub fn options_lookup_pairs(symbol: &str, client_order_id: &str) -> Vec<(String, String)> {
+    vec![
+        ("symbol".to_owned(), symbol.to_owned()),
+        ("clientOrderId".to_owned(), client_order_id.to_owned()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +96,18 @@ mod tests {
             reduce_only: true,
             time_in_force,
         }
+    }
+
+    #[test]
+    fn query_and_cancel_keep_eapi_path_and_client_order_id_wire_field() {
+        assert_eq!(EAPI_ORDER_PATH, "/eapi/v1/order");
+        assert_eq!(
+            options_lookup_pairs("BTC-271231-90000-C", "SA-123"),
+            vec![
+                ("symbol".to_owned(), "BTC-271231-90000-C".to_owned()),
+                ("clientOrderId".to_owned(), "SA-123".to_owned()),
+            ]
+        );
     }
 
     #[test]

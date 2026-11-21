@@ -23,7 +23,7 @@
 
 ## EAPI 订单参数规则独立归属
 
-原来 `VenueClient::place_order` 中期权专用的 LIMIT 类型、价格、TIF、`reduceOnly`、`postOnly` 和 `clientOrderId` 参数构造已迁至 `engine/connection/binance-options/src/order.rs`。签名、预登记门禁、未知结果判定和真实下单权限均仍由旧多产品 Venue 持有；此增量不创建新订单发送通道。
+原来 `VenueClient::place_order` 中期权专用的 LIMIT 类型、价格、TIF、`reduceOnly`、`postOnly` 和 `clientOrderId` 参数构造，以及订单 GET/DELETE 的 `clientOrderId` 查询参数、EAPI 订单路径常量，已迁至 `engine/connection/binance-options/src/order.rs`。签名、预登记门禁、未知结果判定和真实下单权限均仍由旧多产品 Venue 持有；此增量不创建新订单发送通道。
 
 ## Options 账户仓位与余额规范化抽离
 

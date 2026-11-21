@@ -4,7 +4,7 @@
 
 - `normalize_option_trades` 保留交易所成交 ID、订单归属、精确小数字符串、手续费符号和时间；非目标订单被过滤，字段缺失、合约身份不符或重复成交即拒绝当作已确认成交。
 - `normalize_options_account_snapshot` 将已签名 EAPI 账户与持仓的两份只读回复规范化为原 Runtime 快照契约；`option_position_quantities` 与 `option_asset_quantities` 保持 Options 独立持仓方向、保证金优先级和缺失数据失败关闭；不新增余额估值或就绪判定。
-- `build_options_order_pairs` 只生成现有 EAPI LIMIT 委托的确定性签名参数，保留字段顺序与错误语义；不会联网或持有交易凭据。
+- `build_options_order_pairs` 只生成现有 EAPI LIMIT 委托的确定性签名参数；`options_lookup_pairs` 负责 EAPI GET/DELETE 按 `clientOrderId` 查询的参数及稳定字段顺序，所有操作均不联网、不持有交易凭据。
 - `normalize_option_exercises` 验证 EAPI 签名行权记录的合约、交易所 ID、精度、时间和去重，不根据行权金额虚构资金流。
 - Spot / USD-M 行情继续由 `integrations/nautilus_binance_data` 调用 NautilusTrader；其订单执行尚未迁移，仍位于 `engine/connection/binance`，**不要提前删除**。
 - 尚未迁入：Options 的签名 HTTP、账户快照、订单写入门禁、全生命周期、Runtime / Ledger 对账。不能把当前目录出现误认为完成 Options 连接适配。
