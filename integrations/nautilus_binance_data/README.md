@@ -15,7 +15,7 @@
 
 ## 使用 Nautilus 原生执行记录持久化（离线配置验证）
 
-NautilusTrader v2.0.0rc9 在 `NautilusRecordType` 中已有订单提交、接受、拒绝、取消、成交、冲销以及 `OrderStatusReport`、`FillReport`、`PositionStatusReport`、`AccountState`；`StreamingConfig.record_types` 可选择这些原生记录，写入 Nautilus 自带 Feather/Parquet Catalog。新增的离线 `LiveNode` 测试同时配置 `data_types=TradeTick` 与原生执行 `record_types`，不创建自定义执行事件 JSON/SQLite/Parquet 写入器。
+NautilusTrader v2.0.0rc9 在 `NautilusRecordType` 中已有订单提交、接受、拒绝、取消、成交、冲销以及 `OrderStatusReport`、`FillReport`、`PositionStatusReport`、`AccountState`；`StreamingConfig.record_types` 可选择这些原生记录，写入 Nautilus 自带 Feather/Parquet Catalog。离线测试验证 `data_types=TradeTick`、原生执行 `record_types` 和 `.with_streaming_config(...)` 原生 Builder 接口，不创建自定义执行事件 JSON/SQLite/Parquet 写入器。注意：rc9 版本在构建**带 Streaming 的 LiveNode 后销毁节点**时，CI 曾触发 Tokio `failed to park thread: AccessError`；目前该测试仅验证 Streaming 配置与 Builder 的编译契约，单独构建**未启用 Streaming** 的原生执行节点。**Streaming 节点的运行/停止/销毁生命周期尚未验收，不能部署或宣称已接线**。
 
 测试仅验证 **配置与节点构建**，并没有让 `LiveNode` 实际运行，因而**不宣称已写出任何执行记录**，也不代表记录已进入 SeeAlpha Ledger。后续必须实现 Catalog 读取、订单归属、去重、签名成交明细对照及 Ledger 事务投影；订单 ACK 不得冒充 `OrderFilled` 或经 `import_verified_fills` 直接入账。
 
