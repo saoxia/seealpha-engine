@@ -39,6 +39,8 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 
 **数据文件位置**：`<root>/<spot|futures_um>/<trades|aggTrades>/<symbol>/<symbol>-<dataset>-<YYYY-MM-DD>.zip`。
 
+> **已识别的旧代码问题**：现存 `src/trade_archive.rs` 对原始 Trade CSV 的列数假设为 Spot 8 列、USD-M 7 列，而 Binance 官方 `trades` 归档格式分别为 7 列和 6 列；Spot 自 2025-01-01 起时间戳还采用微秒。因此该旧聚合工具不可直接作为新下载文件的已验证导入器。本次新 CLI 只验证 ZIP 哈希与容器结构，**不调用**该解析器，也不声称已经得到完整的历史 Tick。
+
 ## 待完成，不能误认作已实现
 
 1. 在当前 Rust Runtime 真正启用并锁定 NautilusTrader `nautilus-binance` 数据客户端，替换实验性 `ws.rs` / `native_source.rs` 的通用连接逻辑。不得以新增 SeeAlpha 自定义 Adapter Trait 代替复用。
