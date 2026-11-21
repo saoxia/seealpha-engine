@@ -1691,6 +1691,7 @@ dependencies = [
 name = "seealpha-feed"
 version = "0.1.0"
 dependencies = [
+ "rusqlite",
  "rust_decimal",
  "sha2",
  "thiserror",
@@ -1706,6 +1707,7 @@ dependencies = [
  "rust_decimal",
  "seealpha-backtest",
  "seealpha-catalog",
+ "seealpha-feed",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-research",
@@ -1757,6 +1759,9 @@ dependencies = [
 [[package]]
 name = "seealpha-quality"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "seealpha-research"
@@ -1779,6 +1784,7 @@ dependencies = [
  "seealpha-backtest",
  "seealpha-binance-market-data-source",
  "seealpha-catalog",
+ "seealpha-feed",
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-portfolio",
