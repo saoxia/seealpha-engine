@@ -190,6 +190,12 @@ async fn main() -> Result<()> {
     streaming.promotion_interval_ms = None;
     streaming.promote_on_close = true;
 
+    // SeeAlpha jobs and the native live node cannot commit to the same
+    // Catalog concurrently. Hold this reservation until LiveNode exits.
+    let _catalog_writer = seealpha_nautilus_binance_data::reserve_catalog_writer(
+        Path::new(&args[4]),
+    )?;
+
     let mut node = LiveNode::builder(TraderId::from("SEEALPHA-DATA-001"), Environment::Live)?
         .with_name(format!("{client_name}-NODE"))
         .with_streaming_config(streaming)

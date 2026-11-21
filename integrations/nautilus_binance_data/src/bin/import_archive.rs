@@ -311,6 +311,9 @@ where
 
 fn import(request: &Request, archive: &Path, catalog_root: &Path) -> Result<serde_json::Value> {
     ensure!(catalog_root.is_dir(), "native Catalog root must already exist");
+    // Held across validation and every native Catalog write, including failed
+    // partial writes. No duplicate custom writer or Arrow schema.
+    let _catalog_writer = seealpha_nautilus_binance_data::reserve_catalog_writer(catalog_root)?;
     verify_zip_hash(archive, &request.hash)?;
     // The first complete scan catches a late corrupt row before any new
     // Catalog files are committed. The second scan re-validates all inputs.
