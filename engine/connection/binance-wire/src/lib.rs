@@ -64,6 +64,73 @@ pub fn sign_payload(secret: &str, payload: &str) -> String {
     hex_encode(mac.finalize().into_bytes())
 }
 
+/// Pure signed query construction. Does not create an HTTP request or
+/// authorize a write. Timestamp is provided by the legacy transport.
+pub fn signed_query(secret: &str, pairs: &[(String, String)], timestamp: i64) -> String {
+    let mut query = encode_pairs(pairs);
+    if !query.is_empty() {
+        query.push('&');
+    }
+    query.push_str(&format!("timestamp={timestamp}&recvWindow=5000"));
+    let signature = sign_payload(secret, &query);
+    query.push_str("&signature=");
+    query.push_str(&signature);
+    query
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WireResponseError {
+    Unconfirmed,
+    Rejected(String),
+}
+
+/// Decode one HTTP response with the existing strict byte ceiling.
+/// Neither an ACK nor a successful HTTP status confirms an order fill.
+pub fn decode_response<R: std::io::Read>(
+    status: reqwest::StatusCode,
+    reader: R,
+    method: &str,
+    path: &str,
+) -> Result<serde_json::Value, WireResponseError> {
+    use std::io::Read;
+    let maximum = if method == "GET"
+        && matches!(
+            path,
+            "/api/v3/myTrades" | "/fapi/v1/userTrades" | "/eapi/v1/userTrades"
+        )
+    {
+        2 * 1024 * 1024
+    } else {
+        128 * 1024
+    };
+    let mut bytes = Vec::new();
+    reader
+        .take((maximum + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| WireResponseError::Unconfirmed)?;
+    if bytes.len() > maximum {
+        return Err(WireResponseError::Unconfirmed);
+    }
+    let body = std::str::from_utf8(&bytes).map_err(|_| WireResponseError::Unconfirmed)?;
+    let value: serde_json::Value =
+        serde_json::from_str(body).unwrap_or(serde_json::json!({"raw": "unparsed"}));
+    if !status.is_success() {
+        let code = value
+            .get("code")
+            .map(|item| item.to_string())
+            .unwrap_or_default();
+        let msg = value
+            .get("msg")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("交易所拒绝了该委托。");
+        if status.is_server_error() {
+            return Err(WireResponseError::Unconfirmed);
+        }
+        return Err(WireResponseError::Rejected(format!("{code} {msg}")));
+    }
+    Ok(value)
+}
+
 pub fn encode_pairs(pairs: &[(String, String)]) -> String {
     pairs
         .iter()
@@ -113,6 +180,83 @@ mod tests {
         assert_eq!(route_gateway(&base, "/unknown").unwrap_err(), GatewayError::InvalidRoute);
         assert!(route_gateway("https://testnet.binancefuture.com", "/eapi/v1/order").is_err());
         assert!(route_gateway("http://127.0.0.1:18767", "/eapi/v1/order").is_ok());
+    }
+
+    #[test]
+    fn signed_query_keeps_canonical_order_and_signature() {
+        let pairs = vec![
+            ("symbol".to_string(), "ETHUSDT".to_string()),
+            ("note".to_string(), "a b".to_string()),
+        ];
+        let canonical = "symbol=ETHUSDT&note=a%20b&timestamp=123&recvWindow=5000";
+        assert_eq!(
+            signed_query("secret", &pairs, 123),
+            format!("{canonical}&signature={}", sign_payload("secret", canonical))
+        );
+        let empty = "timestamp=123&recvWindow=5000";
+        assert_eq!(
+            signed_query("secret", &[], 123),
+            format!("{empty}&signature={}", sign_payload("secret", empty))
+        );
+    }
+
+    #[test]
+    fn decoder_preserves_success_and_exchange_errors() {
+        use reqwest::StatusCode;
+        use std::io::Cursor;
+        let ok = decode_response(
+            StatusCode::OK, Cursor::new(br#"{"status":"NEW"}"#), "GET", "/api/v3/order",
+        ).unwrap();
+        assert_eq!(ok["status"], "NEW");
+        assert_eq!(
+            decode_response(
+                StatusCode::BAD_REQUEST,
+                Cursor::new(br#"{"code":-2013,"msg":"Order not found"}"#),
+                "GET",
+                "/api/v3/order",
+            ),
+            Err(WireResponseError::Rejected("-2013 Order not found".into()))
+        );
+        assert_eq!(
+            decode_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Cursor::new(br#"{"code":500,"msg":"failed"}"#),
+                "GET",
+                "/api/v3/order",
+            ),
+            Err(WireResponseError::Unconfirmed)
+        );
+        assert_eq!(
+            decode_response(StatusCode::OK, Cursor::new(b"not-json"), "GET", "/api/v3/order")
+                .unwrap(),
+            serde_json::json!({"raw":"unparsed"})
+        );
+    }
+
+    #[test]
+    fn decoder_bounds_actual_reader_and_preserves_trade_page_exception() {
+        use reqwest::StatusCode;
+        use std::io::Cursor;
+        let payload = vec![b' '; 128 * 1024 + 1];
+        assert_eq!(
+            decode_response(
+                StatusCode::OK, Cursor::new(payload.clone()), "GET", "/api/v3/order",
+            ),
+            Err(WireResponseError::Unconfirmed)
+        );
+        assert_eq!(
+            decode_response(
+                StatusCode::OK, Cursor::new(payload), "GET", "/eapi/v1/userTrades",
+            ).unwrap(),
+            serde_json::json!({"raw":"unparsed"})
+        );
+        let enormous = vec![b' '; 2 * 1024 * 1024 + 1];
+        assert_eq!(
+            decode_response(
+                StatusCode::OK, Cursor::new(enormous), "GET", "/fapi/v1/userTrades",
+            ),
+            Err(WireResponseError::Unconfirmed)
+        );
     }
 
     #[test]

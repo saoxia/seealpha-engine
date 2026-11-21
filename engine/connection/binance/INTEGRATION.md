@@ -8,7 +8,7 @@
 
 | 物理目录 | 职责 |
 | --- | --- |
-| `src/lib.rs` | 签名 HTTP 传输及响应界限、公共类型、现有只读/预登记写入入口；主机白名单、路由和签名已委托 `binance-wire` |
+| `src/lib.rs` | 唯一签名 HTTP 发送入口、公共类型、现有只读/预登记写入门禁；主机白名单、路由、签名查询组装与有界响应解析已委托 `binance-wire` |
 | `src/spot/` | Spot OCO（仍被 Runtime 使用） |
 | `src/usd_m/` | USD-M 条件订单（Algo） |
 | `src/options/` | 已迁移并清空，Options 专属证据与分页在 `binance-options/` |
@@ -22,6 +22,12 @@
 新增 `engine/connection/binance-wire`（`seealpha-binance-wire`），统一维护 Spot/USD-M/Options 的官方主机白名单、测试网产品路由、单一 percent-encoding、签名 HMAC-SHA256。旧 `seealpha-venue` 保持原错误语义映射与 `sign_payload` 公开兼容入口，`VenueClient::signed_wire` 仍是唯一现有私有 HTTP 发出点，不创建额外网络客户端、不改变凭据存储、请求次数、超时、请求门禁、响应大小限制或订单确认政策。Cargo workspace 与 lockfile 同步更新。
 
 这是**公共签名策略抽离，不是生产执行迁移**；旧 Venue 的签名 HTTP 发送、Spot OCO、USD-M Algo、Options 查询和 Runtime/Ledger 接线仍待处理。不能把拆分后的库视为已放开实盘。
+
+## 签名查询组装及有界响应读取迁移（2026-11-22）
+
+`seealpha-binance-wire::signed_query` 单独负责对已有参数加上原 `timestamp`、`recvWindow=5000`、签名参数，完整保留参数顺序及 percent-encoding。 `decode_response` 负责从传入的 HTTP 响应流读取最多允许大小加一字节、UTF-8/JSON 解码和交易所状态解释：普通 128 KiB，Spot/USD-M/Options 成交 GET 2 MiB，5xx 或响应超限仍视为 `Unconfirmed`，4xx 保留原交易所拒绝原因。这些纯组装与响应解析函数**没有新建或发出 HTTP 请求**。
+
+`VenueClient::signed_wire` 仍是唯一现有的 HTTP 请求发出点；`VenueClient::signed` 继续拒绝所有未通过预登记入口的非 GET 请求，`PreparedWrite::dispatch_live` 的 Journal 预登记仍不可绕过。该拆分不意味着已迁移订单发送、开启新交易网关或完成生产验收。
 
 ## Options 成交分页协议抽离
 

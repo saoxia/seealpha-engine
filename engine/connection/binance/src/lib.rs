@@ -417,14 +417,7 @@ impl VenueClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_millis() as i64)
             .unwrap_or(0);
-        let mut query = seealpha_binance_wire::encode_pairs(pairs);
-        if !query.is_empty() {
-            query.push('&');
-        }
-        query.push_str(&format!("timestamp={timestamp}&recvWindow=5000"));
-        let signature = sign_payload(&credentials.secret, &query);
-        query.push_str("&signature=");
-        query.push_str(&signature);
+        let query = seealpha_binance_wire::signed_query(&credentials.secret, pairs, timestamp);
         let target = route_gateway(&self.base, path)?;
         let url = format!("{target}{path}?{query}");
         let response = self
@@ -433,44 +426,13 @@ impl VenueClient {
             .header("X-MBX-APIKEY", &credentials.api_key)
             .send()
             .map_err(|_| VenueError::Unconfirmed)?;
-        let status = response.status();
-        // 1000-trade pages exceed 128 KiB; other endpoints stay on a
-        // smaller limit. Bound the actual socket read, not just the string.
-        let maximum = if method == "GET"
-            && matches!(
-                path,
-                "/api/v3/myTrades" | "/fapi/v1/userTrades" | "/eapi/v1/userTrades"
-            ) {
-            2 * 1024 * 1024
-        } else {
-            128 * 1024
-        };
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        response
-            .take((maximum + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|_| VenueError::Unconfirmed)?;
-        if bytes.len() > maximum {
-            return Err(VenueError::Unconfirmed);
-        }
-        let body = std::str::from_utf8(&bytes).map_err(|_| VenueError::Unconfirmed)?;
-        let value: Value = serde_json::from_str(body).unwrap_or(json!({ "raw": "unparsed" }));
-        if !status.is_success() {
-            let code = value
-                .get("code")
-                .map(|item| item.to_string())
-                .unwrap_or_default();
-            let msg = value
-                .get("msg")
-                .and_then(Value::as_str)
-                .unwrap_or("交易所拒绝了该委托。");
-            if status.is_server_error() {
-                return Err(VenueError::Unconfirmed);
-            }
-            return Err(VenueError::Rejected(format!("{code} {msg}")));
-        }
-        Ok(value)
+        seealpha_binance_wire::decode_response(response.status(), response, method, path)
+            .map_err(|error| match error {
+                seealpha_binance_wire::WireResponseError::Unconfirmed => VenueError::Unconfirmed,
+                seealpha_binance_wire::WireResponseError::Rejected(message) => {
+                    VenueError::Rejected(message)
+                }
+            })
     }
 }
 
