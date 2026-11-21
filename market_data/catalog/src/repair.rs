@@ -267,9 +267,14 @@ pub fn classify_minute_repair(
         return Err(CatalogError::Invalid("修复来源合约精度不受支持。".into()));
     }
     candidate.validate("1m", product)?;
-    if [candidate.open, candidate.high, candidate.low, candidate.close]
-        .iter()
-        .any(|value| value.round_dp(price_precision) != *value)
+    if [
+        candidate.open,
+        candidate.high,
+        candidate.low,
+        candidate.close,
+    ]
+    .iter()
+    .any(|value| value.round_dp(price_precision) != *value)
         || candidate.volume.round_dp(size_precision) != candidate.volume
     {
         return Err(CatalogError::Invalid("补齐来源精度与合约不一致。".into()));
