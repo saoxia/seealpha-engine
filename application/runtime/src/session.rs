@@ -141,11 +141,11 @@ impl Runtime {
             } else {
                 let temp = match &strategy.package {
                     PackageBody::Archive(bytes) => Some(write_temp(bytes)?),
-                    PackageBody::Directory(_) => None,
+                    PackageBody::Directory(_) | PackageBody::NativeEma => None,
                 };
                 let directory = match &strategy.package {
                     PackageBody::Directory(path) => Some(path.as_path()),
-                    PackageBody::Archive(_) => None,
+                    PackageBody::Archive(_) | PackageBody::NativeEma => None,
                 };
                 let archive = temp.as_deref();
                 let host_command = HostCommand {
@@ -219,7 +219,7 @@ impl Runtime {
                     let _ = std::fs::remove_file(path);
                 }
                 outcome.map_err(map_strategy)?
-                };
+            };
             let limit = decimal_field(&run.prepared, "risk_limit")?;
             let allocation = allocation_field(&run.prepared)?;
             risk_limit = Some(match risk_limit {
