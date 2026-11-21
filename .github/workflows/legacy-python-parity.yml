@@ -37,6 +37,8 @@ jobs:
         run: |
           cargo build --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
           cargo test --locked --release --manifest-path engine/market_data/repair/rust_converter/Cargo.toml
+      - name: Build Rust venue repair validator
+        run: cargo build --locked --release -p seealpha-catalog --bin seealpha-repair-verify
       - name: Validate legacy Binance source and quality helpers
         run: |
           cargo test --locked --release --manifest-path engine/market_data/quality/rust/Cargo.toml

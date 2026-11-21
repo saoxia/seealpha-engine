@@ -1,10 +1,12 @@
 """Hierarchical history checks and additive repairs inside the existing Pipeline."""
 
 import asyncio
+import json
 import os
+import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -51,30 +53,48 @@ def local_klines(catalog, symbol, level, start_ms, end_ms, *, market="futures_um
     return buckets
 
 
-async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms):
-    """Require a complete, ordered closed response, including every REST page."""
-    result = []
+async def remote_klines(rest, symbol, level, start_ms, end_ms, available_ms, *, market="futures_um"):
+    """Fetch public pages; Rust is the sole authority for repair evidence validation."""
+    rows = []
     cursor = start_ms
     while cursor < end_ms:
-        rows = await rest.get("klines", symbol=symbol, interval=level,
+        page = await rest.get("klines", symbol=symbol, interval=level,
                               startTime=cursor, endTime=end_ms - 1, limit=1000)
-        if not rows:
+        if not page:
             raise ValueError(f"{level} 对照来源为空；不能声明核验通过")
-        for row in rows:
-            left, right = int(row[0]), int(row[6]) + 1
-            allowed_first = bar_window(level, available_ms)[0]
-            if (left != cursor and not (not result and cursor < available_ms and left == allowed_first)
-                    or bar_window(level, left) != (left, right) or right > end_ms or right <= cursor):
-                raise ValueError(f"{level} 对照来源缺口、乱序或周期边界无效")
-            values = [Decimal(str(row[i])) for i in range(1, 6)]
-            opening, high, low, close, volume = values
-            count = int(row[8])
-            if (not all(value.is_finite() for value in values) or min(values[:4]) <= 0 or volume < 0
-                    or high < max(opening, close) or low > min(opening, close) or low > high or count < 0):
-                raise ValueError("交易所对照 K 线数值无效")
-            result.append({"start_ms": left, "end_ms": right, "values": values, "count": count})
-            cursor = right
-    return result
+        rows.extend(page)
+        if len(rows) > 50_000:
+            raise ValueError("交易所对照数据超出单次记录限制")
+        try:
+            next_cursor = int(page[-1][6]) + 1
+        except (TypeError, ValueError, IndexError, OverflowError) as exc:
+            raise ValueError("交易所 K 线结束时间无效") from exc
+        if next_cursor <= cursor:
+            raise ValueError("交易所 K 线分页未前进")
+        cursor = next_cursor
+
+    binary = Path(os.environ.get("SEEALPHA_REPAIR_VERIFY_BINARY",
+                                str(Path(__file__).resolve().parents[3] / "target/release/seealpha-repair-verify")))
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise ValueError("Rust repair validator unavailable; build seealpha-repair-verify or configure SEEALPHA_REPAIR_VERIFY_BINARY")
+    request = {"interval": level, "product": market, "start_ms": start_ms,
+               "end_ms": end_ms, "available_ms": available_ms, "rows": rows}
+    try:
+        result = subprocess.run([str(binary)], input=json.dumps(request),
+                                capture_output=True, text=True, check=False, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("Rust repair validator failed to execute") from exc
+    if result.returncode != 0:
+        raise ValueError("交易所 K 线原生校验失败：" + result.stderr.strip()[:200])
+    try:
+        verified = json.loads(result.stdout)
+        if not isinstance(verified, list) or len(verified) != len(rows):
+            raise ValueError("Rust repair validator returned an invalid result")
+        return [{"start_ms": row["start_ms"], "end_ms": row["end_ms"],
+                 "values": [Decimal(value) for value in row["values"]],
+                 "count": row["count"]} for row in verified]
+    except (KeyError, TypeError, json.JSONDecodeError, InvalidOperation) as exc:
+        raise ValueError("Rust repair validator returned malformed evidence") from exc
 
 
 def differs(local, remote, source):
@@ -89,7 +109,7 @@ async def scan_day(rest, catalog, symbol, source, start_ms, end_ms, available_ms
 
     async def descend(level_index, left, right):
         level = SCAN_PATH[level_index]
-        remote = await remote_klines(rest, symbol, level, left, right, available_ms)
+        remote = await remote_klines(rest, symbol, level, left, right, available_ms, market=market)
         local = await asyncio.to_thread(local_klines, catalog, symbol, level, left, right, market=market)
         found = False
         for item in remote:
