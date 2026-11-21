@@ -257,13 +257,15 @@ impl Coordinator {
     }
     pub fn flatten(&mut self, member: &str) -> Result<(), CoordinatorError> {
         self.ensure_active()?;
-        self.orders.retain(|_, o| o.member_id != member);
+        // Validate membership before discarding any resting orders. A failed
+        // request must never partially mutate the coordinator's state.
         let book = self
             .members
             .get_mut(member)
             .ok_or(CoordinatorError::NotFound)?;
         book.explicit = Some(Decimal::ZERO);
         book.risk_exit = true;
+        self.orders.retain(|_, o| o.member_id != member);
         Ok(())
     }
     fn ensure_active(&self) -> Result<(), CoordinatorError> {
