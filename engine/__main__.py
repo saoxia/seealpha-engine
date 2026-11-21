@@ -1,14 +1,11 @@
-"""python -m engine — resident trading engine."""
-
-import uvicorn
-
-from engine.api.app import create_app
-from engine.config import EngineConfig
+"""Legacy Python Engine entrypoint retired in favor of the native Rust HTTP server."""
 
 
 def main():
-    config = EngineConfig.from_environment()
-    uvicorn.run(create_app(config), host=config.host, port=config.port)
+    raise SystemExit(
+        "The Python Engine HTTP API has been retired. "
+        "Start the native service with: cargo run --locked --release -p seealpha-engine"
+    )
 
 
 if __name__ == "__main__":
