@@ -36,7 +36,7 @@ docker run --rm -p 127.0.0.1:8766:8766 \
   seealpha-engine:python
 ```
 
-注意：Python 版仍是 **Rust Engine 主进程 + 本地受限 Python 子进程**，不是独立网络服务；它是部署时可选的兼容层，不代表策略 IPC 或插件协议已完全解耦。默认 Rust 镜像的 Python 策略下发、`use_sample: true`（未指定 `native_sample`）等请求会因宿主不可用而拒绝；调用者必须显式采用 Rust 原生模式或安装兼容层。Python Host 的 OS 沙箱、凭据隔离和资源限额仍需由部署环境单独保证。
+注意：Python 版仍是 **Rust Engine 主进程 + 本地受限 Python 子进程**，不是独立网络服务；它是部署时可选的兼容层，不代表策略 IPC 或插件协议已完全解耦。示例 `packages/ema_crossover/strategy.py` 依赖 `nautilus_trader`；可选镜像目前只提供 Python 解释器和策略代码，**未预装 NautilusTrader，也尚未通过该示例的端到端运行验收**。若需运行此类策略，必须在单独评估依赖版本、安全隔离及兼容性后构建扩展镜像。默认 Rust 镜像的 Python 策略下发、`use_sample: true`（未指定 `native_sample`）等请求会因宿主不可用而拒绝；调用者必须显式采用 Rust 原生模式或安装兼容层。Python Host 的 OS 沙箱、凭据隔离和资源限额仍需由部署环境单独保证。
 
 ## 原生 Rust 策略模拟（开发模式）
 
