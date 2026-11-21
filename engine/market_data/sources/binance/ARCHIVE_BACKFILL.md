@@ -61,7 +61,7 @@ Downloader 只访问固定的 `https://data.binance.vision` 官方路径，先�
 
 ## 原生 NautilusTrader Rust 节点的初步代码
 
-参见 [integrations/nautilus_binance_data/README.md](../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。当前不在 Engine Runtime 或 Docker 中启动；需要先通过独立 CI、精度与 Catalog parity、数据缺口验证后再切换和删除旧自研实现。
+参见 [integrations/nautilus_binance_data/README.md](../../../../integrations/nautilus_binance_data/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。当前不在 Engine Runtime 或 Docker 中启动；需要先通过独立 CI、精度与 Catalog parity、数据缺口验证后再切换和删除旧自研实现。
 
 ## 待完成，不能误认作已实现
 
