@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 pub mod archive_fetch;
+pub mod legacy_inspect;
 pub mod calc;
 pub mod trade_archive;
 pub mod trade_features;

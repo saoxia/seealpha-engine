@@ -154,7 +154,7 @@ impl Runtime {
         if !dataset.starts_with(&source_root) {
             return Err(RuntimeError::Conflict("数据源目录越界。".into()));
         }
-        let inspection = seealpha_binance_market_data_source::store::inspect_pair_journal(
+        let inspection = seealpha_binance_market_data_source::legacy_inspect::inspect_pair_journal(
             &dataset, symbol, base,
         )
         .map_err(|e| RuntimeError::Conflict(format!("源数据 Journal 不可信：{e}")))?;
