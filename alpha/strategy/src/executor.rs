@@ -79,8 +79,9 @@ mod tests {
     #[test]
     fn rust_executor_does_not_depend_on_python() {
         let bars = ["1", "1", "1", "10", "10", "0"].map(bar);
+        let parameters = json!({"fast_period": 2, "slow_period": 3});
         let input = ExecutionInput {
-            parameters: &json!({"fast_period":2,"slow_period":3}),
+            parameters: &parameters,
             symbol: "ETHUSDT",
             interval: "1m",
             bars: &bars,
