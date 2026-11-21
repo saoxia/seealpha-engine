@@ -129,6 +129,39 @@ jobs:
           printf '{}' | docker run --rm -i --entrypoint python3 seealpha-engine:python \
             -I /app/python/strategy_host/host.py > "$RUNNER_TEMP/strategy-host-response.json"
           python3 -c 'import json,sys; result=json.load(open(sys.argv[1])); assert result.get("ok") is False' "$RUNNER_TEMP/strategy-host-response.json"
+      - name: Execute bundled EMA Python sample in optional adapter
+        run: |
+          python3 - <<'PY' > "$RUNNER_TEMP/ema-host-request.json"
+          import json
+          prices = [100] * 30 + [200] * 30 + [50] * 30
+          bars = [
+              {
+                  "open_time_ms": index * 60000,
+                  "open": str(price), "high": str(price),
+                  "low": str(price), "close": str(price),
+                  "volume": "1",
+              }
+              for index, price in enumerate(prices)
+          ]
+          print(json.dumps({
+              "op": "run", "package_dir": "/app/packages/ema_crossover",
+              "parameters": {}, "symbol": "ETHUSDT",
+              "interval": "1m", "bars": bars,
+          }))
+          PY
+          docker run --rm -i --entrypoint python3 seealpha-engine:python \
+            -I /app/python/strategy_host/host.py \
+            < "$RUNNER_TEMP/ema-host-request.json" \
+            > "$RUNNER_TEMP/ema-host-response.json"
+          python3 - "$RUNNER_TEMP/ema-host-response.json" <<'PY'
+          import json
+          import sys
+          result = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert result.get("ok") is True, result
+          targets = [item.get("quantity") for item in result["publications"]]
+          assert "1" in targets and "0" in targets, result
+          assert all("bar_index" in item for item in result["publications"]), result
+          PY
       - name: Local synthetic HTTP smoke (no exchange credentials)
         run: |
           docker run -d --name seealpha-engine-ci -p 127.0.0.1:18766:8766 \
