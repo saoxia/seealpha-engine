@@ -7,6 +7,7 @@ pub mod evidence;
 pub mod matching;
 pub mod option_quotes;
 pub mod timeline;
+pub mod window;
 
 use rust_decimal::Decimal;
 use seealpha_portfolio::{
