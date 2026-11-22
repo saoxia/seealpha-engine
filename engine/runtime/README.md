@@ -1,6 +1,8 @@
 # Runtime — 用例编排
 
-Runtime 负责租户检查、已授权策略包的只读预览、Catalog 访问以及订单意图预登记/恢复清单。HTTP 由 Gateway 负责；行情、策略、组合、回测、账户与执行逻辑应由对应领域 crate 或 NautilusTrader 提供。
+Runtime 负责租户检查、已授权策略包的只读预览以及订单意图预登记/恢复清单。HTTP 和 Catalog 查询由 Gateway 负责；行情、策略、组合、回测、账户与执行逻辑应由对应领域 crate 或 NautilusTrader 提供。
+
+Gateway 直接调用 `seealpha-catalog` 读取 Nautilus v2 Parquet 数据；Runtime 不再提供 Catalog 转发、历史 Bar 写入或未使用的连续 Bar 查询入口。行情写入与修复继续由 Pipeline 负责，Catalog 本身仍执行 Parquet、时间和精度校验。
 
 ## 已退役的自定义 Paper 会话
 

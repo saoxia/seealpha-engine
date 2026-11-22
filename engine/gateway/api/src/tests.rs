@@ -281,6 +281,33 @@ use super::*;
     }
 
     #[tokio::test]
+    async fn catalog_reads_preserve_tenant_checks_and_missing_mount_errors() {
+        let setup = state();
+        let app = router(setup.clone());
+        let routes = [
+            ("/tenants/42/data/catalog/events",
+             r#"{"data_type":"trades","identifier":"ETHUSDT.BINANCE","start_ns":1,"end_ns":2}"#),
+            ("/tenants/42/data/catalog/inventory",
+             r#"{"data_type":"trades","identifier":"ETHUSDT.BINANCE"}"#),
+        ];
+        for (path, body) in routes {
+            let make = || Request::builder()
+                .method("POST").uri(path)
+                .header("authorization", "Bearer ci-engine-token-0123456789abcdef0123456789abcdef")
+                .header("content-type", "application/json")
+                .body(Body::from(body)).unwrap();
+            let (status, _, response) = call(&app, make()).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert!(response["detail"].as_str().unwrap_or("").contains("Catalog"));
+
+            setup.runtime.ensure_tenant("42", "development", "archived").unwrap();
+            let (status, _, _) = call(&app, make()).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{path}");
+            setup.runtime.ensure_tenant("42", "development", "active").unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn retired_catalog_bar_routes_are_absent() {
         let app = router(state());
         let token = "Bearer ci-engine-token-0123456789abcdef0123456789abcdef";

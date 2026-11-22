@@ -42,6 +42,35 @@ pub struct AppState {
     pub market: Arc<dyn PublicSource>,
 }
 
+impl AppState {
+    /// Use the same mounted Nautilus v2 Catalog path as the former Runtime facade.
+    fn catalog(&self) -> Result<Option<seealpha_catalog::Catalog>, AppError> {
+        let path = match std::env::var("ENGINE_CATALOG_DIR") {
+            Ok(value) if !value.trim().is_empty() => {
+                let selected = std::path::PathBuf::from(value);
+                if selected.is_absolute() {
+                    selected
+                } else {
+                    self.config.project.join(selected)
+                }
+            }
+            _ => self.config.project.join("data").join("catalog"),
+        };
+        match path.symlink_metadata() {
+            Ok(_) => seealpha_catalog::Catalog::open_existing(&path)
+                .map(Some)
+                .map_err(|error| AppError::conflict(error.to_string())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(AppError::conflict(format!("Catalog 数据目录不可用：{error}"))),
+        }
+    }
+
+    fn require_catalog(&self) -> Result<seealpha_catalog::Catalog, AppError> {
+        self.catalog()?
+            .ok_or_else(|| AppError::not_found("未挂载 Python Nautilus v2 Catalog。"))
+    }
+}
+
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         .route("/health", get(health))

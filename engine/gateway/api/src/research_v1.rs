@@ -95,10 +95,7 @@ fn scope(
 
 fn available_datasets(state: &AppState, grant: &Grant) -> Result<Value, AppError> {
     scope(grant, "datasets:read", None, None)?;
-    let inventory = state
-        .runtime
-        .native_dataset_inventory(&grant.tenant_id)
-        .map_err(AppError::from)?
+    let inventory = crate::parity::dataset_inventory(state)?
         .ok_or_else(|| AppError::conflict("Research Catalog 未挂载，无法确认数据集库存。"))?;
     let datasets: Vec<Value> = inventory
         .into_iter()
