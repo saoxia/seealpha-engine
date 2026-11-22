@@ -95,3 +95,29 @@ pub(super) async fn update_worker_settings(
             .map_err(|e| AppError::bad_request(e.to_string()))?,
     ))
 }
+
+fn require_clickhouse_admin(state: &AppState, tenant: &str) -> Result<(), AppError> {
+    if state.config.auth_mode != AuthMode::Token
+        || state.config.tenant_id.as_deref() != Some(tenant)
+    {
+        return Err(AppError::forbidden("ClickHouse 凭据管理仅允许 Token 认证且固定租户的引擎。"));
+    }
+    Ok(())
+}
+
+pub(super) async fn clickhouse_settings(
+    State(state): State<AppState>,
+    Path(tenant): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    require_clickhouse_admin(&state, &tenant)?;
+    Ok(Json(state.runtime.clickhouse_settings(&tenant).map_err(AppError::from)?))
+}
+
+pub(super) async fn update_clickhouse_settings(
+    State(state): State<AppState>,
+    Path(tenant): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    require_clickhouse_admin(&state, &tenant)?;
+    Ok(Json(state.runtime.update_clickhouse_settings(&tenant, &body).map_err(AppError::from)?))
+}
