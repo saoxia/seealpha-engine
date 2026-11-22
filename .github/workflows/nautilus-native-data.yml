@@ -24,6 +24,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  historical-tick-bar-rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt, clippy
+      - name: Tick revision, deletion, restart and Catalog recovery regression
+        run: |
+          cargo test -p seealpha-catalog replaces_sparse_bars_and_removes_deleted_trade_second --locked
+          cargo test -p seealpha-market auto_rebuilds_after_native_tick_insert_revision_and_deletion --locked
+          cargo clippy -p seealpha-catalog -p seealpha-market --all-targets --locked -- -D warnings
   execution-cutover:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -41,6 +54,9 @@ jobs:
           cargo test -p seealpha-market option_history_persists_only_bar_data --locked
           cargo test -p seealpha-catalog removes_complete_old_day_without_touching_current_day --locked
           cargo test -p seealpha-catalog on_disk_parquet_roundtrip_supports_upsert_and_product_isolation --locked
+          cargo test -p seealpha-catalog replaces_sparse_bars_and_removes_deleted_trade_second --locked
+          cargo test -p seealpha-market minute_bounds_include_entire_last_trade_second --locked
+          cargo test -p seealpha-market auto_rebuilds_after_native_tick_insert_revision_and_deletion --locked
           cargo test -p seealpha-market open_bars_update_on_every_tick_even_before_close --locked
           cargo test -p seealpha-market instrument_filters_are_exact_not_inferred_from_candle_values --locked
           cargo test -p seealpha-market earlier_tenant_start_wins_and_disabled_prevents_deletion --locked

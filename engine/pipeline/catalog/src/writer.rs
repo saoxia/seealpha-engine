@@ -158,6 +158,120 @@ fn validate_batch(interval:&str,rows:&[CatalogBar],price_precision:u32,size_prec
     Ok(())
 }
 impl Catalog {
+
+    /// Replace every Bar in an exact aligned window, including deleting
+    /// old timestamps no longer supported by TradeTick. The durable marker
+    /// makes incomplete crash-time replacements unreadable until replay.
+    pub fn replace_bars_window(
+        &self,id:&str,interval:&str,window:(i64,i64),
+        bars:&[CatalogBar],price_precision:u32,size_precision:u32,
+    )->Result<(),CatalogError>{
+        let (start_ms,end_ms)=window;
+        if start_ms<0||end_ms<=start_ms||bars.len()>MAX_WRITE
+            ||price_precision>16||size_precision>16
+            ||crate::bar_window(interval,start_ms)?.0!=start_ms
+            ||crate::bar_window(interval,end_ms)?.0!=end_ms
+        {
+            return Err(CatalogError::Invalid("invalid historical replacement window".into()));
+        }
+        let (instrument,recorded_interval)=parse_bar_type(id)?;
+        if recorded_interval!=interval{
+            return Err(CatalogError::Invalid("BarType interval mismatch".into()));
+        }
+        let mut previous=None;
+        for bar in bars{
+            bar.validate(interval)?;
+            if bar.open_time_ms<start_ms||bar.open_time_ms>=end_ms
+                ||previous.is_some_and(|p|bar.open_time_ms<=p)
+            {return Err(CatalogError::Invalid("replacement Bar timestamp invalid".into()));}
+            for (value,precision) in [
+                (bar.open,price_precision),(bar.high,price_precision),
+                (bar.low,price_precision),(bar.close,price_precision),(bar.volume,size_precision),
+            ]{
+                if value.round_dp(precision)!=value{
+                    return Err(CatalogError::Invalid("replacement Bar precision invalid".into()));
+                }
+            }
+            previous=Some(bar.open_time_ms);
+        }
+        let rel=RecordKind::Bars.directory(id)?;
+        let directory=safe_mkdir(&self.root,&rel)?;
+        let lock=OpenOptions::new().create(true).truncate(false).read(true).write(true)
+            .open(directory.join(".writer.lock"))?;
+        lock.lock_exclusive()?;
+        let marker=directory.join(".rebuilding");
+        let expected=format!("{start_ms},{end_ms}");
+        match fs::read_to_string(&marker){
+            Ok(old) if old!=expected=>{
+                return Err(CatalogError::Conflict("different Bar window has pending crash recovery".into()));
+            }
+            Ok(_)=>{},
+            Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{},
+            Err(error)=>return Err(error.into()),
+        }
+        let from=start_ms.checked_mul(crate::NANO_PER_MS)
+            .ok_or_else(||CatalogError::Invalid("Bar start overflow".into()))?;
+        let to=end_ms.checked_mul(crate::NANO_PER_MS)
+            .ok_or_else(||CatalogError::Invalid("Bar end overflow".into()))?;
+        let existing=candidate_files(&self.root,&rel,from,to)?;
+        for path in &existing{
+            let name=path.file_name().and_then(|n|n.to_str())
+                .ok_or_else(||CatalogError::Invalid("invalid Bar file".into()))?;
+            let (first,last)=filename_bounds(name)?;
+            if first<from||last>=to{
+                return Err(CatalogError::Conflict("historical replacement crosses an existing file".into()));
+            }
+        }
+        let staging=safe_mkdir(&self.root,Path::new(".staging"))?;
+        let timestamp=std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_|CatalogError::Invalid("invalid system timestamp".into()))?.as_nanos();
+        let mut staged:Vec<(PathBuf,PathBuf)>=Vec::new();
+        let mut run:Vec<CatalogBar>=Vec::new();
+        let mut flush=|run:&[CatalogBar]|->Result<(),CatalogError>{
+            if run.is_empty(){return Ok(())}
+            validate_batch(interval,run,price_precision,size_precision)?;
+            let name=file_name(run[0].event_ns(interval)?,run[run.len()-1].event_ns(interval)?)?;
+            let dest=directory.join(name);
+            let tmp=staging.join(format!("rebuild-{}-{timestamp}-{}.tmp",std::process::id(),staged.len()));
+            stage_bars(&tmp,id,&instrument,interval,run,price_precision,size_precision)?;
+            staged.push((tmp,dest));
+            Ok(())
+        };
+        let prepare=(||->Result<(),CatalogError>{
+            for bar in bars{
+                if let Some(prior)=run.last().map(|b|b.open_time_ms)
+                    && crate::bar_window(interval,prior)?.1!=bar.open_time_ms
+                {
+                    flush(&run)?;
+                    run.clear();
+                }
+                run.push(bar.clone());
+            }
+            flush(&run)
+        })();
+        if let Err(error)=prepare{
+            for (tmp,_) in &staged{let _=fs::remove_file(tmp);}
+            return Err(error);
+        }
+        {
+            use std::io::Write;
+            let mut file=OpenOptions::new().create(true).truncate(true).write(true).open(&marker)?;
+            file.write_all(expected.as_bytes())?;
+            file.sync_all()?;
+        }
+        File::open(&directory)?.sync_all()?;
+        let commit=(||->Result<(),CatalogError>{
+            for old in &existing{fs::remove_file(old)?;}
+            for (tmp,dest) in &staged{fs::hard_link(tmp,dest)?;}
+            File::open(&directory)?.sync_all()?;
+            fs::remove_file(&marker)?;
+            File::open(&directory)?.sync_all()?;
+            Ok(())
+        })();
+        for (tmp,_) in &staged{let _=fs::remove_file(tmp);}
+        commit
+    }
     /// Insert or update a validated Bar batch. If a timestamp already exists,
     /// the incoming Bar replaces it and untouched rows remain intact.
     /// The writer lock serializes other writers and guarded Catalog readers.
@@ -178,6 +292,9 @@ impl Catalog {
         let lease=OpenOptions::new().create(true).truncate(false).read(true).write(true)
             .open(directory.join(".writer.lock"))?;
         lease.lock_exclusive()?;
+        if directory.join(".rebuilding").exists(){
+            return Err(CatalogError::Conflict("Tick-derived Bar replacement awaiting recovery".into()));
+        }
         let first=bars[0].event_ns(interval)?;
         let last=bars.last().ok_or_else(||CatalogError::Invalid("empty batch".into()))?
             .event_ns(interval)?;
@@ -299,6 +416,43 @@ impl Catalog {
 mod tests {
     use super::*;
     use rust_decimal::Decimal;
+    #[test]
+    fn replaces_sparse_bars_and_removes_deleted_trade_second(){
+        let path=std::env::temp_dir().join(format!(
+            "sa-history-replace-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        fs::create_dir(&path).unwrap();
+        let catalog=Catalog::open_existing(&path).unwrap();
+        let id=crate::bar_type("ETHUSDT.BINANCE","1s").unwrap();
+        let bar=|time|CatalogBar{
+            open_time_ms:time,open:Decimal::from(100),high:Decimal::from(105),
+            low:Decimal::from(95),close:Decimal::from(100),volume:Decimal::ONE,
+        };
+        let rows=[bar(0),bar(1_000),bar(3_000)];
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&rows,2,2).unwrap();
+        let read=||catalog.read_bars(&id,"1s",0,60_000_000_000,100).unwrap();
+        assert_eq!(read(),rows);
+        let revised=[bar(0),bar(3_000)];
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&revised,2,2).unwrap();
+        assert_eq!(read(),revised);
+        // Crash after recording the durable replacement marker: readers must
+        // reject partial results until the same UTC window is replayed.
+        let marker=path.join("data/bars").join(&id).join(".rebuilding");
+        fs::write(&marker,"0,60000").unwrap();
+        assert!(catalog.read_bars(&id,"1s",0,60_000_000_000,100).is_err());
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&revised,2,2).unwrap();
+        assert_eq!(read(),revised);
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&[],2,2).unwrap();
+        assert!(read().is_empty());
+        let other=crate::bar_type("ETHUSDT-PERP.BINANCE","1s").unwrap();
+        catalog.replace_bars_window(&other,"1s",(0,60_000),&[bar(0)],2,2).unwrap();
+        assert_eq!(catalog.read_bars(&other,"1s",0,60_000_000_000,100).unwrap().len(),1);
+        let _=fs::remove_dir_all(path);
+    }
+
     #[test]
     fn filename_matches_python_nautilus_v2_exact_nanoseconds() {
         assert_eq!(
