@@ -225,7 +225,7 @@ impl Runtime {
         body["risk_limit"] = json!(risk.to_string());
         body["history_source"] = json!("tenant_local_catalog_sqlite");
         body["orders_submitted"] = json!(0);
-        self.ledger
+        self.state_store
             .save_backtest(tenant, account, "history", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
