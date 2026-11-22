@@ -129,14 +129,6 @@ impl Runtime {
             "environment":environment,"status":"closed"}))
     }
 
-    pub fn sync_registered_fills(
-        &self, tenant: &str, _account: &str, _environment: &str,
-        _request_id: &str, _venue_base: &str,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
-
     pub fn account_snapshot(
         &self, tenant_id: &str, account_id: &str, environment: &str,
         api_key: &str, secret: &str, _venue_base: Option<&str>,
