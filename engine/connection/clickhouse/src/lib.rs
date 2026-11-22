@@ -21,7 +21,7 @@ pub enum ClickHouseError {
     Data(&'static str),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClickHouseConfig {
     /// HTTP(S) endpoint, e.g. http://127.0.0.1:8123
     pub url: String,
