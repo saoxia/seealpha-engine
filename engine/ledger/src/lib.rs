@@ -1,19 +1,23 @@
 //! SQLite runtime book for tenants, trading evidence, and paper orders.
+// Ledger/Funds business domains: state, movements, attribution, and checking.
+mod accounts;
+mod movements;
+mod allocations;
+mod reconciliation;
+pub use accounts::AccountSnapshot;
+
+// Existing execution, portfolio and compatibility APIs remain unchanged.
+// They are not subdomains of Ledger/Funds and are not migrated in this PR.
 mod order_intents;
 mod order_reconciliation_tasks;
 mod records;
 pub use order_reconciliation_tasks::ReconciliationTask;
-mod account_events;
-mod account_snapshots;
-pub use account_snapshots::AccountSnapshot;
 pub use order_intents::{BasketAdmission, IntentStart, OrderRecoveryItem};
 mod basket_journal;
 mod coordinator_state;
 pub use basket_journal::StoredBasketJournal;
 pub use coordinator_state::StoredCoordinatorState;
 mod parity;
-mod settlements;
-mod verified_fills;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use std::path::Path;
