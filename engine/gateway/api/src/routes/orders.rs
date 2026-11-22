@@ -64,18 +64,6 @@ pub(super) async fn order_command(
     Ok(Json(result.map_err(AppError::from)?))
 }
 
-pub(super) async fn ledger_sync(
-    State(state): State<AppState>,
-    Path((tenant_id, account_id, request_id)): Path<(String, String, String)>,
-) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .mark_ledger_synced(&tenant_id, &account_id, &request_id)
-            .map_err(AppError::from)?,
-    ))
-}
-
 pub(super) async fn reconcile_order(
     State(state): State<AppState>,
     Path((tenant_id, account_id, request_id)): Path<(String, String, String)>,
