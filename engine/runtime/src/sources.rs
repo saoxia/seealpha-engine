@@ -222,9 +222,9 @@ impl Runtime {
         // coverage must be established from native Catalog proof, not socket
         // connectivity. Only list authorized symbols here.
         let symbols = self
-            .ledger
+            .control
             .policies(tenant)
-            .map_err(map_ledger)?
+            .map_err(crate::map_control)?
             .into_iter()
             .filter(|policy| policy["product"] == product)
             .map(|policy| {
