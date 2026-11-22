@@ -65,16 +65,14 @@ impl StateStore {
     fn import_verified_fills(&self, tenant: &str, account: &str, env: &str, order_id: &str, rows: &[serde_json::Value]) -> Result<usize, LedgerError> {
         use seealpha_database::params;
         let mut conn=self.lock()?;
-        let tx=conn.transaction().map_err(|e| LedgerError::Database(e.to_string()))?;
+        let tx=conn.transaction_with_behavior(seealpha_database::TransactionBehavior::Immediate).map_err(|e| LedgerError::Database(e.to_string()))?;
         for row in rows {
             let trade_id=row["trade_id"].as_str().ok_or_else(|| LedgerError::Conflict("missing test trade id".into()))?;
             if !trade_id.starts_with("binance:") || row["venue_order_id"].as_str()!=Some(order_id)
                 || row["source"].as_str()!=Some("signed_exchange_user_trades") {
                 return Err(LedgerError::Conflict("invalid test fill".into()));
             }
-            tx.execute("INSERT INTO fills(tenant_id,account_id,environment,fill_id,fill_json,updated_at) VALUES (
-}
-,$2,$3,$4,$5,0) ON CONFLICT(tenant_id,account_id,environment,fill_id) DO NOTHING",
+            tx.execute("INSERT INTO fills(tenant_id,account_id,environment,fill_id,fill_json,updated_at) VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT(tenant_id,account_id,environment,fill_id) DO NOTHING",
                 params![tenant,account,env,trade_id,row.to_string()]).map_err(|e| LedgerError::Database(e.to_string()))?;
         }
         tx.commit().map_err(|e| LedgerError::Database(e.to_string()))?;
