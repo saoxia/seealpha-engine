@@ -6,7 +6,7 @@ use rust_decimal::Decimal;
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn sqlite(err: seealpha_database::Error) -> LedgerError {
+fn db_error(err: seealpha_database::Error) -> LedgerError {
     LedgerError::Database(err.to_string())
 }
 fn invalid() -> LedgerError {
@@ -28,10 +28,10 @@ impl Ledger {
         let mut conn = self.lock()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let mut stmt = tx
             .prepare("SELECT tenant_id,account_id,environment,fill_id,fill_json FROM fills")
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let rows = stmt
             .query_map(&[], |r| {
                 Ok((
@@ -42,10 +42,10 @@ impl Ledger {
                     r.get::<_, String>(4)?,
                 ))
             })
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let mut suspected = Vec::new();
         for row in rows {
-            let (tenant, account, env, id, text) = row.map_err(sqlite)?;
+            let (tenant, account, env, id, text) = row.map_err(db_error)?;
             let Ok(value) = serde_json::from_str::<Value>(&text) else {
                 continue;
             };
@@ -68,15 +68,15 @@ impl Ledger {
                  VALUES($1,$2,$3,$4,$5,'synthetic_order_ack_fill',$6) ON CONFLICT DO NOTHING",
                 params![tenant, account, env, id, text, now_ms()],
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
             tx.execute(
                 "DELETE FROM fills WHERE tenant_id=$1 AND account_id=$2
                  AND environment=$3 AND fill_id=$4",
                 params![tenant, account, env, id],
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         }
-        tx.commit().map_err(sqlite)?;
+        tx.commit().map_err(db_error)?;
         Ok(suspected.len())
     }
 
@@ -94,7 +94,7 @@ impl Ledger {
         let mut conn = self.lock()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         for row in rows {
             let id = row["trade_id"].as_str().ok_or_else(invalid)?;
             let qty = row["quantity"]
@@ -125,7 +125,7 @@ impl Ledger {
                     |r| r.get(0),
                 )
                 .optional()
-                .map_err(sqlite)?;
+                .map_err(db_error)?;
             if let Some(previous) = prior {
                 if previous != text {
                     return Err(invalid());
@@ -137,10 +137,10 @@ impl Ledger {
                      VALUES($1,$2,$3,$4,$5,$6)",
                     params![tenant, account, environment, id, text, now_ms()],
                 )
-                .map_err(sqlite)?;
+                .map_err(db_error)?;
             }
         }
-        tx.commit().map_err(sqlite)?;
+        tx.commit().map_err(db_error)?;
         Ok(rows.len())
     }
 
@@ -149,7 +149,7 @@ impl Ledger {
         conn.query_row(
             "SELECT COUNT(*) FROM quarantined_unverified_fills WHERE tenant_id=$1 AND account_id=$2",
             params![tenant,account],|r|r.get(0),
-        ).map_err(sqlite)
+        ).map_err(db_error)
     }
 }
 
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn quarantines_fabricated_ack_without_losing_raw_evidence() {
         let path = std::env::temp_dir().join(format!(
-            "seealpha-fill-{}-{}.sqlite",
+            "seealpha-fill-{}-{}.db_error",
             std::process::id(),
             now_ms()
         ));
