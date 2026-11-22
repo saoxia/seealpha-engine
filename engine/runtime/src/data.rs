@@ -803,7 +803,7 @@ impl Runtime {
                 tenant_id, account_id, product, symbol, role, state, progress,
             )
             .map_err(map_state)?;
-        self.ledger
+        self.state_store
             .add_event(tenant_id, account_id, "subscription", &result.to_string())
             .map_err(map_state)?;
         Ok(result)
