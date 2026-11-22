@@ -2,7 +2,14 @@
 //!
 //! No strategies, no trade commands, no account ledger writes, no fallback
 //! REST client. Use isolated process and separate account cursor per product.
-use std::{cell::RefCell, path::Path, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    cell::RefCell,
+    fs::{self, OpenOptions},
+    path::Path,
+    rc::Rc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+use fs2::FileExt;
 
 use anyhow::{Context, Result, ensure};
 use nautilus_binance::{
@@ -49,6 +56,15 @@ async fn main() -> Result<()> {
     let root = Path::new(&args[3]);
     ensure!(root.is_dir(), "state directory must exist");
     ensure!(!root.symlink_metadata()?.file_type().is_symlink(), "symlink state directory forbidden");
+    let lock = root.join(format!("{}-{}.cursor.lock", args[1], account_id));
+    if let Ok(meta) = fs::symlink_metadata(&lock) {
+        ensure!(meta.is_file() && !meta.file_type().is_symlink(), "invalid cursor lock file");
+    }
+    // Keep the file handle alive while the node runs: a second instance must
+    // not update the same recovery cursor concurrently.
+    let _cursor_lock = OpenOptions::new()
+        .read(true).write(true).create(true).truncate(false).open(&lock)?;
+    _cursor_lock.try_lock_exclusive().context("native account observer already active")?;
     let checkpoint = root.join(format!("{}-{}.cursor.json", args[1], account_id));
     let session = Rc::new(RefCell::new(NativeAccountSession::open(
         account_id, account_type, &checkpoint,
