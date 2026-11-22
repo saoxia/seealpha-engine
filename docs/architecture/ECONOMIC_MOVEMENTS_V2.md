@@ -27,3 +27,11 @@ For compound source transactions, `effects` can express multiple assets and fee 
 5. Migrate read consumers and only then remove legacy paths.
 
 The current PR introduces durable V2 storage and validation, **not** complete replacement or production source verification.
+
+## Ownership update: private account events are a Pipeline process
+
+Venue-specific extraction/normalization belongs in `engine/pipeline/account_events/` (or per-venue source adapters under that pipeline). The Binance implementation is not part of Ledger. Its current functions `binance_usdm_funding` and `binance_account_fill` normalize supplied private-account evidence into the shared `MovementInput`; they do not establish HTTP authentication.
+
+`ledger/movements` retains only venue-neutral append/query/idempotency and immutable evidence storage. `account_events.rs` is legacy and will be retired after consumer migration; the future generic account-event feed should be derived from canonical movements rather than reconstructed independently in Ledger.
+
+This new private pipeline must not change the separately frozen **public market-data** ingestion scope or route private trades into the public Tick/Bar catalog. Connection-layer signing and native Nautilus execution remain separate from this account-event normalization process.
