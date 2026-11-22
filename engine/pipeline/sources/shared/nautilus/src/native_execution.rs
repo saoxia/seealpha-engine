@@ -218,6 +218,7 @@ pub fn link_native_accept(
 /// Immutable pre-registered instruction identity provided by the runtime.
 /// A matching identity is necessary for attribution, but never proves venue
 /// provenance or grants the right to send, amend or settle an order.
+#[derive(Clone, Copy, Debug)]
 pub struct NativeOrderBinding<'a> {
     pub account_id: &'a str,
     pub instrument_id: &'a str,
