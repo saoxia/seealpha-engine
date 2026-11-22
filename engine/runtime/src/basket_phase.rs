@@ -197,24 +197,11 @@ impl Runtime {
         }
         let account_state = self
             .ledger
-            .account_snapshot(tenant, account, environment)
-            .map_err(map_ledger)?
-            .ok_or_else(|| RuntimeError::Conflict("缺少已核验账户仓位快照。".into()))?;
-        if account_state.revision != expected_account_revision
-            || (environment == "paper" && account_state.source != "paper_simulator")
-            || (environment != "paper" && account_state.source != "signed_exchange_account_query")
-        {
-            return Err(RuntimeError::Conflict("账户快照来源或版本不可信。".into()));
-        }
-        let snapshot_ns = u64::try_from(account_state.observed_at_ms)
-            .ok()
-            .and_then(|v| v.checked_mul(1_000_000))
-            .ok_or_else(|| RuntimeError::Conflict("账户快照时间溢出。".into()))?;
-        if snapshot_ns > limits.now_ns || limits.now_ns - snapshot_ns > limits.max_age_ns {
-            return Err(RuntimeError::Conflict(
-                "账户快照已过期，禁止篮子阶段登记。".into(),
-            ));
-        }
+            .account_snapshot_for_risk(
+                tenant, account, environment, expected_account_revision,
+                limits.now_ns, limits.max_age_ns,
+            )
+            .map_err(map_ledger)?;
         let reported = account_state.state["positions"]
             .as_object()
             .ok_or_else(|| RuntimeError::Conflict("账户仓位证据缺失。".into()))?;

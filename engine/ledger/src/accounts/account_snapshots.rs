@@ -100,12 +100,17 @@ impl Ledger {
             params![tenant,account,environment],
             |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
         ).optional().map_err(sql)?;
+        // An evidence identity is immutable within the current observation.
+        // The previous behavior allowed reusing the same evidence_id with a
+        // later timestamp and different balances after a CAS update.
         if let Some((revision, old_id, old_time, old_source, old_state)) = &previous
             && old_id == evidence_id
-            && *old_time == observed_at_ms
-            && old_source == source
-            && old_state == &body
         {
+            if *old_time != observed_at_ms || old_source != source || old_state != &body {
+                return Err(LedgerError::Conflict(
+                    "account snapshot evidence ID reused with different content".into(),
+                ));
+            }
             return Ok(AccountSnapshot {
                 revision: *revision,
                 evidence_id: evidence_id.into(),
@@ -192,6 +197,56 @@ impl Ledger {
         })
         .transpose()
     }
+
+    /// Obtain the persisted account observation for risk or basket recovery
+    /// under one explicitly supplied revision and freshness window.
+    ///
+    /// This verifies only persisted provenance metadata, CAS revision and age.
+    /// It does NOT authenticate a new Nautilus AccountState, query the venue,
+    /// or authorize sending an order. The upstream account adapter must still
+    /// independently verify the exchange source before storing the snapshot.
+    pub fn account_snapshot_for_risk(
+        &self,
+        tenant: &str,
+        account: &str,
+        environment: &str,
+        expected_revision: i64,
+        now_ns: u64,
+        max_age_ns: u64,
+    ) -> Result<AccountSnapshot, LedgerError> {
+        if tenant.is_empty()
+            || account.is_empty()
+            || expected_revision <= 0
+            || now_ns == 0
+            || max_age_ns == 0
+            || !matches!(environment, "production" | "sandbox" | "paper")
+        {
+            return Err(invalid());
+        }
+        let snapshot = self
+            .account_snapshot(tenant, account, environment)?
+            .ok_or_else(|| LedgerError::Conflict("account snapshot is missing".into()))?;
+        let expected_source = if environment == "paper" {
+            "paper_simulator"
+        } else {
+            "signed_exchange_account_query"
+        };
+        if snapshot.revision != expected_revision || snapshot.source != expected_source {
+            return Err(LedgerError::Conflict(
+                "account snapshot revision or source mismatch".into(),
+            ));
+        }
+        let observed_ns = u64::try_from(snapshot.observed_at_ms)
+            .ok()
+            .and_then(|ms| ms.checked_mul(1_000_000))
+            .ok_or_else(invalid)?;
+        if observed_ns == 0 || observed_ns > now_ns || now_ns - observed_ns > max_age_ns {
+            return Err(LedgerError::Conflict(
+                "account snapshot is stale or timestamp is in the future".into(),
+            ));
+        }
+        Ok(snapshot)
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +255,107 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Barrier};
     use std::thread;
+
+    #[test]
+    fn risk_snapshot_requires_exact_revision_source_and_fresh_time() {
+        let book = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        book.ensure_tenant("t", "production", "active").unwrap();
+        let state = json!({"balances":{"USDT":"100.00"},"positions":{"futures_um:ETHUSDT":"-0.5"}});
+        let original = book.save_account_snapshot(
+            "t", "a", "production", None, "signed1", 1_000,
+            "signed_exchange_account_query", &state,
+        ).unwrap();
+        assert_eq!(original.revision, 1);
+        // Exact boundary is allowed, but neither a future observation nor
+        // an observation older than the explicitly supplied window is.
+        assert_eq!(book.account_snapshot_for_risk(
+            "t", "a", "production", 1, 1_300_000_000, 300_000_000,
+        ).unwrap(), original);
+        for (revision, now_ns, max_age_ns) in [
+            (2, 1_300_000_000, 300_000_000),
+            (1, 1_300_000_001, 300_000_000),
+            (1, 999_999_999, 300_000_000),
+            (1, 0, 300_000_000),
+            (1, 1_300_000_000, 0),
+        ] {
+            assert!(book.account_snapshot_for_risk(
+                "t", "a", "production", revision, now_ns, max_age_ns,
+            ).is_err());
+        }
+        assert!(book.account_snapshot_for_risk(
+            "t", "a", "sandbox", 1, 1_300_000_000, 300_000_000,
+        ).is_err());
+        assert!(book.account_snapshot_for_risk(
+            "other", "a", "production", 1, 1_300_000_000, 300_000_000,
+        ).is_err());
+        assert!(book.account_snapshot_for_risk(
+            "t", "other", "production", 1, 1_300_000_000, 300_000_000,
+        ).is_err());
+        let same = book.save_account_snapshot(
+            "t", "a", "production", None, "signed1", 1_000,
+            "signed_exchange_account_query", &state,
+        ).unwrap();
+        assert_eq!(same.revision, 1);
+        // Current evidence ID is immutable even when the CAS revision matches
+        // and the proposed observation timestamp increases.
+        assert!(book.save_account_snapshot(
+            "t", "a", "production", Some(1), "signed1", 1_001,
+            "signed_exchange_account_query", &state,
+        ).is_err());
+        let changed = json!({"balances":{"USDT":"99.99"},"positions":{}});
+        assert!(book.save_account_snapshot(
+            "t", "a", "production", Some(1), "signed1", 1_001,
+            "signed_exchange_account_query", &changed,
+        ).is_err());
+        assert_eq!(book.account_snapshot("t", "a", "production").unwrap(), Some(original));
+    }
+
+    #[test]
+    fn paper_snapshot_gate_does_not_promote_simulation_to_exchange_evidence() {
+        let book = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        book.ensure_tenant("research", "development", "active").unwrap();
+        let simulated = book.save_account_snapshot(
+            "research", "paper1", "paper", None, "sim1", 10,
+            "paper_simulator", &json!({"balances":{"USDT":"0"},"positions":{}}),
+        ).unwrap();
+        assert_eq!(book.account_snapshot_for_risk(
+            "research", "paper1", "paper", 1, 10_000_000, 1,
+        ).unwrap(), simulated);
+        assert!(book.account_snapshot_for_risk(
+            "research", "paper1", "production", 1, 10_000_000, 1,
+        ).is_err());
+    }
+
+    #[test]
+    fn risk_snapshot_gate_reloads_the_same_state_after_sqlite_restart() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let path = std::env::temp_dir().join(format!(
+            "seealpha-account-gate-{}-{}.sqlite",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        {
+            let book = Ledger::open(&path).unwrap();
+            book.ensure_tenant("tenant1", "production", "active").unwrap();
+            book.save_account_snapshot(
+                "tenant1", "account1", "sandbox", None, "venue-10", 20,
+                "signed_exchange_account_query",
+                &json!({"balances":{"USDT":"23.0001"},"positions":{}}),
+            ).unwrap();
+        }
+        {
+            let recovered = Ledger::open(&path).unwrap();
+            let checked = recovered.account_snapshot_for_risk(
+                "tenant1", "account1", "sandbox", 1, 21_000_000, 1_000_000,
+            ).unwrap();
+            assert_eq!(checked.evidence_id, "venue-10");
+            assert_eq!(checked.state["balances"]["USDT"].as_str(), Some("23.0001"));
+            assert!(recovered.account_snapshot_for_risk(
+                "tenant1", "account1", "sandbox", 1, 21_000_001, 1_000_000,
+            ).is_err());
+        }
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn decimal_cas_and_stale_account_evidence_fail_closed() {
