@@ -326,22 +326,22 @@ impl Runtime {
         });
         let report_json = report.to_string();
         if persist {
-        self.state_store
-            .complete_session(
-                &SessionWrite {
-                    tenant_id: &request.tenant_id,
-                    account_id: &request.account_id,
-                    symbol: &request.snapshot.symbol,
-                    request_id,
-                    fingerprint,
-                    report: &report_json,
-                    expected_position: starting_position,
-                    ending_position: ending,
-                },
-                &order_json,
-                &fill_json,
-            )
-            .map_err(map_ledger)?;
+            self.state_store
+                .complete_session(
+                    &SessionWrite {
+                        tenant_id: &request.tenant_id,
+                        account_id: &request.account_id,
+                        symbol: &request.snapshot.symbol,
+                        request_id,
+                        fingerprint,
+                        report: &report_json,
+                        expected_position: starting_position,
+                        ending_position: ending,
+                    },
+                    &order_json,
+                    &fill_json,
+                )
+                .map_err(map_ledger)?;
         }
         Ok(report)
     }
