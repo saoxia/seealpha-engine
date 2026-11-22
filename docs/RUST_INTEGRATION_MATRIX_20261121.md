@@ -11,7 +11,7 @@ Domain changes are copied exactly at file level from the branch associated with 
 | Market/Feed | #75 | feat/rust-market-feed-evidence-20261121 | seealpha-market, seealpha-feed | READY only with persistent source evidence; no empty-as-complete |
 | Strategy/Research | #77 | feat/ai8-strategy-research-rust-20261121 | seealpha-strategy, seealpha-research | Runtime accept_strategy checks issuance; historical Catalog replay now calls run_issued_host on trusted Ledger issuance; archive-backed paper sessions now also use Ledger-issued host; development-only sample directories still use lower-level host |
 | Backtest | #74 | feat/backtest-evidence-execution-20261121 | seealpha-backtest | Verified replay is available, Runtime task worker not yet switched |
-| Portfolio | #72 | feat/portfolio-evidence-risk-20261121 | seealpha-portfolio | Cross-leg phase gate present; Rust Runtime state/evidence lifecycle still needs integration |
+| Portfolio | #72 | feat/portfolio-evidence-risk-20261121 | seealpha-execution | Cross-leg phase gate present; Rust Runtime state/evidence lifecycle still needs integration |
 | Venue | #80 | feat/rust-venue-order-evidence-20261121 | seealpha-venue | Old write path intentionally fails closed; no live orders |
 | Ledger | #79 | feat/ledger-parity-cas-20261121 | seealpha-ledger | Atomic pre-registration present; Runtime IntentJournal adapter not yet connected |
 | HTTP | #78 | feat/http-v2-research-v1-parity-ai9-20261121 | seealpha-http | Research task auth/cancel implemented; 501 for missing snapshot and other capabilities; routes not all equivalent |

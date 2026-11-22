@@ -2,8 +2,8 @@
 
 ## Rust 原生实现
 
-- `seealpha-portfolio::coordinator`：多成员目标、虚拟订单（Market/Limit/StopMarket/StopLimit）、K 线后触发、成交内部撮合与归属、限额、风险退出、在途订单去重和部分成交、撤单被拒后的在途门禁、冻结、可恢复快照。
-- `seealpha-portfolio::basket`：Spot / USD-M / Options 多腿目标，同账户隔离、合约数量步长、价格与风险预算、Funding Carry/Option Protected 和声明式 Spot/UM hedge pair 的阶段排序、每腿成交累计及终态仓位确认、事件重放。
+- `seealpha-execution::coordinator`：多成员目标、虚拟订单（Market/Limit/StopMarket/StopLimit）、K 线后触发、成交内部撮合与归属、限额、风险退出、在途订单去重和部分成交、撤单被拒后的在途门禁、冻结、可恢复快照。
+- `seealpha-execution::basket`：Spot / USD-M / Options 多腿目标，同账户隔离、合约数量步长、价格与风险预算、Funding Carry/Option Protected 和声明式 Spot/UM hedge pair 的阶段排序、每腿成交累计及终态仓位确认、事件重放。
 - `risk`：跨腿漂移、期权覆盖、行情过期、当前总名义额、仓位/累计成交一致性、待确认超时。
 - `order_evidence`：根据计划哈希和请求身份生成稳定客户端订单号，交易所订单/执行 ID 绑定，拒绝认可静态 ACK 成交；未知/非完整终态冻结而不是重发。
 - `settlement`：已认证期权到期行权明细、合约乘数、行权价、到期价及现金账户前后余额逐项核对。

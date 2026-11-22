@@ -1,11 +1,11 @@
 # Backtesting and portfolio Python directory retirement
 
 The native Rust owners are `backtest` (`seealpha-backtest`) and
-`portfolio` (`seealpha-portfolio`). Their integration is through
+`portfolio` (`seealpha-execution`). Their integration is through
 `application/runtime`, `accounting/ledger`, and the native HTTP server.
 
 The legacy directories `engine/backtesting` (8 files) and
-`engine/portfolio` (10 files) were removed as the module-level retirement
+`engine/execution` (10 files) were removed as the module-level retirement
 unit. The migration intentionally does not claim Python/NautilusTrader
 event-level parity. Rust backtests are offline simulations, not evidence
 of live exchange fills.
@@ -14,9 +14,9 @@ of live exchange fills.
 | --- | --- |
 | historical window and bar replay | `seealpha-backtest::window`, `timeline`, `matching` |
 | funding carry and protected options | `seealpha-backtest::timeline`, `matching`, `option_quotes` |
-| strategy publication, target netting, virtual orders | `seealpha-portfolio::lib`, `coordinator` |
-| basket planning, phase reconciliation | `seealpha-portfolio::basket`, `journal`, `phase_gate` |
-| execution evidence, monitoring, settlement | `seealpha-portfolio::order_evidence`, `risk`, `settlement` |
+| strategy publication, target netting, virtual orders | `seealpha-execution::lib`, `coordinator` |
+| basket planning, phase reconciliation | `seealpha-execution::basket`, `journal`, `phase_gate` |
+| execution evidence, monitoring, settlement | `seealpha-execution::order_evidence`, `risk`, `settlement` |
 | persistent scoped coordinator | `seealpha-runtime::portfolio` with ledger persistence |
 
 **Cutover boundary:** the retired Python `engine.trading.runtime` and
@@ -35,7 +35,7 @@ Verification required on a Rust-capable checkout:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test -p seealpha-backtest --locked
-cargo test -p seealpha-portfolio --locked
+cargo test -p seealpha-execution --locked
 cargo test --workspace --locked
 ```
 

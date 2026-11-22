@@ -2,11 +2,11 @@
 
 This ledger tracks replacement by Python module within a directory. The default Engine is Rust. When the corresponding native Rust functionality is already implemented and integrated, the redundant Python source is removed without waiting for unrelated Decimal formatting or cleanup verification. The separate legacy Python Engine may lose compatibility when its imported modules are retired.
 
-## First migration unit: `engine/portfolio/`
+## First migration unit: `engine/execution/`
 
 | Legacy responsibility | Rust target | Current evidence | Cutover gate |
 | --- | --- | --- | --- |
-| `engine/portfolio/targets.py` immutable target, selection, bounded weight, allocation conversion (**deleted on this PR**) | `portfolio/core/src/lib.rs` `TargetHolding` | Rust model wired to paper runtime and native coordinator; fixture tests authored but unexecuted | Follow up on any remaining legacy-only imports and adjust/remove stale tests |
+| `engine/execution/targets.py` immutable target, selection, bounded weight, allocation conversion (**deleted on this PR**) | `portfolio/core/src/lib.rs` `TargetHolding` | Rust model wired to paper runtime and native coordinator; fixture tests authored but unexecuted | Follow up on any remaining legacy-only imports and adjust/remove stale tests |
 | Target netting, paper delta and clipping | `portfolio/core/src/lib.rs` | Native unit tests exist | Compare replay order, rounding, netting, persistence and error paths against legacy scenario fixtures |
 | Portfolio coordinator and failure handling | `portfolio/core/src/coordinator.rs` and application integration | Rust implementations exist | Inventory legacy call sites and externally visible side effects, including cancel/unknown-order behavior; prove parity on isolated stores |
 
@@ -49,7 +49,7 @@ The existing `application/runtime/src/portfolio.rs` persists coordinator snapsho
 
 A focused runtime test creates a development ledger, registers a member, publishes a 0.5 weighted target at allocation 4, reloads persisted coordinator state, reconciles an offline target delta of 2, and verifies a wrong-symbol publication returns a conflict without advancing the stored revision. **Test committed, not executed.** This is a Rust-native persisted API pathway, not a live venue order route.
 
-The persisted coordinator and the paper replay remain separate application workflows. This does not prove that all legacy Python Portfolio callers were migrated, or justify deleting the entire `engine/portfolio/` folder; only the separately replaced target module has been removed.
+The persisted coordinator and the paper replay remain separate application workflows. This does not prove that all legacy Python Portfolio callers were migrated, or justify deleting the entire `engine/execution/` folder; only the separately replaced target module has been removed.
 
 ## Validation environment and Decimal assertion review
 
@@ -65,14 +65,14 @@ The current connected container does not have `cargo` or `rustc`, and its git re
 
 ## Current batch status
 
-**Partial: `engine/portfolio/targets.py` deleted (41 source lines).** The native coordinator now validates membership before removing resting orders in `flatten`, with failure-atomicity and member-isolation tests in `portfolio/core/tests/coordinator_atomicity.rs`. This is a Rust safety fix, not a Python cutover. The added `legacy_target_parity.rs` covers the native target selection, bounds, signed quantity and allocation cases. The native fixture suite has **not been executed** in this connector session, and no identical-input Python-versus-Rust comparison or legacy import inventory has been run. Do not treat this as a completed folder cutover or enable live trading based on it.
+**Partial: `engine/execution/targets.py` deleted (41 source lines).** The native coordinator now validates membership before removing resting orders in `flatten`, with failure-atomicity and member-isolation tests in `portfolio/core/tests/coordinator_atomicity.rs`. This is a Rust safety fix, not a Python cutover. The added `legacy_target_parity.rs` covers the native target selection, bounds, signed quantity and allocation cases. The native fixture suite has **not been executed** in this connector session, and no identical-input Python-versus-Rust comparison or legacy import inventory has been run. Do not treat this as a completed folder cutover or enable live trading based on it.
 
 ## First actual Python module retirement
 
-- Deleted: `engine/portfolio/targets.py` (41 lines, immutable target definition plus `signed_quantity`).
+- Deleted: `engine/execution/targets.py` (41 lines, immutable target definition plus `signed_quantity`).
 - Replacement: `portfolio/core/src/lib.rs::TargetHolding`, already used by `application/runtime/src/session.rs` and the persisted portfolio event adapter.
 - Independent fixes (Decimal report string scale, coordinator atomicity) are **not** blockers to deleting replaced Python source.
-- Remaining impact: the opt-in legacy Python runtime may still import this module. That import graph could not be enumerated using the available GitHub connector search; do **not** claim the legacy Python entrypoint remains operational after its removal. The primary Rust runtime does not import `engine/portfolio/targets.py`.
+- Remaining impact: the opt-in legacy Python runtime may still import this module. That import graph could not be enumerated using the available GitHub connector search; do **not** claim the legacy Python entrypoint remains operational after its removal. The primary Rust runtime does not import `engine/execution/targets.py`.
 - No Cargo or legacy-Python test run has been observed in this editing session.
 
 ## Complete directory retirement: `engine/market_data/quality/` (2026-11-21)

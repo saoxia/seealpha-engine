@@ -39,7 +39,7 @@ This change does not authorize live trading, deployment, historical source rewri
 | engine/market_data/quality/ | Quality rules, parity and integration | Rust candidate only |
 | engine/strategies/ | Native strategy package validation and target interface | Pending |
 | engine/backtesting/ | Rust NautilusTrader backtest/streaming parity | Pending |
-| engine/portfolio/ | Decimal-safe netting, basket targets and risk phases | Pending |
+| engine/execution/ | Decimal-safe netting, basket targets and risk phases | Pending |
 | engine/trading/ | Ledger, order idempotency, no blind retry, recovery and risk gates | Pending |
 | engine/research/ | Research task authorization, snapshots and workers | Pending |
 | engine/api/ | HTTP v2, Research v1 and MCP-compatible native boundary | Pending |

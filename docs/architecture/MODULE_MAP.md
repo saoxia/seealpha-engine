@@ -13,7 +13,7 @@
 | 回测协调、研究快照 | `engine/runtime/src/research.rs`、`history.rs` | `gateway/api/src/research/`、`engine/backtest` |
 | 策略授权与原生策略 | `engine/strategy/src/` | `engine/runtime/src/session.rs` |
 | 研究授权与操作范围校验 | `engine/gateway/api/src/research/` | `engine/gateway/api/src/research_v1.rs`、`engine/gateway/mcp/src/research.rs` |
-| 目标持仓、篮子、风险裁剪 | `engine/portfolio/src/` | `runtime/src/basket*.rs` |
+| 目标持仓、篮子、风险裁剪 | `engine/execution/src/` | `runtime/src/basket*.rs` |
 | 账户、订单和成交持久化 | `engine/ledger/src/` | `engine/runtime/src/accounts.rs` |
 | Binance 实时行情入口（实验性） | `engine/pipeline/sources/shared/nautilus/src/main.rs` | 由 `engine/runtime/src/sources.rs` 显式启动，独立编译 |
 | 产品采集及存储基线 | `engine/pipeline/BASELINE.md` | Spot 原始成交、USD-M 聚合成交、Options 仅历史 K 线；记录未完成的自动维护闭环 |

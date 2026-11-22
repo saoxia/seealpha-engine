@@ -21,7 +21,7 @@
 | `engine/connectors/` | 交易所协议、Nautilus 适配器；不得反向依赖消费或采集编排 |
 | `engine/strategies/` | 策略包检查、发行物加载、策略配置 |
 | `engine/backtesting/` | 离线回测、模拟与独立子进程执行 |
-| `engine/portfolio/` | 组合/篮子目标、调仓净额与对账逻辑 |
+| `engine/execution/` | 组合/篮子目标、调仓净额与对账逻辑 |
 | `engine/trading/` | Engine 订单、账户运行事实、幂等与恢复 |
 | `engine/research/` | 研究候选、只读快照、研究评估 |
 | `engine/infrastructure/` | 进程管理、任务队列等底层基础设施 |

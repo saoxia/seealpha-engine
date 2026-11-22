@@ -12,7 +12,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 
 - `engine/pipeline/`：完整行情服务（Nautilus 原生订阅、补充来源、数据完整性、实时和历史访问）
 - `engine/strategy/`：Rust 内置策略、授权清单和目标持仓发布
-- `engine/portfolio/`：目标净额和风险裁剪
+- `engine/execution/`：目标净额和风险裁剪
 - `engine/ledger/`：PostgreSQL 账本（SeeAlpha 专属 schema）
 - `engine/connection/`：Binance Options 专属规范化接口（Spot/USD-M 原生工厂位于 `pipeline/sources/shared/nautilus/`）
 - `engine/backtest/`：历史回放与回测
