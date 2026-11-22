@@ -1,7 +1,10 @@
 [workspace]
 resolver = "2"
 # Validate pinned Nautilus Rust without mutating the production workspace graph.
-exclude = ["engine/pipeline/sources/shared/nautilus"]
+exclude = [
+    "engine/pipeline/sources/shared/nautilus",
+    "engine/pipeline/sources/binance_account",
+]
 members = [
     "engine/pipeline/catalog",
     "engine/pipeline/sources/binance/archive",

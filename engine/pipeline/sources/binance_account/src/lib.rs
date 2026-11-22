@@ -7,7 +7,7 @@
 use nautilus_common::msgbus::{self, TypedHandler};
 use nautilus_model::events::OrderEventAny;
 
-use crate::native_execution::{
+use seealpha_nautilus_binance_data::native_execution::{
     check_native_fill_binding, link_native_accept, link_native_fill,
     NativeAcceptLink, NativeFillLink, NativeOrderBinding,
 };

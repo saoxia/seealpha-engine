@@ -13,3 +13,9 @@ Binance 官方 ZIP 下载代码保存在 `binance/archive/`，仅供 Binance 产
 `binance_option/` 历史市场数据仅使用 Binance 官方期权 K 线（`bars`），按期权合约与周期落盘；不对期权采集历史成交、订单簿或公开行权事件。合约元数据用于识别品种，不属于历史行情。
 
 上述 Spot、USD-M、Options 的产品数据边界已记录于 [Pipeline 基线](../BASELINE.md)。冻结已有责任划分，不为未接通的接口创建平行采集或修复程序。
+
+## Binance 账户与订单事件
+
+`binance_account/` 是 Binance 账户侧原生执行事件的接入域。它订阅 NautilusTrader 的原生 typed order-event bus，负责接入、订阅生命周期和登记订单的解析；不实现交易所 WebSocket、真实订单状态机或自定义执行客户端。
+
+`shared/nautilus/` 保留可复用的原生事件字段投影和账户/合约/订单身份验证；具体执行模块只消费通过验证的关联结果。当前订阅尚未绑定正在运行的 LiveNode，也不代表已完成跨进程可信事件回写或 Ledger 经济入账。

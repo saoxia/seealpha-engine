@@ -1,0 +1,15 @@
+[package]
+name = "seealpha-binance-account-source"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+
+# Binance-specific native account/event subscription; no custom venue sender.
+# Both this crate and the pinned native Nautilus dependency are excluded from
+# the production workspace until their lifecycle and tests are verified.
+[dependencies]
+seealpha-nautilus-binance-data = { path = "../shared/nautilus" }
+nautilus-common = "=0.68.0"
+nautilus-model = { version = "=0.68.0", features = ["high-precision"] }
+anyhow = "1"
