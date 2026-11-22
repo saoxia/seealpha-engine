@@ -77,7 +77,7 @@ pub(super) async fn strategy_preview(
     Ok(Json(
         state
             .runtime
-            .run_paper(PaperRequest {
+            .run_paper_preview(PaperRequest {
                 tenant_id,
                 account_id,
                 snapshot,
