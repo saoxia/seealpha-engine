@@ -182,7 +182,6 @@ pub async fn serve(state: AppState) -> Result<(), std::io::Error> {
 fn resume_queued_research_jobs(state: &AppState) -> Result<(), std::io::Error> {
     let tenants = state
         .runtime
-        .ledger
         .active_tenant_ids()
         .map_err(std::io::Error::other)?;
     for tenant in tenants {
