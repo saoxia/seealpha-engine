@@ -21,13 +21,6 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/jobs/{identity}/retry",post(task_retry))
         .route("/tenants/{tenant_id}/accounts/{account_id}/positions",get(positions))
         .route("/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}",get(request))
-        .route("/tenants/{tenant_id}/accounts/{account_id}/market/subscriptions",
-            get(subscriptions).post(subscription_put))
-        .route("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions",
-            post(strategy_subscribe))
-        .route("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions/{issuance_id}",
-            delete(strategy_unsubscribe))
-        .route("/market/strategy-subscriptions",get(strategy_status))
         .route("/tenants/{tenant_id}/data/control/source/{product}/start",post(source_start))
         .route("/tenants/{tenant_id}/data/control/source/{product}/stop",post(source_stop))
         .route("/tenants/{tenant_id}/data/control/source/{product}",get(source_status))
@@ -91,95 +84,6 @@ async fn request(
         .order_request_view(&tenant, &account, &request_id)
         .map_err(AppError::from)?;
     Ok(Json(value))
-}
-
-async fn subscriptions(
-    State(state): State<AppState>,
-    Path((tenant, account)): Path<(String, String)>,
-) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .market_subscriptions(&tenant, &account)
-            .map_err(AppError::from)?,
-    ))
-}
-
-async fn subscription_put(
-    State(state): State<AppState>,
-    Path((tenant, account)): Path<(String, String)>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    let product = body["product"].as_str().unwrap_or("");
-    let symbol = body["symbol"].as_str().unwrap_or("");
-    let role = body["role"].as_str().unwrap_or("");
-    let status = body["state"].as_str().unwrap_or("");
-    Ok(Json(
-        state
-            .runtime
-            .note_market_subscription(
-                &tenant,
-                &account,
-                product,
-                symbol,
-                role,
-                status,
-                &body["progress"],
-            )
-            .map_err(AppError::from)?,
-    ))
-}
-
-async fn strategy_subscribe(
-    State(state): State<AppState>,
-    Path((tenant, account)): Path<(String, String)>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    let issuance = body["issuance_id"].as_str().unwrap_or("");
-    // Only loaded, tenant-authorized strategies may ask for market views.
-    let loads = state
-        .runtime
-        .strategy_loads(&tenant, Some(&account))
-        .map_err(AppError::from)?;
-    let authorized = loads["items"]
-        .as_array()
-        .is_some_and(|items| items.iter().any(|item| item["issuance_id"] == issuance));
-    if !authorized {
-        return Err(AppError::conflict("策略尚未下发，不能订阅行情。"));
-    }
-    let lookback = body["lookback_bars"].as_i64().unwrap_or(1);
-    Ok(Json(
-        state
-            .runtime
-            .subscribe_strategy_market(&tenant, &account, issuance, &body["streams"], lookback)
-            .map_err(AppError::from)?,
-    ))
-}
-
-async fn strategy_unsubscribe(
-    State(state): State<AppState>,
-    Path((tenant, account, issuance)): Path<(String, String, String)>,
-) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .unsubscribe_strategy_market(&tenant, &account, &issuance)
-            .map_err(AppError::from)?,
-    ))
-}
-
-async fn strategy_status(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let tenant = state
-        .config
-        .tenant_id
-        .as_deref()
-        .ok_or_else(|| AppError::forbidden("未固定租户，不能获取全局订阅。"))?;
-    Ok(Json(
-        state
-            .runtime
-            .strategy_market_status(tenant)
-            .map_err(AppError::from)?,
-    ))
 }
 
 async fn source_start(
