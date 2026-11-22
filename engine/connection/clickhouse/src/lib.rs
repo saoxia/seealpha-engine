@@ -53,7 +53,7 @@ impl ClickHouseConfig {
         Ok(Some(config))
     }
 
-    fn validate(&self) -> Result<(), ClickHouseError> {
+    pub fn validate(&self) -> Result<(), ClickHouseError> {
         let url = Url::parse(&self.url).map_err(|_| ClickHouseError::Config("invalid URL"))?;
         if !matches!(url.scheme(), "http" | "https")
             || url.host_str().is_none()
