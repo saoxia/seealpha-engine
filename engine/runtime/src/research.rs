@@ -1,8 +1,6 @@
 //! Research snapshots and historical/backtest use cases.
 use crate::{Runtime, RuntimeError, map_ledger};
-use super::orders::hex_encode;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
@@ -36,36 +34,6 @@ impl Runtime {
             .save_backtest(tenant_id, account_id, "history", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
-    }
-
-    pub fn create_research_snapshot(
-        &self,
-        tenant_id: &str,
-        body: &str,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        let digest = hex_encode(Sha256::digest(body.as_bytes()));
-        let snapshot_id = digest[..16].to_string();
-        self.state_store
-            .save_snapshot(tenant_id, &snapshot_id, &digest, body)
-            .map_err(map_ledger)?;
-        Ok(json!({ "snapshot_id": snapshot_id, "sha256": digest }))
-    }
-
-    pub fn research_snapshot(
-        &self,
-        tenant_id: &str,
-        snapshot_id: &str,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        match self
-            .state_store
-            .snapshot(tenant_id, snapshot_id)
-            .map_err(map_ledger)?
-        {
-            Some((sha256, body)) => {
-                Ok(json!({ "snapshot_id": snapshot_id, "sha256": sha256, "body": body }))
-            }
-            None => Err(RuntimeError::NotFound("没有该研究快照".into())),
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -111,48 +79,6 @@ impl Runtime {
             max_gross,
         )
         .map_err(|error| RuntimeError::Conflict(error.to_owned()))?;
-        self.state_store
-            .save_backtest(tenant_id, account_id, "protected_option", &body.to_string())
-            .map_err(map_ledger)?;
-        Ok(body)
-    }
-
-    pub fn run_carry_backtest(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        bars: &[seealpha_backtest::matching::CarryBar],
-        spot_qty: rust_decimal::Decimal,
-        perp_qty: rust_decimal::Decimal,
-        cash: rust_decimal::Decimal,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        self.require_development(tenant_id)?;
-        let body = seealpha_backtest::matching::run_carry(bars, spot_qty, perp_qty, cash)
-            .map_err(|error| RuntimeError::Conflict(error.to_owned()))?;
-        self.state_store
-            .save_backtest(tenant_id, account_id, "carry", &body.to_string())
-            .map_err(map_ledger)?;
-        Ok(body)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn run_protected_backtest(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        final_spot: rust_decimal::Decimal,
-        strike: rust_decimal::Decimal,
-        premium: rust_decimal::Decimal,
-        multiplier: rust_decimal::Decimal,
-        perp_qty: rust_decimal::Decimal,
-        perp_entry: rust_decimal::Decimal,
-        perp_exit: rust_decimal::Decimal,
-        cash: rust_decimal::Decimal,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        self.require_development(tenant_id)?;
-        let body = seealpha_backtest::matching::run_protected_option(
-            final_spot, strike, premium, multiplier, perp_qty, perp_entry, perp_exit, cash,
-        );
         self.state_store
             .save_backtest(tenant_id, account_id, "protected_option", &body.to_string())
             .map_err(map_ledger)?;
