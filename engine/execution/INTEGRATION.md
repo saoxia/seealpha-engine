@@ -141,3 +141,11 @@ it could create artificial same-bar churn and was not called by Runtime.
 `replay_targets` remains the underlying paper execution primitive and is
 not a live venue execution path. Live orders and executions must use the
 Nautilus-integrated Runtime path; do not treat paper fills as exchange facts.
+
+## Historical carry data boundary
+
+Spot/UM bar alignment and observed funding-rate merging now live in
+`seealpha-backtest::carry_history`, not in execution. They are historical
+observations and must not generate exchange fills or funding cash movements.
+Execution uses authoritative position/order evidence; Ledger records actual
+exchange-confirmed funding and settlement movements.
