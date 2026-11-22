@@ -26,7 +26,6 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 | PUT | `/tenants/{tenant_id}` | `TenantBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/runnable` | `RunnableBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/drop` | `无体或对象` | 删除租户状态 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| GET | `/market/strategy-subscriptions` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/workers/{worker_id}` | `Query / path` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/workers/{worker_id}/stop` | `无体或对象` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/strategy-packages/inspect` | `PackageInspectBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
@@ -55,10 +54,6 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/reconcile` | `ReconcileBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/ledger-sync` | `无体或对象` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/events` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| GET | `/tenants/{tenant_id}/accounts/{account_id}/market/subscriptions` | `Query / path` | 订阅状态 / 配置 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/market/subscriptions` | `SubscriptionBody` | 订阅状态 / 配置 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions` | `StrategyMarketBody` | 订阅状态 / 配置 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| DELETE | `/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions/{issuance_id}` | `Query / path` | 订阅状态 / 配置 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers/note` | `WorkerNote` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers` | `WorkerBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/strategy-preview` | `PreviewBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
