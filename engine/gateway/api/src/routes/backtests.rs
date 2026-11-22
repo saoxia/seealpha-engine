@@ -26,39 +26,11 @@ pub(super) async fn run_backtest(
         .unwrap_or("10")
         .parse()
         .map_err(|_| AppError::bad_request("风险额度无效。"))?;
-    // Legacy API contract: a date-scoped request uses stored, issued strategy
-    // packages and contiguous local catalog evidence, never injected targets.
+    // A date-scoped issued-strategy replay was retired with Runtime history.rs.
+    // Never silently substitute caller-injected bars or synthetic targets.
     if body.get("bars").is_none() {
-        let start = body
-            .get("start")
-            .and_then(Value::as_str)
-            .and_then(parse_time_ms)
-            .ok_or_else(|| AppError::bad_request("开始时间无效。"))?;
-        let end = body
-            .get("end")
-            .and_then(Value::as_str)
-            .and_then(parse_time_ms)
-            .ok_or_else(|| AppError::bad_request("结束时间无效。"))?;
-        let interval = body.get("interval").and_then(Value::as_str).unwrap_or("1m");
-        let product = body
-            .get("product")
-            .and_then(Value::as_str)
-            .unwrap_or("futures_um");
-        return Ok(Json(
-            state
-                .runtime
-                .run_issued_catalog_backtest(
-                    &tenant_id,
-                    &account_id,
-                    product,
-                    symbol,
-                    interval,
-                    start,
-                    end,
-                    starting,
-                    quote,
-                )
-                .map_err(AppError::from)?,
+        return Err(AppError::conflict(
+            "基于 Catalog 的已下发策略历史回测暂未提供；请显式提供 bars 和 targets。",
         ));
     }
     let raw_bars = body
