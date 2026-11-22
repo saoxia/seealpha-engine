@@ -121,7 +121,6 @@ impl TickBars {
         self.last=(Some(tick.ts_ns),Some(tick.id.clone()));
         Ok(updates)
     }
-    pub fn current(&self,interval:&str)->Option<&TickBar>{self.states.get(interval)}
 }
 
 #[cfg(test)]
