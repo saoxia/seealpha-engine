@@ -59,7 +59,8 @@ impl StateStore {
         use seealpha_database::params;
         let conn=self.lock()?;
         let mut stmt=conn.prepare("SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2 AND environment=$3").map_err(|e| LedgerError::Database(e.to_string()))?;
-        stmt.query_map(params![tenant,account,env], |r| r.get::<_,String>(0)).map_err(|e| LedgerError::Database(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e| LedgerError::Database(e.to_string()))
+        let rows=stmt.query_map(params![tenant,account,env], |r| r.get::<_,String>(0)).map_err(|e| LedgerError::Database(e.to_string()))?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e| LedgerError::Database(e.to_string()))
     }
     // Test-only authenticated fill fixtures. Production ingestion stays in Ledger.
     fn import_verified_fills(&self, tenant: &str, account: &str, env: &str, order_id: &str, rows: &[serde_json::Value]) -> Result<usize, LedgerError> {
