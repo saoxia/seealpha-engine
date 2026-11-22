@@ -46,7 +46,6 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/data/control/job/cancel",post(data_cancel))
         .route("/tenants/{tenant_id}/data/control/job/retry",post(data_retry))
         .route("/tenants/{tenant_id}/data/control/configuration-plan",post(configuration_plan))
-        .route("/tenants/{tenant_id}/data/control/delete-plan",post(native_delete_preview))
         .route("/tenants/{tenant_id}/data/datasets",post(data_inventory))
         .route("/tenants/{tenant_id}/data/coverage",post(data_coverage))
         .route("/tenants/{tenant_id}/data/prepare-plan",post(data_prepare_plan))
@@ -647,36 +646,6 @@ async fn configuration_plan(
         "effect":"review_only","will_delete":false}),
     ))
 }
-async fn native_delete_preview(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    if body["delete_archives"] == true {
-        return Err(AppError::conflict(
-            "归档删除依赖独立原始数据目录与跨进程锁，暂不支持。",
-        ));
-    }
-    let product = body["product"].as_str().unwrap_or("futures_um");
-    let symbol = body["symbol"]
-        .as_str()
-        .ok_or_else(|| AppError::bad_request("待删除品种无效。"))?;
-    let from = body["start_ms"]
-        .as_i64()
-        .or_else(|| body["start"].as_str().and_then(parse_time_ms))
-        .ok_or_else(|| AppError::bad_request("删除开始时间无效。"))?;
-    let to = body["end_ms"]
-        .as_i64()
-        .or_else(|| body["end"].as_str().and_then(parse_time_ms))
-        .ok_or_else(|| AppError::bad_request("删除结束时间无效。"))?;
-    Ok(Json(
-        state
-            .runtime
-            .native_delete_plan(&tenant, product, symbol, from, to)
-            .map_err(AppError::from)?,
-    ))
-}
-
 // Read-side endpoints use ONLY the tenant's existing Rust catalog; no route
 // here starts Binance sockets, downloads archives or modifies DataPolicy.
 fn data_query_range(body: &Value) -> Result<(&str, &str, &str, i64, i64, i64), AppError> {
