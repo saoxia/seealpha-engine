@@ -1,8 +1,9 @@
 //! Application-owned durable state: research outputs and Portfolio checkpoints.
 //! This is not a balance, position, or exchange fill ledger. Uses the same
 //! PostgreSQL schema initialized by Runtime before stores are opened.
-mod registry;
-pub use registry::Tenant;
+mod tenants;
+pub use tenants::Tenant;
+mod account_registry;
 mod basket_journal;
 mod coordinator_state;
 mod research;
