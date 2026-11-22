@@ -30,6 +30,13 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 
 升级已有数据库不会自动删除历史 `account_snapshots` 表及数据；待明确历史保留和备份策略后由独立迁移处理。
 
+## 旧 `src/` 接口清理（2026-11-22）
+
+- 删除不再被生产调用的 `records.rs::gaps()`、`records.rs::events()` 及可绕过专用认证入口的旧 `upsert_fill_row()`；保留 `gaps_for_scope()`、`event_page()`、`import_verified_fills()` 和 Paper Session 内部模拟成交写入。
+- 删除 `parity.rs::positions()` 对历史 `positions` 表的读接口；Gateway `/positions` 在 Nautilus 原生持仓核验尚未接线前明确失败关闭，包含 `paper` 环境，不能把缺少证据的空仓位响应当作已核实状态。
+- **不执行 DROP 表或历史数据迁移**：既有 `positions` 和 `order_observations` 数据保留供审计及后续受控迁移。
+- `order_intents.rs` 的订单观察与恢复链路暂时保留：虽然没有生产观察写入调用方，`order_recovery_page()` 依赖历史观察、且带有禁止未知状态重发的安全约束；必须由已验收的 Nautilus 持久报告与恢复功能替代后再删。
+
 ## 安全原则
 
 - Nautilus Account / Position 管理运行时余额、保证金和持仓；SeeAlpha 不再新增另一套账户快照引擎。
