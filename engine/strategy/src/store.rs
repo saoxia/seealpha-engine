@@ -150,6 +150,91 @@ impl StrategyStore {
         store.rebuild_index()?;
         Ok(store)
     }
+
+    /// Reconstruct the index from published issuance directories after a crash
+    /// or loss of the metadata database; no legacy Ledger strategy tables.
+    fn rebuild_index(&self) -> Result<(), StoreError> {
+        let _guard = self.lock.lock().map_err(err)?;
+        let mut conn = self.index.lock().map_err(err)?;
+        let tx = conn.transaction().map_err(err)?;
+        tx.execute("DELETE FROM strategy_issuances", []).map_err(err)?;
+        for tenant in fs::read_dir(&self.root).map_err(err)? {
+            let tenant = tenant.map_err(err)?;
+            if !tenant.file_type().map_err(err)?.is_dir() { continue; }
+            for account in fs::read_dir(tenant.path()).map_err(err)? {
+                let account = account.map_err(err)?;
+                if !account.file_type().map_err(err)?.is_dir() { continue; }
+                for item in fs::read_dir(account.path()).map_err(err)? {
+                    let item = item.map_err(err)?;
+                    if !item.file_type().map_err(err)?.is_dir()
+                        || item.file_name().to_string_lossy().starts_with('.') { continue; }
+                    let record = read_record(&item.path().join("issuance.json"))?;
+                    if record.load.tenant_id != tenant.file_name().to_string_lossy()
+                        || record.load.account_id != account.file_name().to_string_lossy()
+                        || record.load.issuance_id != item.file_name().to_string_lossy()
+                    { return Err(conflict("issuance scope mismatch on startup")); }
+                    self.check_artifact(&item.path(), &record)?;
+                    insert_index(&tx, &record)?;
+                }
+            }
+        }
+        tx.commit().map_err(err)
+    }
+
+    fn check_artifact(&self, folder: &Path, record: &StoredRecord) -> Result<Vec<u8>, StoreError> {
+        let manifest = folder.join("manifest.json");
+        let file = if manifest.exists() { manifest } else { folder.join("legacy-archive.bin") };
+        let bytes = fs::read(file).map_err(err)?;
+        if sha(&bytes) != record.load.package_hash {
+            return Err(conflict("stored strategy manifest was modified"));
+        }
+        if let Some(digest) = &record.zip_sha256 {
+            let zip_bytes = fs::read(folder.join("package.zip")).map_err(err)?;
+            if sha(&zip_bytes) != *digest { return Err(conflict("stored ZIP was modified")); }
+            let (manifest, files) = unpack_native_zip(&zip_bytes)?;
+            if manifest != bytes { return Err(conflict("ZIP manifest differs from deployed manifest")); }
+            for (relative, expected) in files {
+                if fs::read(folder.join(relative)).map_err(err)? != expected {
+                    return Err(conflict("extracted strategy file was modified"));
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn index_record(&self, record: &StoredRecord) -> Result<(), StoreError> {
+        let mut conn = self.index.lock().map_err(err)?;
+        let tx = conn.transaction().map_err(err)?;
+        let l = &record.load;
+        let current: Option<(String,String,String,String,String,String,Option<String>)> = tx.query_row(
+            "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+             FROM strategy_issuances WHERE tenant_id=?1 AND account_id=?2 AND issuance_id=?3",
+            params![l.tenant_id,l.account_id,l.issuance_id],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)),
+        ).optional().map_err(err)?;
+        let expected = (l.code_key.clone(),l.version.clone(),l.grant_purpose.clone(),
+            l.parameters_json.clone(),l.entry_point.clone(),l.package_hash.clone(),
+            record.zip_sha256.clone());
+        match current {
+            Some(prior) if prior != expected => return Err(conflict("indexed issuance differs")),
+            Some(_) => (),
+            None => insert_index(&tx, record)?,
+        }
+        tx.commit().map_err(err)
+    }
+
+    /// Metadata-only lookup using SQLite, without walking strategy folders.
+    pub fn list(&self, tenant: &str, account: &str) -> Result<Vec<StrategyLoad>, StoreError> {
+        if !valid_id(tenant) || !valid_id(account) { return Err(conflict("invalid scope")); }
+        let conn = self.index.lock().map_err(err)?;
+        let mut stmt = conn.prepare(
+            "SELECT tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
+                    parameters_json,entry_point,package_hash
+             FROM strategy_issuances WHERE tenant_id=?1 AND account_id=?2 ORDER BY issuance_id"
+        ).map_err(err)?;
+        let rows = stmt.query_map(params![tenant,account],read_index_row).map_err(err)?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(err)
+    }
     fn folder(&self, load: &StrategyLoad) -> PathBuf {
         self.root.join(&load.tenant_id).join(&load.account_id).join(&load.issuance_id)
     }
@@ -195,6 +280,7 @@ impl StrategyStore {
                     return Err(conflict("stored ZIP was modified"));
                 }
             }
+            self.index_record(&record)?;
             return Ok(());
         }
         let parent = final_dir.parent().ok_or_else(|| conflict("invalid scope"))?;
@@ -239,44 +325,25 @@ impl StrategyStore {
             fs::rename(&stage,&final_dir).map_err(err)
         })();
         if outcome.is_err() { let _ = fs::remove_dir_all(stage); }
-        outcome
+        outcome?;
+        self.index_record(&record)
     }
 
+    /// Execution: find issuance metadata in SQLite, then verify on-disk bytes.
     pub fn strategies(&self, tenant: &str, account: &str) -> Result<Vec<StrategyLoad>, StoreError> {
-        if !valid_id(tenant) || !valid_id(account) { return Err(conflict("invalid scope")); }
+        let indexed = self.list(tenant, account)?;
         let _guard = self.lock.lock().map_err(err)?;
-        let scope = self.root.join(tenant).join(account);
-        if !scope.exists() { return Ok(Vec::new()); }
-        let mut output = Vec::new();
-        for entry in fs::read_dir(scope).map_err(err)? {
-            let entry = entry.map_err(err)?;
-            if !entry.file_type().map_err(err)?.is_dir() || entry.file_name().to_string_lossy().starts_with('.') { continue; }
-            let path = entry.path();
-            let record = read_record(&path.join("issuance.json"))?;
-            if record.load.tenant_id != tenant || record.load.account_id != account
-                || record.load.issuance_id != entry.file_name().to_string_lossy()
-            { return Err(conflict("stored scope mismatch")); }
-            let manifest = path.join("manifest.json");
-            let artifact = if manifest.exists() { manifest } else { path.join("legacy-archive.bin") };
-            let raw = fs::read(artifact).map_err(err)?;
-            if sha(&raw) != record.load.package_hash { return Err(conflict("stored manifest digest mismatch")); }
-            if let Some(digest) = &record.zip_sha256 {
-                let zip_bytes = fs::read(path.join("package.zip")).map_err(err)?;
-                if sha(&zip_bytes) != *digest { return Err(conflict("stored ZIP digest mismatch")); }
-                let (_, files) = unpack_native_zip(&zip_bytes)?;
-                for (relative, expected) in files {
-                    if fs::read(path.join(relative)).map_err(err)? != expected {
-                        return Err(conflict("extracted strategy file was modified"));
-                    }
-                }
-            }
-            let mut load = record.load;
-            load.archive = raw;
+        let mut output = Vec::with_capacity(indexed.len());
+        for mut load in indexed {
+            let dir = self.folder(&load);
+            let record = read_record(&dir.join("issuance.json"))?;
+            if record.load != load { return Err(conflict("indexed strategy metadata differs from disk")); }
+            load.archive = self.check_artifact(&dir, &record)?;
             output.push(load);
         }
-        output.sort_by(|a,b| a.issuance_id.cmp(&b.issuance_id));
         Ok(output)
     }
+
 }
 
 #[cfg(test)]
