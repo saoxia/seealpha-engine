@@ -6,8 +6,6 @@ mod records;
 mod writer;
 mod funding;
 mod control;
-mod subscriptions;
-pub use subscriptions::{PipelineSubscription, validate_subscription};
 
 use std::path::PathBuf;
 use thiserror::Error;
