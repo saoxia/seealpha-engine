@@ -8,6 +8,7 @@ mod paper;
 mod order_intents;
 mod order_reconciliation_tasks;
 mod order_requests;
+pub use order_requests::StoredOrder;
 pub use order_intents::{IntentStart, OrderRecoveryItem};
 pub use order_reconciliation_tasks::ReconciliationTask;
 pub(crate) use paper::{SessionStart, SessionWrite};
