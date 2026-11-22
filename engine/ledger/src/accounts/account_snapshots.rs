@@ -205,7 +205,6 @@ impl Ledger {
     /// It does NOT authenticate a new Nautilus AccountState, query the venue,
     /// or authorize sending an order. The upstream account adapter must still
     /// independently verify the exchange source before storing the snapshot.
-    #[allow(clippy::too_many_arguments)]
     pub fn account_snapshot_for_risk(
         &self,
         tenant: &str,
@@ -256,7 +255,6 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Barrier};
     use std::thread;
-
 
     #[test]
     fn risk_snapshot_requires_exact_revision_source_and_fresh_time() {
@@ -351,7 +349,7 @@ mod tests {
                 "tenant1", "account1", "sandbox", 1, 21_000_000, 1_000_000,
             ).unwrap();
             assert_eq!(checked.evidence_id, "venue-10");
-            assert_eq!(checked.state["balances"]["USDT"], "23.0001");
+            assert_eq!(checked.state["balances"]["USDT"].as_str(), Some("23.0001"));
             assert!(recovered.account_snapshot_for_risk(
                 "tenant1", "account1", "sandbox", 1, 21_000_001, 1_000_000,
             ).is_err());
