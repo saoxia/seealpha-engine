@@ -2,6 +2,7 @@
 //! This is only a SeeAlpha process-coordination guard; Nautilus owns all
 //! TradeTick serialization, Arrow schemas and Parquet catalog operations.
 
+pub mod native_account;
 pub mod native_execution;
 
 use std::{

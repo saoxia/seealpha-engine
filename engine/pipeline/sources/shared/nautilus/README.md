@@ -149,3 +149,11 @@ Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/or
 执行事件持久化应使用 Nautilus 原生 StreamingConfig.record_types 与 Feather/Parquet Catalog，类型清单统一定义在 native_execution::native_execution_record_types（包括订单生命周期、OrderFilled/FillReport、PositionStatusReport 与 AccountState）。离线 tests/native_execution_node.rs 使用此清单验证固定版本的编译契约和配置可用性；**尚未启动带 Streaming 的执行节点、未验证实际写盘及重启恢复**，此前 rc9 的 Streaming LiveNode 销毁异常尚需解决。
 
 SeeAlpha Ledger 仍保留可信签名成交、结算和不可变下单前意图的必要独立证据。Nautilus 的 OrderFilled / FillReport 不自动成为交易所认证成交，也不能直接绕过 verified_fills 的核验路径。后续接线需要核验租户/账户绑定、真实 Trade ID、重复事件、Catalog 完整性、持久化中断及重启，且在此之前 **Runtime 实盘发送仍关闭**。具体重叠能力矩阵见 [Ledger/Nautilus 边界审计](../../../../../docs/architecture/LEDGER_NAUTILUS_OVERLAP_20261122.md)。
+
+## AccountState 原生只读报告门禁（2026-11-22）
+
+新增 `src/native_account.rs::inspect_native_account_report`，直接使用 **固定 NautilusTrader Rust 0.68.0** 的 `AccountState` 类型，不自行设计 Binance 账户资产 JSON 模型。对输入 AccountState 检查：预期 Nautilus AccountId、AccountType、`is_reported`、事件与初始化时间有效性、观察时点未来/过期边界；只返回 AccountId、事件 ID 与纳秒时间戳的候选元数据。
+
+**`is_reported=true` 只表示 Nautilus 此事件属于交易所上报类别，不是认证真实性的充分条件。** 接受该候选元数据并不会存入 Ledger、修改现金/仓位或赋予下单权限；必须由未来可信的原生 ExecutionClient/Report 生产者绑定 tenant/account/environment，并核验完整性和账户身份后，才可能成为 Ledger 可信快照。当前 Runtime 仍不能读取真实账户。
+
+离线单元测试使用真实 `nautilus_model::events::account::state::AccountState` 构造器覆盖允许条件、系统本地计算事件、账户身份不匹配、类型不匹配、过期、未来时间和无效窗口。尚未验证原生账户事件的实际接收、断线重连、历史补齐或运行中 Streaming 完整性，不能据此开放生产账户或订单执行。
