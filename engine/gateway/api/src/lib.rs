@@ -21,9 +21,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use seealpha_market::{LoadQuery, MarketSnapshot, Product, PublicSource, check_symbol};
+use seealpha_market::{MarketSnapshot, Product, PublicSource, check_symbol};
 use seealpha_runtime::{
-    AuthMode, Config, OrderCommand, PackageBody, PaperRequest, Runtime, RuntimeError,
+    AuthMode, Config, OrderCommand, PreviewRequest, Runtime, RuntimeError,
     StrategyInput, StrategySubmission,
 };
 use serde::Deserialize;
@@ -57,10 +57,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/strategy-preview",
             post(strategy_preview),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/paper/sessions",
-            post(paper_session),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/orders",
@@ -369,26 +365,6 @@ struct EnvironmentQuery {
 }
 
 #[derive(Deserialize)]
-struct PaperBody {
-    symbol: String,
-    #[serde(default = "default_interval")]
-    interval: String,
-    #[serde(default = "default_limit")]
-    limit: u32,
-    #[serde(default = "default_product")]
-    product: String,
-    #[serde(default)]
-    use_sample: bool,
-    /// Opt-in Rust-only EMA sample; requires use_sample=true.
-    #[serde(default)]
-    native_sample: bool,
-    #[serde(default)]
-    request_id: Option<String>,
-    #[serde(default)]
-    parameters: Value,
-}
-
-#[derive(Deserialize)]
 struct PreviewBody {
     symbol: String,
     #[serde(default = "default_interval")]
@@ -410,12 +386,6 @@ struct PreviewBar {
 
 fn default_interval() -> String {
     "1m".into()
-}
-fn default_limit() -> u32 {
-    120
-}
-fn default_product() -> String {
-    "spot".into()
 }
 
 #[cfg(test)]

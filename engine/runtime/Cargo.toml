@@ -11,7 +11,6 @@ seealpha-database = { path = "../database" }
 seealpha-catalog = { path = "../pipeline/catalog" }
 seealpha-market = { path = "../pipeline/sources/shared/market" }
 seealpha-execution = { path = "../execution" }
-seealpha-backtest = { path = "../backtest" }
 seealpha-strategy = { path = "../strategy" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

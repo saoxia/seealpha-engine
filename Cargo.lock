@@ -1722,7 +1722,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "rust_decimal",
- "seealpha-backtest",
  "seealpha-catalog",
  "seealpha-database",
  "seealpha-execution",

@@ -1,12 +1,9 @@
-//! Application-owned durable paper sessions and immutable order intents.
-//! This is not a balance, position, or exchange fill ledger. Uses the same
-//! PostgreSQL schema initialized by Runtime before stores are opened.
+//! Application-owned immutable order intents and tenant scopes.
+//! This is not a balance, position, or exchange fill ledger.
 mod registry;
 pub use registry::Tenant;
-mod paper;
 mod order_intents;
 pub use order_intents::{IntentStart, OrderRecoveryItem};
-pub(crate) use paper::{SessionStart, SessionWrite};
 
 use seealpha_database::Connection;
 use seealpha_ledger::LedgerError;
