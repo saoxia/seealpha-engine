@@ -1,7 +1,6 @@
 //! PostgreSQL evidence book for tenants and verified trading facts.
-// Native Nautilus owns account/position state; this crate only persists
-// SeeAlpha-specific movement evidence, attribution and reconciliation data.
-// Keep src/lib.rs as the Rust crate root.
+//! Nautilus owns account and position state; Ledger owns verified economic evidence.
+//! Tenant registration metadata is isolated in `accounts`, not the crate root.
 #[path = "../accounts/mod.rs"]
 mod accounts;
 #[path = "../movements/mod.rs"]
@@ -11,7 +10,8 @@ mod allocations;
 #[path = "../reconciliation/mod.rs"]
 mod reconciliation;
 
-// Economic evidence and account registration remain in Ledger.
+pub use accounts::Tenant;
+
 use seealpha_database::Connection;
 use std::path::Path;
 use thiserror::Error;
@@ -24,13 +24,6 @@ pub enum LedgerError {
     Database(String),
     #[error("{0}")]
     Conflict(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tenant {
-    pub tenant_id: String,
-    pub purpose: String,
-    pub status: String,
 }
 
 pub struct Ledger {
