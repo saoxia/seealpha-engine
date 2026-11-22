@@ -6,4 +6,3 @@ pub mod phase_gate;
 pub mod risk;
 pub mod account_evidence;
 pub mod settlement;
-pub mod history;
