@@ -1,6 +1,6 @@
 //! Application-owned durable state: research outputs and Portfolio checkpoints.
 //! This is not a balance, position, or exchange fill ledger. Uses the same
-//! PostgreSQL schema already initialized by Ledger::open during Runtime::open.
+//! PostgreSQL schema initialized by Runtime before stores are opened.
 mod registry;
 pub use registry::Tenant;
 mod basket_journal;
@@ -27,7 +27,7 @@ impl StateStore {
         let connection = Connection::open(path)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
         // Tests use standalone :memory: fixtures; production schema creation is
-        // owned by Ledger::open, called before this store is constructed.
+        // owned by Runtime::open, called before this store is constructed.
         #[cfg(test)]
         seealpha_database::bootstrap_engine_schema(&connection)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
