@@ -1,29 +1,4 @@
-//! Decimal target netting for paper holdings.
-//!
-//! Strategies publish absolute signed targets. This crate nets them, clips the
-//! aggregate to a risk limit, and sizes the remaining delta toward zero so a
-//! paper fill cannot overshoot the target. It does not submit exchange orders.
-#[path = "reconciliation/account_evidence.rs"]
-pub mod account_evidence;
-#[path = "baskets/basket.rs"]
-pub mod basket;
-#[path = "coordination/coordinator.rs"]
-pub mod coordinator;
-#[path = "coordination/coordinator_snapshot.rs"]
-pub mod coordinator_snapshot;
-#[path = "research/history.rs"]
-pub mod history;
-#[path = "baskets/journal.rs"]
-pub mod journal;
-#[path = "baskets/order_evidence.rs"]
-pub mod order_evidence;
-#[path = "baskets/phase_gate.rs"]
-pub mod phase_gate;
-#[path = "baskets/risk.rs"]
-pub mod risk;
-#[path = "reconciliation/settlement.rs"]
-pub mod settlement;
-
+//! Strategy target holdings, netting, sizing and replay.
 use rust_decimal::Decimal;
 use thiserror::Error;
 
