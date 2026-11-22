@@ -4,4 +4,3 @@ pub mod journal;
 pub mod order_evidence;
 pub mod phase_gate;
 pub mod risk;
-pub mod settlement;
