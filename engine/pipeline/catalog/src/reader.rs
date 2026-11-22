@@ -219,7 +219,7 @@ pub(crate) fn candidate_files(
         }
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.ends_with(".metadata.json") || name == ".writer.lock" {
+        if name.ends_with(".metadata.json") || name == ".writer.lock" || name == ".rebuilding" {
             continue;
         }
         if !name.ends_with(".parquet") {
@@ -479,6 +479,9 @@ impl Catalog {
         let lease=OpenOptions::new().create(true).truncate(false).read(true).write(true)
             .open(dir.join(".writer.lock"))?;
         FileExt::lock_shared(&lease)?;
+        if dir.join(".rebuilding").exists(){
+            return Err(CatalogError::Conflict("unfinished historical Bar replacement; replay required".into()));
+        }
         self.read_bars_unlocked(bar_identity,interval,start_ns,end_ns,limit)
     }
     /// Caller must hold the writer lock; used only for an atomic Bar rewrite.
