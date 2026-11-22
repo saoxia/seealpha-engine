@@ -1,6 +1,6 @@
 //! Native-only order entry and conservative ledger completion checks.
 use crate::{Runtime, RuntimeError, map_ledger};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub struct OrderCommand {
     pub tenant_id: String,
@@ -40,6 +40,22 @@ impl Runtime {
         crate::native_handoff::stage_native_order_command(self, &command)
     }
 
+    /// Read-only request history for legacy API consumers. This does not
+    /// authorize a send, settlement, or native account reconciliation.
+    pub fn order_request_view(
+        &self,
+        tenant_id: &str,
+        account_id: &str,
+        request_id: &str,
+    ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant_id)?;
+        let raw = self.state_store.get_order_request(tenant_id, account_id, request_id)
+            .map_err(map_ledger)?
+            .ok_or_else(|| RuntimeError::NotFound("没有该订单请求记录。".into()))?;
+        serde_json::from_str(&raw)
+            .map_err(|_| RuntimeError::Conflict("订单请求记录损坏。".into()))
+    }
+
     /// Only the native authenticated event stream can reconcile native orders.
     /// No implicit retry, no custom REST recovery, no invented fills.
     #[allow(clippy::too_many_arguments)]
@@ -71,72 +87,7 @@ impl Runtime {
         ))
     }
 
-    pub fn mark_ledger_synced(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        request_id: &str,
-    ) -> Result<Value, RuntimeError> {
-        let Some(existing) = self
-            .state_store
-            .get_order_request(tenant_id, account_id, request_id)
-            .map_err(map_ledger)?
-        else {
-            return Err(RuntimeError::NotFound("没有该请求".into()));
-        };
-        let mut stored: Value = serde_json::from_str(&existing)
-            .map_err(|_| RuntimeError::BadRequest("委托记录损坏。".into()))?;
-        if stored["order_list"] == "oco" {
-            if stored["fills_complete"] != true
-                || stored["ledger_synced"] != true
-                || stored["order_children"]
-                    .as_array()
-                    .is_none_or(|c| c.len() != 2)
-                || stored["response"]["order"]["list_status"] != "ALL_DONE"
-            {
-                return Err(RuntimeError::Conflict(
-                    "OCO 列表及两条子订单成交尚未全部核实，不能标记完成。".into(),
-                ));
-            }
-            return Ok(stored);
-        }
-        let order = if stored["algo_order"] == true {
-            &stored["triggered_order"]
-        } else {
-            &stored["response"]["order"]
-        };
-        if stored["response"]["status"] != "completed" || order.is_null() {
-            return Err(RuntimeError::Conflict(
-                "订单尚未在交易所核实，不能标记已对账。".into(),
-            ));
-        }
-        let terminal = matches!(
-            order["status"].as_str(),
-            Some("FILLED" | "CANCELED" | "EXPIRED" | "EXPIRED_IN_MATCH" | "REJECTED")
-        );
-        if !terminal {
-            return Err(RuntimeError::Conflict(
-                "订单仍可能继续成交，不能将开放委托标记为全部对账。".into(),
-            ));
-        }
-        let filled = order["filled"]
-            .as_str()
-            .ok_or_else(|| RuntimeError::Conflict("订单累计成交量未核实。".into()))?
-            .parse::<rust_decimal::Decimal>()
-            .map_err(|_| RuntimeError::Conflict("订单累计成交量无效。".into()))?;
-        if filled < rust_decimal::Decimal::ZERO
-            || (filled > rust_decimal::Decimal::ZERO && stored["fills_complete"] != true)
-        {
-            return Err(RuntimeError::Conflict(
-                "订单已有成交但交易所 Trade ID 尚未完整核对。".into(),
-            ));
-        }
-        stored["ledger_synced"] = json!(true);
-        self.state_store
-            .append_order_request_view(tenant_id, account_id, request_id, &stored.to_string())
-            .map_err(map_ledger)?;
-        Ok(stored)
-    }
+
 }
 
 // Numeric loopback URLs only; reject remote hosts and deceptive authorities.

@@ -89,10 +89,6 @@ pub fn router(state: AppState) -> Router {
             post(order_command),
         )
         .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/ledger-sync",
-            post(ledger_sync),
-        )
-        .route(
             "/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/reconcile",
             post(reconcile_order),
         )

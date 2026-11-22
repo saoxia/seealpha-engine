@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - "engine/pipeline/sources/shared/nautilus/**"
+      - "engine/pipeline/sources/binance_account/**"
+      - "engine/execution/**"
+      - "engine/runtime/**"
+      - "engine/gateway/api/**"
       - "engine/pipeline/sources/binance_spot/**"
       - "engine/pipeline/sources/binance_futures_um/native.rs"
       - ".github/workflows/nautilus-native-data.yml"
@@ -10,7 +14,26 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  execution-cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt, clippy
+      - name: Compile production Rust workspace after legacy OMS removal
+        run: cargo check --workspace --all-targets --locked
+      - name: Run pure Execution and Backtest regressions
+        run: cargo test -p seealpha-execution -p seealpha-backtest --locked
+      - name: Check Execution/Backtest lint
+        run: cargo clippy -p seealpha-execution -p seealpha-backtest --all-targets --locked -- -D warnings
+
   native-binance-data:
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -25,3 +48,9 @@ jobs:
         run: cargo test --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml
       - name: Native Nautilus Binance clippy
         run: cargo clippy --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml --all-targets -- -D warnings
+      - name: Native Binance account subscription compile
+        run: cargo check --manifest-path engine/pipeline/sources/binance_account/Cargo.toml --all-targets
+      - name: Native Binance account subscription offline tests
+        run: cargo test --manifest-path engine/pipeline/sources/binance_account/Cargo.toml
+      - name: Native Binance account subscription clippy
+        run: cargo clippy --manifest-path engine/pipeline/sources/binance_account/Cargo.toml --all-targets -- -D warnings

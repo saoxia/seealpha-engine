@@ -90,10 +90,8 @@ async fn request(
         .map_err(AppError::from)?;
     let value = state
         .runtime
-        .ledger
-        .request(&tenant, &account, &request_id)
-        .map_err(|e| AppError::bad_request(e.to_string()))?
-        .ok_or_else(|| AppError::not_found("服务器没有该请求记录，请在交易所核对后处理。"))?;
+        .order_request_view(&tenant, &account, &request_id)
+        .map_err(AppError::from)?;
     Ok(Json(value))
 }
 

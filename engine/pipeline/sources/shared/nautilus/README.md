@@ -157,3 +157,35 @@ SeeAlpha Ledger 仍保留可信签名成交、结算和不可变下单前意图�
 **`is_reported=true` 只表示 Nautilus 此事件属于交易所上报类别，不是认证真实性的充分条件。** 接受该候选元数据并不会存入 Ledger、修改现金/仓位或赋予下单权限；必须由未来可信的原生 ExecutionClient/Report 生产者绑定 tenant/account/environment，并核验完整性和账户身份后，才可能成为 Ledger 可信快照。当前 Runtime 仍不能读取真实账户。
 
 离线单元测试使用真实 `nautilus_model::events::account::state::AccountState` 构造器覆盖允许条件、系统本地计算事件、账户身份不匹配、类型不匹配、过期、未来时间和无效窗口。尚未验证原生账户事件的实际接收、断线重连、历史补齐或运行中 Streaming 完整性，不能据此开放生产账户或订单执行。
+
+## Native virtual attribution (legacy OMS removed)
+
+The prior SeeAlpha Coordinator and Basket execution status machines,
+associated Runtime paper/research endpoints, and checkpoint adapters have
+been deleted. Nautilus `OrderCore` owns the venue order lifecycle and
+accumulated fill amount.
+
+`native_virtual_attribution` now accepts the native post-event `OrderCore`,
+validated native `OrderFilled`, immutable ordered `MemberClaim` quantities,
+and the caller's previously **committed** cumulative fill. It deterministically
+allocates only the new increment across strategy members (FIFO by original
+claim order); it never creates a second venue order or mutable OMS.
+
+`binance_account::attach_native_virtual_attribution` listens on the existing
+typed native subscription and expects a snapshot resolver that returns an
+exact revision, previous committed cumulative, immutable claims and native
+order. The caller's commit callback must persist the native event/trade ID,
+cumulative progress and all strategy allocations in one CAS transaction.
+No virtual fills are published when CAS fails.
+
+ACKs never create virtual fills; voided, duplicated, out-of-order or otherwise
+mismatched fills must stop attribution and trigger native account/order
+reconciliation. The `on_error` callback is an integration hook, not durable
+quarantine by itself.
+
+**Not live-ready:** production Rust Runtime does not yet install the above
+callback with its real Nautilus node/cache, transactional writer and recovery.
+Native crates remain separately built and excluded from the root workspace.
+Live trading stays disabled. Multi-leg protective sequencing also needs a
+new native risk gate; the retired research Basket phase gate is not a valid
+live fallback.

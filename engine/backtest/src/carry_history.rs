@@ -1,7 +1,13 @@
-//! Read-only bounded Spot/UM bar alignment and observed funding event merge.
+//! Historical Spot/UM bar alignment and observed funding event merge for backtests.
 //! Rates are observations, NOT credited or debited cash flows.
-use crate::basket::BasketError;
+use thiserror::Error;
 use rust_decimal::Decimal;
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum CarryHistoryError {
+    #[error("invalid or incomplete historical carry evidence")]
+    Evidence,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CarryBar {
@@ -31,12 +37,12 @@ pub fn align_bars(
     step_ns: u64,
     start_ns: Option<u64>,
     end_ns: Option<u64>,
-) -> Result<Vec<CarryEvent>, BasketError> {
+) -> Result<Vec<CarryEvent>, CarryHistoryError> {
     if !matches!(step_ns, 60_000_000_000 | 300_000_000_000)
         || spot.is_empty()
         || spot.len() != perpetual.len()
     {
-        return Err(BasketError::Evidence);
+        return Err(CarryHistoryError::Evidence);
     }
     let mut result = Vec::with_capacity(spot.len());
     let mut prev = None::<u64>;
@@ -46,7 +52,7 @@ pub fn align_bars(
             || prev.is_some_and(|t| s.ts_ns.checked_sub(t) != Some(step_ns))
             || (prev.is_none() && start_ns.is_some_and(|t| t.checked_add(step_ns) != Some(s.ts_ns)))
         {
-            return Err(BasketError::Evidence);
+            return Err(CarryHistoryError::Evidence);
         }
         for b in [s, p] {
             if b.low <= Decimal::ZERO
@@ -56,7 +62,7 @@ pub fn align_bars(
                 || b.close < b.low
                 || b.close > b.high
             {
-                return Err(BasketError::Evidence);
+                return Err(CarryHistoryError::Evidence);
             }
         }
         prev = Some(s.ts_ns);
@@ -67,7 +73,7 @@ pub fn align_bars(
         });
     }
     if end_ns.is_some_and(|t| t.checked_sub(step_ns) != prev) {
-        return Err(BasketError::Evidence);
+        return Err(CarryHistoryError::Evidence);
     }
     Ok(result)
 }
@@ -77,14 +83,14 @@ pub fn merge_funding(
     start_ns: u64,
     end_ns: u64,
     require_funding: bool,
-) -> Result<Vec<CarryEvent>, BasketError> {
+) -> Result<Vec<CarryEvent>, CarryHistoryError> {
     if start_ns >= end_ns || funding.len() > 10_000 || (require_funding && funding.is_empty()) {
-        return Err(BasketError::Evidence);
+        return Err(CarryHistoryError::Evidence);
     }
     let mut previous = None::<u64>;
     for f in funding {
         if f.ts_ns < start_ns || f.ts_ns >= end_ns || previous.is_some_and(|x| x >= f.ts_ns) {
-            return Err(BasketError::Evidence);
+            return Err(CarryHistoryError::Evidence);
         }
         previous = Some(f.ts_ns);
     }
@@ -93,7 +99,7 @@ pub fn merge_funding(
     for row in bars {
         let ts = match &row {
             CarryEvent::Bars { ts_ns, .. } => *ts_ns,
-            CarryEvent::Funding(_) => return Err(BasketError::Evidence),
+            CarryEvent::Funding(_) => return Err(CarryHistoryError::Evidence),
         };
         while cursor < funding.len() && funding[cursor].ts_ns < ts {
             result.push(CarryEvent::Funding(funding[cursor].clone()));
@@ -134,7 +140,32 @@ mod tests {
                 Some(0),
                 None
             ),
-            Err(BasketError::Evidence)
+            Err(CarryHistoryError::Evidence)
         );
+    }
+
+    #[test]
+    fn funding_observations_are_merged_without_creating_cash_flows() {
+        let bar = CarryBar {
+            ts_ns: 60_000_000_000,
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+        };
+        let bars = align_bars(&[bar.clone()], &[bar], 60_000_000_000, Some(0), None).unwrap();
+        let events = merge_funding(
+            bars,
+            &[FundingObservation {
+                ts_ns: 60_000_000_000,
+                rate: Decimal::new(1, 4),
+            }],
+            0,
+            120_000_000_000,
+            true,
+        )
+        .unwrap();
+        assert!(matches!(events[0], CarryEvent::Bars { .. }));
+        assert!(matches!(events[1], CarryEvent::Funding(_)));
     }
 }
