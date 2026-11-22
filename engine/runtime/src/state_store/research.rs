@@ -1,5 +1,5 @@
 //! Research/backtest persistent results, unrelated to trading account funds.
-use super::{StateStore, LedgerError};
+use super::{StateStore, LedgerError, now_ms};
 use seealpha_database::{OptionalExtension, params};
 
 impl StateStore {
