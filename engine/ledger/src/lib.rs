@@ -17,7 +17,6 @@ mod basket_journal;
 mod coordinator_state;
 pub use basket_journal::StoredBasketJournal;
 pub use coordinator_state::StoredCoordinatorState;
-mod funding;
 mod parity;
 mod settlements;
 mod verified_fills;
@@ -274,17 +273,6 @@ CREATE TABLE IF NOT EXISTS account_settlements (
 );
 CREATE INDEX IF NOT EXISTS account_settlement_symbol
     ON account_settlements(tenant_id,account_id,environment,product,symbol);
-CREATE TABLE IF NOT EXISTS funding_observations (
-    tenant_id TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    funding_time_ms INTEGER NOT NULL,
-    rate_type TEXT NOT NULL,
-    funding_rate TEXT NOT NULL,
-    mark_price TEXT NOT NULL,
-    PRIMARY KEY(tenant_id,symbol,funding_time_ms,rate_type)
-);
-CREATE INDEX IF NOT EXISTS funding_time_index
-    ON funding_observations(tenant_id,symbol,funding_time_ms);
 CREATE TABLE IF NOT EXISTS backtest_results (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,

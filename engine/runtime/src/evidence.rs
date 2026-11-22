@@ -89,9 +89,7 @@ impl Runtime {
             .map(|b| b.mark_time_ms.saturating_add(1))
             .ok_or_else(|| error("历史 K 线为空。"))?;
         let events = self
-            .ledger
-            .funding_events(tenant, symbol, funding_start, end_ms, 5000)
-            .map_err(map_ledger)?;
+            .funding_observations(tenant, symbol, funding_start, end_ms, 5000)?;
         let mut settlement = Vec::with_capacity(events.len());
         for row in &events {
             let time = row["funding_time_ms"]
@@ -131,7 +129,7 @@ impl Runtime {
         report["end_ms"] = json!(end_ms);
         report["spot_data_source"] = json!("tenant_catalog_spot");
         report["perp_data_source"] = json!("tenant_catalog_futures_um");
-        report["funding_data_source"] = json!("tenant_settled_funding");
+        report["funding_data_source"] = json!("pipeline_catalog_settled_funding");
         self.ledger
             .save_backtest(tenant, account, "carry", &report.to_string())
             .map_err(map_ledger)?;
@@ -227,15 +225,13 @@ impl Runtime {
         }
         let first = marks.first().ok_or_else(|| error("历史数据为空。"))?;
         let events = self
-            .ledger
-            .funding_events(
+            .funding_observations(
                 tenant,
                 perp_symbol,
                 first.mark_time_ms.saturating_add(1),
                 end_ms,
                 5000,
-            )
-            .map_err(map_ledger)?;
+            )?;
         let settlement = events
             .iter()
             .map(|row| {

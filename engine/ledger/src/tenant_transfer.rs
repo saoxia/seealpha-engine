@@ -140,7 +140,6 @@ impl Ledger {
             "quarantined_unverified_fills",
             "paper_positions",
             "account_settlements",
-            "funding_observations",
             "backtest_results",
             "research_snapshots",
             "data_policies",

@@ -4,6 +4,7 @@ mod model;
 mod reader;
 mod records;
 mod writer;
+mod funding;
 
 use std::path::PathBuf;
 use thiserror::Error;
@@ -13,6 +14,7 @@ pub use model::{
     interval_ms,
 };
 pub use reader::{BarGap, RecordKind};
+pub use funding::CatalogFunding;
 
 #[derive(Debug, Error)]
 pub enum CatalogError {

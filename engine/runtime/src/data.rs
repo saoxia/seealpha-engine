@@ -5,7 +5,7 @@
 use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
 use crate::catalog::CatalogBar;
-use seealpha_catalog::DAY_MS;
+use seealpha_catalog::{DAY_MS, CatalogFunding};
 use seealpha_market::futures_repair::{RepairNextStep, scan_day};
 use seealpha_market::spot_repair;
 use seealpha_market::funding::FundingSource;
@@ -695,9 +695,20 @@ impl Runtime {
                     })
                 })
                 .collect::<Vec<_>>();
-            self.ledger
-                .import_funding_events(tenant_id, symbol, &rows)
-                .map_err(map_ledger)?;
+            self.require_active(tenant_id)?;
+            let catalog = self.native_catalog()?.ok_or_else(|| RuntimeError::NotFound("未挂载 Pipeline Catalog。".into()))?;
+            let observations = events.iter().map(|record| {
+                Ok(CatalogFunding {
+                    funding_time_ms: record.funding_time_ms,
+                    rate_type: record.rate_type.clone(),
+                    funding_rate: record.funding_rate.parse::<rust_decimal::Decimal>()
+                        .map_err(|_| bad("资金费率无效。"))?,
+                    mark_price: record.mark_price.parse::<rust_decimal::Decimal>()
+                        .map_err(|_| bad("资金费标记价无效。"))?,
+                })
+            }).collect::<Result<Vec<_>, RuntimeError>>()?;
+            catalog.append_funding(symbol, &observations)
+                .map_err(|e| RuntimeError::Conflict(e.to_string()))?;
             return Ok(
                 json!({"action":"backfill","data_kind":"funding","symbol":symbol,
                 "start_ms":begin,"end_ms":end,"observations":rows.len(),
