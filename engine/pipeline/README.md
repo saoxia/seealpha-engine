@@ -11,7 +11,6 @@ Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `c
 | `sources/binance/archive/` | 跨 Spot / USD-M 的 Binance 官方历史 ZIP 获取、来源校验与 Manifest | 现有 `seealpha-binance-market-data-source` crate |
 | `sources/shared/market/` | 当前共用的公共市场模型、REST 客户端、K 线和时间校验工具；USD-M 近期成交解析由 binance_futures_um/agg_trades.rs 承担 | 现有 `seealpha-market` crate，公共 API 不变 |
 | `catalog/` | Parquet/SQLite 历史存储、读取、修复和派生缓存 | 当前兼容实现 |
-| `catalog/integrity/` | 被行情管线使用的 K 线、成交静态校验 | 纯校验函数；旧的未接入监控/READY 会话实现已清除 |
 
 ## 连接生命周期
 
