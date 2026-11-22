@@ -1,6 +1,12 @@
 //! PostgreSQL-backed minimal synchronous SQL access for SeeAlpha state stores.
 //! Retains the business-facing row/transaction API while replacing the storage engine.
 pub use postgres;
+
+/// Initialize the shared application schema independently of a particular store.
+/// Ledger and Runtime use the same database namespace; no tables are dropped.
+pub fn bootstrap_engine_schema(connection: &Connection) -> Result<(), Error> {
+    connection.execute_batch(include_str!("../../../docker/seealpha-postgres-schema.sql"))
+}
 use postgres::{Client, NoTls, types::{FromSql, ToSql}};
 use std::{fmt, hash::{Hash, Hasher}, path::Path, sync::Mutex};
 

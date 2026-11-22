@@ -5,6 +5,9 @@ edition = "2024"
 publish = false
 license = "Apache-2.0"
 
+[lib]
+path = "mod.rs"
+
 [dependencies]
 seealpha-database = { path = "../database" }
 rust_decimal = "1"
