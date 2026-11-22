@@ -3,7 +3,6 @@
 //! PostgreSQL schema initialized by Runtime before stores are opened.
 mod registry;
 pub use registry::Tenant;
-mod research;
 mod paper;
 mod order_intents;
 pub use order_intents::{IntentStart, OrderRecoveryItem};
