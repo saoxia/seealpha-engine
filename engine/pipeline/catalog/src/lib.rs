@@ -4,7 +4,6 @@ mod cleanup;
 mod model;
 mod reader;
 mod records;
-mod repair;
 mod writer;
 
 use std::path::PathBuf;
@@ -16,11 +15,6 @@ pub use model::{
     interval_ms,
 };
 pub use reader::{BarGap, RecordKind};
-pub use repair::{
-    AggregatedKline, LocalKline, MinuteRepairDecision, SavedKline, VenueKline,
-    aggregate_saved_klines, classify_minute_repair, missing_bar_windows, plan_minute_repairs,
-    read_aggregated_catalog_klines, validate_venue_klines, venue_kline_differs,
-};
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
