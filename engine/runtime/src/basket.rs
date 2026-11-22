@@ -50,7 +50,7 @@ impl Runtime {
     ) -> Result<StoredCheckpoint, RuntimeError> {
         self.check_basket_scope(tenant, account, checkpoint)?;
         let encoded = encode_checkpoint(basket, checkpoint).map_err(basket_error)?;
-        self.ledger
+        self.state_store
             .save_basket_journal(
                 tenant,
                 account,
@@ -71,7 +71,7 @@ impl Runtime {
     ) -> Result<Option<StoredCheckpoint>, RuntimeError> {
         self.require_active(tenant)?;
         let Some(record) = self
-            .ledger
+            .state_store
             .load_basket_journal(tenant, account, basket)
             .map_err(map_ledger)?
         else {
