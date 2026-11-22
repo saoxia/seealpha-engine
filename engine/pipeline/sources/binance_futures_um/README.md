@@ -10,7 +10,7 @@
 | REST 快照 | `agg_trades.rs` + `../shared/market/` | `GET /fapi/v1/aggTrades` 的 `a/p/q/f/l/T/m` 聚合成交；与 WS/ZIP 保持同类 ID | 只代表有限近期快照，不能证明完整历史 |
 | REST 历史 K 线 | `../shared/market/` | `GET /fapi/v1/klines`，按交易所时钟确认收盘，精确区间校验后写入 Catalog | 验证单个请求窗口；不等同于持续实盘 READY |
 | 官方历史成交 | `../binance/archive/` + `../shared/nautilus/src/bin/import_archive.rs` | Binance `futures/um/daily/aggTrades` ZIP，校验 SHA-256，验证数据与 Instrument 精度，原生 TradeTick Parquet | 成功导入不等于与 WS/REST 无缝衔接 |
-| 资金费率 | `funding.rs` | `GET /fapi/v1/fundingRate`，解析已结算的公共 Funding；解析 `markPriceUpdate` 的预估资金费率 | 预估费率不等于真实结算；公开记录不等于账户付款 |
+| 资金费率 | `funding.rs` | `GET /fapi/v1/fundingRate`，解析已结算的公共 Funding，直接持久化到 Catalog 的 `funding_rate_updates` Parquet；解析 `markPriceUpdate` 的预估资金费率 | 预估费率不等于真实结算；公开记录不等于账户付款 |
 | 历史读取 | `../../catalog/` | Parquet、派生 K 线缓存、范围查询/缺口检查 | 需要单独维护不同产品、来源和记录粒度的身份 |
 
 目前支持 USD-M，**不包含 COIN-M**。行情源进程与 Spot 分开管理；在同一 USD-M 进程内部，可订阅多个交易对，不要求每个符号独立 WebSocket。
@@ -27,6 +27,8 @@
 2. 基于 Catalog 覆盖范围识别历史缺口，按优先级从 REST / 官方 ZIP 补充；缺失时间段内没有成交时，不能仅凭无记录判定历史连续。
 3. 将可信状态和过期状态交给 Runtime READY/风险门禁；在验证完成前始终 `data_ready=false`、`allow_new_risk=false`。
 4. 如果需要 `markPrice@1s` 的持续实时估计，应优先确认 Nautilus 原生订阅能力；不能把 `funding.rs` 的消息解析函数视为已经启动的 WebSocket。
+
+资金费率由产品专属 `funding.rs` 管理采集、去重、追加写入与读取；Runtime 仅调度，Ledger 不再存公共资金费率，账户实际资金费用属于独立账务事件。历史事件无固定 8 小时格点的完整性声明。
 
 原则：**来源相互补足，但不得因为多源存在就默认数据准确。** 当前保持只读、实验性，未开启实盘订单，也不恢复已删除的 Python 采集器。
 
