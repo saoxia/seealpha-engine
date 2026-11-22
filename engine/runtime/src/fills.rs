@@ -5,16 +5,12 @@ use crate::{Runtime, RuntimeError};
 use serde_json::Value;
 
 impl Runtime {
-    #[allow(clippy::too_many_arguments)]
     pub fn sync_verified_order_fills(
         &self,
         tenant: &str,
         _account: &str,
         _environment: &str,
         _request_id: &str,
-        _api_key: &str,
-        _secret: &str,
-        _venue_base: &str,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant)?;
         Err(RuntimeError::Conflict(
