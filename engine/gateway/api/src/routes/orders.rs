@@ -10,12 +10,7 @@ pub(super) async fn list_orders(
     let orders = state
         .runtime
         .stored_orders(&tenant_id, &account_id, &environment)
-        .map_err(|error| match error {
-            seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
-            seealpha_ledger::LedgerError::Database(detail) => {
-                AppError::bad_request(format!("状态库不可用。{detail}"))
-            }
-        })?;
+        .map_err(AppError::from)?;
     let items = orders
         .into_iter()
         .map(|order| {
