@@ -46,18 +46,38 @@ pub struct NativeExecutionTarget {
 /// This is a record selection only: it neither starts a node nor authenticates
 /// a report or grants permission to submit an order.
 pub fn native_execution_record_types() -> Vec<NautilusRecordType> {
+    use NautilusRecordType as R;
+    // Capture the Nautilus-native lifecycle, not a second SeeAlpha order log.
+    // The downstream writer owns durability and gap/restart verification.
     vec![
-        NautilusRecordType::AccountState,
-        NautilusRecordType::OrderSubmitted,
-        NautilusRecordType::OrderAccepted,
-        NautilusRecordType::OrderRejected,
-        NautilusRecordType::OrderCanceled,
-        NautilusRecordType::OrderExpired,
-        NautilusRecordType::OrderFilled,
-        NautilusRecordType::OrderFillVoided,
-        NautilusRecordType::OrderStatusReport,
-        NautilusRecordType::FillReport,
-        NautilusRecordType::PositionStatusReport,
+        R::AccountState,
+        R::OrderInitialized,
+        R::OrderDenied,
+        R::OrderEmulated,
+        R::OrderSubmitted,
+        R::OrderAccepted,
+        R::OrderRejected,
+        R::OrderPendingCancel,
+        R::OrderCanceled,
+        R::OrderCancelRejected,
+        R::OrderExpired,
+        R::OrderTriggered,
+        R::OrderPendingUpdate,
+        R::OrderReleased,
+        R::OrderModifyRejected,
+        R::OrderUpdated,
+        R::OrderFilled,
+        R::OrderFillVoided,
+        R::PositionOpened,
+        R::PositionChanged,
+        R::PositionClosed,
+        R::PositionAdjusted,
+        R::OrderSnapshot,
+        R::PositionSnapshot,
+        R::OrderStatusReport,
+        R::FillReport,
+        R::PositionStatusReport,
+        R::ExecutionMassStatus,
     ]
 }
 
@@ -192,4 +212,24 @@ mod tests {
             ).is_err());
         }
     }
+    #[test]
+    fn native_record_selection_retains_full_order_and_position_lifecycle() {
+        use NautilusRecordType as R;
+        let selected = native_execution_record_types();
+        for required in [
+            R::AccountState, R::OrderInitialized, R::OrderDenied,
+            R::OrderSubmitted, R::OrderAccepted, R::OrderRejected,
+            R::OrderPendingCancel, R::OrderCancelRejected, R::OrderCanceled,
+            R::OrderPendingUpdate, R::OrderUpdated, R::OrderModifyRejected,
+            R::OrderFilled, R::OrderFillVoided, R::PositionOpened,
+            R::PositionChanged, R::PositionClosed, R::PositionStatusReport,
+            R::OrderStatusReport, R::FillReport, R::ExecutionMassStatus,
+        ] {
+            assert!(selected.contains(&required), "missing {required:?}");
+        }
+        for (index, record) in selected.iter().enumerate() {
+            assert!(!selected[..index].contains(record), "duplicate {record:?}");
+        }
+    }
+
 }
