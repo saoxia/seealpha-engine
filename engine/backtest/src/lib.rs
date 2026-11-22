@@ -3,6 +3,7 @@
 //! Each publication replaces that member's target. The account trades the
 //! quantized delta at that bar's close. Cash is quote currency. Ending equity
 //! is cash plus the marked position. No exchange call is made.
+pub mod carry_history;
 pub mod evidence;
 pub mod matching;
 pub mod option_quotes;
