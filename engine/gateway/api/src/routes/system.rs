@@ -21,16 +21,3 @@ pub(super) async fn runnable(
             .map_err(AppError::from)?,
     ))
 }
-
-pub(super) async fn jobs(
-    State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .data_job_list(&tenant_id)
-            .map_err(AppError::from)?,
-    ))
-}
-

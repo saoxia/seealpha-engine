@@ -49,7 +49,6 @@ pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         .route("/health", get(health))
         .route("/tenants/{tenant_id}/runnable", post(runnable))
-        .route("/tenants/{tenant_id}/jobs", get(jobs))
         .route(
             "/tenants/{tenant_id}/strategy-packages/inspect",
             post(inspect_strategy),

@@ -1719,7 +1719,6 @@ dependencies = [
  "axum",
  "rust_decimal",
  "seealpha-backtest",
- "seealpha-binance-market-data-source",
  "seealpha-catalog",
  "seealpha-database",
  "seealpha-ledger",
