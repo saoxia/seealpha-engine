@@ -3,7 +3,7 @@
 //! decision policy lives in the market-data pipeline.
 use crate::{Bar, BinanceSource, Product};
 use seealpha_catalog::{
-    Catalog, CatalogError, MarketProduct, NANO_PER_MS, bar_window,
+    Catalog, CatalogError, NANO_PER_MS, bar_window, bar_type,
 };
 /// Original saved Nautilus bar, with its exact close timestamp in nanoseconds.
 #[derive(Clone, Debug, PartialEq)]
@@ -80,8 +80,7 @@ pub fn aggregate_saved_klines(
 /// target bars exist. Neither missing source data nor partial windows are filled.
 pub fn read_aggregated_catalog_klines(
     catalog_root: &std::path::Path,
-    symbol: &str,
-    product: MarketProduct,
+    instrument: &str,
     target_interval: &str,
     start_ms: i64,
     end_ms: i64,
@@ -97,10 +96,12 @@ pub fn read_aggregated_catalog_klines(
         .ok_or_else(|| CatalogError::Invalid("本地 K 线终点溢出。".into()))?;
     let catalog = Catalog::open_existing(catalog_root)?;
     let mut source = target_interval;
-    let mut bars = catalog.read_bars(symbol, product, source, start_ns, end_ns, 50_000)?;
+    let mut kind = bar_type(instrument, source)?;
+    let mut bars = catalog.read_bars(&kind, source, start_ns, end_ns, 50_000)?;
     if bars.is_empty() && target_interval != "1m" {
         source = "1m";
-        bars = catalog.read_bars(symbol, product, source, start_ns, end_ns, 50_000)?;
+        kind = bar_type(instrument, source)?;
+        bars = catalog.read_bars(&kind, source, start_ns, end_ns, 50_000)?;
     }
     let saved = bars
         .iter()
@@ -130,11 +131,13 @@ fn error(message: impl Into<String>) -> RepairError {
     RepairError(message.into())
 }
 
-fn catalog_product(product: Product) -> MarketProduct {
-    match product {
+fn source_instrument(product: Product, symbol: &str) -> Result<String, RepairError> {
+    use crate::identity::{MarketProduct, instrument_id};
+    let product = match product {
         Product::Spot => MarketProduct::Spot,
         Product::FuturesUm => MarketProduct::FuturesUm,
-    }
+    };
+    instrument_id(symbol, product).map_err(|e| error(e.to_string()))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -238,8 +241,7 @@ pub async fn scan_day(
         let local = if let Some(catalog_root) = catalog_root {
             read_aggregated_catalog_klines(
                 catalog_root,
-                symbol,
-                catalog_product(product),
+                &source_instrument(product, symbol)?,
                 interval,
                 start_ms,
                 end_ms,
@@ -343,8 +345,8 @@ mod tests {
 
     #[test]
     fn each_exchange_product_uses_its_own_catalog_identity() {
-        assert_eq!(catalog_product(Product::Spot), MarketProduct::Spot);
-        assert_eq!(catalog_product(Product::FuturesUm), MarketProduct::FuturesUm);
+        assert_eq!(source_instrument(Product::Spot, "ETHUSDT").unwrap(), "ETHUSDT.BINANCE");
+        assert_eq!(source_instrument(Product::FuturesUm, "ETHUSDT").unwrap(), "ETHUSDT-PERP.BINANCE");
     }
 
     #[test]
