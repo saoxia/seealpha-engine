@@ -99,6 +99,22 @@ fn project_native_fill(
     if inflight.id != fill.client_order_id {
         return Ok(fail_closed(coordinator, "native fill is not the pending SeeAlpha intent"));
     }
+    // The native Core and the registered SeeAlpha intent must describe the
+    // very same order, not merely reuse the same client identifier.
+    let native_quantity = match native_order.quantity.to_string().parse::<Decimal>() {
+        Ok(v) => v,
+        Err(_) => return Ok(fail_closed(coordinator, "invalid native order quantity")),
+    };
+    if native_quantity != inflight.signed_requested.abs()
+        || native_order.venue_order_id.as_ref()
+            .is_none_or(|id| id.to_string() != fill.venue_order_id)
+        || (inflight.signed_requested > Decimal::ZERO
+            && native_order.side != nautilus_model::enums::OrderSide::Buy)
+        || (inflight.signed_requested < Decimal::ZERO
+            && native_order.side != nautilus_model::enums::OrderSide::Sell)
+    {
+        return Ok(fail_closed(coordinator, "Nautilus order terms disagree with durable intent"));
+    }
     let cumulative = match native_order.filled_qty.to_string().parse::<Decimal>() {
         Ok(v) => v,
         Err(_) => return Ok(fail_closed(coordinator, "invalid Nautilus filled quantity")),
