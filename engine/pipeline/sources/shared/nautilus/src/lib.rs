@@ -3,6 +3,7 @@
 //! TradeTick serialization, Arrow schemas and Parquet catalog operations.
 
 pub mod native_account;
+pub mod native_account_session;
 pub mod native_execution;
 
 use std::{
