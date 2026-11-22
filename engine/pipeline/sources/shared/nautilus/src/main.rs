@@ -369,7 +369,7 @@ mod tests {
             InstrumentId::from("ETHUSDT.BINANCE"),
             "100.00".parse().unwrap(),
             "1.000".parse().unwrap(),
-            AggressorSide::Buyer,
+            AggressorSide::Buy,
             TradeId::from("1"),
             UnixNanos::new(1_000_000_000),
             UnixNanos::new(1_000_000_100),
