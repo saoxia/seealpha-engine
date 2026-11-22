@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::{
     io::Read,
     os::unix::{fs::{FileTypeExt, PermissionsExt}, net::UnixStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -36,6 +36,12 @@ fn read_native_account(tenant: &str, account: &str) -> Result<Value, RuntimeErro
     }
     let directory = std::env::var("ENGINE_NATIVE_ACCOUNT_SOCKET_DIR")
         .map(PathBuf::from).map_err(|_| unavailable())?;
+    read_native_account_in(&directory, tenant, account)
+}
+
+#[cfg(unix)]
+fn read_native_account_in(directory: &Path, tenant: &str, account: &str) -> Result<Value, RuntimeError> {
+    let unavailable = || RuntimeError::Conflict("可信 Nautilus testnet 账户进程尚未就绪。".into());
     if !directory.is_absolute() {
         return Err(unavailable());
     }
@@ -150,6 +156,43 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn sandbox_account_reads_private_unix_socket_and_rejects_bad_permissions() {
+        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+        use std::io::Write as _;
+        let tmp = std::env::temp_dir().join(format!(
+            "seealpha-native-account-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        std::fs::create_dir(&tmp).unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = tmp.join("tenant_1--account_1--sandbox.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+        let payload = json!({
+            "tenant_id": "tenant_1", "account_id": "account_1",
+            "environment": "sandbox", "source": "nautilus_testnet_read_only",
+            "native_account": {
+                "account_id": "BINANCE-SPOT-001", "event_id": "test-event",
+                "observed_at_ns": now, "balances": {}, "margins": []
+            }
+        }).to_string();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(payload.as_bytes()).unwrap();
+        });
+        assert!(read_native_account_in(&tmp, "tenant_1", "account_1").is_ok());
+        server.join().unwrap();
+        assert!(read_native_account_in(&tmp, "tenant_1", "other").is_err());
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(read_native_account_in(&tmp, "tenant_1", "account_1").is_err());
+        std::fs::remove_file(socket).unwrap();
+        std::fs::remove_dir(tmp).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn native_read_rejects_wrong_identity_source_and_stale_event() {
