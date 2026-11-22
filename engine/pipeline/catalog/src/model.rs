@@ -1,5 +1,4 @@
-//! The Python Engine's native market identity and UTC bar-time conventions.
-//! This module does not depend on NautilusTrader Python or a private API.
+//! Generic Nautilus BarType and UTC bar-time storage conventions.
 use crate::CatalogError;
 use chrono::{Datelike, TimeZone, Utc};
 use rust_decimal::Decimal;
@@ -7,126 +6,63 @@ use serde::{Deserialize, Serialize};
 
 pub const NANO_PER_MS: i64 = 1_000_000;
 pub const DAY_MS: i64 = 86_400_000;
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MarketProduct {
-    Spot,
-    FuturesUm,
-    Options,
+/// Nautilus bar identity is supplied by Source; Catalog only formats its storage key.
+pub fn bar_type(instrument_id: &str, interval: &str) -> Result<String, CatalogError> {
+    crate::reader::safe_component(instrument_id)?;
+    let (multiple, unit) = interval_unit(interval)?;
+    Ok(format!("{instrument_id}-{multiple}-{unit}-LAST-EXTERNAL"))
 }
-impl MarketProduct {
-    pub fn parse(raw: &str) -> Result<Self, CatalogError> {
-        match raw {
-            "spot" => Ok(Self::Spot),
-            "futures_um" => Ok(Self::FuturesUm),
-            "options" => Ok(Self::Options),
-            _ => Err(CatalogError::Invalid(
-                "行情产品必须为 spot、futures_um 或 options。".into(),
-            )),
-        }
-    }
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Spot => "spot",
-            Self::FuturesUm => "futures_um",
-            Self::Options => "options",
-        }
+fn interval_unit(interval: &str) -> Result<(u32, &'static str), CatalogError> {
+    match interval {
+        "1s" => Ok((1, "SECOND")),
+        "1m" => Ok((1, "MINUTE")),
+        "3m" => Ok((3, "MINUTE")),
+        "5m" => Ok((5, "MINUTE")),
+        "15m" => Ok((15, "MINUTE")),
+        "30m" => Ok((30, "MINUTE")),
+        "1h" => Ok((1, "HOUR")),
+        "2h" => Ok((2, "HOUR")),
+        "4h" => Ok((4, "HOUR")),
+        "6h" => Ok((6, "HOUR")),
+        "8h" => Ok((8, "HOUR")),
+        "12h" => Ok((12, "HOUR")),
+        "1d" => Ok((1, "DAY")),
+        "3d" => Ok((3, "DAY")),
+        "1w" => Ok((1, "WEEK")),
+        "1M" => Ok((1, "MONTH")),
+        _ => Err(CatalogError::Invalid("不支持的 Nautilus K 线周期。".into())),
     }
 }
-fn valid_option(symbol: &str) -> bool {
-    let parts: Vec<_> = symbol.split('-').collect();
-    if parts.len() != 4
-        || parts[0].len() < 2
-        || parts[0].len() > 15
-        || !parts[0]
-            .bytes()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-    {
-        return false;
-    }
-    let date = parts[1];
-    if date.len() != 6 || !date.bytes().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-    let yy = date[0..2].parse::<i32>().ok();
-    let mm = date[2..4].parse::<u32>().ok();
-    let dd = date[4..6].parse::<u32>().ok();
-    if let (Some(yy), Some(mm), Some(dd)) = (yy, mm, dd) {
-        if chrono::NaiveDate::from_ymd_opt(2000 + yy, mm, dd).is_none() {
-            return false;
-        }
-    } else {
-        return false;
-    }
-    if parts[3] != "C" && parts[3] != "P" {
-        return false;
-    }
-    if parts[2].matches('.').count() > 1
-        || !parts[2].bytes().all(|c| c.is_ascii_digit() || c == b'.')
-    {
-        return false;
-    }
-    parts[2]
-        .parse::<Decimal>()
-        .is_ok_and(|strike| strike > Decimal::ZERO)
-}
-pub fn instrument_id(symbol: &str, product: MarketProduct) -> Result<String, CatalogError> {
-    if symbol.len() > 64
-        || symbol.is_empty()
-        || symbol != symbol.trim()
-        || symbol != symbol.to_ascii_uppercase()
-    {
-        return Err(CatalogError::Invalid("行情代码未规范化。".into()));
-    }
-    let valid = match product {
-        MarketProduct::Spot => {
-            (3..=30).contains(&symbol.len())
-                && symbol
-                    .bytes()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        }
-        MarketProduct::FuturesUm => {
-            (5..=30).contains(&symbol.len())
-                && (symbol.ends_with("USDT") || symbol.ends_with("USDC"))
-                && symbol
-                    .bytes()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        }
-        MarketProduct::Options => valid_option(symbol),
+/// Decode the storage BarType independently of any exchange or product.
+pub fn parse_bar_type(value: &str) -> Result<(String, String), CatalogError> {
+    crate::reader::safe_component(value)?;
+    let mut parts = value.rsplitn(5, '-');
+    let (Some("EXTERNAL"), Some("LAST"), Some(unit), Some(factor), Some(instrument)) =
+        (parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
+    else { return Err(CatalogError::Invalid("Nautilus BarType 无效。".into())); };
+    let interval = match (factor, unit) {
+        ("1", "SECOND") => "1s",
+        ("1", "MINUTE") => "1m",
+        ("3", "MINUTE") => "3m",
+        ("5", "MINUTE") => "5m",
+        ("15", "MINUTE") => "15m",
+        ("30", "MINUTE") => "30m",
+        ("1", "HOUR") => "1h",
+        ("2", "HOUR") => "2h",
+        ("4", "HOUR") => "4h",
+        ("6", "HOUR") => "6h",
+        ("8", "HOUR") => "8h",
+        ("12", "HOUR") => "12h",
+        ("1", "DAY") => "1d",
+        ("3", "DAY") => "3d",
+        ("1", "WEEK") => "1w",
+        ("1", "MONTH") => "1M",
+        _ => return Err(CatalogError::Invalid("Nautilus BarType 周期无效。".into())),
     };
-    if !valid {
-        return Err(CatalogError::Invalid("行情代码无效。".into()));
+    if bar_type(instrument, interval)? != value {
+        return Err(CatalogError::Invalid("Nautilus BarType 非规范化。".into()));
     }
-    Ok(match product {
-        MarketProduct::FuturesUm => format!("{symbol}-PERP.BINANCE"),
-        _ => format!("{symbol}.BINANCE"),
-    })
-}
-pub fn bar_type(
-    symbol: &str,
-    product: MarketProduct,
-    interval: &str,
-) -> Result<String, CatalogError> {
-    let instrument = instrument_id(symbol, product)?;
-    let (multiple, unit) = match interval {
-        "1s" => (1, "SECOND"),
-        "1m" => (1, "MINUTE"),
-        "3m" => (3, "MINUTE"),
-        "5m" => (5, "MINUTE"),
-        "15m" => (15, "MINUTE"),
-        "30m" => (30, "MINUTE"),
-        "1h" => (1, "HOUR"),
-        "2h" => (2, "HOUR"),
-        "4h" => (4, "HOUR"),
-        "6h" => (6, "HOUR"),
-        "8h" => (8, "HOUR"),
-        "12h" => (12, "HOUR"),
-        "1d" => (1, "DAY"),
-        "3d" => (3, "DAY"),
-        "1w" => (1, "WEEK"),
-        "1M" => (1, "MONTH"),
-        _ => return Err(CatalogError::Invalid("不支持的 Nautilus K 线周期。".into())),
-    };
-    Ok(format!("{instrument}-{multiple}-{unit}-LAST-EXTERNAL"))
+    Ok((instrument.to_owned(), interval.to_owned()))
 }
 pub fn interval_ms(interval: &str) -> Result<Option<i64>, CatalogError> {
     Ok(match interval {
@@ -204,14 +140,14 @@ impl CatalogBar {
         let (start, end) = bar_window(interval, self.open_time_ms)?;
         if start != self.open_time_ms {
             return Err(CatalogError::Invalid(
-                "K 线没有对齐 Binance/UTC 边界。".into(),
+                "K 线没有对齐 UTC 存储边界。".into(),
             ));
         }
         end.checked_sub(1)
             .and_then(|ms| ms.checked_mul(NANO_PER_MS))
             .ok_or_else(|| CatalogError::Invalid("K 线纳秒时间溢出。".into()))
     }
-    pub fn validate(&self, interval: &str, product: MarketProduct) -> Result<(), CatalogError> {
+    pub fn validate(&self, interval: &str) -> Result<(), CatalogError> {
         self.event_ns(interval)?;
         if self.open < Decimal::ZERO
             || self.high < Decimal::ZERO
@@ -222,11 +158,6 @@ impl CatalogBar {
             || self.high < self.close
             || self.low > self.open
             || self.low > self.close
-            || (product != MarketProduct::Options
-                && (self.open.is_zero()
-                    || self.high.is_zero()
-                    || self.low.is_zero()
-                    || self.close.is_zero()))
         {
             return Err(CatalogError::Invalid("K 线 OHLCV 质量校验失败。".into()));
         }
@@ -237,20 +168,14 @@ impl CatalogBar {
 mod tests {
     use super::*;
     #[test]
-    fn identifiers_match_python_bar_type_for() {
-        assert_eq!(
-            instrument_id("ETHUSDT", MarketProduct::FuturesUm).unwrap(),
-            "ETHUSDT-PERP.BINANCE"
-        );
-        assert_eq!(
-            bar_type("ETHUSDT", MarketProduct::FuturesUm, "1m").unwrap(),
-            "ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL"
-        );
-        assert_eq!(
-            bar_type("BTC-271231-90000-P", MarketProduct::Options, "5m").unwrap(),
-            "BTC-271231-90000-P.BINANCE-5-MINUTE-LAST-EXTERNAL"
-        );
-        assert!(instrument_id("../ETHUSDT", MarketProduct::Spot).is_err());
+    fn generic_bar_type_accepts_any_exchange_identity() {
+        let value = bar_type("BTCUSDT-PERP.BINANCE", "1m").unwrap();
+        assert_eq!(value, "BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL");
+        assert_eq!(parse_bar_type(&value).unwrap(), ("BTCUSDT-PERP.BINANCE".into(), "1m".into()));
+        let other = bar_type("ETH-USDT.OKX", "5m").unwrap();
+        assert_eq!(parse_bar_type(&other).unwrap().0, "ETH-USDT.OKX");
+        assert!(bar_type("../ETHUSDT", "1m").is_err());
+        assert!(parse_bar_type("ETHUSDT.BINANCE-1-MINUTE-LAST-FAKE").is_err());
     }
     #[test]
     fn utc_windows_match_python_three_day_week_and_month() {
