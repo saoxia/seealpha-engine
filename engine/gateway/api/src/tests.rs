@@ -153,7 +153,6 @@ use super::*;
             .unwrap();
         setup
             .runtime
-            .ledger
             .upsert_connection("42", "a", "production", "registered")
             .unwrap();
         setup
