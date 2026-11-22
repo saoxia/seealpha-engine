@@ -693,7 +693,7 @@ fn data_query_range(body: &Value) -> Result<(&str, &str, &str, i64, i64, i64), A
     }
     Ok((product, symbol, interval, start, end, step))
 }
-fn catalog_bar_json(bar: &seealpha_ledger::CatalogBar) -> Value {
+fn catalog_bar_json(bar: &seealpha_runtime::CatalogBar) -> Value {
     json!({"open_time_ms":bar.open_time_ms,"open":bar.open,
         "high":bar.high,"low":bar.low,"close":bar.close,"volume":bar.volume,
         "is_closed":true})
