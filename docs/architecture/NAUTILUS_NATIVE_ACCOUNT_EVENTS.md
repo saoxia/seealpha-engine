@@ -50,3 +50,11 @@ Nautilus references (latest docs are *capability signals*, not proof of pinned c
 ## Definition of done
 
 Native account event receipt, durable storage, source-specific provenance, restart recovery, tenant/account isolation and reconciliation must be demonstrated with pinned-version integration tests. Any unsupported economic record type must be listed as a gap, not fabricated from an account snapshot. Existing safety gates and legacy consumers remain in effect until demonstrated cutover.
+
+## Agreed implementation decision (2026-11-22)
+
+Proceed **native-first and native-only for supported account events**: use pinned Nautilus Binance execution/client reporting, native `AccountState` / `OrderFilled` / order and position engines, and native cache-backed persistence/recovery. Do not add a parallel account-event collector, generic movement DTO, second database, or duplicate reconciliation engine merely for completeness of architecture.
+
+History is limited to what the pinned native adapter and exchange APIs can genuinely retrieve; a restored account snapshot is not a reconstructed economic ledger. For any missing funding-income, deposit, withdrawal, transfer, or option-exercise history, record the verified capability gap and leave it unimplemented unless explicitly prioritized. Do not synthesize transactions from balance differences.
+
+Acceptance remains gated on offline/restart tests with pinned 0.68.0 and confirmation of safe execution-client integration; existing legacy consumers and safety gates remain untouched until native parity is demonstrated.
