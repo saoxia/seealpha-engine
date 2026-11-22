@@ -30,7 +30,7 @@ The current PR introduces durable V2 storage and validation, **not** complete re
 
 ## Ownership update: private account events are a Pipeline process
 
-Venue-specific extraction/normalization belongs in `engine/pipeline/account_events/` (or per-venue source adapters under that pipeline). The Binance implementation is not part of Ledger. Its current functions `binance_usdm_funding` and `binance_account_fill` normalize supplied private-account evidence into the shared `MovementInput`; they do not establish HTTP authentication.
+Venue-specific extraction/normalization belongs in `engine/pipeline/binance_account_events/` (or per-venue source adapters under that pipeline). The Binance implementation is not part of Ledger. Its current functions `binance_usdm_funding` and `binance_account_fill` normalize supplied private-account evidence into the shared `MovementInput`; they do not establish HTTP authentication.
 
 `ledger/movements` retains only venue-neutral append/query/idempotency and immutable evidence storage. `account_events.rs` is legacy and will be retired after consumer migration; the future generic account-event feed should be derived from canonical movements rather than reconstructed independently in Ledger.
 
