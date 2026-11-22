@@ -42,3 +42,13 @@ Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、�
 ## 已锁定的产品契约
 
 [Pipeline 基线](BASELINE.md) 列出 Spot、USD-M Futures、Options 的冻结范围及对应验证。此次清理不改变上述产品链路或风险门禁；删除的只是已无调用方、与现行架构重复的旧模块。
+
+## 私有账户事件 Pipeline（新增 V2）
+
+`account_events/` 是独立的 Rust crate `seealpha-account-events-pipeline`，负责将经过交易所连接层获取的 Binance 私有账户经济事件规范化为跨交易所的 `MovementInput`，然后由 `ledger/movements` 提供通用、幂等、不可变的事件持久化。这里的 **Pipeline** 表达数据处理过程，不意味着所有账户事件必须进入行情 Parquet Catalog。
+
+- Binance 特有的字段、产品代码、成交 ID、资金费结算类型和 Instrument ID 映射只放在本层或其 Binance source adapter 中；Ledger 不知道 Binance API 结构。
+- API 签名、密钥、分页、水位和断线补偿应由连接器/采集调度负责；当前 V2 只实现离线规范化，**不声称已接通私有采集或完成证据认证**。
+- 交易所私有成交不等于公共市场 TradeTick；关联到 Nautilus 的原生成交事件 ID，但不在 Pipeline 或 Ledger 中重新实现 OMS、持仓和余额计算。
+- 所有 V2 记录当前仍为 `verification: pending`，不可用作真实资金过账或解除风控门禁。
+- 历史行情基线（Spot/UM/Options）不受影响；旧账户证据 API 暂时保留，后续验证切换完成再删除。
