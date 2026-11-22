@@ -13,7 +13,6 @@ seealpha-nautilus-binance-data = { path = "../shared/nautilus" }
 nautilus-common = "=0.68.0"
 nautilus-model = { version = "=0.68.0", features = ["high-precision"] }
 anyhow = "1"
-seealpha-execution = { path = "../../../execution" }
 
 [dev-dependencies]
 rust_decimal = "1"
