@@ -2,6 +2,8 @@
 // Native Nautilus owns account/position state; this crate only persists
 // SeeAlpha-specific movement evidence, attribution and reconciliation data.
 // Keep src/lib.rs as the Rust crate root.
+#[path = "../accounts/mod.rs"]
+mod accounts;
 #[path = "../movements/mod.rs"]
 mod movements;
 #[path = "../allocations/mod.rs"]
