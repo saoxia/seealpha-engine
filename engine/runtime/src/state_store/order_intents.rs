@@ -811,4 +811,163 @@ mod tests {
         );
     }
 
+    #[test]
+    fn partial_and_complete_orders_require_exact_verified_decimal_sum() {
+        let book = StateStore::open(std::path::Path::new(":memory:")).unwrap();
+        book.ensure_tenant("t", "production", "active").unwrap();
+        let intent = json!({"action":"NEW","environment":"production","client_order_id":"c3",
+            "symbol":"ETHUSDT","side":"BUY","quantity":"0.3"});
+        book.preregister_order_intent(
+            "t",
+            "a",
+            "production",
+            "req3",
+            "c3",
+            &"d".repeat(64),
+            &intent,
+        )
+        .unwrap();
+        let t1 = json!({"trade_id":"binance:futures_um:ETHUSDT:301","venue_order_id":"100",
+            "quantity":"0.1","price":"100","source":"signed_exchange_user_trades"});
+        let t2 = json!({"trade_id":"binance:futures_um:ETHUSDT:302","venue_order_id":"100",
+            "quantity":"0.2","price":"100","source":"signed_exchange_user_trades"});
+        book.import_verified_fills("t", "a", "production", "100", &[t1, t2])
+            .unwrap();
+        let mut observed = json!({"environment":"production","client_order_id":"c3",
+            "status":"PARTIALLY_FILLED","source":"signed_exchange_order_query",
+            "observed_at_ns":1,"venue_order_id":"100",
+            "trade_ids":["binance:futures_um:ETHUSDT:301"]});
+        book.append_order_observation("t", "a", "production", "c3", "partial", &observed)
+            .unwrap();
+        observed["status"] = json!("FILLED");
+        observed["observed_at_ns"] = json!(2);
+        assert!(
+            book.append_order_observation("t", "a", "production", "c3", "early", &observed)
+                .is_err()
+        );
+        observed["trade_ids"] = json!([
+            "binance:futures_um:ETHUSDT:301",
+            "binance:futures_um:ETHUSDT:302"
+        ]);
+        book.append_order_observation("t", "a", "production", "c3", "complete", &observed)
+            .unwrap();
+        assert_eq!(
+            book.latest_order_observation("t", "a", "production", "c3")
+                .unwrap()
+                .unwrap()["status"],
+            "FILLED"
+        );
+    }
+
+    #[test]
+    fn observed_partial_fills_cannot_disappear_on_later_snapshots() {
+        let book = StateStore::open(std::path::Path::new(":memory:")).unwrap();
+        book.ensure_tenant("t", "production", "active").unwrap();
+        let intent = json!({"action":"NEW","environment":"production","client_order_id":"client",
+            "symbol":"ETHUSDT","side":"BUY","quantity":"0.3"});
+        book.preregister_order_intent(
+            "t",
+            "a",
+            "production",
+            "request",
+            "client",
+            &"a".repeat(64),
+            &intent,
+        )
+        .unwrap();
+        let t1 = json!({"trade_id":"binance:futures_um:ETHUSDT:501","venue_order_id":"42",
+            "quantity":"0.1","price":"100","source":"signed_exchange_user_trades"});
+        let t2 = json!({"trade_id":"binance:futures_um:ETHUSDT:502","venue_order_id":"42",
+            "quantity":"0.2","price":"100","source":"signed_exchange_user_trades"});
+        book.import_verified_fills("t", "a", "production", "42", &[t1, t2])
+            .unwrap();
+        let base = json!({"environment":"production","client_order_id":"client",
+            "status":"PARTIALLY_FILLED","source":"signed_exchange_order_query",
+            "observed_at_ns":100,"venue_order_id":"42",
+            "trade_ids":["binance:futures_um:ETHUSDT:501"]});
+        book.append_order_observation("t", "a", "production", "client", "obs1", &base)
+            .unwrap();
+        let mut rollback = base.clone();
+        rollback["observed_at_ns"] = json!(101);
+        rollback["status"] = json!("NEW");
+        assert!(
+            book.append_order_observation("t", "a", "production", "client", "obs2", &rollback)
+                .is_err()
+        );
+        rollback["status"] = json!("FILLED");
+        rollback["trade_ids"] = json!(["binance:futures_um:ETHUSDT:502"]);
+        assert!(
+            book.append_order_observation("t", "a", "production", "client", "obs3", &rollback)
+                .is_err()
+        );
+        rollback["trade_ids"] = json!([
+            "binance:futures_um:ETHUSDT:501",
+            "binance:futures_um:ETHUSDT:502"
+        ]);
+        book.append_order_observation("t", "a", "production", "client", "obs4", &rollback)
+            .unwrap();
+        assert_eq!(
+            book.latest_order_observation("t", "a", "production", "client")
+                .unwrap()
+                .unwrap()["status"],
+            "FILLED"
+        );
+    }
+
+    #[test]
+    fn ack_unknown_cannot_be_rewritten_into_a_fill() {
+        let ledger = StateStore::open(std::path::Path::new(":memory:")).unwrap();
+        ledger.ensure_tenant("t", "production", "active").unwrap();
+        ledger
+            .preregister_order_intent(
+                "t",
+                "a",
+                "production",
+                "r",
+                "cl1",
+                &"a".repeat(64),
+                &new_intent(),
+            )
+            .unwrap();
+        let observed = json!({"environment":"production","client_order_id":"cl1",
+            "status":"NEW","source":"authenticated_user_stream","observed_at_ns":1});
+        ledger
+            .append_order_observation("t", "a", "production", "cl1", "o1", &observed)
+            .unwrap();
+        assert!(ledger.fills("t", "a", "production").unwrap().is_empty());
+        let filled = json!({"environment":"production","client_order_id":"cl1",
+            "status":"FILLED","source":"signed_exchange_order_query","observed_at_ns":2,
+            "venue_order_id":"42","trade_ids":["binance:futures_um:ETHUSDT:99"]});
+        assert!(
+            ledger
+                .append_order_observation("t", "a", "production", "cl1", "o2", &filled)
+                .is_err()
+        );
+        let trade = json!({"trade_id":"binance:futures_um:ETHUSDT:99","venue_order_id":"42",
+            "quantity":"0.00000001","price":"1024.00000001","source":"signed_exchange_user_trades"});
+        ledger
+            .import_verified_fills("t", "a", "production", "42", &[trade])
+            .unwrap();
+        ledger
+            .append_order_observation("t", "a", "production", "cl1", "o2", &filled)
+            .unwrap();
+        ledger
+            .append_order_observation("t", "a", "production", "cl1", "o2", &filled)
+            .unwrap();
+        assert_eq!(ledger.fills("t", "a", "production").unwrap().len(), 1);
+        let mut contradictory = observed;
+        contradictory["observed_at_ns"] = json!(3);
+        assert!(
+            ledger
+                .append_order_observation("t", "a", "production", "cl1", "o3", &contradictory)
+                .is_err()
+        );
+        assert_eq!(
+            ledger
+                .latest_order_observation("t", "a", "production", "cl1")
+                .unwrap()
+                .unwrap()["status"],
+            "FILLED"
+        );
+    }
 }
