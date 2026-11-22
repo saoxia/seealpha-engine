@@ -4,6 +4,8 @@
 mod basket_journal;
 mod coordinator_state;
 mod research;
+mod paper;
+pub(crate) use paper::{SessionStart, SessionWrite};
 
 use seealpha_database::Connection;
 use seealpha_ledger::LedgerError;
@@ -27,4 +29,10 @@ impl StateStore {
         self.connection.lock()
             .map_err(|_| LedgerError::Database("application state mutex poisoned".into()))
     }
+}
+
+pub(super) fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|v| v.as_millis()).unwrap_or(0)).unwrap_or(0)
 }
