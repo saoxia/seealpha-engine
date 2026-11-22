@@ -1,4 +1,4 @@
-use crate::{Ledger, LedgerError};
+use crate::{Ledger, LedgerError, now_ms};
 use seealpha_database::{OptionalExtension, params};
 
 impl Ledger {
@@ -285,17 +285,6 @@ impl Ledger {
             .optional()
             .map_err(|error| LedgerError::Database(error.to_string()))
     }
-}
-
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis())
-            .unwrap_or(0),
-    )
-    .unwrap_or(0)
 }
 
 #[cfg(test)]
