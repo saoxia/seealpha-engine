@@ -61,7 +61,6 @@ fn allocate_fifo(
     let signed = match side {
         OrderSide::Buy => Decimal::ONE,
         OrderSide::Sell => -Decimal::ONE,
-        _ => bail!("unsupported native side for virtual allocation"),
     };
     let mut offset = Decimal::ZERO;
     let mut seen = BTreeSet::new();
