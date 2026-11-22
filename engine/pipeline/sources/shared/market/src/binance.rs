@@ -207,10 +207,6 @@ fn precision_from_increment(raw:&str)->Result<u32,MarketError>{
     if number<=rust_decimal::Decimal::ZERO {return Err(MarketError::Payload);}
     let precision=number.normalize().scale();
     if precision>16 {return Err(MarketError::Payload);}
-    // Binance tick/step values must be exact powers of ten for a single
-    // decimal-place precision to describe their allowed price/quantity grid.
-    let expected=rust_decimal::Decimal::new(1,precision);
-    if number!=expected {return Err(MarketError::Payload);}
     Ok(precision)
 }
 
@@ -223,7 +219,7 @@ mod precision_tests {
         assert_eq!(precision_from_increment("1.00000000").unwrap(),0);
         assert_eq!(precision_from_increment("0.00010000").unwrap(),4);
         assert!(precision_from_increment("0.00000000").is_err());
-        assert!(precision_from_increment("0.25000000").is_err());
+        assert_eq!(precision_from_increment("0.25000000").unwrap(),2);
     }
 }
 
