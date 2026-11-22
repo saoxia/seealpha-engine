@@ -128,16 +128,16 @@ cargo test --workspace --locked
 python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
 
-## Native holding publication to paper replay
+## Native bar-synchronous holding replay
 
-`replay_holdings` now resolves each `HoldingPublication` (member, symbol,
-quantity-or-weight, allocation, price) into a `TargetPublication` before
-calling the established Rust netting, risk clipping and paper-fill replay.
-The input batch is rejected if symbols differ or any allocation/target is
-invalid. It is a **single-instrument paper** entry point: do not use it for
-multi-instrument baskets, live order submission, or venue reconciliation.
+The Runtime calls `replay_holdings_by_bar` to resolve member quantity/weight
+publications, retain the last target for each member within a closed bar,
+net member targets once per bar, and generate paper deltas. Each batch rejects
+mixed symbols, out-of-order bar indices, inconsistent close prices and invalid
+allocations before applying fills.
 
-Tests cover opposing long/short weight publications and reject mixed
-instruments or invalid allocations. This entry point is not yet wired to
-HTTP strategy-host output or the live coordinator; keep legacy Python until
-full integration, equivalence and owner-approved retirement.
+The obsolete per-publication `replay_holdings` entry point was removed:
+it could create artificial same-bar churn and was not called by Runtime.
+`replay_targets` remains the underlying paper execution primitive and is
+not a live venue execution path. Live orders and executions must use the
+Nautilus-integrated Runtime path; do not treat paper fills as exchange facts.
