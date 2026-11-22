@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
