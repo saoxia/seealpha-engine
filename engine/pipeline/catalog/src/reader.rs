@@ -907,6 +907,21 @@ impl Catalog {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn missing_bar_windows_keep_half_open_ranges_and_reject_duplicates() {
+        assert_eq!(
+            missing_bar_windows(&[0, 60_000, 180_000, 240_000], 0, 360_000, 60_000).unwrap(),
+            vec![BarGap { start_ms: 120_000, end_ms: 180_000 },
+                 BarGap { start_ms: 300_000, end_ms: 360_000 }]
+        );
+        assert_eq!(missing_bar_windows(&[], 0, 120_000, 60_000).unwrap(),
+            vec![BarGap { start_ms: 0, end_ms: 120_000 }]);
+        assert!(missing_bar_windows(&[0, 0], 0, 120_000, 60_000).is_err());
+        assert!(missing_bar_windows(&[10], 0, 120_000, 60_000).is_err());
+        assert!(missing_bar_windows(&[], 0, 120_000, 0).is_err());
+    }
+
+
     use super::*;
     #[test]
     fn inventory_reconstructs_option_and_perpetual_bar_types_from_right() {
