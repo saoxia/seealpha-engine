@@ -1,6 +1,7 @@
 //! Seealpha's native data foundation for the existing Python/Nautilus v2
 //! Catalog directory. No rewriting into SQLite or implicit subscriptions.
 mod model;
+mod funding;
 mod reader;
 mod records;
 mod writer;
@@ -12,6 +13,7 @@ pub use model::{
     CatalogBar, DAY_MS, NANO_PER_MS, bar_type, bar_window, interval_ms, parse_bar_type,
 };
 pub use reader::{BarGap, RecordKind};
+pub use funding::CatalogFunding;
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
