@@ -73,6 +73,9 @@ fn window(interval:&str, timestamp_ms:i64)->Result<(i64,i64),String>{
 /// covered_until_ms is the *verified* exclusive end of the underlying 1s
 /// dataset. A Bar is final only when its entire window is covered; the last
 /// window may be returned open if the input ends before its close.
+// Compiled into native live collector through its shared TickBars module,
+// but called only by the market historical-reconstruction library.
+#[allow(dead_code)]
 pub fn aggregate_historical_seconds(
     seconds: &[TickBar],
     interval: &str,
