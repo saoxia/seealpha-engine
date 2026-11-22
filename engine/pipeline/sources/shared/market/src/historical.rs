@@ -266,7 +266,8 @@ impl HistoricalTracker {
     /// A single bounded Pipeline poll; native persisted TradeTicks are the
     /// sole input. Only fingerprints committed after all derivative writes.
     pub fn poll(&mut self,source:&Catalog,target:&Catalog,symbol:&str,
-        product:MarketProduct,precision:(u32,u32))->Result<usize>{
+        product:MarketProduct,precision:(u32,u32),minimum_ms:i64)->Result<usize>{
+        if minimum_ms<0||minimum_ms%MINUTE_MS!=0{return Err("invalid historical starting minute".into())}
         let instrument=identity::instrument_id(symbol,product)?;
         if !self.loaded.contains(&instrument){
             // A failed checkpoint load must be retryable on the next poll.
@@ -283,14 +284,19 @@ impl HistoricalTracker {
             names.insert(key.clone());
             let path=directory.join(filename);
             let fingerprint=file_fingerprint(&path)?;
-            if self.completed.get(&key).is_some_and(|c|c.fingerprint==fingerprint)
-                || self.pending.get(&key).is_some_and(|r|r.fingerprint==fingerprint)
-            {continue}
             let first_ns:i64=row["start_ns"].as_str().ok_or("start missing")?.parse()?;
             let last_ns:i64=row["end_ns"].as_str().ok_or("end missing")?.parse()?;
             if first_ns<0||last_ns<first_ns{return Err("invalid Tick file range".into())}
-            let start_ms=aligned_start(first_ns.div_euclid(NANO_PER_MS));
+            let start_ms=aligned_start(first_ns.div_euclid(NANO_PER_MS)).max(minimum_ms);
             let end_ms=aligned_end(last_ns.div_euclid(NANO_PER_MS))?;
+            if start_ms>=end_ms{continue}
+            // Do not regenerate pruned history. When a tenant advances its
+            // requested start backwards, the saved range forces a rebuild.
+            if self.completed.get(&key).is_some_and(|c|
+                c.fingerprint==fingerprint && c.start_ms<=start_ms && c.end_ms>=end_ms)
+                || self.pending.get(&key).is_some_and(|r|
+                    r.fingerprint==fingerprint && r.start_ms<=start_ms && r.end_ms>=end_ms)
+            {continue}
             self.pending.insert(key,Revision{fingerprint,start_ms,end_ms,cursor_ms:start_ms});
         }
         // A removed native file invalidates its former time range too.
@@ -300,10 +306,14 @@ impl HistoricalTracker {
             .filter(|(key,_)|key.starts_with(&format!("{instrument}/"))&&!names.contains(*key))
             .map(|(key,value)|(key.clone(),value.clone())).collect::<Vec<_>>();
         for (key,entry) in removed{
+            let start_ms=entry.start_ms.max(minimum_ms);
+            if start_ms>=entry.end_ms{
+                self.completed.remove(&key);
+                continue;
+            }
             if self.pending.get(&key).is_none_or(|task|task.fingerprint!=0){
                 self.pending.insert(key,Revision {
-                    fingerprint:0,start_ms:entry.start_ms,
-                    end_ms:entry.end_ms,cursor_ms:entry.start_ms,
+                    fingerprint:0,start_ms,end_ms:entry.end_ms,cursor_ms:start_ms,
                 });
             }
         }
@@ -414,7 +424,7 @@ mod tests{
         let target=Catalog::open_existing(&out).unwrap();
         let mut tracker=HistoricalTracker::default();
         write_native(110,2);
-        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),1);
+        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2),base).unwrap(),1);
         let first_id=seealpha_catalog::bar_type(instrument,"1s").unwrap();
         let minute_id=seealpha_catalog::bar_type(instrument,"1m").unwrap();
         let read=|id:&str,interval:&str,end_ms:i64|target.read_bars(id,interval,
@@ -424,17 +434,17 @@ mod tests{
         assert_eq!(seconds.len(),1);
         assert_eq!(seconds[0].high,Decimal::from(110));
         assert_eq!(minutes[0].volume,Decimal::from(3));
-        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),0);
+        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2),base).unwrap(),0);
         // Same file name and time bounds, corrected underlying Tick values.
         write_native(120,5);
-        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),1);
+        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2),base).unwrap(),1);
         assert_eq!(read(&first_id,"1s",base+1_000)[0].high,Decimal::from(120));
         assert_eq!(read(&minute_id,"1m",base+60_000)[0].volume,Decimal::from(6));
         // Durable checkpoint: a new worker must not repeat finished work.
         let mut restarted=HistoricalTracker::default();
-        assert_eq!(restarted.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),0);
+        assert_eq!(restarted.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2),base).unwrap(),0);
         fs::remove_file(file).unwrap();
-        assert_eq!(restarted.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),1);
+        assert_eq!(restarted.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2),base).unwrap(),1);
         assert!(read(&first_id,"1s",base+1_000).is_empty());
         assert!(read(&minute_id,"1m",base+60_000).is_empty());
         fs::remove_dir_all(root).unwrap();

@@ -171,7 +171,7 @@ async fn cycle(
         match tracker.poll(&native,catalog,&symbol,match product {
             Product::Spot=>MarketProduct::Spot,
             Product::FuturesUm=>MarketProduct::FuturesUm,
-        },precision) {
+        },precision,fetch_from) {
             Ok(worked) if worked>0=>eprintln!(
                 "pipeline {} {symbol}: rebuilt {worked} Tick-backed historical minutes",
                 product.as_str()),
