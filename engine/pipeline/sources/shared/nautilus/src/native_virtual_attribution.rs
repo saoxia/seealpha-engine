@@ -42,7 +42,7 @@ pub fn project_native_order_observation(
     binding: &NativeOrderBinding<'_>,
     bar: Option<Bar>,
 ) -> Result<VirtualAttribution> {
-    let mut coordinator = previous.clone();
+    let coordinator = previous.clone();
     ensure!(!binding.account_id.is_empty()
         && !binding.instrument_id.is_empty()
         && !binding.client_order_id.is_empty(),
