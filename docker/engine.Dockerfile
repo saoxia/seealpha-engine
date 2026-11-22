@@ -17,7 +17,7 @@ FROM debian:bookworm-slim
 RUN mkdir -p /etc/postgresql-common \
     && printf 'create_main_cluster = false\\n' > /etc/postgresql-common/createcluster.conf \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 libsqlite3-0 postgresql-15 postgresql-client-15 \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 postgresql-15 postgresql-client-15 \
     && rm -rf /var/lib/apt/lists/*
 ENV ENGINE_PROJECT=/app \
     ENGINE_HOST=127.0.0.1 ENGINE_PORT=8766 \
