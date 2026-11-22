@@ -106,6 +106,24 @@ impl ArchiveSpec {
         Ok(Self { market, dataset, symbol: symbol.to_owned(), day: parsed })
     }
 
+    /// Closed UTC calendar day represented as a half-open millisecond range.
+    /// Reused by the USD-M hierarchical repair job to avoid a second date parser.
+    pub fn utc_day_bounds_ms(&self) -> Result<(i64, i64)> {
+        let start = self.day.and_hms_opt(0, 0, 0)
+            .ok_or("invalid UTC day start")?
+            .and_utc()
+            .timestamp_millis();
+        let next = self.day.succ_opt().ok_or("UTC date overflow")?
+            .and_hms_opt(0, 0, 0)
+            .ok_or("invalid UTC day end")?
+            .and_utc()
+            .timestamp_millis();
+        if start < 0 || next <= start {
+            return Err("invalid positive UTC day range".into());
+        }
+        Ok((start, next))
+    }
+
     pub fn archive_name(&self) -> String {
         format!("{}-{}-{}.zip", self.symbol, self.dataset.as_str(), self.day)
     }

@@ -1,10 +1,10 @@
 //! USD-M hierarchical daily repair orchestrator, reusing existing Catalog
 //! comparison and Binance ZIP fetch/import jobs. No second collector or writer.
 use crate::{Runtime, RuntimeError};
-use chrono::NaiveDate;
 use seealpha_catalog::{AggregatedKline, DAY_MS, MarketProduct, bar_window,
     read_aggregated_catalog_klines};
 use seealpha_market::{Bar, BinanceSource, Product};
+use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -168,18 +168,13 @@ impl Runtime {
             .ok_or_else(|| error("修复合约缺失。"))?;
         let day = payload["day"].as_str()
             .ok_or_else(|| error("修复 UTC 日期缺失。"))?;
-        let date = NaiveDate::parse_from_str(day, "%Y-%m-%d")
-            .map_err(|_| error("修复 UTC 日期无效。"))?;
-        if date.format("%Y-%m-%d").to_string() != day {
-            return Err(error("修复日期必须是标准 UTC 日期。"));
-        }
-        let start = date.and_hms_opt(0, 0, 0)
-            .ok_or_else(|| error("修复日开始时间无效。"))?
-            .and_utc().timestamp_millis();
-        if start < 0 || start % DAY_MS != 0 {
+        let spec = ArchiveSpec::new("futures_um", "aggTrades", symbol, day)
+            .map_err(|e| error(format!("USD-M 修复日期或合约无效：{e}")))?;
+        let (start, end) = spec.utc_day_bounds_ms()
+            .map_err(|e| error(format!("USD-M 修复 UTC 日期无效：{e}")))?;
+        if start < 0 || start % DAY_MS != 0 || end - start != DAY_MS {
             return Err(error("修复日期必须按 UTC 天对齐。"));
         }
-        let end = start.checked_add(DAY_MS).ok_or_else(|| error("修复日溢出。"))?;
         let scan = self.scan_futures_day(symbol, start, end).await?;
 
         let mut response = json!({
