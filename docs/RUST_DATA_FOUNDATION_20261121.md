@@ -39,7 +39,6 @@
 - `POST /tenants/{tenant_id}/data/catalog/events`：传入 `{"data_type":"trades","identifier":"ETHUSDT-PERP.BINANCE","start_ns": "...", "end_ns": "...","limit":1000}`，其他支持 `quotes`、`instruments`、`funding_rate_updates`、`option_greeks`、`order_book_depths`、`instrument_statuses`、`instrument_closes`，以及指定 `feature_catalog`、`class_name` 的 `custom/supplement`。原始纳秒保留为字符串；部分 Arrow 特殊数据类型可能拒绝读取，不降级为伪造值。
 - `POST /tenants/{tenant_id}/data/catalog/inventory`：按数据类型和标识查询实际文件时间范围。
 - `POST /tenants/{tenant_id}/data/datasets`：从已有 Nautilus Bar 和 TradeTick 目录直接扫描产品与周期，不依赖策略订阅配置。
-- `POST /tenants/{tenant_id}/data/control/delete-plan`：全日删除预览，不允许实际删除。
 - `POST /tenants/{tenant_id}/data/catalog/bars`：已有 `data/catalog` 时写入原生 Parquet，要求携带 `price_precision` 和 `size_precision`（0..16，且可精确表示提交值），不能覆盖不同历史。精度目前仍需要由可信 Instrument 配置提供，尚未完成全部 schema 交叉验证。
 - `POST /tenants/{tenant_id}/data/control/source/{product}/calculate/{symbol}/start` 或 `/stop`：需要显式 `ENGINE_EXPERIMENTAL_SOURCE=1`，只管理独立计算进程，不启用实时 READY。
 - `POST /tenants/{tenant_id}/data/control/job/start` 可提交 `{"payload":{"action":"publish_catalog","product":"futures_um","symbol":"ETHUSDT","interval":"1m","price_precision":2,"size_precision":3}}`。先核实项目原生 Journal、精度和 Parquet 挂载，再经外部公开 REST 校验完整闭合 K 线，全部通过才原子发布和更新检查点。
