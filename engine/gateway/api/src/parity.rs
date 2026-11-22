@@ -774,8 +774,8 @@ async fn data_coverage(
         "start_ms":start,"end_ms":end,"expected_bars":expected,
         "present_bars":rows.len(),"missing_count":gaps.len(),
         "missing_open_times_ms":gaps,"complete":gaps.is_empty(),
-        "quality":"unverified","backend":"native_sqlite",
-        "message":"仅验证本地 SQLite K 线连续性，不等于交易所归档或 Tick 完整性。"}),
+        "quality":"unverified","backend":"nautilus_v2_parquet",
+        "message":"仅验证本地 Parquet K 线连续性，不等于交易所归档或 Tick 完整性。"}),
     ))
 }
 async fn data_prepare_plan(
