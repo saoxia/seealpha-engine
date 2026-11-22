@@ -6,7 +6,6 @@ pub use catalog::CatalogBar;
 mod config;
 mod data;
 mod evidence;
-mod fills;
 mod history;
 mod verified_replay;
 pub use verified_replay::VerifiedHistoryWindow;
