@@ -22,6 +22,13 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 
 本轮只搭建 Ledger 的数据核心，不新增 HTTP 路由、自动执行任务或与 Nautilus 并行的账户状态机。现有 Ledger 库在打开时创建必要表；已有历史表保持原状。
 
+## 旧账户接口收敛（2026-11-22）
+
+- Gateway `account_health` 复用 Ledger `account_registry_view`，仍保留旧响应的 `status`、`workers`、`connections` 字段；附加显式的非实盘认证标记。
+- Runtime 的账户注册和测试网只读快照不再接收无效的凭据 / `venue_base` 参数；HTTP 快照继续拒绝非空内联凭据。
+- 旧 `sync_registered_fills` 代理已移除，Gateway 成交同步路由统一调用 `sync_verified_order_fills`，仍拒绝未经核验的原生成交，不要求配置一个实际上不会使用的旧 Venue URL。
+- 未改变订单发送门禁、旧历史数据或实盘账户状态；这些修改需要 Cargo / CI 验证后才可合并。
+
 ## Accounts 迁移
 
 2026-11-22 起不再编译 `accounts/account_snapshots.rs`，也不再为新数据库建立 `account_snapshots` 表。原生账户模块位于 `engine/pipeline/sources/shared/nautilus/`。删除了无生产调用方的 Ledger 快照 Basket 对账、旧版本 CAS 预登记实验接口，保留通用 Basket Checkpoint 和通用不可变订单意图记录。
