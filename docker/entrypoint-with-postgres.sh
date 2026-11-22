@@ -7,6 +7,7 @@ PG_CLUSTER=seealpha
 PG_DATA="${SEEALPHA_POSTGRES_DATA_DIR:-/app/.local/state/postgresql}"
 PG_RUNTIME=/run/postgresql
 PG_CREDENTIAL_FILE="${SEEALPHA_POSTGRES_CREDENTIAL_FILE:-/app/.local/state/.postgres-password}"
+new_database=0
 
 postgres_pid=""
 engine_pid=""
@@ -32,6 +33,7 @@ if [[ ! -f "$PG_DATA/PG_VERSION" ]]; then
     echo "PostgreSQL directory has files but is not initialized; refusing to overwrite" >&2
     exit 1
   fi
+  new_database=1
   runuser -u postgres -- /usr/lib/postgresql/"$PG_VERSION"/bin/initdb \
     -D "$PG_DATA" --auth-local=peer --auth-host=scram-sha-256 --encoding=UTF8 \
     --no-instructions >/dev/null
@@ -45,7 +47,11 @@ fi
 # Do not print the password or expose the database on a network interface.
 if [[ ! -f "$PG_CREDENTIAL_FILE" ]]; then
   umask 077
-  python3 -c 'import secrets,sys; sys.stdout.write(secrets.token_urlsafe(36))' > "$PG_CREDENTIAL_FILE"
+  if [[ "$new_database" != 1 ]]; then
+    echo "Existing PostgreSQL cluster has no credential file; refusing to rotate credentials" >&2
+    exit 1
+  fi
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \\n' > "$PG_CREDENTIAL_FILE"
 fi
 chmod 0600 "$PG_CREDENTIAL_FILE"
 PG_PASSWORD="$(cat "$PG_CREDENTIAL_FILE")"
@@ -80,10 +86,9 @@ fi
 # Create a dedicated database and a non-superuser login on first startup.
 if ! runuser -u postgres -- psql -h "$PG_RUNTIME" -d postgres -Atqc \
   "SELECT 1 FROM pg_roles WHERE rolname='seealpha_cache'" | grep -qx 1; then
-  PG_BOOTSTRAP_PASSWORD="$PG_PASSWORD" runuser -u postgres -- env \
-    PG_BOOTSTRAP_PASSWORD="$PG_PASSWORD" psql -h "$PG_RUNTIME" -d postgres \
-    -v ON_ERROR_STOP=1 -q -c \
-    "CREATE ROLE seealpha_cache LOGIN PASSWORD '$(printf '%s' "$PG_PASSWORD" | sed "s/'/''/g")'"
+  runuser -u postgres -- psql -h "$PG_RUNTIME" -d postgres -v ON_ERROR_STOP=1 -q <<SQL
+CREATE ROLE seealpha_cache LOGIN PASSWORD '$PG_PASSWORD';
+SQL
 fi
 if ! runuser -u postgres -- psql -h "$PG_RUNTIME" -d postgres -Atqc \
   "SELECT 1 FROM pg_database WHERE datname='seealpha_cache'" | grep -qx 1; then
