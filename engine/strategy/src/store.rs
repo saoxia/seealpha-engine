@@ -280,6 +280,7 @@ impl StrategyStore {
                     return Err(conflict("stored ZIP was modified"));
                 }
             }
+            self.check_artifact(&final_dir, &record)?;
             self.index_record(&record)?;
             return Ok(());
         }
@@ -379,6 +380,11 @@ mod tests {
         db.insert_zip(&load,&bytes).unwrap();
         let folder = db.folder(&load);
         assert!(folder.join("README.txt").exists());
+        let metadata = db.list("tenant","account").unwrap();
+        assert_eq!(metadata.len(),1);
+        assert_eq!(metadata[0].code_key, "ema_crossover");
+        assert_eq!(metadata[0].version, "1");
+        assert!(metadata[0].archive.is_empty());
         assert_eq!(db.strategies("tenant","account").unwrap(),vec![load.clone()]);
         let mut changed = bytes.clone(); changed.push(0);
         assert!(db.insert_zip(&load,&changed).is_err());
@@ -408,6 +414,11 @@ mod tests {
          let mut altered=load.clone();altered.archive=b"other".to_vec();altered.package_hash=sha(b"other");assert!(db.insert(&altered).is_err());}
         let db=StrategyStore::open(&root).unwrap();
         assert_eq!(db.strategies("tenant","account").unwrap(),vec![load]);
+        let conn = Connection::open(root.join("index.sqlite")).unwrap();
+        let columns: String = conn.query_row("SELECT sql FROM sqlite_master WHERE name='strategy_issuances'", [], |row| row.get(0)).unwrap();
+        assert!(!columns.contains("BLOB"));
+        assert!(!columns.contains("archive"));
+        drop(conn);
         assert!(db.strategies("tenant","another").unwrap().is_empty());
         drop(db);let _=fs::remove_dir_all(root);
     }
