@@ -66,8 +66,6 @@ pub struct Runtime {
     pub strategy_store: StrategyStore,
     pub control: ControlStore,
     pub project: PathBuf,
-    pub python: PathBuf,
-    pub host: PathBuf,
     inflight: AtomicUsize,
     source_processes: Mutex<HashMap<String, Child>>,
 }
@@ -125,8 +123,6 @@ impl Runtime {
             strategy_store,
             control,
             project: config.project.clone(),
-            python: config.python.clone(),
-            host: config.host_script(),
             inflight: AtomicUsize::new(0),
             source_processes: Mutex::new(HashMap::new()),
         })
@@ -497,19 +493,6 @@ pub(crate) fn map_strategy(error: seealpha_strategy::StrategyError) -> RuntimeEr
     }
 }
 
-pub(crate) fn write_archive(bytes: &[u8]) -> Result<PathBuf, RuntimeError> {
-    let path = std::env::temp_dir().join(format!(
-        "seealpha-archive-{}-{}.zip",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0)
-    ));
-    std::fs::write(&path, bytes)
-        .map_err(|_| RuntimeError::BadRequest("策略包无法写入。".into()))?;
-    Ok(path)
-}
 
 pub fn map_control(error: ControlError) -> RuntimeError {
     match error {
