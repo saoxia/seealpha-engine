@@ -161,6 +161,9 @@ async fn main() -> Result<()> {
         Rc::clone(&session), now_ns, 60_000_000_000,
     );
     let result = node.run().await;
+    // Release the native Postgres cache and drain queued writes before exit.
+    // LiveNode::run() alone does not guarantee cache adapter disposal.
+    node.dispose();
     session.borrow_mut().mark_disconnected();
     result?;
     Ok(())
