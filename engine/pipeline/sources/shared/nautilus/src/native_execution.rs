@@ -1,7 +1,7 @@
 //! Fail-closed SeeAlpha -> Nautilus Binance native execution identity mapping.
 //! This is a deterministic routing contract, not a sender or an authorization.
 //! Runtime must commit the immutable intent before any future native submission.
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use nautilus_binance::common::enums::BinanceProductType;
 use nautilus_model::{
     data::NautilusRecordType,
@@ -214,9 +214,92 @@ pub fn link_native_accept(
     }
 }
 
+
+/// Immutable pre-registered instruction identity provided by the runtime.
+/// A matching identity is necessary for attribution, but never proves venue
+/// provenance or grants the right to send, amend or settle an order.
+pub struct NativeOrderBinding<'a> {
+    pub account_id: &'a str,
+    pub instrument_id: &'a str,
+    pub client_order_id: &'a str,
+    pub venue_order_id: Option<&'a str>,
+}
+
+/// Refuse to associate an unrelated or malformed Nautilus fill with a virtual
+/// order. In particular, a valid client ID alone is insufficient to identify
+/// the correct account, contract or venue order.
+pub fn check_native_fill_binding(
+    link: &NativeFillLink,
+    binding: &NativeOrderBinding<'_>,
+) -> Result<()> {
+    ensure!(
+        !binding.account_id.is_empty()
+            && !binding.instrument_id.is_empty()
+            && !binding.client_order_id.is_empty()
+            && link.account_id == binding.account_id
+            && link.instrument_id == binding.instrument_id
+            && link.client_order_id == binding.client_order_id,
+        "Nautilus fill belongs to another account, instrument or order"
+    );
+    ensure!(
+        !link.event_id.is_empty()
+            && !link.trade_id.is_empty()
+            && !link.venue_order_id.is_empty()
+            && link.event_ts_ns > 0,
+        "Nautilus fill has missing venue or event identity"
+    );
+    if let Some(venue_order_id) = binding.venue_order_id {
+        ensure!(
+            !venue_order_id.is_empty() && link.venue_order_id == venue_order_id,
+            "Nautilus venue order identity changed"
+        );
+    }
+    let qty = link.last_quantity.parse::<rust_decimal::Decimal>()
+        .context("invalid Nautilus execution quantity")?;
+    let price = link.last_price.parse::<rust_decimal::Decimal>()
+        .context("invalid Nautilus execution price")?;
+    ensure!(qty > rust_decimal::Decimal::ZERO && price > rust_decimal::Decimal::ZERO,
+        "Nautilus fill quantity and price must be positive");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_fill_link_requires_full_account_order_and_venue_identity() {
+        let fill = NativeFillLink {
+            account_id: "BINANCE-UM-001".into(),
+            instrument_id: "ETHUSDT-PERP.BINANCE".into(),
+            client_order_id: "SA123".into(),
+            venue_order_id: "456".into(),
+            trade_id: "789".into(),
+            event_id: "event-one".into(),
+            event_ts_ns: 1234,
+            last_quantity: "0.25".into(),
+            last_price: "2000".into(),
+            position_id: None,
+            reconciliation: false,
+        };
+        let binding = NativeOrderBinding {
+            account_id: "BINANCE-UM-001",
+            instrument_id: "ETHUSDT-PERP.BINANCE",
+            client_order_id: "SA123",
+            venue_order_id: Some("456"),
+        };
+        assert!(check_native_fill_binding(&fill, &binding).is_ok());
+        let wrong_account = NativeOrderBinding { account_id: "OTHER", ..binding };
+        assert!(check_native_fill_binding(&fill, &wrong_account).is_err());
+        let wrong_instrument = NativeOrderBinding { instrument_id: "BTCUSDT-PERP.BINANCE", ..binding };
+        assert!(check_native_fill_binding(&fill, &wrong_instrument).is_err());
+        let wrong_venue = NativeOrderBinding { venue_order_id: Some("457"), ..binding };
+        assert!(check_native_fill_binding(&fill, &wrong_venue).is_err());
+        let bad_price = NativeFillLink { last_price: "0".into(), ..fill.clone() };
+        assert!(check_native_fill_binding(&bad_price, &binding).is_err());
+        let missing_trade = NativeFillLink { trade_id: "".into(), ..fill };
+        assert!(check_native_fill_binding(&missing_trade, &binding).is_err());
+    }
 
     #[test]
     fn spot_and_usdm_resolve_to_distinct_native_routes() {
