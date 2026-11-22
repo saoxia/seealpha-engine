@@ -69,6 +69,9 @@ impl NativeAccountSession {
         );
         // Neither the directory nor the account binding may be fabricated on
         // restart: the file always contains the previous native account ID.
+        if let Ok(meta) = fs::symlink_metadata(checkpoint_path) {
+            ensure!(meta.is_file() && !meta.file_type().is_symlink(), "account cursor must be regular file");
+        }
         let last: Option<RecoveryCursor> = match fs::read(checkpoint_path) {
             Ok(bytes) => {
                 let cursor: RecoveryCursor =
@@ -137,22 +140,43 @@ impl NativeAccountSession {
         // from order acks or changes between two account-state observations.
         let mut balances = BTreeMap::new();
         for b in &event.balances {
+            ensure!(
+                b.total.currency == b.currency
+                    && b.locked.currency == b.currency
+                    && b.free.currency == b.currency
+                    && b.locked.checked_add(b.free) == Some(b.total),
+                "account balance values inconsistent"
+            );
             let currency = b.currency.to_string();
             ensure!(
                 balances.insert(currency, BalanceView {
-                    total: b.total.to_string(),
-                    locked: b.locked.to_string(),
-                    free: b.free.to_string(),
+                    total: b.total.as_decimal().to_string(),
+                    locked: b.locked.as_decimal().to_string(),
+                    free: b.free.as_decimal().to_string(),
                 }).is_none(),
                 "duplicated currency in account report"
             );
         }
-        let margins = event.margins.iter().map(|m| MarginView {
-            instrument_id: m.instrument_id.map(|id| id.to_string()),
-            currency: m.currency.to_string(),
-            initial: m.initial.to_string(),
-            maintenance: m.maintenance.to_string(),
-        }).collect();
+        let mut margins = Vec::with_capacity(event.margins.len());
+        let mut margin_keys = std::collections::HashSet::new();
+        for m in &event.margins {
+            ensure!(
+                m.initial.currency == m.currency && m.maintenance.currency == m.currency,
+                "native account margin currency mismatch"
+            );
+            let instrument_id = m.instrument_id.map(|id| id.to_string());
+            let currency = m.currency.to_string();
+            ensure!(
+                margin_keys.insert((instrument_id.clone(), currency.clone())),
+                "duplicate native account margin"
+            );
+            margins.push(MarginView {
+                instrument_id,
+                currency,
+                initial: m.initial.as_decimal().to_string(),
+                maintenance: m.maintenance.as_decimal().to_string(),
+            });
+        }
 
         let next_cursor = RecoveryCursor {
             account_id: candidate.account_id.clone(),
@@ -181,7 +205,7 @@ fn persist_cursor(path: &Path, cursor: &RecoveryCursor) -> Result<()> {
     let temp = path.with_extension("tmp");
     let bytes = serde_json::to_vec(cursor)?;
     let mut file = OpenOptions::new()
-        .write(true).create(true).truncate(true).open(&temp)
+        .write(true).create_new(true).open(&temp)
         .context("cannot create account cursor temporary file")?;
     file.write_all(&bytes)?;
     file.sync_all()?;
@@ -214,7 +238,7 @@ impl NativeAccountSubscription {
                         // Read-only output of Nautilus-reported numbers, never
                         // "signed" or "verified" Ledger financial evidence.
                         if let Ok(row) = serde_json::to_string(view) {
-                            log::info!("native account observation: {row}");
+                            println!("{row}");
                         }
                     }
                 }
@@ -286,7 +310,8 @@ mod tests {
             assert!(session.fresh(1_000_000_000, 1).is_none());
             assert!(session.accept(&first, 1_001_000_000, 5_000_000).unwrap());
             let view = session.fresh(1_001_000_000, 5_000_000).unwrap();
-            assert_eq!(view.balances["USD"].total, "100.00 USD");
+            assert_eq!(view.balances["USD"].total.parse::<rust_decimal::Decimal>().unwrap(),
+                rust_decimal::Decimal::from(100));
             session.mark_disconnected();
             assert!(session.fresh(1_001_000_000, 5_000_000).is_none());
         }
