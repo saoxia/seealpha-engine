@@ -5,7 +5,6 @@
 //! is NOT evidence of connectivity or a trading permission. Until the native
 //! account/report subscriber is wired, evidence-dependent methods fail closed.
 use crate::{Runtime, RuntimeError, map_ledger};
-use seealpha_portfolio::basket::Product;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -100,14 +99,6 @@ impl Runtime {
             "environment":environment,"status":"closed"}))
     }
 
-    /// Native reports are not yet authenticated to Ledger. Do not manufacture
-    /// a signed GET or silently mark a reconciliation job finished.
-    pub fn run_one_registered_order_reconciliation(
-        &self, tenant: &str, _worker: &str, _venue_base: &str,
-    ) -> Result<Option<Value>, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
 
     pub fn sync_registered_fills(
         &self, tenant: &str, _account: &str, _environment: &str,
@@ -125,24 +116,8 @@ impl Runtime {
         Err(native_evidence_unavailable())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn reconcile_account_product(
-        &self, tenant: &str, _account: &str, _environment: &str,
-        _product: Product, _expected: &Value, _venue_base: &str,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn sync_registered_settlements(
-        &self, tenant: &str, _account: &str, _environment: &str,
-        _product: Product, _symbol: &str,
-        _start_ms: i64, _end_ms: i64, _venue_base: &str,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
+
 }
 
 #[cfg(test)]
