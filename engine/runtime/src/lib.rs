@@ -204,6 +204,20 @@ impl Runtime {
             .map_err(map_ledger)
     }
 
+    /// Runtime-owned persisted API gaps and operational events.
+    pub fn gaps_for_scope(&self, tenant: &str, account: &str, scope: Option<&str>) -> Result<Vec<Value>, RuntimeError> {
+        self.state_store.gaps_for_scope(tenant, account, scope).map_err(map_ledger)
+    }
+    pub fn put_gap(&self, tenant: &str, account: &str, scope: &str, key: &str, body: &str) -> Result<(), RuntimeError> {
+        self.state_store.put_gap(tenant, account, scope, key, body).map_err(map_ledger)
+    }
+    pub fn add_event(&self, tenant: &str, account: &str, kind: &str, body: &str) -> Result<(), RuntimeError> {
+        self.state_store.add_event(tenant, account, kind, body).map_err(map_ledger)
+    }
+    pub fn event_page(&self, tenant: &str, account: &str, after: i64, limit: i64) -> Result<Value, RuntimeError> {
+        self.state_store.event_page(tenant, account, after, limit).map_err(map_ledger)
+    }
+
     /// Read persisted order projections owned by Runtime execution.
     pub fn stored_orders(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<StoredOrder>, RuntimeError> {
         self.state_store.orders(tenant, account, env).map_err(map_ledger)
