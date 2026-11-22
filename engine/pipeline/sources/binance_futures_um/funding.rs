@@ -4,6 +4,196 @@
 //! funding payment every fixed eight hours or confuse mark-price estimates
 //! with a settled funding record.
 use crate::{MarketError, check_symbol};
+
+use arrow_array::{ArrayRef, Decimal128Array, RecordBatch, StringArray, TimestampNanosecondArray};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
+use seealpha_catalog::{Catalog, CatalogError, RecordKind};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
+
+/// Public exchange settlements belong to the USD-M market-data pipeline,
+/// never to the account/order ledger. The catalog provides atomic immutable
+/// Parquet publication; this product module owns the event schema and policy.
+fn funding_identifier(symbol: &str) -> Result<String, CatalogError> {
+    check_symbol(symbol).map_err(|_| CatalogError::Invalid("invalid USD-M funding symbol".into()))?;
+    Ok(format!("{symbol}-PERP.BINANCE"))
+}
+
+fn funding_decimal(raw: &str) -> Result<i128, CatalogError> {
+    let mut value = raw.parse::<Decimal>()
+        .map_err(|_| CatalogError::Invalid("invalid funding decimal".into()))?;
+    let original = value;
+    value.rescale(16);
+    if value != original || value.scale() != 16 {
+        return Err(CatalogError::Invalid("funding decimal exceeds 16 fractional digits".into()));
+    }
+    Ok(value.mantissa())
+}
+
+fn funding_batch(symbol: &str, rows: &[FundingObservation]) -> Result<RecordBatch, CatalogError> {
+    let identifier = funding_identifier(symbol)?;
+    let schema = Arc::new(Schema::new_with_metadata(vec![
+        Field::new("funding_rate", DataType::Decimal128(38, 16), false),
+        Field::new("mark_price", DataType::Decimal128(38, 16), false),
+        Field::new("rate_type", DataType::Utf8, false),
+        Field::new("ts_event", DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())), false),
+        Field::new("ts_init", DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into())), false),
+    ], HashMap::from([
+        ("type_name".to_owned(), "FundingRateUpdate".to_owned()),
+        ("instrument_id".to_owned(), identifier),
+        ("exchange".to_owned(), "BINANCE".to_owned()),
+        ("product".to_owned(), "futures_um".to_owned()),
+        ("settlement_source".to_owned(), "official_fundingRate_REST".to_owned()),
+    ])));
+    let mut rates = Vec::with_capacity(rows.len());
+    let mut marks = Vec::with_capacity(rows.len());
+    let mut types = Vec::with_capacity(rows.len());
+    let mut timestamps = Vec::with_capacity(rows.len());
+    let mut previous = None;
+    for row in rows {
+        let ts = row.funding_time_ms.checked_mul(1_000_000)
+            .ok_or_else(|| CatalogError::Invalid("funding timestamp overflow".into()))?;
+        if row.symbol != symbol || previous.is_some_and(|p| ts <= p)
+            || !matches!(row.rate_type.as_str(), "Regular" | "Special" | "Unknown")
+            || row.mark_price.parse::<Decimal>().ok().is_none_or(|x| x <= Decimal::ZERO) {
+            return Err(CatalogError::Invalid("invalid or unordered settled funding".into()));
+        }
+        rates.push(funding_decimal(&row.funding_rate)?);
+        marks.push(funding_decimal(&row.mark_price)?);
+        types.push(row.rate_type.as_str());
+        timestamps.push(ts);
+        previous = Some(ts);
+    }
+    let decimal = |values: Vec<i128>| -> Result<ArrayRef, CatalogError> {
+        Ok(Arc::new(Decimal128Array::from(values).with_precision_and_scale(38, 16)
+            .map_err(|e| CatalogError::Arrow(e.to_string()))?))
+    };
+    RecordBatch::try_new(schema, vec![
+        decimal(rates)?, decimal(marks)?,
+        Arc::new(StringArray::from(types)),
+        Arc::new(TimestampNanosecondArray::from(timestamps.clone()).with_timezone("UTC")),
+        Arc::new(TimestampNanosecondArray::from(timestamps).with_timezone("UTC")),
+    ]).map_err(|e| CatalogError::Arrow(e.to_string()))
+}
+
+/// Read official, already settled observations. No timestamp-grid interpolation
+/// and no assertion that empty intervals prove historical completeness.
+pub fn read_funding(
+    catalog: &Catalog, symbol: &str, start_ms: i64, end_ms: i64, limit: usize,
+) -> Result<Vec<FundingObservation>, CatalogError> {
+    let identifier = funding_identifier(symbol)?;
+    let start_ns = start_ms.checked_mul(1_000_000)
+        .ok_or_else(|| CatalogError::Invalid("start overflow".into()))?;
+    let end_ns = end_ms.checked_mul(1_000_000)
+        .ok_or_else(|| CatalogError::Invalid("end overflow".into()))?;
+    let rows = catalog.read_records(&RecordKind::FundingRate, &identifier, start_ns, end_ns, limit)?;
+    rows.into_iter().map(|row| {
+        let ts = row["ts_event"].as_str().ok_or_else(|| CatalogError::Invalid("funding timestamp absent".into()))?
+            .parse::<i64>().map_err(|_| CatalogError::Invalid("funding timestamp invalid".into()))?;
+        if ts % 1_000_000 != 0 {
+            return Err(CatalogError::Invalid("funding timestamp not on millisecond".into()));
+        }
+        let field = |name: &str| -> Result<String, CatalogError> {
+            row[name].as_str().map(str::to_owned)
+                .ok_or_else(|| CatalogError::Invalid(format!("funding field {name} missing")))
+        };
+        let observation = FundingObservation {
+            symbol: symbol.to_owned(),
+            funding_time_ms: ts / 1_000_000,
+            funding_rate: field("funding_rate")?,
+            mark_price: field("mark_price")?,
+            rate_type: field("rate_type")?,
+        };
+        if !matches!(observation.rate_type.as_str(), "Regular" | "Special" | "Unknown") {
+            return Err(CatalogError::Invalid("invalid funding rate type".into()));
+        }
+        Ok(observation)
+    }).collect()
+}
+
+/// Publish only unseen settlement events. A repeated observation is idempotent;
+/// a different value for the same exchange event is a hard conflict. Split
+/// newly discovered events around existing timestamps to avoid partial Parquet
+/// overlaps, including when REST replays earlier pages.
+pub fn persist_funding(
+    catalog: &Catalog, symbol: &str, observations: &[FundingObservation],
+) -> Result<usize, CatalogError> {
+    if observations.is_empty() { return Ok(0); }
+    if observations.len() > 5000 {
+        return Err(CatalogError::Limit("funding batch exceeds 5000 events".into()));
+    }
+    let first = observations.first().unwrap().funding_time_ms;
+    let last = observations.last().unwrap().funding_time_ms;
+    if first < 0 || last < first {
+        return Err(CatalogError::Invalid("invalid funding range".into()));
+    }
+    let end = last.checked_add(1).ok_or_else(|| CatalogError::Invalid("funding end overflow".into()))?;
+    // Read and validate all observations before any mutation.
+    let previous = read_funding(catalog, symbol, first, end, 50_000)?;
+    let existing: HashMap<i64, FundingObservation> =
+        previous.into_iter().map(|r| (r.funding_time_ms, r)).collect();
+    let mut seen = HashSet::new();
+    let mut new_rows = Vec::new();
+    let mut prior = None;
+    for row in observations {
+        if row.symbol != symbol || !seen.insert(row.funding_time_ms)
+            || prior.is_some_and(|p| row.funding_time_ms <= p) {
+            return Err(CatalogError::Invalid("duplicate or unordered funding event".into()));
+        }
+        prior = Some(row.funding_time_ms);
+        // Compare Decimal values numerically, since REST and Parquet may
+        // serialize equivalent scales differently.
+        if let Some(old) = existing.get(&row.funding_time_ms) {
+            if old.rate_type != row.rate_type ||
+                old.funding_rate.parse::<Decimal>().ok() != row.funding_rate.parse::<Decimal>().ok() ||
+                old.mark_price.parse::<Decimal>().ok() != row.mark_price.parse::<Decimal>().ok() {
+                return Err(CatalogError::Conflict("stored funding event differs from exchange".into()));
+            }
+        } else {
+            new_rows.push(row.clone());
+        }
+    }
+    if new_rows.is_empty() { return Ok(0); }
+    // Every original timestamp boundary already present in Catalog can split
+    // a newly published chunk; never write an overlapping file.
+    let mut count = 0;
+    let mut chunk: Vec<FundingObservation> = Vec::new();
+    for row in observations {
+        if existing.contains_key(&row.funding_time_ms) {
+            if !chunk.is_empty() {
+                let batch = funding_batch(symbol, &chunk)?;
+                catalog.append_record_batches(&RecordKind::FundingRate, &funding_identifier(symbol)?, &[batch])?;
+                count += chunk.len();
+                chunk.clear();
+            }
+        } else {
+            chunk.push(row.clone());
+        }
+    }
+    if !chunk.is_empty() {
+        let batch = funding_batch(symbol, &chunk)?;
+        catalog.append_record_batches(&RecordKind::FundingRate, &funding_identifier(symbol)?, &[batch])?;
+        count += chunk.len();
+    }
+    Ok(count)
+}
+
+pub fn latest_funding(
+    catalog: &Catalog, symbol: &str, limit: usize,
+) -> Result<Vec<FundingObservation>, CatalogError> {
+    if !(1..=500).contains(&limit) {
+        return Err(CatalogError::Limit("invalid latest funding limit".into()));
+    }
+    // A bounded historical lookback, not proof of complete history. Request
+    // a known supported window and retain only the newest settled events.
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| CatalogError::Invalid("system clock invalid".into()))?
+        .as_millis() as i64;
+    let start = now_ms.saturating_sub(365_i64 * 86_400_000);
+    let mut rows = read_funding(catalog, symbol, start, now_ms, 50_000)?;
+    if rows.len() > limit { rows.drain(..rows.len()-limit); }
+    Ok(rows)
+}
+
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::time::Duration;
