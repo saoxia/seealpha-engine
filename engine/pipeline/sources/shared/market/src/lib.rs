@@ -21,6 +21,8 @@ mod repair;
 pub mod spot_repair;
 
 pub use binance::BinanceSource;
+/// Read-only external historical raw trade source for future repair orchestration.
+pub use seealpha_clickhouse as clickhouse;
 pub use pipeline::{
     aggregate_trades, bar_features, interval_ms, parse_binance_klines, validate_bars,
 };
