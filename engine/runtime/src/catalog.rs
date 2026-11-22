@@ -283,28 +283,6 @@ impl Runtime {
     /// Generic native Parquet data for instruments, TradeTick, QuoteTick,
     /// funding, depth, greeks, statuses and custom features. Requires an
     /// existing mounted Catalog; never silently reads a different product.
-    /// Opt-in, historical-only reader for the separate native feature format.
-    /// This is not an exchange/source READY attestation.
-    pub fn read_native_trade_features(
-        &self,
-        tenant: &str,
-        identity: &str,
-        start_ns: i64,
-        end_ns: i64,
-        limit: usize,
-    ) -> Result<Vec<Value>, RuntimeError> {
-        self.native_market_events(
-            tenant,
-            &RecordKind::Feature {
-                identifier: "rust-v1".to_owned(),
-                name: "NativeTradeFeaturesV1".to_owned(),
-            },
-            identity,
-            start_ns,
-            end_ns,
-            limit,
-        )
-    }
     pub fn native_market_events(
         &self,
         tenant: &str,
