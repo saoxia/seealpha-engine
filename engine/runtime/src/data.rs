@@ -5,6 +5,8 @@
 use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
 use seealpha_ledger::CatalogBar;
+use seealpha_catalog::DAY_MS;
+use seealpha_market::futures_repair::{RepairNextStep, scan_day};
 use seealpha_market::exercise::{ExerciseSource, as_evidence};
 use seealpha_market::funding::FundingSource;
 use seealpha_market::options::{OptionsSource, parse_option_symbol};
@@ -959,3 +961,145 @@ mod tests {
         assert_ne!(hash_job("one", &data), hash_job("two", &data));
     }
 }
+
+// The runtime Data Job adapter owns scheduling and process safety, not
+// the USD-M data diagnosis or archive-trigger policy.
+
+fn repair_error(message: impl Into<String>) -> RuntimeError {
+    RuntimeError::Conflict(message.into())
+}
+
+impl Runtime {
+    /// Explicit user/worker-submitted historical repair job. Never start a
+    /// data source implicitly in a read request, or write an active LiveNode
+    /// Catalog while that node owns its writer reservation.
+    pub(crate) async fn repair_futures_day_job(
+        &self,
+        tenant: &str,
+        payload: &Value,
+    ) -> Result<Value, RuntimeError> {
+        let symbol = payload["symbol"].as_str()
+            .ok_or_else(|| repair_error("修复合约缺失。"))?;
+        let day = payload["day"].as_str()
+            .ok_or_else(|| repair_error("修复 UTC 日期缺失。"))?;
+        let spec = ArchiveSpec::new("futures_um", "aggTrades", symbol, day)
+            .map_err(|e| repair_error(format!("USD-M 修复日期或合约无效：{e}")))?;
+        let (start, end) = spec.utc_day_bounds_ms()
+            .map_err(|e| repair_error(format!("USD-M 修复 UTC 日期无效：{e}")))?;
+        if start < 0 || start % DAY_MS != 0 || end - start != DAY_MS {
+            return Err(repair_error("修复日期必须按 UTC 天对齐。"));
+        }
+        let catalog = self.native_catalog()?;
+        let scan = scan_day(symbol, start, end, catalog.as_ref().map(|c| c.root()))
+            .await
+            .map_err(|e| repair_error(e.to_string()))?;
+        let next_step = scan.next_step();
+
+        let mut response = json!({
+            "action":"repair_futures_day","product":"futures_um",
+            "symbol":symbol,"day":day,
+            "levels_checked":scan.levels_checked,
+            "missing_minute_count":scan.missing_minutes.len(),
+            "missing_minutes":scan.missing_minutes,
+            "conflicting_minute_count":scan.conflicting_minutes.len(),
+            "conflicting_minutes":scan.conflicting_minutes,
+            "unresolved_parent_windows":scan.unresolved_parent_windows,
+            "data_ready":false,"allow_new_risk":false,
+            "needs_recalculation":false,
+            "exchange_orders":0
+        });
+
+        match next_step {
+            RepairNextStep::ReviewMinuteConflict => {
+                response["result"] = json!("minute_conflicts_require_review");
+                return Ok(response);
+            }
+            RepairNextStep::RecalculateParent => {
+                response["result"] = json!("parent_bar_recalculation_required");
+                return Ok(response);
+            }
+            RepairNextStep::Nothing => {
+                response["result"] = json!("no_missing_minutes");
+                return Ok(response);
+            }
+            RepairNextStep::FetchOfficialArchive => {}
+        }
+
+        // Preserve a durable, tenant-scoped ZIP receipt through the *existing*
+        // downloader; never trust user-supplied archive paths or SHA hashes.
+        let fetch = self.run_futures_repair_child(tenant, &json!({
+            "action":"archive_fetch","product":"futures_um",
+            "dataset":"aggTrades","symbol":symbol,"day":day
+        })).await?;
+        response["archive_fetch_job_id"] = fetch["id"].clone();
+
+        let price = payload["price_precision"].as_u64()
+            .filter(|value| *value <= 16)
+            .ok_or_else(|| repair_error("Instrument 价格精度缺失。"))?;
+        let size = payload["size_precision"].as_u64()
+            .filter(|value| *value <= 16)
+            .ok_or_else(|| repair_error("Instrument 数量精度缺失。"))?;
+        let import = self.queue_data_job(tenant, &json!({
+            "action":"archive_import",
+            "archive_job_id":fetch["id"],
+            "price_precision":price,
+            "size_precision":size
+        }))?;
+        response["archive_import_job_id"] = import["id"].clone();
+
+        let key = format!("{tenant}:futures_um");
+        let active_writer = {
+            let mut processes = self.source_processes.lock()
+                .map_err(|_| repair_error("实时节点状态锁不可用。"))?;
+            if let Some(child) = processes.get_mut(&key) {
+                child.try_wait().map_err(|_| repair_error("实时节点状态未知。"))?.is_none()
+            } else {
+                false
+            }
+        };
+        if active_writer {
+            response["result"] = json!("archive_downloaded_import_deferred_live_writer");
+            response["needs_recalculation"] = json!(true);
+            return Ok(response);
+        }
+
+        let import = self.execute_or_reuse_repair_child(tenant, import).await?;
+        response["archive_import_job_id"] = import["id"].clone();
+        response["result"] = json!("archive_imported_recalculation_pending");
+        response["needs_recalculation"] = json!(true);
+        Ok(response)
+    }
+
+    /// The nested executor is boxed so a repair job can reuse the existing
+    /// archive jobs without duplicating download/import safety code.
+    async fn execute_or_reuse_repair_child(
+        &self,
+        tenant: &str,
+        job: Value,
+    ) -> Result<Value, RuntimeError> {
+        let job = if job["status"] == "queued" {
+            let id = job["id"].as_str()
+                .ok_or_else(|| repair_error("归档子任务 ID 无效。"))?;
+            Box::pin(self.execute_data_job(tenant, id)).await?
+        } else {
+            job
+        };
+        if job["status"] != "completed" {
+            return Err(repair_error(format!(
+                "历史归档子任务尚未成功：{}；任务编号：{}",
+                job["status"], job["id"]
+            )));
+        }
+        Ok(job)
+    }
+
+    async fn run_futures_repair_child(
+        &self,
+        tenant: &str,
+        payload: &Value,
+    ) -> Result<Value, RuntimeError> {
+        let job = self.queue_data_job(tenant, payload)?;
+        self.execute_or_reuse_repair_child(tenant, job).await
+    }
+}
+

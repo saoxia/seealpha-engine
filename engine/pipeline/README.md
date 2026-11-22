@@ -29,4 +29,4 @@ Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、�
 
 ### USD-M Futures 历史数据自维护
 
-`engine/runtime/src/futures_repair.rs` 使用已有 Catalog 分层聚合和 Binance REST K 线进行 `1d → 4h → 1h → 15m → 5m → 1m` 异常定位。仅在定位到缺失分钟记录后，才通过数据任务调用官方 ZIP 下载与 Nautilus 导入；若实时节点持有写锁，则将导入保留为待处理任务。导入后 K 线重建仍需后续对接。
+`engine/pipeline/sources/binance_futures/repair.rs` 通过 `seealpha-market::futures_repair` 使用已有 Catalog 分层聚合和 Binance REST K 线进行 `1d → 4h → 1h → 15m → 5m → 1m` 异常定位。仅在定位到缺失分钟记录后，才通过数据任务调用官方 ZIP 下载与 Nautilus 导入；若实时节点持有写锁，则将导入保留为待处理任务。导入后 K 线重建仍需后续对接。

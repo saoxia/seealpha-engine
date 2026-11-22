@@ -6,6 +6,8 @@
 mod binance;
 #[path = "../../../binance_futures/agg_trades.rs"]
 mod futures_agg_trades;
+#[path = "../../../binance_futures/repair.rs"]
+pub mod futures_repair;
 pub mod clock;
 #[path = "../../../binance_option/exercise.rs"]
 pub mod exercise;

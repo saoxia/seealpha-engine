@@ -1513,6 +1513,7 @@ dependencies = [
  "async-trait",
  "reqwest",
  "rust_decimal",
+ "seealpha-catalog",
  "seealpha-quality",
  "serde",
  "serde_json",
