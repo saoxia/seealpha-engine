@@ -546,15 +546,24 @@ impl Coordinator {
         price: Decimal,
         bar: Option<Bar>,
     ) -> Result<Vec<VirtualFill>, CoordinatorError> {
-        // Do not publish any member allocation if a later validation fails.
-        // A detected evidence conflict is the only error that commits a state
-        // mutation: the freeze itself.
+        // Validate on a copy. If attribution fails after a partial allocation,
+        // persist only the fail-closed freeze, never any unverified member fills,
+        // order arming, or flight progress from that rejected event.
         let mut proposed = self.clone();
-        let result = proposed.apply_venue_fill_inner(order_id, event_id, cumulative, price, bar);
-        if result.is_ok() || proposed.frozen {
-            *self = proposed;
+        match proposed.apply_venue_fill_inner(order_id, event_id, cumulative, price, bar) {
+            Ok(fills) => {
+                *self = proposed;
+                Ok(fills)
+            }
+            Err(error) => {
+                if proposed.frozen {
+                    self.freeze(
+                        proposed.freeze_reason.as_deref().unwrap_or("venue fill evidence mismatch"),
+                    );
+                }
+                Err(error)
+            }
         }
-        result
     }
     fn apply_venue_fill_inner(
         &mut self,
