@@ -8,6 +8,7 @@ members = [
     "engine/pipeline/sources/shared/market",
     "engine/portfolio",
     "engine/ledger",
+    "engine/database",
     "engine/strategy",
     "engine/connection/binance-options",
     "engine/connection/clickhouse",
