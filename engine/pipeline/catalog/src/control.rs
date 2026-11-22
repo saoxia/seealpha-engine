@@ -1,5 +1,5 @@
 //! Durable non-financial Pipeline and research control-plane state.
-use rusqlite::{Connection,OptionalExtension,TransactionBehavior,params};
+use rusqlite::{Connection,TransactionBehavior,params};
 use serde_json::{Value,json};
 use std::{path::Path,sync::Mutex,time::{SystemTime,UNIX_EPOCH}};
 use thiserror::Error;
@@ -21,61 +21,23 @@ CREATE INDEX IF NOT EXISTS data_jobs_status ON data_jobs(tenant_id,status,update
 CREATE TABLE IF NOT EXISTS backtest_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,job_id));
 CREATE TABLE IF NOT EXISTS worker_settings(singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),max_workers INTEGER NOT NULL,timeout_seconds INTEGER NOT NULL);
 INSERT OR IGNORE INTO worker_settings(singleton_id,max_workers,timeout_seconds) VALUES(1,1,3600);
-CREATE TABLE IF NOT EXISTS control_migrations(version INTEGER PRIMARY KEY);
 "#;
 impl ControlStore {
  pub fn open(path:&Path,old:&Path)->Result<Self,ControlError>{
-  let mut c=Connection::open(path).map_err(sqlite)?;
-  c.execute_batch("PRAGMA journal_mode=DELETE;").map_err(sqlite)?;
-  c.execute_batch(SCHEMA).map_err(sqlite)?;
-  let migrated:bool=c.query_row("SELECT 1 FROM control_migrations WHERE version=1",[],|r|r.get::<_,i64>(0)).optional().map_err(sqlite)?.is_some();
-  if old.exists() && !migrated {
-   c.execute("ATTACH DATABASE ?1 AS legacy",params![old.to_string_lossy().as_ref()]).map_err(sqlite)?;
-   {
-    let tx=c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sqlite)?;
-    for (table,cols) in [
-      ("subscriptions","tenant_id,account_id,product,symbol,role,state,progress_json,updated_at"),
-      ("data_policies","tenant_id,product,symbol,policy_json,updated_at"),
-      ("strategy_market_subscriptions","tenant_id,account_id,issuance_id,streams_json,lookback_bars,updated_at"),
-    ] {
-      let exists=tx.query_row("SELECT 1 FROM legacy.sqlite_master WHERE type='table' AND name=?1",params![table],|r|r.get::<_,i64>(0)).optional().map_err(sqlite)?.is_some();
-      if exists {
-       tx.execute(&format!("INSERT OR IGNORE INTO main.{table} ({cols}) SELECT {cols} FROM legacy.{table}"),[]).map_err(sqlite)?;
-       // Reject a conflicting record instead of silently overwriting migrated values.
-       let mismatch=format!("SELECT 1 FROM (SELECT {cols} FROM legacy.{table} EXCEPT SELECT {cols} FROM main.{table}) LIMIT 1");
-       if tx.query_row(&mismatch,[],|r|r.get::<_,i64>(0)).optional().map_err(sqlite)?.is_some(){
-        return Err(ControlError::Conflict("旧控制状态与新存储冲突，拒绝启动".into()));
-       }
-      }
+  let mut cimpl ControlStore {
+    /// Open the current control-plane store. No legacy Ledger import is needed.
+    pub fn open(path: &Path) -> Result<Self, ControlError> {
+        let connection = Connection::open(path).map_err(sqlite)?;
+        connection.execute_batch("PRAGMA journal_mode=DELETE;").map_err(sqlite)?;
+        connection.execute_batch(SCHEMA).map_err(sqlite)?;
+        Ok(Self { conn: Mutex::new(connection) })
     }
-    let jobs_exist=tx.query_row("SELECT 1 FROM legacy.sqlite_master WHERE type='table' AND name='data_jobs'",[],|r|r.get::<_,i64>(0)).optional().map_err(sqlite)?.is_some();
-    if jobs_exist {
-      let cols="tenant_id,job_id,operation,payload_json,status,result_json,created_at,updated_at";
-      for (target,where_clause) in [("data_jobs","operation <> 'backtest'"),("backtest_jobs","operation = 'backtest'")] {
-       tx.execute(&format!("INSERT OR IGNORE INTO main.{target} ({cols}) SELECT {cols} FROM legacy.data_jobs WHERE {where_clause}"),[]).map_err(sqlite)?;
-       let mismatch=format!("SELECT 1 FROM (SELECT {cols} FROM legacy.data_jobs WHERE {where_clause} EXCEPT SELECT {cols} FROM main.{target}) LIMIT 1");
-       if tx.query_row(&mismatch,[],|r|r.get::<_,i64>(0)).optional().map_err(sqlite)?.is_some(){return Err(ControlError::Conflict("旧任务状态冲突，拒绝启动".into()));}
-      }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, ControlError> {
+        self.conn.lock().map_err(|_| ControlError::Conflict("控制状态锁不可用".into()))
     }
-    let settings=tx.query_row("SELECT 1 FROM legacy.sqlite_master WHERE type='table' AND name='worker_settings'",[],|r|r.get::<_,i64>(0)).optional().map_err(sqlite)?.is_some();
-    if settings {
-      let old_values:Option<(i64,i64)>=tx.query_row("SELECT max_workers,timeout_seconds FROM legacy.worker_settings WHERE singleton_id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sqlite)?;
-      if let Some((workers,timeout))=old_values {
-        // Preserve a user-modified runtime setting; only replace the pristine default.
-        tx.execute("UPDATE main.worker_settings SET max_workers=?1,timeout_seconds=?2 WHERE singleton_id=1 AND max_workers=1 AND timeout_seconds=3600",params![workers,timeout]).map_err(sqlite)?;
-      }
-    }
-    tx.execute("INSERT INTO control_migrations(version) VALUES(1)",[]).map_err(sqlite)?;
-    tx.commit().map_err(sqlite)?;
-   }
-   c.execute_batch("DETACH DATABASE legacy;").map_err(sqlite)?;
-  }
-  Ok(Self{conn:Mutex::new(c)})
- }
- fn lock(&self)->Result<std::sync::MutexGuard<'_,Connection>,ControlError>{self.conn.lock().map_err(|_|ControlError::Conflict("控制状态锁不可用".into()))}
 }
-impl ControlStore {
-    // Keep the legacy subscription record fields explicit until v2 contract parity is verified.
+act parity is verified.
     #[allow(clippy::too_many_arguments)]
     pub fn record_subscription(
         &self,
@@ -541,8 +503,7 @@ mod tests {
     #[test]
     fn pipeline_and_backtest_jobs_have_disjoint_queues_and_recover_safely() {
         let path=isolated();
-        let old=path.with_extension("legacy");
-        let store=ControlStore::open(&path,&old).unwrap();
+        let store=ControlStore::open(&path).unwrap();
         let payload=json!({"symbol":"ETHUSDT"});
         store.queue_data_job("t","data-1","backfill",&payload).unwrap();
         store.queue_backtest_job("t","test-1","backtest",&payload).unwrap();
@@ -553,7 +514,7 @@ mod tests {
         store.transition_data_job("t","data-1","queued","running",None).unwrap();
         store.transition_backtest_job("t","test-1","queued","running",None).unwrap();
         drop(store);
-        let reopened=ControlStore::open(&path,&old).unwrap();
+        let reopened=ControlStore::open(&path).unwrap();
         assert_eq!(reopened.restore_interrupted_data_jobs().unwrap(),2);
         assert_eq!(reopened.data_job("t","data-1").unwrap().unwrap()["status"],"interrupted");
         assert_eq!(reopened.backtest_job("t","test-1").unwrap().unwrap()["status"],"interrupted");
@@ -562,26 +523,4 @@ mod tests {
         let _=std::fs::remove_file(path);
     }
 
-    #[test]
-    fn legacy_migration_is_copy_only_once_and_preserves_user_changes() {
-        let path=isolated();
-        let old=path.with_extension("legacy");
-        let conn=Connection::open(&old).unwrap();
-        conn.execute_batch("CREATE TABLE data_policies(tenant_id TEXT,product TEXT,symbol TEXT,policy_json TEXT,updated_at INTEGER);
-            INSERT INTO data_policies VALUES('t','futures_um','ETHUSDT','{\"product\":\"futures_um\",\"symbol\":\"ETHUSDT\"}',1);
-            CREATE TABLE data_jobs(tenant_id TEXT,job_id TEXT,operation TEXT,payload_json TEXT,status TEXT,result_json TEXT,created_at INTEGER,updated_at INTEGER);
-            INSERT INTO data_jobs VALUES('t','b','backtest','{}','queued',NULL,1,1);").unwrap();
-        drop(conn);
-        let control=ControlStore::open(&path,&old).unwrap();
-        assert_eq!(control.policies("t").unwrap().len(),1);
-        assert!(control.data_job("t","b").unwrap().is_none());
-        assert!(control.backtest_job("t","b").unwrap().is_some());
-        control.replace_policies("t",&[json!({"product":"spot","symbol":"BTCUSDT"})]).unwrap();
-        drop(control);
-        let reopened=ControlStore::open(&path,&old).unwrap();
-        assert_eq!(reopened.policies("t").unwrap()[0]["symbol"],"BTCUSDT");
-        drop(reopened);
-        let _=std::fs::remove_file(path);
-        let _=std::fs::remove_file(old);
-    }
 }

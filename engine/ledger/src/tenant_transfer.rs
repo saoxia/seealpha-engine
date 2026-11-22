@@ -8,14 +8,13 @@ use rusqlite::{
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 
-const TABLES: [&str; 9] = [
+const TABLES: [&str; 8] = [
     "connections",
     "order_requests",
     "orders",
     "fills",
     "positions",
     "gaps",
-    "subscriptions",
     "events",
     "strategy_loads",
 ];
@@ -161,7 +160,7 @@ impl Ledger {
         }
         // Older SQLite databases may retain retired market-data tables.
         // Never silently omit their rows from a Python v1 export.
-        for table in ["catalog_bars", "option_exercise_observations", "funding_observations", "data_policies", "strategy_market_subscriptions", "data_jobs"] {
+        for table in ["catalog_bars", "option_exercise_observations", "funding_observations"] {
             let exists: bool = conn.query_row(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
                 params![table], |_| Ok(()),

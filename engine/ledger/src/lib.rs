@@ -203,18 +203,6 @@ CREATE TABLE IF NOT EXISTS gaps (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, scope, gap_key)
 );
--- Historical Python v1 compatibility only. Active subscriptions are in Pipeline control.sqlite.
-CREATE TABLE IF NOT EXISTS subscriptions (
-    tenant_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    product TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    role TEXT NOT NULL,
-    state TEXT NOT NULL,
-    progress_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (tenant_id, account_id, product, symbol, role)
-);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id TEXT NOT NULL,

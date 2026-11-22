@@ -4,14 +4,13 @@ use crate::{LedgerError, SCHEMA};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::HashSet;
 
-const RUNTIME_TABLES: [&str; 9] = [
+const RUNTIME_TABLES: [&str; 8] = [
     "connections",
     "order_requests",
     "orders",
     "fills",
     "positions",
     "gaps",
-    "subscriptions",
     "events",
     "strategy_loads",
 ];
@@ -51,7 +50,6 @@ fn legacy_copy(tx: &Transaction<'_>, table: &str) -> Result<(), LedgerError> {
         "fills" => "INSERT INTO fills SELECT '1',account_id,environment,fill_id,fill_json,updated_at FROM fills_legacy".to_string(),
         "positions" => "INSERT INTO positions SELECT '1',account_id,environment,position_id,position_json,updated_at FROM positions_legacy".to_string(),
         "gaps" => "INSERT INTO gaps SELECT '1',account_id,scope,gap_key,gap_json,updated_at FROM gaps_legacy".to_string(),
-        "subscriptions" => "INSERT INTO subscriptions SELECT '1',account_id,product,symbol,role,state,progress_json,updated_at FROM subscriptions_legacy".to_string(),
         "events" => "INSERT INTO events (id,tenant_id,account_id,kind,body_json,created_at) SELECT id,'1',account_id,kind,body_json,created_at FROM events_legacy".to_string(),
         "strategy_loads" => {
             let available = columns(tx, &legacy)?;
