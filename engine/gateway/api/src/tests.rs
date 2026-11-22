@@ -38,6 +38,14 @@ use super::*;
         }
     }
 
+    // Test-only mounted Parquet catalog. Each state() owns an isolated project;
+    // do not mutate process-wide ENGINE_CATALOG_DIR in concurrent tests.
+    fn state_with_catalog() -> AppState {
+        let instance = state();
+        std::fs::create_dir_all(instance.config.project.join("data/catalog")).unwrap();
+        instance
+    }
+
     async fn call(app: &Router, request: Request) -> (StatusCode, String, Value) {
         let response = app.clone().oneshot(request).await.unwrap();
         let status = response.status();
@@ -385,7 +393,7 @@ use super::*;
 
     #[tokio::test]
     async fn native_backtest_denies_missing_history_without_fetching_or_synthesizing() {
-        let app = router(state());
+        let app = router(state_with_catalog());
         let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
         let make = |path: &str, method: &str, body: &str| {
             Request::builder()
@@ -427,7 +435,7 @@ use super::*;
 
     #[tokio::test]
     async fn native_catalog_page_and_coverage_are_read_only_and_contiguous() {
-        let app = router(state());
+        let app = router(state_with_catalog());
         let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
         let make = |path: &str, method: &str, body: &str| {
             Request::builder()
@@ -450,7 +458,7 @@ use super::*;
         let (status,_,imported)=call(&app,make(
             "/tenants/42/data/catalog/bars","POST",
             r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
-                "bars":[
+                "price_precision":2,"size_precision":2,"bars":[
                     {"open_time_ms":0,"open":"100","high":"101","low":"99","close":"100","volume":"5"},
                     {"open_time_ms":60000,"open":"100","high":"102","low":"100","close":"101","volume":"4"}
                 ]}"#
@@ -472,7 +480,7 @@ use super::*;
                 "/tenants/42/data/catalog/bars",
                 "POST",
                 r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
-                "bars":[{"open_time_ms":0,"open":"100","high":"101","low":"99",
+                "price_precision":2,"size_precision":2,"bars":[{"open_time_ms":0,"open":"100","high":"101","low":"99",
                         "close":"99","volume":"5"}]}"#,
             ),
         )
