@@ -55,6 +55,15 @@ if [[ "$(cat "$PG_DATA/PG_VERSION")" != "$PG_VERSION" ]]; then
   echo "PostgreSQL data version mismatch; upgrade must be explicit" >&2
   exit 1
 fi
+# Refuse direct reuse of an unverified glibc-backed PostgreSQL data volume.
+# A matching major version alone does not prove locale/index compatibility.
+PG_PLATFORM_MARKER="$PG_DATA/.seealpha-alpine-musl"
+if [[ "$new_database" == 1 ]]; then
+  su-exec postgres touch "$PG_PLATFORM_MARKER"
+elif [[ ! -f "$PG_PLATFORM_MARKER" ]]; then
+  echo "Existing PostgreSQL cluster lacks Alpine/musl provenance; back up via the original Debian image and restore into a fresh Alpine volume." >&2
+  exit 1
+fi
 
 # First boot credentials are generated once and retained with the state volume.
 # Do not print the password or expose the database on a network interface.
