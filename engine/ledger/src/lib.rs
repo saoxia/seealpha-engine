@@ -1,7 +1,5 @@
 //! SQLite runtime book for tenants, trading evidence, and paper orders.
 mod order_intents;
-mod native_events;
-pub use native_events::UnverifiedNativeOrderEvent;
 mod order_reconciliation_tasks;
 mod records;
 pub use order_reconciliation_tasks::ReconciliationTask;
@@ -70,17 +68,6 @@ CREATE TABLE IF NOT EXISTS order_reconciliation_tasks (
 );
 CREATE INDEX IF NOT EXISTS order_reconcile_due
     ON order_reconciliation_tasks(tenant_id,state,next_due_ms);
--- Unverified Nautilus event metadata is deliberately separate from trusted
--- order_observations and fills. Rows never advance financial state.
-CREATE TABLE IF NOT EXISTS native_order_event_quarantine (
-    tenant_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    environment TEXT NOT NULL,
-    client_order_id TEXT NOT NULL,
-    event_id TEXT NOT NULL,
-    event_json TEXT NOT NULL,
-    PRIMARY KEY (tenant_id,account_id,environment,client_order_id,event_id)
-);
 CREATE TABLE IF NOT EXISTS order_observations (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
