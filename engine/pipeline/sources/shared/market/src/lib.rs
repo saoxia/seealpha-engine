@@ -5,6 +5,7 @@
 //! features. Neither path starts a collector as a side effect of a read.
 mod binance;
 pub mod identity;
+pub mod historical;
 #[path = "../../../binance_futures_um/agg_trades.rs"]
 mod futures_agg_trades;
 #[path = "../../../binance_futures_um/repair.rs"]

@@ -1,7 +1,7 @@
 //! One autonomous reconciliation process per Binance product.
 //! Database config is desired state; data is never declared READY here.
 use seealpha_catalog::{Catalog,ControlStore,PipelineSubscription,validate_subscription};
-use seealpha_market::{Product,options::parse_option_symbol,identity::{self,MarketProduct}};
+use seealpha_market::{BinanceSource,Product,options::parse_option_symbol,identity::{self,MarketProduct},historical::HistoricalTracker};
 use std::{collections::{BTreeMap,BTreeSet},env,error::Error,path::{Path,PathBuf},process::{Child,Command,Stdio},time::Duration};
 
 type Result<T> = std::result::Result<T,Box<dyn Error>>;
@@ -138,7 +138,7 @@ async fn cycle_options(control:&ControlStore,catalog:&Catalog)->Result<()>{
 
 async fn cycle(
     control:&ControlStore,catalog:&Catalog,product:Product,
-    active:&mut Option<Collector>,
+    active:&mut Option<Collector>,tracker:&mut HistoricalTracker,source:&BinanceSource,
 )->Result<()>{
     let rows=control.product_subscriptions(product.as_str())?;
     let expected=desired(&rows)?;
@@ -148,10 +148,35 @@ async fn cycle(
     if let Err(error)=sync_collector(product.as_str(),&live,active) {
         eprintln!("pipeline {} realtime: {error}",product.as_str());
     }
+    // Native source owns finalized TradeTick Parquet in a separate catalog.
+    // Only promoted files can trigger historical Bar reconstruction. Catalog
+    // readers and writers remain independent of the live data actor.
+    let native=Catalog::open_existing(&native_root("PIPELINE_NATIVE_CATALOG_ROOT",product.as_str())?)?;
     for (symbol,settings) in expected {
         let Some(fetch_from)=settings.fetch_from else{continue};
         if let Err(error)=reconcile_history(catalog,product,&symbol,settings.retain_from,fetch_from).await{
             eprintln!("pipeline {} {symbol} history: {error}",product.as_str());
+            continue;
+        }
+        let precision=match settings.precision {
+            Some(value)=>value,
+            None=>match source.instrument_precisions(product,&symbol).await {
+                Ok(value)=>value,
+                Err(error)=>{
+                    eprintln!("pipeline {} {symbol} precision: {error}",product.as_str());
+                    continue;
+                }
+            },
+        };
+        match tracker.poll(&native,catalog,&symbol,match product {
+            Product::Spot=>MarketProduct::Spot,
+            Product::FuturesUm=>MarketProduct::FuturesUm,
+        },precision) {
+            Ok(worked) if worked>0=>eprintln!(
+                "pipeline {} {symbol}: rebuilt {worked} Tick-backed historical minutes",
+                product.as_str()),
+            Ok(_)=>{},
+            Err(error)=>eprintln!("pipeline {} {symbol} Tick history: {error}",product.as_str()),
         }
     }
     Ok(())
@@ -163,13 +188,16 @@ async fn main()->Result<()>{
     let product=MarketProduct::parse(&name)?;
     let control=ControlStore::open(Path::new("pipeline-control"))?;
     let mut native=None;
+    let mut history=HistoricalTracker::default();
+    let source=if product==MarketProduct::Options {None} else {Some(BinanceSource::new()?)};
     loop {
         match Catalog::open_existing(&catalog_path()) {
             Ok(catalog)=>{
                 let result=match product {
                     MarketProduct::Spot|MarketProduct::FuturesUm=>{
                         let parsed=Product::parse(&name)?;
-                        cycle(&control,&catalog,parsed,&mut native).await
+                        cycle(&control,&catalog,parsed,&mut native,&mut history,
+                            source.as_ref().ok_or("missing Spot/USD-M source")?).await
                     }
                     MarketProduct::Options=>cycle_options(&control,&catalog).await,
                 };
