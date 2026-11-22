@@ -40,7 +40,7 @@ impl Catalog {
         crate::parse_bar_type(bar_type)?;
         let dir=self.root.join(RecordKind::Bars.directory(bar_type)?);
         if !inspect_existing_directory(&dir)? {return Ok(0)}
-        let lock=OpenOptions::new().create(true).read(true).write(true).open(dir.join(".writer.lock"))?;
+        let lock=OpenOptions::new().create(true).truncate(false).read(true).write(true).open(dir.join(".writer.lock"))?;
         lock.lock_exclusive()?;
         let cutoff=cutoff_ms.checked_mul(NANO_PER_MS)
             .ok_or_else(||CatalogError::Invalid("retention cutoff overflow".into()))?;
