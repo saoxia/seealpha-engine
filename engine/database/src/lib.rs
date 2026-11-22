@@ -106,8 +106,11 @@ impl Connection {
         let ddl = format!(
             "BEGIN; SELECT pg_advisory_xact_lock(732114683); CREATE SCHEMA IF NOT EXISTS {schema}; COMMIT; SET search_path TO {schema}, public;"
         );
-        std::thread::scope(|scope| scope.spawn(|| client.batch_execute(&ddl))
-            .join().map_err(|_| Error::InvalidRow("postgres schema worker panicked".into()))?)?;
+        std::thread::scope(|scope| {
+            scope.spawn(|| client.batch_execute(&ddl)).join()
+                .map_err(|_| Error::InvalidRow("postgres schema worker panicked".into()))?
+                .map_err(Error::from)
+        })?;
         Ok(Self { client: Mutex::new(client), schema })
     }
 
