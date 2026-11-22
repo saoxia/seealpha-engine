@@ -181,6 +181,33 @@ impl Runtime {
         let action = field(payload, "action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
+        if action == "repair_futures_day" {
+            let product = field(payload, "product")?;
+            let symbol = field(payload, "symbol")?;
+            let day = field(payload, "day")?;
+            if product != "futures_um"
+                || check_symbol(symbol).is_err()
+                || ArchiveSpec::new(product, "aggTrades", symbol, day).is_err()
+            {
+                return Err(bad("USD-M 按日修复仅接受合法合约与 UTC 日期。"));
+            }
+            let precision = |key| {
+                payload.get(key).and_then(Value::as_u64)
+                    .filter(|value| *value <= 16)
+                    .ok_or_else(|| bad("必须提供经 Instrument 确认的价格和数量精度。"))
+            };
+            let normalized = json!({
+                "action":"repair_futures_day",
+                "product":"futures_um",
+                "symbol":symbol,
+                "day":day,
+                "price_precision":precision("price_precision")?,
+                "size_precision":precision("size_precision")?,
+            });
+            let id = hash_job(tenant_id, &normalized);
+            return self.ledger.queue_data_job(tenant_id, &id, action, &normalized)
+                .map_err(map_ledger);
+        }
         if !matches!(action, "backfill" | "archive_fetch" | "archive_import") {
             return Err(RuntimeError::Conflict(
                 "该历史任务尚未完成 Rust 等价迁移。".into(),
@@ -351,6 +378,8 @@ impl Runtime {
         } else if original["action"] == "archive_import" {
             self.archive_import_job(tenant_id, &original["payload"])
                 .await
+        } else if original["action"] == "repair_futures_day" {
+            self.repair_futures_day_job(tenant_id, &original["payload"]).await
         } else if original["action"] == "backfill" {
             self.backfill_job(tenant_id, &original["payload"]).await
         } else {

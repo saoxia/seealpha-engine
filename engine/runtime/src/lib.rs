@@ -8,6 +8,7 @@ mod catalog;
 mod native_calculation;
 mod config;
 mod data;
+mod futures_repair;
 mod evidence;
 mod fills;
 mod history;

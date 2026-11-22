@@ -29,3 +29,11 @@
 4. 如果需要 `markPrice@1s` 的持续实时估计，应优先确认 Nautilus 原生订阅能力；不能把 `funding.rs` 的消息解析函数视为已经启动的 WebSocket。
 
 原则：**来源相互补足，但不得因为多源存在就默认数据准确。** 当前保持只读、实验性，未开启实盘订单，也不恢复已删除的 Python 采集器。
+
+## 按日层级修复（Rust 数据任务）
+
+使用现有 Data Job 接口提交 `repair_futures_day`，参数含 `product=futures_um`、`symbol`、`day` 和经过 Instrument 核对的 `price_precision/size_precision`。该任务实现旧版逐级扫描顺序 `1d → 4h → 1h → 15m → 5m → 1m`：仅对上一层异常范围进行更细周期的比较，每个下钻层最多读取一整天官方收盘 K 线（总计不超过 6 次 REST 历史请求）。
+
+仅识别到**缺失分钟 K 线且无现存分钟数据冲突**时，任务才自动创建并执行 `archive_fetch`，使用 Binance 官方 `futures/um/daily/aggTrades` 及 SHA256；然后创建 `archive_import`，复用既有 Nautilus 原生导入程序。已有实时 Catalog 写者运行时不强行导入，而将导入子任务留在 `queued` 并在结果中返回 `archive_import_job_id`，后续需在安全停止 LiveNode 后运行该任务。
+
+ZIP 导入成功只是 Tick 数据写入，不代表已自动重新生成分钟/小时/日 K 线；任务返回 `needs_recalculation=true`。已有分钟记录与交易所 K 线不一致时不自动覆盖，返回 `minute_conflicts_require_review`。上层不一致但下层完全一致时返回 `parent_bar_recalculation_required`。这是历史数据维护流程，不改变实盘 READY、安全门禁及交易授权。

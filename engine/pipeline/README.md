@@ -25,3 +25,8 @@ Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `c
 Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、历史与实时交接、Catalog 一致性和 READY 均未通过生产验收；不得把收到行情或进程运行当作数据可用/允许开新风险。策略实时交付仍待实现。
 
 行情数据不提交到此源码目录。参见 [数据目录约定](../../docs/architecture/DATA_LAYOUT.md)。
+
+
+### USD-M Futures 历史数据自维护
+
+`engine/runtime/src/futures_repair.rs` 使用已有 Catalog 分层聚合和 Binance REST K 线进行 `1d → 4h → 1h → 15m → 5m → 1m` 异常定位。仅在定位到缺失分钟记录后，才通过数据任务调用官方 ZIP 下载与 Nautilus 导入；若实时节点持有写锁，则将导入保留为待处理任务。导入后 K 线重建仍需后续对接。
