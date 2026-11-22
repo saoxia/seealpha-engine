@@ -244,7 +244,7 @@ impl StrategyStore {
     /// Metadata-only lookup using PostgreSQL, without walking strategy folders.
     pub fn list(&self, tenant: &str, account: &str) -> Result<Vec<StrategyLoad>, StoreError> {
         if !valid_id(tenant) || !valid_id(account) { return Err(conflict("invalid scope")); }
-        let mut conn = self.index.lock().map_err(err)?;
+        let conn = self.index.lock().map_err(err)?;
         let rows = conn.query(
             "SELECT tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
                     parameters_json,entry_point,package_hash
@@ -432,7 +432,7 @@ mod tests {
          let mut altered=load.clone();altered.archive=b"other".to_vec();altered.package_hash=sha(b"other");assert!(db.insert(&altered).is_err());}
         let db=StrategyStore::open(&root).unwrap();
         assert_eq!(db.strategies("tenant","account").unwrap(),vec![load]);
-        let mut conn = db.index.lock().unwrap();
+        let conn = db.index.lock().unwrap();
         let columns = conn.query(
             "SELECT column_name FROM information_schema.columns
              WHERE table_schema=current_schema() AND table_name='strategy_issuances'
