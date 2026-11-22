@@ -23,11 +23,15 @@
 - `order_intents.rs`、`order_reconciliation_tasks.rs` 等订单安全相关文件不属于此处的资金业务二级分类；本次不移动、不删改。Basket/Coordinator、旧查询兼容代码也原位保留，不据此增加额外资金业务功能块。
 - 具体文件夹划分不是新增四套数据库或四个常驻进程；本次保持原 `Ledger` API、SQL Schema、历史数据不变。
 
+## 当前业务目录布局
+
+`engine/ledger/{accounts,movements,allocations,reconciliation}/` 四个业务目录与 `src/` 并列，`src/lib.rs` 使用显式 `#[path]` 模块属性加载它们。以下历史变更说明保留原业务拆分含义，不代表四块仍位于 `src/` 下。
+
 ## 这次提交的具体变更
 
-1. `src/accounts/`：将 `account_snapshots.rs` 原样移动，并继续在根 `lib.rs` 重导出 `AccountSnapshot`。
-2. `src/movements/`：将 `account_events.rs`、`verified_fills.rs`、`settlements.rs` 原样移动。
-3. `src/allocations/`、`src/reconciliation/`：只建立明确的业务边界文档，**不引入空数据库表、伪造业务接口或尚未实现的交易逻辑**。
+1. `accounts/`：将 `account_snapshots.rs` 原样移动，并继续在根 `lib.rs` 重导出 `AccountSnapshot`。
+2. `movements/`：将 `account_events.rs`、`verified_fills.rs`、`settlements.rs` 原样移动。
+3. `allocations/`、`reconciliation/`：只建立明确的业务边界文档，**不引入空数据库表、伪造业务接口或尚未实现的交易逻辑**。
 4. 其他文件不变，原 `Ledger` 上的公开方法仍由对应子模块的 `impl Ledger` 提供。
 5. 不引入 Schema 迁移，不改变生产开关，不启用实盘交易，不删除原始认证数据。
 
