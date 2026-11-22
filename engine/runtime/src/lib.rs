@@ -5,6 +5,7 @@ mod basket_phase;
 mod portfolio;
 pub use portfolio::{NativePortfolioEvent, NativePortfolioResult, NativePortfolioState};
 mod catalog;
+mod clickhouse;
 pub use catalog::CatalogBar;
 mod config;
 mod data;
