@@ -37,3 +37,39 @@ Currently this is evidence-only: no Catalog import or completeness guarantee.
 **Important:** the table is raw `trade`, while the current USD-M Nautilus
 repair/import path uses `aggTrades`. Never pass these rows through that importer
 or conflate `trade_id` with aggregate trade ID. Spot fallback is not enabled.
+
+
+## HTTP API 配置
+
+使用 Engine HTTP v2 现有的 Bearer Token 身份认证，并要求
+`ENGINE_AUTH_MODE=token` 和 `ENGINE_TENANT_ID`（固定租户）。
+接口按租户配置，不允许未固定租户的 Engine 修改数据库凭据。
+
+- `GET /tenants/{tenant_id}/data/clickhouse/config`：读取启用状态与非敏感配置。
+- `PUT /tenants/{tenant_id}/data/clickhouse/config`：保存配置及启用/关闭状态。
+
+PUT JSON 示例：
+
+```json
+{
+  "enabled": true,
+  "url": "http://127.0.0.1:8123",
+  "database": "default",
+  "user": "reader",
+  "password": "replace-me"
+}
+```
+
+`enabled` 必填；省略其他字段会保留当前值，故可通过
+`{"enabled":false}` 关闭。默认关闭；只配置 URL 不会自动启用。
+密码只写：GET 和 PUT 的响应只返回 `password_configured`，不回显密码。
+首次启用必须指定有效 URL；保存不会主动访问 ClickHouse。
+
+API 配置按租户存储在 Engine 的 `control.sqlite`，重启后仍然有效。
+API 配置优先于环境变量；尚未通过 API 配置的租户仍可使用
+`SEEALPHA_CLICKHOUSE_ENABLED=true` 显式启用环境变量配置。
+ClickHouse 不可用时保留原有 ZIP 获取失败原因，不会改变其他数据任务。
+
+**安全注意：目前密码以明文保存在本机 SQLite 状态库中**，并非加密密钥仓库。
+应保护 Engine 状态目录、备份及管理员 Token，且仅通过 HTTPS 或可信本地
+通道发送凭据；不要对不可信租户开放此管理接口。
