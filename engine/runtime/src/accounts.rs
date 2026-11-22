@@ -45,7 +45,7 @@ fn read_native_account_in(directory: &Path, tenant: &str, account: &str) -> Resu
     if !directory.is_absolute() {
         return Err(unavailable());
     }
-    let dir_meta = std::fs::symlink_metadata(&directory).map_err(|_| unavailable())?;
+    let dir_meta = std::fs::symlink_metadata(directory).map_err(|_| unavailable())?;
     if !dir_meta.is_dir() || dir_meta.file_type().is_symlink()
         || dir_meta.permissions().mode() & 0o077 != 0
     {
