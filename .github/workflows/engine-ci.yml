@@ -195,6 +195,7 @@ jobs:
             sleep 1
           done
           test "$ready" = 1
+          docker exec seealpha-pg-ci test -f /app/.local/state/postgresql/.seealpha-alpine-musl
           docker exec seealpha-pg-ci su-exec postgres psql \
             -h /run/postgresql -d seealpha_cache -Atqc "SHOW shared_buffers" | grep -qx 16MB
           docker exec seealpha-pg-ci su-exec postgres psql \
