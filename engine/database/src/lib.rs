@@ -128,6 +128,10 @@ impl Statement<'_> {
 }
 
 pub struct Transaction<'a> { conn: &'a Connection, committed: bool }
+impl std::ops::Deref for Transaction<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Self::Target { self.conn }
+}
 impl Transaction<'_> {
     pub fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<usize, Error> {
         self.conn.execute(sql, params)
