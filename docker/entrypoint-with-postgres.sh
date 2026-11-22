@@ -133,7 +133,6 @@ fi
 export SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE="$PG_CREDENTIAL_FILE"
 # Local endpoint hint only; actual native Cache is enabled explicitly on observer.
 
-export SEEALPHA_POSTGRES_URL="postgresql://seealpha_cache:${PG_PASSWORD}@127.0.0.1:5432/seealpha_cache"
 unset PG_PASSWORD
 
 # Explicit testnet-only observer: no strategies, no live orders and no
