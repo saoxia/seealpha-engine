@@ -2,7 +2,7 @@
 //! Retains the business-facing row/transaction API while replacing the storage engine.
 pub use postgres;
 use postgres::{Client, NoTls, types::{FromSql, ToSql}};
-use std::{cell::RefCell, fmt, path::Path};
+use std::{cell::RefCell, fmt, path::Path, hash::{Hash, Hasher}};
 
 #[derive(Debug)]
 pub enum Error {
@@ -58,19 +58,39 @@ impl Row {
     }
 }
 
-pub struct Connection { client: RefCell<Client> }
+pub fn schema_for_path(path: &Path) -> String {
+    // Application stores share one schema, while standalone fixtures are isolated.
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some("postgres-state" | "control-state" | "strategies") => "seealpha".into(),
+        _ => {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            path.hash(&mut hash);
+            format!("seealpha_fixture_{:016x}", hash.finish())
+        }
+    }
+}
+
+pub struct Connection { client: RefCell<Client>, schema: String }
 impl Connection {
-    /// The original path argument remains for existing callers; only PostgreSQL is used.
-    pub fn open(_path: &Path) -> Result<Self, Error> {
+    /// Storage is PostgreSQL-only; fixture paths select isolated schemas.
+    pub fn open(path: &Path) -> Result<Self, Error> {
         let url = std::env::var("SEEALPHA_DATABASE_URL")
             .map_err(|_| Error::InvalidRow("SEEALPHA_DATABASE_URL is required".into()))?;
         let mut client = Client::connect(&url, NoTls)?;
-        client.batch_execute("CREATE SCHEMA IF NOT EXISTS seealpha; SET search_path TO seealpha, public;")?;
-        Ok(Self { client: RefCell::new(client) })
+        let schema = schema_for_path(path);
+        client.batch_execute(&format!(
+            "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public;"
+        ))?;
+        Ok(Self { client: RefCell::new(client), schema })
     }
 
     pub fn execute_batch(&self, sql: &str) -> Result<(), Error> {
-        self.client.borrow_mut().batch_execute(sql)?;
+        let sql = sql.replace("CREATE SCHEMA IF NOT EXISTS seealpha;", &format!(
+            "CREATE SCHEMA IF NOT EXISTS {};", self.schema
+        )).replace("SET LOCAL search_path TO seealpha, public;", &format!(
+            "SET LOCAL search_path TO {}, public;", self.schema
+        ));
+        self.client.borrow_mut().batch_execute(&sql)?;
         Ok(())
     }
 
@@ -120,7 +140,7 @@ impl Transaction<'_> {
         self.conn.prepare(sql)
     }
     pub fn last_insert_rowid(&self) -> i64 {
-        self.query_row("SELECT currval(pg_get_serial_sequence('seealpha.account_evidence_events','id'))",
+        self.query_row("SELECT currval(pg_get_serial_sequence('account_evidence_events','id'))",
             &[], |row| row.get(0)).unwrap_or(0)
     }
     pub fn commit(mut self) -> Result<(), Error> {
