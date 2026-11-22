@@ -110,6 +110,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/tenants/{tenant_id}/data/catalog/bars", post(import_bars))
         .route(
+            "/tenants/{tenant_id}/data/clickhouse/config",
+            get(clickhouse_settings).put(update_clickhouse_settings),
+        )
+        .route(
             "/tenants/{tenant_id}/accounts/{account_id}/backtests",
             post(run_backtest),
         )
