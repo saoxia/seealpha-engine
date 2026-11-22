@@ -416,18 +416,22 @@ use super::*;
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::CONFLICT);
+        // No mounted Catalog is a distinct missing-evidence error, never a
+        // fabricated backtest result.
+        assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(
             response["detail"]
                 .as_str()
                 .unwrap_or("")
-                .contains("历史 K 线")
+                .contains("Catalog")
         );
     }
 
     #[tokio::test]
     async fn native_catalog_page_and_coverage_are_read_only_and_contiguous() {
-        let app = router(state());
+        let setup = state();
+        std::fs::create_dir_all(setup.runtime.native_catalog_root()).unwrap();
+        let app = router(setup);
         let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
         let make = |path: &str, method: &str, body: &str| {
             Request::builder()
@@ -450,6 +454,7 @@ use super::*;
         let (status,_,imported)=call(&app,make(
             "/tenants/42/data/catalog/bars","POST",
             r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "price_precision":8,"size_precision":8,
                 "bars":[
                     {"open_time_ms":0,"open":"100","high":"101","low":"99","close":"100","volume":"5"},
                     {"open_time_ms":60000,"open":"100","high":"102","low":"100","close":"101","volume":"4"}
@@ -472,6 +477,7 @@ use super::*;
                 "/tenants/42/data/catalog/bars",
                 "POST",
                 r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
+                "price_precision":8,"size_precision":8,
                 "bars":[{"open_time_ms":0,"open":"100","high":"101","low":"99",
                         "close":"99","volume":"5"}]}"#,
             ),
