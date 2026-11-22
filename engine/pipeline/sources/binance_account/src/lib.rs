@@ -73,14 +73,19 @@ impl NativeOrderLinkSubscription {
 ///
 /// A caller supplies an already committed Coordinator and Nautilus's latest
 /// OrderCore for the registered client order. The callback must CAS-persist the
-/// result before any virtual fills are released; this API never submits orders.
+/// result against the snapshot's exact revision before any virtual fills are
+/// released; this API never submits orders.
 pub fn attach_native_virtual_attribution(
     resolve_binding: impl Fn(&str) -> Option<OwnedNativeBinding> + 'static,
+    // The snapshot revision is mandatory: the commit must use exactly
+    // this version as its CAS expectation, never a later re-read revision.
     resolve_snapshot: impl Fn(&str) -> Option<(
+        String,
         seealpha_execution::coordinator::Coordinator,
         nautilus_model::orders::OrderCore,
     )> + 'static,
     commit: impl Fn(
+        &str,
         &str,
         &seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution,
     ) -> anyhow::Result<()> + 'static,
@@ -112,7 +117,7 @@ pub fn attach_native_virtual_attribution(
             errors_for_events("native attribution binding disappeared".into());
             return;
         };
-        let Some((coordinator, native_order)) = resolve_snapshot(client_id) else {
+        let Some((expected_revision, coordinator, native_order)) = resolve_snapshot(client_id) else {
             errors_for_events("Nautilus order or committed coordinator unavailable".into());
             return;
         };
@@ -127,7 +132,11 @@ pub fn attach_native_virtual_attribution(
         ) {
             Ok(projected) => {
                 // An unsuccessful CAS releases no attributed fills.
-                if let Err(e) = commit(client_id, &projected) {
+                if expected_revision.trim().is_empty() {
+                    errors_for_events("native attribution CAS revision is missing".into());
+                    return;
+                }
+                if let Err(e) = commit(client_id, &expected_revision, &projected) {
                     errors_for_events(format!("native attribution CAS failed: {e}"));
                     return;
                 }
