@@ -86,8 +86,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
-      - name: Refresh PostgreSQL dependencies
-        run: cargo generate-lockfile
+      - name: Resolve PostgreSQL dependencies without updating pinned packages
+        run: cargo metadata --format-version 1 > /dev/null
       - name: Preserve regenerated lockfile for review
         uses: actions/upload-artifact@v4
         with:
@@ -116,8 +116,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Update PostgreSQL lockfile for image validation
-        run: cargo generate-lockfile
+      - name: Resolve PostgreSQL dependencies for image validation
+        run: cargo metadata --format-version 1 > /dev/null
       - name: Build Rust-only Engine image
         run: docker build -f docker/engine.Dockerfile -t seealpha-engine:native .
       - name: Verify native image needs no Python
