@@ -287,25 +287,27 @@ async fn submit_job(
     };
     Ok((StatusCode::ACCEPTED, Json(job)))
 }
+fn task_record(state: &AppState, tenant: &str, id: &str) -> Result<Value, AppError> {
+    state.runtime.require_active(tenant).map_err(AppError::from)?;
+    if let Some(job) = state.runtime.control.backtest_job(tenant, id)
+        .map_err(|e| AppError::bad_request(e.to_string()))? {
+        return Ok(job);
+    }
+    state.runtime.control.data_job(tenant, id)
+        .map_err(|e| AppError::bad_request(e.to_string()))?
+        .ok_or_else(|| AppError::not_found("任务不存在。"))
+}
 async fn task(
     State(state): State<AppState>,
     Path((tenant, id)): Path<(String, String)>,
 ) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .data_job(&tenant, &id)
-            .map_err(AppError::from)?,
-    ))
+    Ok(Json(task_record(&state, &tenant, &id)?))
 }
 async fn task_result(
     State(state): State<AppState>,
     Path((tenant, id)): Path<(String, String)>,
 ) -> Result<Json<Value>, AppError> {
-    let task = state
-        .runtime
-        .data_job(&tenant, &id)
-        .map_err(AppError::from)?;
+    let task = task_record(&state, &tenant, &id)?;
     if task["status"] == "completed" {
         return Ok(Json(task["result"].clone()));
     }
@@ -318,31 +320,29 @@ async fn task_cancel(
     State(state): State<AppState>,
     Path((tenant, id)): Path<(String, String)>,
 ) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .cancel_data_job(&tenant, &id)
-            .map_err(AppError::from)?,
-    ))
+    let job = task_record(&state, &tenant, &id)?;
+    let cancelled = if job["action"] == "backtest" {
+        state.runtime.cancel_backtest_job(&tenant, &id)
+    } else {
+        state.runtime.cancel_data_job(&tenant, &id)
+    }.map_err(AppError::from)?;
+    Ok(Json(cancelled))
 }
 async fn task_retry(
     State(state): State<AppState>,
     Path((tenant, id)): Path<(String, String)>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
-    let before = state
-        .runtime
-        .data_job(&tenant, &id)
-        .map_err(AppError::from)?;
+    let before = task_record(&state, &tenant, &id)?;
     let status = before["status"].as_str().unwrap_or("");
     if !matches!(status, "failed" | "interrupted") {
         return Err(AppError::conflict("任务未处于失败或中断状态。"));
     }
-    if !state
-        .runtime
-        .control
-        .transition_data_job(&tenant, &id, status, "queued", None)
-        .map_err(|e| AppError::bad_request(e.to_string()))?
-    {
+    let transitioned = if before["action"] == "backtest" {
+        state.runtime.control.transition_backtest_job(&tenant, &id, status, "queued", None)
+    } else {
+        state.runtime.control.transition_data_job(&tenant, &id, status, "queued", None)
+    }.map_err(|e| AppError::bad_request(e.to_string()))?;
+    if !transitioned {
         return Err(AppError::conflict("任务状态发生并发变化。"));
     }
     if before["action"] == "backtest" {
@@ -353,10 +353,7 @@ async fn task_retry(
     Ok((
         StatusCode::ACCEPTED,
         Json(
-            state
-                .runtime
-                .data_job(&tenant, &id)
-                .map_err(AppError::from)?,
+            task_record(&state, &tenant, &id)?,
         ),
     ))
 }
@@ -656,11 +653,11 @@ async fn data_inventory(
         .map(|policy| {
             json!({"product":policy["product"],"symbol":policy["symbol"],
         "base_level":policy["base_level"],"data_ready":false,
-        "status":"not_verified","catalog_backend":"sqlite"})
+        "status":"not_verified","catalog_backend":"control_declaration_only"})
         })
         .collect::<Vec<_>>();
     Ok(Json(
-        json!({"items":items,"backend":"engine_sqlite_compat"}),
+        json!({"items":items,"backend":"control_declarations"}),
     ))
 }
 async fn data_coverage(
@@ -699,8 +696,8 @@ async fn data_coverage(
         "start_ms":start,"end_ms":end,"expected_bars":expected,
         "present_bars":rows.len(),"missing_count":gaps.len(),
         "missing_open_times_ms":gaps,"complete":gaps.is_empty(),
-        "quality":"unverified","backend":"nautilus_v2_parquet",
-        "message":"仅验证本地 Parquet K 线连续性，不等于交易所归档或 Tick 完整性。"}),
+        "quality":"unverified","backend":"native_sqlite",
+        "message":"仅验证本地 SQLite K 线连续性，不等于交易所归档或 Tick 完整性。"}),
     ))
 }
 async fn data_prepare_plan(

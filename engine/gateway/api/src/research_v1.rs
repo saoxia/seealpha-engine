@@ -441,23 +441,11 @@ fn read_job(state: &AppState, grant: &Grant, id: &str) -> Result<Value, AppError
 }
 
 fn cancel_job(state: &AppState, grant: &Grant, id: &str) -> Result<Value, AppError> {
-    let job = scoped_job(state, grant, id, "backtests:cancel")?;
-    let status = job["status"].as_str().unwrap_or("");
-    if status == "cancelled" {
-        return Ok(public_job(&job, false));
-    }
-    if status != "queued" {
-        return Err(AppError::conflict("Research backtest is not cancellable"));
-    }
-    let changed = state.runtime.control
-        .transition_backtest_job(&grant.tenant_id, id, "queued", "cancelled", None)
-        .map_err(|e| AppError::conflict(e.to_string()))?;
-    if !changed {
-        return Err(AppError::conflict("Research backtest state changed concurrently"));
-    }
-    let cancelled = state.runtime.control.backtest_job(&grant.tenant_id, id)
-        .map_err(|e| AppError::conflict(e.to_string()))?
-        .ok_or_else(|| AppError::not_found("Research backtest not found"))?;
+    let _ = scoped_job(state, grant, id, "backtests:cancel")?;
+    let cancelled = state
+        .runtime
+        .cancel_backtest_job(&grant.tenant_id, id)
+        .map_err(AppError::from)?;
     Ok(public_job(&cancelled, false))
 }
 

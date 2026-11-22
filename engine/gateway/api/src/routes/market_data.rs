@@ -81,32 +81,18 @@ pub(super) async fn import_bars(
     }
     seealpha_market::validate_bars(&canonical, step)
         .map_err(|e| AppError::bad_request(e.to_string()))?;
-    // Parquet is the established Python Pipeline storage contract.
-    // A mounted Catalog is authoritative; never silently write a separate
-    // SQLite copy that backtests cannot see.
-    let native = state
-        .runtime
-        .native_catalog()
-        .map_err(AppError::from)?
-        .is_some();
-    if !native {
-        return Err(AppError::conflict("未挂载原生 Parquet Catalog，拒绝写入。"));
-    }
-    // Python derives the precision from authoritative Instrument metadata.
-    // The Rust importer refuses to invent it for a native Parquet publication.
-    if native && (body.get("price_precision").is_none() || body.get("size_precision").is_none()) {
-        return Err(AppError::bad_request(
-            "写入 Nautilus Parquet 必须传入经 Instrument 验证的精度。",
-        ));
-    }
+    // Only the native Pipeline Catalog is writable. Explicit instrument
+    // precision is mandatory; never invent defaults or write SQLite bars.
     let price_precision = body["price_precision"]
         .as_u64()
         .and_then(|x| u32::try_from(x).ok())
-        .unwrap_or(8);
+        .filter(|x| *x <= 16)
+        .ok_or_else(|| AppError::bad_request("必须提供经 Instrument 确认的价格精度。"))?;
     let size_precision = body["size_precision"]
         .as_u64()
         .and_then(|x| u32::try_from(x).ok())
-        .unwrap_or(8);
+        .filter(|x| *x <= 16)
+        .ok_or_else(|| AppError::bad_request("必须提供经 Instrument 确认的数量精度。"))?;
     let imported = state
         .runtime
         .commit_market_bars(
