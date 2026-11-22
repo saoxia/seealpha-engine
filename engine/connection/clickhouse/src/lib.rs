@@ -91,7 +91,7 @@ pub fn um_storage_symbol(symbol: &str) -> Result<String, ClickHouseError> {
 
 fn storage_symbol_ok(s: &str) -> bool {
     for quote in ["USDT", "USDC"] {
-        if let Some(base) = s.strip_suffix(&format!("/{quote}:{quote}")) {
+        if let Some(base) = s.strip_suffix(format!("/{quote}:{quote}").as_str()) {
             return (2..=15).contains(&base.len())
                 && base.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
         }
