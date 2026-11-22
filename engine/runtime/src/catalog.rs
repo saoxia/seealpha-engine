@@ -5,7 +5,7 @@
 use crate::{Runtime, RuntimeError};
 use rust_decimal::Decimal;
 use seealpha_catalog::{
-    Catalog, CatalogBar as NativeBar, CatalogError, MarketProduct, NANO_PER_MS, RecordKind,
+    Catalog, CatalogBar as NativeBar, CatalogError, NANO_PER_MS, RecordKind,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogBar {
@@ -23,8 +23,13 @@ use std::path::PathBuf;
 fn error(e: CatalogError) -> RuntimeError {
     RuntimeError::Conflict(e.to_string())
 }
-fn product(raw: &str) -> Result<MarketProduct, RuntimeError> {
-    MarketProduct::parse(raw).map_err(error)
+fn product(raw: &str) -> Result<seealpha_market::identity::MarketProduct, RuntimeError> {
+    seealpha_market::identity::MarketProduct::parse(raw)
+        .map_err(|e| RuntimeError::Unprocessable(e.to_string()))
+}
+fn market_bar_type(raw: &str, symbol: &str, interval: &str) -> Result<String, RuntimeError> {
+    seealpha_market::identity::bar_type(symbol, product(raw)?, interval)
+        .map_err(|e| RuntimeError::Unprocessable(e.to_string()))
 }
 fn one(bar: &NativeBar) -> BookBar {
     BookBar {
@@ -94,8 +99,7 @@ impl Runtime {
         })?;
         let gaps = catalog
             .bar_gaps(
-                symbol,
-                product(product_name)?,
+                &market_bar_type(product_name, symbol, interval)?,
                 interval,
                 start_ms,
                 end_ms,
@@ -147,7 +151,7 @@ impl Runtime {
         })?;
         let rows = catalog
             .read_bars(
-                symbol, product(product_name)?, interval,
+                &market_bar_type(product_name, symbol, interval)?, interval,
                 time_ns(start_ms)?, time_ns(end_ms)?, limit as usize,
             )
             .map_err(error)?;
@@ -203,6 +207,7 @@ impl Runtime {
             ));
         }
         let product = product(product_name)?;
+        let identity = market_bar_type(product_name, symbol, interval)?;
         if price_precision > 16 || size_precision > 16 {
             return Err(RuntimeError::Unprocessable(
                 "Nautilus 价格或数量精度无效。".into(),
@@ -234,7 +239,9 @@ impl Runtime {
                     .parse::<Decimal>()
                     .map_err(|_| RuntimeError::Unprocessable("K 线成交量无效。".into()))?,
             };
-            row.validate(interval, product).map_err(error)?;
+            row.validate(interval).map_err(error)?;
+            seealpha_market::identity::validate_market_bar(&row, product)
+                .map_err(|e| RuntimeError::Unprocessable(e.to_string()))?;
             if [row.open, row.high, row.low, row.close]
                 .iter()
                 .any(|value| value.scale() > price_precision)
@@ -254,7 +261,7 @@ impl Runtime {
             RuntimeError::NotFound("未挂载 Nautilus v2 Catalog。".into())
         })?;
         let path = catalog
-            .append_bars(symbol, product, interval, &native, price_precision, size_precision)
+            .append_bars(&identity, interval, &native, price_precision, size_precision)
             .map_err(error)?;
         let published = json!({"imported":bars.len(),"verified":true,
             "backend":"nautilus_v2_parquet",
@@ -310,9 +317,22 @@ impl Runtime {
         tenant: &str,
     ) -> Result<Option<Vec<Value>>, RuntimeError> {
         self.require_active(tenant)?;
-        self.native_catalog()?
-            .map(|catalog| catalog.scan_inventory().map_err(error))
-            .transpose()
+        let Some(catalog) = self.native_catalog()? else { return Ok(None); };
+        let mut records = catalog.scan_inventory().map_err(error)?;
+        // Binance API fields are resolved in Source, not in storage.
+        for record in &mut records {
+            let instrument = record["instrument_id"].as_str().ok_or_else(|| {
+                RuntimeError::Conflict("Catalog 数据缺失 InstrumentId。".into())
+            })?;
+            let (symbol, product) = seealpha_market::identity::parse_instrument_id(instrument)
+                .map_err(|e| RuntimeError::Conflict(e.to_string()))?;
+            record["symbol"] = json!(symbol);
+            record["product"] = json!(product.as_str());
+        }
+        records.sort_by(|a,b| a["product"].as_str().cmp(&b["product"].as_str())
+            .then(a["symbol"].as_str().cmp(&b["symbol"].as_str()))
+            .then(a["level"].as_str().cmp(&b["level"].as_str())));
+        Ok(Some(records))
     }
     pub fn native_market_inventory(
         &self,
