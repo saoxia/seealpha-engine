@@ -515,11 +515,6 @@ impl Catalog {
                 "Catalog 根目录不存在，读取端不自动创建。".into(),
             ));
         }
-        if path.join("data/bar").exists() || path.join("data/trade_tick").exists() {
-            return Err(CatalogError::Invalid(
-                "检测到旧版 Nautilus v1 Catalog，必须明确迁移。".into(),
-            ));
-        }
         Ok(Self {
             root: path.canonicalize()?,
         })
