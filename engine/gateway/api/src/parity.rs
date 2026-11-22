@@ -116,15 +116,10 @@ async fn sync_verified_fills(
             "对账请求不得携带密钥，必须先登记账户连接。",
         ));
     }
-    let venue = state
-        .config
-        .venue_base
-        .as_deref()
-        .ok_or_else(|| AppError::conflict("交易网关未配置，拒绝读取账户。"))?;
     Ok(Json(
         state
             .runtime
-            .sync_registered_fills(&tenant, &account, environment, &request_id, venue)
+            .sync_verified_order_fills(&tenant, &account, environment, &request_id)
             .map_err(AppError::from)?,
     ))
 }
