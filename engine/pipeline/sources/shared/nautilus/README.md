@@ -158,31 +158,34 @@ SeeAlpha Ledger 仍保留可信签名成交、结算和不可变下单前意图�
 
 离线单元测试使用真实 `nautilus_model::events::account::state::AccountState` 构造器覆盖允许条件、系统本地计算事件、账户身份不匹配、类型不匹配、过期、未来时间和无效窗口。尚未验证原生账户事件的实际接收、断线重连、历史补齐或运行中 Streaming 完整性，不能据此开放生产账户或订单执行。
 
-## Native virtual attribution projection (incremental cutover)
+## Native virtual attribution (legacy OMS removed)
 
-`native_virtual_attribution::project_native_order_observation` now links the
-native typed event observation with the **post-event Nautilus OrderCore**
-(`filled_qty`) and a durably registered SeeAlpha Coordinator. Neither the
-observer nor its projection maintains an independent venue order-status map.
-The upstream `binance_account::attach_native_virtual_attribution` reuses the
-single typed native order subscription and passes the read snapshot's exact revision into an injected CAS commit before
-releasing virtual member fills. A stale revision or failed commit publishes no fills;
-the Binance account subscription includes explicit regression coverage for this gate.
+The prior SeeAlpha Coordinator and Basket execution status machines,
+associated Runtime paper/research endpoints, and checkpoint adapters have
+been deleted. Nautilus `OrderCore` owns the venue order lifecycle and
+accumulated fill amount.
 
-- `OrderAccepted` is never a fill. `OrderFillVoided` freezes attribution
-  pending native account/order reconciliation; it does not reverse Ledger cash.
-- Partial executions require the native Core cumulative quantity to advance
-  by exactly the native event's last quantity. A stale, ahead-of-event or
-  contradictory cache snapshot freezes instead of constructing synthetic fills.
-- Callers must supply an authenticated live-node event, a registered binding,
-  an account/instrument-matched native OrderCore and an atomic durable CAS
-  implementation. This module itself grants no execution permission.
-- The Runtime currently retains a **development-paper-only** coordinator and
-  basket journal. The separate pinned Nautilus packages remain excluded from
-  the main workspace. The callback-to-Runtime production transaction, complete
-  restart recovery, fill-void replay and ordered native cache acceptance tests
-  are **not yet integrated or validated**. Live trading stays disabled.
+`native_virtual_attribution` now accepts the native post-event `OrderCore`,
+validated native `OrderFilled`, immutable ordered `MemberClaim` quantities,
+and the caller's previously **committed** cumulative fill. It deterministically
+allocates only the new increment across strategy members (FIFO by original
+claim order); it never creates a second venue order or mutable OMS.
 
-When wiring the production runtime, use Nautilus as the sole OMS and keep
-only SeeAlpha virtual-member allocation and immutable intent association.
-Do not enable the live sender based solely on this observer.
+`binance_account::attach_native_virtual_attribution` listens on the existing
+typed native subscription and expects a snapshot resolver that returns an
+exact revision, previous committed cumulative, immutable claims and native
+order. The caller's commit callback must persist the native event/trade ID,
+cumulative progress and all strategy allocations in one CAS transaction.
+No virtual fills are published when CAS fails.
+
+ACKs never create virtual fills; voided, duplicated, out-of-order or otherwise
+mismatched fills must stop attribution and trigger native account/order
+reconciliation. The `on_error` callback is an integration hook, not durable
+quarantine by itself.
+
+**Not live-ready:** production Rust Runtime does not yet install the above
+callback with its real Nautilus node/cache, transactional writer and recovery.
+Native crates remain separately built and excluded from the root workspace.
+Live trading stays disabled. Multi-leg protective sequencing also needs a
+new native risk gate; the retired research Basket phase gate is not a valid
+live fallback.
