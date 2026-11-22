@@ -52,3 +52,9 @@ USD-M 当前只支持显式的 **OneWay/Netting** 测试观测。已有 Hedge �
 5. 完成 basket.rs、basket_phase.rs、order_intents.rs 的一致迁移与回归后再移除 SQLite account_snapshots；历史表需另行制定保留/迁移方案，不直接 DROP。
 
 本批仅收紧原生账户订阅范围并增补隔离测试；并未完成 Runtime 接线或旧快照删除。
+
+## 原生类型读取接口（后续改造）
+
+`NativeAccountSession::fresh_native(now_ns, max_age_ns)` 返回当前已经通过该隔离会话校验、仍处于时效窗口内的原始 Nautilus `AccountState` 引用。重启未获新报告、主动断线或超时均返回 `None`。这为后续在同一可信进程中直接使用 Nautilus 类型提供接入点，避免将 JSON projection 当成新的权威账户模型。
+
+当前实现为兼容只读观察 JSON，同时保留最新原生事件和只读展示投影；这是过渡期的进程内数据，不写入第二套账户数据库。该 API 本身**不认证交易所来源，不包含 Position Cache，不提供跨进程 Runtime 访问或下单权限**，不得直接替换 Basket 原子账户版本门禁。
