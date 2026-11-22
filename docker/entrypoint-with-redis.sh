@@ -65,7 +65,7 @@ set +e
 wait -n -p finished_pid "$engine_pid" "$redis_pid"
 status=$?
 set -e
-if [[ "$finished_pid" == "$redis_pid" && "$status" -eq 0 ]]; then
+if [[ "${finished_pid:-}" == "$redis_pid" && "$status" -eq 0 ]]; then
   echo "Redis stopped while the Engine was running" >&2
   status=1
 fi
