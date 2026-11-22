@@ -59,36 +59,90 @@ History is limited to what the pinned native adapter and exchange APIs can genui
 
 Acceptance remains gated on offline/restart tests with pinned 0.68.0 and confirmation of safe execution-client integration; existing legacy consumers and safety gates remain untouched until native parity is demonstrated.
 
-## Deployment decision: PostgreSQL in the existing Engine container
+## PostgreSQL Cache implementation (native Nautilus 0.68.0, opt-in)
 
-The Docker image installs PostgreSQL 15 and its client tools instead of Redis.
-`docker/entrypoint-with-postgres.sh` runs PostgreSQL and SeeAlpha Engine under one container supervisor.
-PostgreSQL binds only to `127.0.0.1:5432`, with no published database port. The bootstrap creates
-a non-superuser `seealpha_cache` login and matching database; the password is generated on the first
-startup and kept in a mode-0600 file under the state volume, not compiled into the image.
+The current PR now **wires the native Postgres Cache factory to the standalone
+Binance Testnet account observer**. This is not production account migration.
 
-The database files are stored at `/app/.local/state/postgresql`. Mount
-`/app/.local/state` as a persistent volume so that existing SQLite and PostgreSQL survive replacement:
+### Actual native API integration
 
-```bash
+`engine/pipeline/sources/shared/nautilus/Cargo.toml` enables
+`nautilus-infrastructure = "=0.68.0"` with `postgres` feature. The
+`native_account_observer` binary builds a native `PostgresCacheConfig`,
+sets `CacheConfig { persist_account_events: true, flush_on_start: false, .. }`,
+and calls `LiveNodeBuilder::with_cache_database_factory(Box::new(postgres))`.
+This reuses Nautilus's native account event, order and position Cache machinery
+without a SeeAlpha-specific SQL event writer.
+
+Credentials are read from the container's local
+`SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE` (never a command-line password);
+the database endpoint is fixed at `127.0.0.1:5432`, database/user
+`seealpha_cache`. Enabling the native backing is explicit:
+`SEEALPHA_ENABLE_POSTGRES_CACHE=1`. No live account is connected by default.
+
+### Single-container database and schema
+
+`docker/engine.Dockerfile` now compiles and includes
+`native_account_observer` and PostgreSQL 15. Its entrypoint starts a
+**container-local** PostgreSQL server and the existing Engine, without Compose
+or an extra DB container. PostgreSQL's data directory is
+`/app/.local/state/postgresql`; the generated first-boot password is stored
+alongside the data in `/app/.local/state/.postgres-password`.
+The directory and credentials must be backed up together.
+
+The image includes the four upstream `v2.0.0rc9` SQL files from
+`nautechsystems/nautilus_trader/schema/sql` under
+`docker/nautilus-postgres-schema`. They are imported in the official order:
+`types.sql`, `functions.sql`, `partitions.sql`, `tables.sql`. They
+remain NautilusTrader's upstream SQL, not a forked SeeAlpha schema
+(LGPL-3.0 source project; keep provenance when upgrading). Bootstrap is only
+attempted on an empty schema; partial or unknown schemas fail closed rather
+than being deleted or implicitly migrated.
+
+The existing SQLite Ledger remains completely separate and unchanged.
+Persist both via:
+
+```sh
+docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 docker run --name seealpha-engine -v seealpha-state:/app/.local/state seealpha-engine:dev
 ```
 
-The bootstrap refuses to start an existing PostgreSQL data directory without its credential file,
-or to start a cluster with a mismatched major version. An interrupted initial bootstrap requires
-manual recovery rather than destructive automatic reinitialization. Readiness is checked using
-`pg_isready` before the Engine starts. If either process terminates the supervisor stops the other.
+### Explicit testnet-only account observation
 
-The `SEEALPHA_POSTGRES_URL` environment variable is only a **local endpoint hint** for the
-future native Nautilus cache adapter. It does not configure the native cache, install Nautilus
-into this image, or prove account events are persisted. The native account observer currently
-runs as a separate standalone Rust program; it must be co-located before using this
-container-loopback-only database. The underlying Nautilus 0.68.0 `postgres` feature
-and actual cache schema/bootstrap path still require pinned-version compile/runtime and
-restart validation.
+Only after offline validation, enable the **read-only Binance Testnet** account
+observer (no trading commands or strategies) with all required environment
+variables:
 
-Security and durability: PostgreSQL uses WAL, but application-level asynchronous cache writes
-still require explicit flush/restart tests. Back up the PostgreSQL database and generated
-credential together; normal snapshots of an actively running database must use database-aware
-backup procedures. Production deployment should use a reviewed non-root supervisor and
-resource/memory limits. This PR does not enable live trading or modify old SQLite ledger data.
+```sh
+docker run --name seealpha-account-test \
+  -v seealpha-test-state:/app/.local/state \
+  -e SEEALPHA_NATIVE_ACCOUNT_OBSERVER=1 \
+  -e SEEALPHA_ENABLE_POSTGRES_CACHE=1 \
+  -e SEEALPHA_ACCOUNT_PRODUCT=spot \
+  -e SEEALPHA_ACCOUNT_ID=BINANCE-SPOT-TEST-001 \
+  -e SEEALPHA_BINANCE_TESTNET_KEY=... \
+  -e SEEALPHA_BINANCE_TESTNET_SECRET=... \
+  seealpha-engine:dev
+```
+
+For credentials, use a secret-injection facility rather than shell command
+history; the inline environment examples show names, not recommended secret
+transport. The observer only accepts `spot` or `futures_um` Testnet
+execution clients, with explicit account identity. The same-container
+supervisor shuts down the other processes if any supervised service exits.
+
+### Verification gates and limitations
+
+The integration is **code-complete only at the configuration/wiring level**.
+It has not yet passed Docker build, pinned-version `cargo check`, first-boot
+Nautilus SQL migration, authenticated Testnet account event write, restart
+restore, or fault injection. In particular:
+- `AccountState` persistence does not prove that private funding income,
+  withdrawals or option exercise history are captured.
+- The observer's local recovery cursor is **not** Nautilus's account Cache and
+  should be removed only after verified native recovery parity.
+- A PostgreSQL health check is not proof of successful Nautilus SQL writes.
+- PostgreSQL WAL and asynchronous Cache task processing have different
+  durability semantics; test clean shutdown and crash recovery independently.
+- Production should review data ownership, secret injection, backup, least
+  privilege and resource limits. No real orders or account balances are changed.
