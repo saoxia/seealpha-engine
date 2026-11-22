@@ -11,7 +11,7 @@ mod native_handoff;
 mod research;
 mod state_store;
 pub use orders::OrderCommand;
-pub use state_store::{OrderRecoveryItem, ReconciliationTask, StoredOrder};
+pub use state_store::OrderRecoveryItem;
 
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
@@ -129,68 +129,6 @@ impl Runtime {
         self.state_store
             .order_recovery_page(tenant, offset, limit)
             .map_err(map_ledger)
-    }
-
-    /// Explicit scheduling only; no network IO, no order POST and no claim
-    /// that an observed NEW/ACK implies a completed settlement.
-    pub fn enqueue_order_reconciliations(
-        &self,
-        tenant: &str,
-        now_ms: i64,
-    ) -> Result<usize, RuntimeError> {
-        self.require_active(tenant)?;
-        self.state_store
-            .enqueue_order_reconciliations(tenant, now_ms)
-            .map_err(map_ledger)
-    }
-
-    /// Atomically lease one read-side reconciliation task. The caller may
-    /// perform authenticated order/trade/account GETs, never resend the order.
-    pub fn claim_order_reconciliation(
-        &self,
-        tenant: &str,
-        worker: &str,
-        now_ms: i64,
-        lease_ms: i64,
-    ) -> Result<Option<ReconciliationTask>, RuntimeError> {
-        self.require_active(tenant)?;
-        self.state_store
-            .claim_order_reconciliation(tenant, worker, now_ms, lease_ms)
-            .map_err(map_ledger)
-    }
-
-    /// A successful GET observation is still NOT a settled fill. Keep task
-    /// retriable until separately verified financial reconciliation completes.
-    #[allow(clippy::too_many_arguments)]
-    pub fn finish_order_reconciliation(
-        &self,
-        tenant: &str,
-        account: &str,
-        request: &str,
-        worker: &str,
-        expected_attempts: i64,
-        now_ms: i64,
-        outcome: &str,
-        error_code: Option<&str>,
-    ) -> Result<(), RuntimeError> {
-        self.require_active(tenant)?;
-        self.state_store
-            .finish_order_reconciliation(
-                tenant,
-                account,
-                request,
-                worker,
-                expected_attempts,
-                now_ms,
-                outcome,
-                error_code,
-            )
-            .map_err(map_ledger)
-    }
-
-    /// Read persisted order projections owned by Runtime execution.
-    pub fn stored_orders(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<StoredOrder>, RuntimeError> {
-        self.state_store.orders(tenant, account, env).map_err(map_ledger)
     }
 
     pub fn inflight(&self) -> usize {

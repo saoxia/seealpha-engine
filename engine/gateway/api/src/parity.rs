@@ -12,7 +12,6 @@ use serde_json::{Value, json};
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/tenants/{tenant_id}/accounts/{account_id}/positions",get(positions))
-        .route("/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}",get(request))
         .route("/tenants/{tenant_id}/data/datasets",post(data_inventory))
         .route("/tenants/{tenant_id}/data/catalog/events",post(native_events))
         .route("/tenants/{tenant_id}/data/catalog/inventory",post(native_inventory))
@@ -41,21 +40,6 @@ async fn positions(
     Err(AppError::conflict(
         "Nautilus 原生持仓查询尚未接入，旧 Ledger 仓位不可用。",
     ))
-}
-
-async fn request(
-    State(state): State<AppState>,
-    Path((tenant, account, request_id)): Path<(String, String, String)>,
-) -> Result<Json<Value>, AppError> {
-    state
-        .runtime
-        .require_active(&tenant)
-        .map_err(AppError::from)?;
-    let value = state
-        .runtime
-        .order_request_view(&tenant, &account, &request_id)
-        .map_err(AppError::from)?;
-    Ok(Json(value))
 }
 
 async fn data_inventory(

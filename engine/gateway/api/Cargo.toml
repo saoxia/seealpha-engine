@@ -14,6 +14,7 @@ rust_decimal = "1"
 seealpha-backtest = { path = "../../backtest" }
 seealpha-catalog = { path = "../../pipeline/catalog" }
 seealpha-ledger = { path = "../../ledger" }
+seealpha-database = { path = "../../database" }
 seealpha-market = { path = "../../pipeline/sources/shared/market" }
 seealpha-runtime = { path = "../../runtime" }
 serde = { version = "1", features = ["derive"] }
