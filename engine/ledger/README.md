@@ -1,14 +1,160 @@
-# Ledger / Funds
+# Ledger / Funds：账本与资金模块
 
-The four **business subdomains** of ledger and funds are:
-`accounts`, `movements`, `allocations`, and `reconciliation`.
+## 1. 模块定位
 
-The first two house current verified account/funds code; the latter two are
-reserved boundaries for future explicitly tested behavior. This is not a
-second OMS/portfolio engine or an alternative to NautilusTrader.
+`engine/ledger` 是 SeeAlpha 的**账本与资金**领域，负责保存、关联及核验与真实账户、经济变动、策略归属有关的事实。它不承担策略决策、交易所订单执行，也不重新实现 NautilusTrader 已有的订单、持仓与账户运行时引擎。
 
-Existing other source files at the crate root are unchanged and outside this
-specific funds subdomain reorganization. The public `Ledger` API and SQLite
-schema remain untouched.
+在 Ledger / Funds 内，**只定义四个二级业务功能块**：
 
-See [functional design](../../docs/architecture/LEDGER_FUNDS_LEVEL2_20261122.md).
+| 文件夹 | 中文名称 | 回答的问题 | 职责摘要 |
+| --- | --- | --- | --- |
+| `src/accounts/` | 账户与资金状态 | **现在账户有什么、各有多少？** | 账户状态观察、可信快照、身份与版本核验 |
+| `src/movements/` | 资金与资产变动 | **为什么发生这笔资金/资产变化？** | 真实成交证据、费用和结算流水的可信记录 |
+| `src/allocations/` | 内部归属与分配 | **这笔交易、成本或收益属于哪个策略？** | 实际成交与内部虚拟交易的对应、费用/资金费分摊 |
+| `src/reconciliation/` | 对账与一致性 | **账户记录、外部事实和策略内部账是否一致？** | 缺口检测、数量与金额守恒、差异及核验状态 |
+
+这四块是**业务职责边界**，不是四套数据库、四个进程或四个彼此独立的交易引擎。运行时执行、持仓与账户状态优先复用已固定版本的 NautilusTrader；Ledger 只补充其未覆盖或不能等同于可信财务证据的能力。
+
+## 2. 四个文件夹的详细职责
+
+### 2.1 `src/accounts/` — 账户与资金状态
+
+**主要职责**
+
+- 表达某个 `tenant_id + account_id + environment` 对应的账户状态观察。
+- 保存来自可信来源的余额、持仓快照及其 `evidence_id`、时间戳、来源、修订版本。
+- 校验快照的完整性、Decimal 数值精度、版本和并发覆盖（CAS），为账户级风控或恢复提供可信检查点。
+- 与 NautilusTrader `Account` / `AccountState` / `Cache` 对齐；Nautilus 的运行时状态优先，不重复编写一套余额、保证金、PnL 计算引擎。
+
+**已有实现**
+
+- `account_snapshots.rs`
+  - `save_account_snapshot`：保存经过校验的账户快照，并使用预期修订版本控制写入。
+  - `account_snapshot`：读取指定账户、环境下的当前可信快照。
+  - `AccountSnapshot`：对外暴露快照数据类型。
+
+**明确不负责**
+
+- 不根据两次余额快照的差额擅自生成一笔转账或收益。
+- 不将订单 ACK 当作账户已经发生真实变化的证明。
+- 不自行替代 Nautilus 的实时持仓、保证金和盈亏核算。
+
+**当前状态：** 已有可信快照持久化；尚未证明 Nautilus 原生账户状态已完成生产环境同步与恢复替代。
+
+### 2.2 `src/movements/` — 资金与资产变动事实
+
+**主要职责**
+
+- 逐笔记录有可靠来源的外部经济事实，包括真实成交、手续费、资金费、期权结算等。
+- 区分**交易事实**、**账户现金/资产结算**以及**对事实的索引事件**，避免把订单事件直接算成资金流水。
+- 保留交易所真实 Trade ID / Settlement ID、账户范围、产品、金额、币种、时间和来源证据；采用精确 Decimal，并保证重复事件幂等。
+- 未来在经过交易所来源验收后，可扩展内部划转、充值、提现、其他账户收支等类型。
+
+**已有实现**
+
+- `verified_fills.rs`
+  - `import_verified_fills`：导入经过核验的交易所真实成交。
+  - `quarantine_synthetic_fills`、`quarantined_fill_count`：隔离历史上无法作为真实成交证据的合成记录。
+- `settlements.rs`
+  - `import_account_settlements`、`account_settlements`：记录及查询当前支持的 USD-M / Options 账户结算事实。
+- `account_events.rs`
+  - `record_account_evidence_event`、`account_evidence_event_page`：给已有的可信成交/结算建立可追溯、可分页的账户事件引用。
+
+**明确不负责**
+
+- `OrderAccepted`、ACK、未验证的 `FillReport` 或公共资金费率**不是**已认证资金变动。
+- 不把 `account_events.rs` 目前的证据引用机制称作完整现金分录或复式记账。
+- 不在这里决定哪一个策略应承担交易、手续费或资金费；该归属属于 Allocations。
+
+**当前状态：** 已有真实成交与部分结算的证据存储；尚未实现全品种、全账户的现金流水覆盖与完整复式记账。
+
+### 2.3 `src/allocations/` — 策略内部归属与分配
+
+**主要职责**
+
+- 建立交易所**真实成交**与 SeeAlpha **内部策略订单/虚拟成交**之间可追溯的多对多映射。
+- 记录分配数量、策略/运行身份、费用与资金费的分摊金额、归属规则版本、分配时间。
+- 允许多策略内部对冲或交叉撮合；必须明确标记为内部事实，不能冒充交易所真实成交。
+- 支持部分分配与尚未分配的余量，并能够重建策略级成本与归属记录。
+- 分配**决策和价格规则**来自 Portfolio 等业务层；本模块负责归属结果的事实记录和完整性约束。
+
+**预期关键关系**
+
+- 外部：`venue_fill_id -> allocation(s) -> strategy_id / internal_trade_id`。
+- 内部：`internal_cross_id -> participating_strategy_ids`，来源类别明确为内部撮合。
+- 守恒：完整分配时，分配总量 = 真实外部成交量；未完成时显式保留未分配量。
+- 手续费、资金费的已分配额 + 未分配额，应等于相应真实费用或结算总额。
+
+**明确不负责**
+
+- 不重新实现 Nautilus 的订单提交、成交生命周期和交易所路由。
+- 不把策略目标仓位直接认定为已经发生的成交。
+- 不在账本中自行决定多策略内部撮合价格或优先级。
+
+**当前状态：** 文件夹仅定义业务边界；没有可用的分配存储 API、数据库表或完成验收的执行逻辑。
+
+### 2.4 `src/reconciliation/` — 对账与一致性
+
+**主要职责**
+
+- 使用 NautilusTrader 原生订单/持仓对账能力作为基础，补充 Ledger/Funds 所需的资金与归属一致性检查。
+- 对齐三组信息：
+  1. 外部认证成交与真实结算事实（Movements）。
+  2. 交易所可信账户快照、Nautilus 当前账户/持仓状态（Accounts）。
+  3. SeeAlpha 策略内部成交、持仓和费用归属（Allocations）。
+- 检测未知成交、重复/遗漏结算、数量不匹配、未分配费用、资金差异、快照过期及证据缺口。
+- 保存差异、核验时间点、证据来源与处理状态；支持待核验和人工处理，而不是强行写平账目。
+
+**主要一致性约束**
+
+- `外部成交数量 = 已分配外部数量 + 未分配数量`。
+- 同一账户、标的、持仓模式和核验时点，策略净敞口必须能够解释交易所实际净持仓，不能解释的部分应记录差异。
+- `实际费用/结算金额 = 已分配金额 + 未分配金额`（在相同币种、账户和结算范围内）。
+- 不能靠修改或伪造原始成交、资金流水来“完成对账”。
+
+**明确不负责**
+
+- 不重复实现 Nautilus 已提供的标准订单/持仓对账机制。
+- 不将“订单未知时的安全恢复任务”误当作资金对账。
+- 不擅自重发未知结果的订单，不根据无法核实的差额自动生成真实资金事实。
+
+**当前状态：** 文件夹仅定义 Ledger/Funds 的资金及归属核验边界；尚无独立可运行的资金对账引擎。
+
+## 3. 四块之间如何协作
+
+```text
+          NautilusTrader / 交易所认证数据
+                       │
+             ┌─────────┴─────────┐
+             ▼                   ▼
+       Accounts             Movements
+      账户状态观察           成交/结算事实
+             │                   │
+             │                   ▼
+             │              Allocations ◄── Portfolio 内部归属决策
+             │             策略归属与分摊
+             │                   │
+             └─────────┬─────────┘
+                       ▼
+                Reconciliation
+            账户 / 资金 / 策略归属核验
+```
+
+**示例：** 策略 A 想买入 2 ETH，策略 B 想卖出 1 ETH。Portfolio 如果按照明确规则将部分需求内部抵消，Nautilus 最终可能仅向交易所净买入 1 ETH。Movements 保存真实的 1 ETH 外部成交；Allocations 记录外部成交与内部交叉交易的策略归属；Accounts 记录可信账户状态；Reconciliation 验证虚拟账合计可以解释真实账户净仓位和费用。内部撮合不增加交易所真实成交量。
+
+## 4. 与目前其他 Ledger 文件的边界
+
+当前仍位于 `src/` 根目录的 `order_intents.rs`、`order_reconciliation_tasks.rs`、`basket_journal.rs`、`coordinator_state.rs`、`records.rs`、`parity.rs` 等，是已有业务和兼容代码，**本次不迁移、不删除、也不将其纳入上述四项资金业务职责**。
+
+后续若发现这些文件包含 Nautilus 已提供的等价实现，应先完成调用方替换、运行及重启验证，再移除重复代码；必要的安全发送前持久化、可信证据和历史数据不可因目录整理而丢失。
+
+## 5. 开发与验收规则
+
+1. 一种数据只确认一个权威来源：运行时账户状态优先 Nautilus，真实结算以交易所认证证据为准，策略归属以明确的内部业务事件为准。
+2. 金额和数量采用精确 Decimal；始终隔离租户、账户、环境、产品、币种和来源。
+3. 真实成交、模拟成交、内部交叉成交必须区分，不混写为同一种交易所事实。
+4. 可重复导入、可追溯、能发现缺失和冲突；不根据推测补造真实成交或现金。
+5. 新实现通过固定 Nautilus 版本的编译、回归、断线和重启测试，且完成消费者迁移后，才删除等价的旧实现。
+6. 当前四块划分本身**不代表** Nautilus 实盘执行、资金流水或对账闭环已经验收完成。
+
+设计说明：[Ledger / Funds 四个二级业务功能块](../../docs/architecture/LEDGER_FUNDS_LEVEL2_20261122.md)。
