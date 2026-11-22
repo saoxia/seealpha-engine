@@ -88,6 +88,15 @@ jobs:
           components: rustfmt, clippy
       - name: Resolve PostgreSQL dependencies without updating pinned packages
         run: cargo metadata --format-version 1 > /dev/null
+      - name: Export lockfile chunks for one-time sync
+        run: |
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+          content = base64.b64encode(Path("Cargo.lock").read_bytes()).decode()
+          for i in range(0, len(content), 3000):
+              print("LOCKCHUNK:" + content[i:i+3000])
+          PY
       - name: Preserve regenerated lockfile for review
         uses: actions/upload-artifact@v4
         with:
