@@ -367,7 +367,7 @@ impl Runtime {
     ) -> Result<Value, RuntimeError> {
         let loads = if let Some(account_id) = account_id {
             self.strategy_store
-                .strategies(tenant_id, account_id)
+                .list(tenant_id, account_id)
                 .map_err(map_store)?
         } else {
             Vec::new()
