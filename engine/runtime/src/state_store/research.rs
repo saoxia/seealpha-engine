@@ -39,7 +39,6 @@ impl StateStore {
             .optional()
             .map_err(|error| LedgerError::Database(error.to_string()))
     }
-
 }
 
 #[cfg(test)]
@@ -47,7 +46,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn research_records_roundtrip_after_moving_out_of_ledger() {
+    fn backtest_reports_remain_tenant_scoped() {
         let store = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         store.save_backtest("t", "a", "history", r#"{"ok":true}"#).unwrap();
         assert_eq!(
