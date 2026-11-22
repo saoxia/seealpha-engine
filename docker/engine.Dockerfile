@@ -36,10 +36,10 @@ FROM alpine:3.22 AS runtime
 RUN apk add --no-cache ca-certificates openssl bash su-exec postgresql15 postgresql15-client
 ENV PATH="/usr/libexec/postgresql15:${PATH}"
 ENV ENGINE_PROJECT=/app \
-    ENGINE_HOST=127.0.0.1 ENGINE_PORT=8766 \
-    ENGINE_STATE=/app/.local/state/engine \
     SEEALPHA_POSTGRES_DATA_DIR=/app/.local/state/postgresql
 WORKDIR /app
+# Non-secret defaults, overlaid by ENGINE_* environment variables.
+COPY --from=build /src/engine/config /app/engine/config
 COPY --from=build /src/target/release/seealpha-engine /usr/local/bin/seealpha-engine
 COPY --from=build /src/target/release/binance-trade-archive-fetch /usr/local/bin/binance-trade-archive-fetch
 COPY --from=build /src/engine/pipeline/sources/shared/nautilus/target/release/native_account_observer /usr/local/bin/native_account_observer

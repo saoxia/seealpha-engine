@@ -11,6 +11,7 @@ SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目�
 | [ledger](ledger/) | 账户与账本事实及持久化 |
 | [backtest](backtest/) | 历史回放与模拟 |
 | [runtime](runtime/) | 跨领域用例编排 |
+| [config](config/) | Engine 的非敏感初始化配置（环境变量可覆盖） |
 | [gateway](gateway/) | HTTP API、MCP 网关与研究授权 |
 | [apps](apps/) | 可执行入口 |
 
