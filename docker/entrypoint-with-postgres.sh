@@ -11,9 +11,14 @@ new_database=0
 
 postgres_pid=""
 engine_pid=""
+observer_pid=""
 
 shutdown() {
   trap - TERM INT EXIT
+  if [[ -n "$observer_pid" ]]; then
+    kill -TERM "$observer_pid" 2>/dev/null || true
+    wait "$observer_pid" 2>/dev/null || true
+  fi
   if [[ -n "$engine_pid" ]]; then
     kill -TERM "$engine_pid" 2>/dev/null || true
     wait "$engine_pid" 2>/dev/null || true
@@ -131,14 +136,41 @@ export SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE="$PG_CREDENTIAL_FILE"
 export SEEALPHA_POSTGRES_URL="postgresql://seealpha_cache:${PG_PASSWORD}@127.0.0.1:5432/seealpha_cache"
 unset PG_PASSWORD
 
+# Explicit testnet-only observer: no strategies, no live orders and no
+# automatic production account connections.
+if [[ "${SEEALPHA_NATIVE_ACCOUNT_OBSERVER:-0}" == "1" ]]; then
+  if [[ "${SEEALPHA_ENABLE_POSTGRES_CACHE:-0}" != "1" ]]; then
+    echo "Native account observer requires native Postgres Cache enabled" >&2
+    exit 1
+  fi
+  case "${SEEALPHA_ACCOUNT_PRODUCT:-}" in spot|futures_um) ;; *)
+    echo "SEEALPHA_ACCOUNT_PRODUCT must be spot or futures_um" >&2; exit 1 ;;
+  esac
+  if [[ ! "${SEEALPHA_ACCOUNT_ID:-}" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
+    echo "Missing or invalid SEEALPHA_ACCOUNT_ID" >&2
+    exit 1
+  fi
+  observer_dir=/app/.local/state/nautilus-account
+  mkdir -p "$observer_dir"
+  native_account_observer "$SEEALPHA_ACCOUNT_PRODUCT" "$SEEALPHA_ACCOUNT_ID" "$observer_dir" &
+  observer_pid=$!
+elif [[ "${SEEALPHA_NATIVE_ACCOUNT_OBSERVER:-0}" != "0" ]]; then
+  echo "SEEALPHA_NATIVE_ACCOUNT_OBSERVER must be 0 or 1" >&2
+  exit 1
+fi
+
 "$@" &
 engine_pid=$!
 set +e
-wait -n -p finished_pid "$engine_pid" "$postgres_pid"
+if [[ -n "$observer_pid" ]]; then
+  wait -n -p finished_pid "$engine_pid" "$postgres_pid" "$observer_pid"
+else
+  wait -n -p finished_pid "$engine_pid" "$postgres_pid"
+fi
 status=$?
 set -e
-if [[ "${finished_pid:-}" == "$postgres_pid" && "$status" -eq 0 ]]; then
-  echo "PostgreSQL unexpectedly stopped" >&2
+if [[ "${finished_pid:-}" != "$engine_pid" && "$status" -eq 0 ]]; then
+  echo "PostgreSQL or account observer unexpectedly stopped" >&2
   status=1
 fi
 exit "$status"
