@@ -305,24 +305,6 @@ impl Runtime {
             .read_records(kind, identity, start_ns, end_ns, limit)
             .map_err(error)
     }
-    pub fn native_delete_plan(
-        &self,
-        tenant: &str,
-        product_name: &str,
-        symbol: &str,
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        let catalog = self
-            .native_catalog()?
-            .ok_or_else(|| RuntimeError::NotFound("未挂载 Nautilus v2 Catalog。".into()))?;
-        let preview = catalog
-            .preview_delete(symbol, product(product_name)?, start_ms, end_ms)
-            .map_err(error)?;
-        serde_json::to_value(preview)
-            .map_err(|_| RuntimeError::Conflict("删除预览序列化失败。".into()))
-    }
     pub fn native_dataset_inventory(
         &self,
         tenant: &str,
