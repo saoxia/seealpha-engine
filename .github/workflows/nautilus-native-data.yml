@@ -37,6 +37,8 @@ jobs:
       - name: Test Pipeline subscription, retention and precision
         run: |
           cargo test -p seealpha-catalog strict_utc_dates_and_schema --locked
+          cargo test -p seealpha-catalog valid_options_contract_is_independent_of_spot_symbols --locked
+          cargo test -p seealpha-market option_history_persists_only_bar_data --locked
           cargo test -p seealpha-catalog removes_complete_old_day_without_touching_current_day --locked
           cargo test -p seealpha-market instrument_filters_are_exact_not_inferred_from_candle_values --locked
           cargo test -p seealpha-market earlier_tenant_start_wins_and_disabled_prevents_deletion --locked
