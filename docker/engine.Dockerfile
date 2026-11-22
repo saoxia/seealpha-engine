@@ -1,8 +1,8 @@
 # Build from the repository root:
 #   docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
-FROM rust:1.100-slim-bookworm AS build
-RUN apt-get update && apt-get install -y --no-install-recommends binutils \
-    && rm -rf /var/lib/apt/lists/*
+FROM rust:1.100-alpine3.22 AS build
+# musl-native compilation; build tools never enter the runtime image.
+RUN apk add --no-cache build-base pkgconf openssl-dev binutils cmake perl
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY docker/seealpha-postgres-schema.sql ./docker/seealpha-postgres-schema.sql
@@ -30,12 +30,11 @@ FROM scratch AS debug-symbols
 COPY --from=build /src/debug-symbols/ /symbols/
 
 # Default deployment: a Rust runtime without Python interpreter, host, or strategy packages.
-FROM debian:bookworm-slim AS runtime
-RUN mkdir -p /etc/postgresql-common \
-    && printf 'create_main_cluster = false\\n' > /etc/postgresql-common/createcluster.conf \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 postgresql-15 postgresql-client-15 \
-    && rm -rf /var/lib/apt/lists/*
+FROM alpine:3.22 AS runtime
+# Retain PostgreSQL major version 15 and the single-container deployment.
+# Alpine PostgreSQL packages use /usr/libexec/postgresql15 instead of Debian's /usr/lib/postgresql/15/bin.
+RUN apk add --no-cache ca-certificates openssl bash su-exec postgresql15 postgresql15-client
+ENV PATH="/usr/libexec/postgresql15:${PATH}"
 ENV ENGINE_PROJECT=/app \
     ENGINE_HOST=127.0.0.1 ENGINE_PORT=8766 \
     ENGINE_STATE=/app/.local/state/engine \
