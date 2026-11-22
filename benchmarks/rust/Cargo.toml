@@ -14,5 +14,4 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 rust_decimal = "1"
 seealpha-backtest = { path = "../../engine/backtest" }
 seealpha-market = { path = "../../engine/pipeline/sources/shared/market" }
-seealpha-quality = { path = "../../engine/pipeline/catalog/integrity" }
 serde_json = "1"
