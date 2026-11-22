@@ -74,3 +74,25 @@ impl StateStore {
             .map_err(|error| LedgerError::Database(error.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn research_records_roundtrip_after_moving_out_of_ledger() {
+        let store = StateStore::open(std::path::Path::new(":memory:")).unwrap();
+        store.save_backtest("t", "a", "history", r#"{"ok":true}"#).unwrap();
+        assert_eq!(
+            store.latest_backtest("t", "a", "history").unwrap().as_deref(),
+            Some(r#"{"ok":true}"#),
+        );
+        assert!(store.latest_backtest("other", "a", "history").unwrap().is_none());
+        store.save_snapshot("t", "snap", "digest", r#"{"bars":1}"#).unwrap();
+        assert_eq!(
+            store.snapshot("t", "snap").unwrap(),
+            Some(("digest".into(), r#"{"bars":1}"#.into())),
+        );
+        assert!(store.snapshot("other", "snap").unwrap().is_none());
+    }
+}
