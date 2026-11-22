@@ -1,9 +1,8 @@
 //! Native-only account API boundary.
 //!
-//! The legacy Binance REST client has been removed. Credentials can be
-//! registered for a future Nautilus native execution actor, but registration
-//! is NOT evidence of connectivity or a trading permission. Until the native
-//! account/report subscriber is wired, evidence-dependent methods fail closed.
+//! The legacy Binance REST client and unused Runtime credential cache are
+//! removed. Native account/execution reports are not yet wired into Runtime.
+//! Until then, all remote-account evidence and registration fail closed.
 use crate::{Runtime, RuntimeError, map_ledger};
 use serde_json::{Value, json};
 
@@ -50,7 +49,6 @@ impl Runtime {
             "environment":environment,"status":"closed"}))
     }
 
-
     pub fn sync_registered_fills(
         &self, tenant: &str, _account: &str, _environment: &str,
         _request_id: &str, _venue_base: &str,
@@ -66,18 +64,13 @@ impl Runtime {
         self.require_active(tenant_id)?;
         Err(native_evidence_unavailable())
     }
-
-
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn registration_never_pretends_to_connect_or_cache_credentials() {
-        // Runtime::register_connection must fail closed until a trusted native
-        // actor is wired. API parameters are kept for backward compatibility.
-        assert!(native_evidence_unavailable().to_string().contains("Nautilus"));
+    fn native_evidence_is_not_marked_available_by_stub() {
+        assert!(matches!(native_evidence_unavailable(), RuntimeError::Conflict(_)));
     }
 }
