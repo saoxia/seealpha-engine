@@ -4,7 +4,8 @@ BEGIN;
 CREATE SCHEMA IF NOT EXISTS seealpha;
 SET LOCAL search_path TO seealpha, public;
 
--- Source: engine/ledger/src/lib.rs
+-- Runtime-owned CAS business state: engine/runtime/src/state_store/
+-- These tables remain in the same schema for non-destructive in-place ownership migration.
 CREATE TABLE IF NOT EXISTS portfolio_coordinator_states (
  tenant_id TEXT NOT NULL,
  account_id TEXT NOT NULL,
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS basket_journals (
  body_json TEXT NOT NULL,
  PRIMARY KEY (tenant_id, account_id, basket_id)
 );
+-- Ledger-owned immutable order safety envelope (until native execution cutover).
 CREATE TABLE IF NOT EXISTS order_intents (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -183,6 +185,7 @@ CREATE TABLE IF NOT EXISTS events (
     body_json TEXT NOT NULL,
     created_at BIGINT NOT NULL
 );
+-- Runtime-owned paper simulator state, not real exchange positions.
 CREATE TABLE IF NOT EXISTS paper_positions (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -204,6 +207,7 @@ CREATE TABLE IF NOT EXISTS account_settlements (
 );
 CREATE INDEX IF NOT EXISTS account_settlement_symbol
     ON account_settlements(tenant_id,account_id,environment,product,symbol);
+-- Runtime-owned research and backtest history.
 CREATE TABLE IF NOT EXISTS backtest_results (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
