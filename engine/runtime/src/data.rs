@@ -1041,7 +1041,7 @@ impl Runtime {
                 // cannot be acquired. Do not change the verified ZIP importer.
                 // A successful read is evidence, NOT a Catalog import or READY.
                 if let Some(evidence) = self.clickhouse_um_repair_fallback(
-                    symbol, start, end, &response, &zip_error,
+                    tenant, symbol, start, end, &response, &zip_error,
                 ).await {
                     return Ok(evidence);
                 }
@@ -1096,14 +1096,15 @@ impl Runtime {
     /// A positive probe is evidence only and does not import or mark READY.
     async fn clickhouse_um_repair_fallback(
         &self,
+        tenant: &str,
         symbol: &str,
         start_ms: i64,
         end_ms: i64,
         response: &Value,
         zip_error: &RuntimeError,
     ) -> Option<Value> {
-        use seealpha_market::clickhouse::{ClickHouseConfig, ClickHouseConnection, um_storage_symbol};
-        let config = ClickHouseConfig::from_env().ok()??;
+        use seealpha_market::clickhouse::{ClickHouseConnection, um_storage_symbol};
+        let config = self.optional_clickhouse_config(tenant)?;
         let connection = ClickHouseConnection::new(config).ok()?;
 
         // Probe only the first suspect minute; never equate a bounded page
