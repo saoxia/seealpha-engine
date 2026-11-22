@@ -6,16 +6,13 @@ use seealpha_execution::TargetHolding;
 use seealpha_backtest::{HoldingPublication, IndexedHoldingPublication, PaperFill, replay_holdings_by_bar};
 use seealpha_strategy::executor::{ExecutionInput, IssuedNativeEmaExecutor, NativeEmaExecutor, StrategyExecutor};
 use seealpha_strategy::{
-    AccountScope, IssuedStrategy, Publication, StrategyBar, digest_dir,
-    sha256_hex,
+    AccountScope, IssuedStrategy, Publication, StrategyBar, sha256_hex,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum PackageBody {
-    Directory(PathBuf),
     Archive(Vec<u8>),
     /// Built-in Rust evaluator; no Python interpreter or package files.
     NativeEma,
@@ -194,11 +191,6 @@ impl Runtime {
                         self.track_end();
                         outcome.map_err(map_strategy)?
                     }
-                    PackageBody::Directory(_) => {
-                        return Err(RuntimeError::Conflict(
-                            "Python 目录策略已退役；请下发受支持的 Rust 策略清单。".into()
-                        ));
-                    }
                     PackageBody::NativeEma => unreachable!(),
                 }
             };
@@ -322,7 +314,6 @@ fn session_fingerprint(request: &PaperRequest, bars: &[Bar]) -> String {
         hasher.update(strategy.parameters.to_string().as_bytes());
         let digest = match &strategy.package {
             PackageBody::Archive(bytes) => sha256_hex(bytes),
-            PackageBody::Directory(path) => digest_dir(path).unwrap_or_default(),
             PackageBody::NativeEma => "native:ema_crossover:v1".to_string(),
         };
         hasher.update(digest.as_bytes());
@@ -439,7 +430,6 @@ mod tests {
             research_signing_key: None,
             research_mcp_enabled: false,
             venue_base: None,
-            python: PathBuf::from("/nonexistent/python"),
         };
         let runtime = Runtime::open(&config).unwrap();
         runtime.ensure_tenant("dev", "development", "active").unwrap();
@@ -487,7 +477,6 @@ mod tests {
             research_signing_key: None,
             research_mcp_enabled: false,
             venue_base: None,
-            python: PathBuf::from("/nonexistent/python"),
         };
         let runtime = Runtime::open(&config).unwrap();
         runtime.ensure_tenant("prod", "production", "active").unwrap();
