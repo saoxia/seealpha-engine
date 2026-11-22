@@ -5,6 +5,7 @@
 pub mod native_account;
 pub mod native_account_session;
 pub mod native_execution;
+pub mod native_order_subscription;
 
 use std::{
     fs::{File, OpenOptions},
