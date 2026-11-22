@@ -206,8 +206,6 @@ CREATE TABLE IF NOT EXISTS paper_sessions (
 CREATE TABLE IF NOT EXISTS data_policies(tenant_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,policy_json TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,product,symbol));
 CREATE TABLE IF NOT EXISTS data_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,job_id));
 CREATE INDEX IF NOT EXISTS data_jobs_status ON data_jobs(tenant_id,status,updated_at);
-CREATE TABLE IF NOT EXISTS worker_settings(singleton_id BIGINT PRIMARY KEY CHECK(singleton_id=1),max_workers BIGINT NOT NULL,timeout_seconds BIGINT NOT NULL);
-INSERT INTO worker_settings(singleton_id,max_workers,timeout_seconds) VALUES(1,1,3600) ON CONFLICT DO NOTHING;
 
 -- Source: engine/strategy/src/store.rs
 CREATE TABLE IF NOT EXISTS strategy_issuances (

@@ -50,10 +50,6 @@ pub fn router(state: AppState) -> Router {
         .route("/tenants/{tenant_id}/runnable", post(runnable))
         .route("/tenants/{tenant_id}/jobs", get(jobs))
         .route(
-            "/tenants/{tenant_id}/jobs/worker-settings",
-            get(worker_settings).put(update_worker_settings),
-        )
-        .route(
             "/tenants/{tenant_id}/strategy-packages/inspect",
             post(inspect_strategy),
         )
@@ -185,13 +181,6 @@ async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Re
         );
     }
     response
-}
-
-fn text(body: &Value, field: &str) -> String {
-    body.get(field)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
 }
 
 fn decimal_field(

@@ -408,6 +408,7 @@ mod tests {
     use crate::{Config, Runtime};
     use rust_decimal::Decimal;
     use seealpha_market::{DepthBook, MarketSnapshot, Product};
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]

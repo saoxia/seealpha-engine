@@ -213,6 +213,7 @@ impl StateStore {
         tx.commit().map_err(sql)
     }
 
+    #[cfg(test)]
     pub fn order_reconciliation_task(
         &self,
         tenant: &str,

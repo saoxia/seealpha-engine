@@ -99,16 +99,6 @@ fn loopback_fixture_url(value: &str) -> bool {
         .is_some_and(|address| address.ip().is_loopback())
 }
 
-pub(super) fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.as_ref().len() * 2);
-    for byte in bytes.as_ref() {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

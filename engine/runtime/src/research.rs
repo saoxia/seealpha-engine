@@ -1,6 +1,5 @@
 //! Historical/backtest use cases.
 use crate::{Runtime, RuntimeError, map_ledger};
-use serde_json::json;
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
     pub fn run_account_backtest(

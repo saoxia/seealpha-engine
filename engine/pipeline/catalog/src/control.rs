@@ -185,29 +185,7 @@ impl ControlStore {
         Ok(n == 1)
     }
 
-    pub fn worker_settings(&self) -> Result<Value, ControlError> {
-        let conn = self.lock()?;
-        let (workers, timeout): (i64, i64) = conn
-            .query_row(
-                "SELECT max_workers,timeout_seconds FROM worker_settings WHERE singleton_id=1", &[],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map_err(db_error)?;
-        Ok(json!({"max_workers":workers,"timeout_seconds":timeout}))
-    }
 
-    pub fn update_worker_settings(&self, workers: i64, timeout: i64) -> Result<Value, ControlError> {
-        if !(1..=8).contains(&workers) || !(1..=86400).contains(&timeout) {
-            return Err(ControlError::Conflict("回测 Worker 配置超出范围。".into()));
-        }
-        let conn = self.lock()?;
-        conn.execute(
-            "UPDATE worker_settings SET max_workers=$1,timeout_seconds=$2 WHERE singleton_id=1",
-            params![workers, timeout],
-        )
-        .map_err(db_error)?;
-        Ok(json!({"max_workers":workers,"timeout_seconds":timeout}))
-    }
 }
 
 impl ControlStore {
