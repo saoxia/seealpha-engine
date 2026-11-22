@@ -1,5 +1,6 @@
 //! PostgreSQL-backed minimal synchronous SQL access for SeeAlpha state stores.
 //! Retains the business-facing row/transaction API while replacing the storage engine.
+pub use postgres;
 use postgres::{Client, NoTls, types::{FromSql, ToSql}};
 use std::{cell::RefCell, fmt, path::Path};
 
@@ -26,7 +27,7 @@ impl From<postgres::Error> for Error {
 #[macro_export]
 macro_rules! params {
     ($($value:expr),* $(,)?) => {
-        &[$(&$value as &(dyn ::postgres::types::ToSql + Sync)),*]
+        &[$(&$value as &(dyn $crate::postgres::types::ToSql + Sync)),*]
     };
 }
 
