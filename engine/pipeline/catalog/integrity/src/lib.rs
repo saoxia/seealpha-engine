@@ -395,12 +395,3 @@ mod tests {
         assert!(parse_buyer_maker(" TRUE ").unwrap());
     }
 }
-
-/// File-only quality observations for the native source supervisor.
-pub mod monitor;
-
-/// Source-authored reconciliation and data READY checks (not a socket health check).
-pub mod readiness;
-/// Fail-closed live delivery and recovery policy.
-pub mod session;
-pub use readiness::{Bar, Book, FeedError, Gate, MINUTE_MS, SourceProof};

@@ -9,8 +9,6 @@ mod futures_agg_trades;
 #[path = "../../../binance_futures_um/repair.rs"]
 pub mod futures_repair;
 pub mod clock;
-#[path = "../../../binance_option/exercise.rs"]
-pub mod exercise;
 #[path = "../../../binance_futures_um/funding.rs"]
 pub mod funding;
 #[path = "../../../binance_option/option_stream.rs"]
@@ -22,7 +20,7 @@ mod repair;
 #[path = "../../../binance_spot/repair.rs"]
 pub mod spot_repair;
 
-pub use binance::{BinanceSource, MemorySource};
+pub use binance::BinanceSource;
 pub use pipeline::{
     aggregate_trades, bar_features, interval_ms, parse_binance_klines, validate_bars,
 };

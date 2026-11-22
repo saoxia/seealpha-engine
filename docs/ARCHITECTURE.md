@@ -29,7 +29,7 @@ strategy portfolio   backtest
 - **应用编排**：`engine/runtime` 负责业务用例、授权范围、纸面会话、订单恢复和异步作业。订单命令位于 `orders.rs`，历史研究/回测协调位于 `research.rs`；其他模块按既有功能分文件。
 - **领域能力**：`engine/strategy`、`engine/portfolio`、`engine/backtest` 分别负责策略检查/原生策略、目标持仓与风险裁剪、回放和撮合。
 - **交易事实**：`engine/ledger` 持有 SQLite 状态、请求意图、成交和对账证据；`engine/pipeline/sources/shared/nautilus` 保留 NautilusTrader 原生 Binance Spot/USD-M 工厂与执行身份映射；原生订单提交及私有账户取证尚未接入 Runtime。二者不可用简单的 HTTP 传输成功代替实际成交事实。
-- **行情**：`engine/pipeline/sources/shared/nautilus` 是独立编译、显式启用的 NautilusTrader Spot/USD-M 实时数据节点；`sources/shared/market` 保留公共 REST；`sources/binance_option` 持有期权 REST 与消息解析，`sources/binance_futures_um` 持有资金费逻辑；`sources/binance/archive` 负责官方 ZIP；`catalog/integrity` 保留数据校验与 READY 安全规则；已移除无生产订阅者的自研 Feed/Hub 并保留其独有安全规则，`catalog` 仍持有历史数据读写 API 与 Runtime 派生聚合缓存。通用 Catalog 替代尚待验收，原生节点尚未通过生产 READY 验收。
+- **行情**：`engine/pipeline/sources/shared/nautilus` 是独立编译、显式启用的 NautilusTrader Spot/USD-M 实时数据节点；`sources/shared/market` 保留公共 REST；`sources/binance_option` 持有期权 REST 与消息解析，`sources/binance_futures_um` 持有资金费逻辑；`sources/binance/archive` 负责官方 ZIP；`catalog/integrity` 保留活跃的 K 线和成交静态校验，旧的未接入 READY/monitor/session 代码已清除（现有 Runtime 风险门禁不变）；已移除无生产订阅者的自研 Feed/Hub 并保留其独有安全规则，`catalog` 仍持有历史数据读写 API 与 Runtime 派生聚合缓存。通用 Catalog 替代尚待验收，原生节点尚未通过生产 READY 验收。
 - **研究授权**：`engine/gateway/api/src/research/` 管理研究 Grant 的验签和作用域校验；用例编排仍在 `engine/runtime`，历史回放仍在 `engine/backtest`。
 - **独立程序**：`engine/apps/trading_engine` 编译为 `seealpha-engine`，负责创建 Runtime、HTTP 服务以及显式 smoke 入口。
 

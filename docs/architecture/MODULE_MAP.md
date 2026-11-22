@@ -16,8 +16,9 @@
 | 目标持仓、篮子、风险裁剪 | `engine/portfolio/src/` | `runtime/src/basket*.rs` |
 | 账户、订单和成交持久化 | `engine/ledger/src/` | `engine/runtime/src/accounts.rs` |
 | Binance 实时行情入口（实验性） | `engine/pipeline/sources/shared/nautilus/src/main.rs` | 由 `engine/runtime/src/sources.rs` 显式启动，独立编译 |
+| 产品采集及存储基线 | `engine/pipeline/BASELINE.md` | Spot 原始成交、USD-M 聚合成交、Options 仅历史 K 线；记录未完成的自动维护闭环 |
 | Binance 官方历史 ZIP | `engine/pipeline/sources/binance/archive/src/bin/` | `engine/pipeline/sources/shared/nautilus/src/bin/import_archive.rs` 原生 Catalog 导入 |
-| 来源完整性、READY 与实时交付门禁 | `engine/pipeline/catalog/integrity/src/readiness.rs`、`session.rs` | 保留来源证明、时钟、新风险禁入与恢复安全测试；尚未接入生产 READY 协调器 |
+| 行情 K 线/成交静态校验 | `engine/pipeline/catalog/integrity/src/lib.rs` | 现行校验函数被 Market Pipeline 调用；旧未使用 READY/monitor/session 已删除，交易风险门禁仍由 Runtime 持有 |
 | 历史 Catalog 及派生分钟K线缓存 | `engine/pipeline/catalog/src/` | `persisted_rollup.rs` 仍由 Runtime 使用；原生 Catalog 替代尚待验收 |
 | 独立撮合和验证回放 | `backtest/src/` | `engine/runtime/src/verified_replay.rs` |
 

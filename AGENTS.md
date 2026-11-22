@@ -33,3 +33,7 @@ docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 ```
 
 本仓库已有历史格式化债务，CI 中 `cargo fmt --all --check` 暂为 advisory；不能因此把本次新引入的格式问题视为通过。重构不代表旧 Python 功能已 1:1 迁移完毕，也不代表实盘或生产功能已获验收。
+
+## Pipeline 产品基线（2026-11-22）
+
+参见 [engine/pipeline/BASELINE.md](engine/pipeline/BASELINE.md)。Spot 仅维护原始成交与 K 线；USD-M 维护聚合成交、资金费与 K 线；Options 历史行情仅保存官方 K 线 Bar。共用的分层修复算法与 Binance ZIP 必须复用，不能重新引入 Python Feed、平行 WebSocket 数据采集器、额外的质量/READY 会话或期权逐笔历史存储。后续修改这些行为需先明确需求并通过相关现有测试。此次“锁定”是设计与 API 约束，**不等于已完成生产 READY 验收**。

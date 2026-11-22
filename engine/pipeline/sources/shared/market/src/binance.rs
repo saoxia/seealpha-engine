@@ -179,29 +179,6 @@ impl PublicSource for BinanceSource {
     }
 }
 
-pub struct MemorySource {
-    snapshot: MarketSnapshot,
-}
-
-impl MemorySource {
-    pub fn new(snapshot: MarketSnapshot) -> Self {
-        Self { snapshot }
-    }
-}
-
-#[async_trait]
-impl PublicSource for MemorySource {
-    async fn load(&self, query: &LoadQuery) -> Result<MarketSnapshot, MarketError> {
-        if query.product != self.snapshot.product
-            || query.symbol != self.snapshot.symbol
-            || query.interval != self.snapshot.interval
-        {
-            return Err(MarketError::Empty);
-        }
-        Ok(self.snapshot.clone())
-    }
-}
-
 fn parse_trades(value: &Value) -> Result<Vec<PublicTrade>, MarketError> {
     let rows = value.as_array().ok_or(MarketError::Payload)?;
     let mut trades = Vec::with_capacity(rows.len());

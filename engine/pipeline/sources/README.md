@@ -11,3 +11,5 @@ Spot 与 USD-M 现已具有各自的 `repair.rs` 入口，共用 `shared/market/
 Binance 官方 ZIP 下载代码保存在 `binance/archive/`，仅供 Binance 产品使用。Spot 与 USD-M 共享一份下载实现，但现货 `trades` 与 USD-M `aggTrades` 由各自产品入口区分，不作为跨交易所的 `shared/` 抽象。
 
 `binance_option/` 历史市场数据仅使用 Binance 官方期权 K 线（`bars`），按期权合约与周期落盘；不对期权采集历史成交、订单簿或公开行权事件。合约元数据用于识别品种，不属于历史行情。
+
+上述 Spot、USD-M、Options 的产品数据边界已记录于 [Pipeline 基线](../BASELINE.md)。冻结已有责任划分，不为未接通的接口创建平行采集或修复程序。
