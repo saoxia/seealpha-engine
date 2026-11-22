@@ -65,7 +65,9 @@ Content-Type: application/json
 
 ### 历史数据和保留规则
 
-Worker **不会**调用 Binance Kline API 为正式 Catalog 回填 Bar。历史 Tick ZIP 无缺口导入、校验与全周期 Bar 重建尚未完成，因此当前不能把配置开始日期当作已拥有完整历史 K 线的证明。
+Worker **不会**调用 Binance Kline API 回填 Bar。Spot/USD-M 的产品 Worker 定期扫描 Nautilus 已发布的 TradeTick Parquet：发现新增、改写或删除的源文件后，自动定位受影响的 UTC 分钟、用当前全部 Tick 重建 1s K 线，并从 1s 重新计算对应的 1m 至 1M K 线；仅全部写入成功才更新持久化的源文件修订记录。每轮限量处理，失败保留任务以供后续轮询重试。被修正删除的成交秒和因此消失的高周期 K 线会被同步清除。正式历史不再需要手动触发数据任务。
+
+**数据可用性限制**：自动维护从原生 Catalog **已完成发布**的 TradeTick 文件开始，不会主动下载缺失的 Binance ZIP，也不证明源文件覆盖完整。高周期 Bar 是对当时已知 Tick 的计算结果，不应将其误认为完整且已通过来源连续性认证的历史数据；READY 仍须单独校验。Options 暂无 Tick 来源，不会生成官方 Kline 替代品。
 
 `history_start` 后移后，Catalog 只删除严格早于 UTC 日界线的完整 Bar Parquet 文件；任何跨边界的文件均拒绝删除，不裁断原始文件、不错误声明完成清理。对共享 Catalog，所有租户（**包括已禁用、仍要求保留历史的租户**）中最早的 `history_start` 才是清理下界。删除不影响其他产品、交易对或租户保留要求。
 
@@ -104,5 +106,5 @@ SEEALPHA_DATABASE_URL='postgresql://...' cargo run --locked -p seealpha-market -
 ### 实时与历史 K 线聚合的分工
 
 - **实时**：每个新的 TradeTick 直接更新所有周期（包括未闭合 K 线），不为了分层而引入一秒延迟；`1s` 本身也实时更新。
-- **历史重建**：优先从经过校验、确认已经结束的 `1s` K 线批量聚合更大周期，避免将全部历史 Tick 反复逐周期处理。`aggregate_historical_seconds()` 提供这一共享纯计算能力；历史 ZIP 导入、验证覆盖范围和完整重建调度仍需接通。
+- **历史重建**：Pipeline 自动根据已发布原生 TradeTick 文件的内容变化触发受影响的 `1s` K 线重算，再从已存储的 `1s` 自动重建全部更大周期；不会因为实时 Tick 到来而全量重扫历史。源 Tick 的完整性/连续性仍需独立验证。
 - **没有成交的秒**：不凭空生成 1s 或更高周期 K 线。历史聚合接收明确的已核验数据覆盖截止时间，只有被完整覆盖的周期才标记为 `closed`，不得把最后一个未覆盖完的窗口误标为已闭合。

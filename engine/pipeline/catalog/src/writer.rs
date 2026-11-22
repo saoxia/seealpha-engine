@@ -416,6 +416,43 @@ mod tests {
     use super::*;
     use rust_decimal::Decimal;
     #[test]
+    fn replaces_sparse_bars_and_removes_deleted_trade_second(){
+        let path=std::env::temp_dir().join(format!(
+            "sa-history-replace-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        fs::create_dir(&path).unwrap();
+        let catalog=Catalog::open_existing(&path).unwrap();
+        let id=crate::bar_type("ETHUSDT.BINANCE","1s").unwrap();
+        let bar=|time|CatalogBar{
+            open_time_ms:time,open:Decimal::from(100),high:Decimal::from(105),
+            low:Decimal::from(95),close:Decimal::from(100),volume:Decimal::ONE,
+        };
+        let rows=[bar(0),bar(1_000),bar(3_000)];
+        catalog.replace_bars_window(&id,"1s",0,60_000,&rows,2,2).unwrap();
+        let read=||catalog.read_bars(&id,"1s",0,60_000_000_000,100).unwrap();
+        assert_eq!(read(),rows);
+        let revised=[bar(0),bar(3_000)];
+        catalog.replace_bars_window(&id,"1s",0,60_000,&revised,2,2).unwrap();
+        assert_eq!(read(),revised);
+        // Crash after recording the durable replacement marker: readers must
+        // reject partial results until the same UTC window is replayed.
+        let marker=path.join("data/bars").join(&id).join(".rebuilding");
+        fs::write(&marker,"0,60000").unwrap();
+        assert!(catalog.read_bars(&id,"1s",0,60_000_000_000,100).is_err());
+        catalog.replace_bars_window(&id,"1s",0,60_000,&revised,2,2).unwrap();
+        assert_eq!(read(),revised);
+        catalog.replace_bars_window(&id,"1s",0,60_000,&[],2,2).unwrap();
+        assert!(read().is_empty());
+        let other=crate::bar_type("ETHUSDT-PERP.BINANCE","1s").unwrap();
+        catalog.replace_bars_window(&other,"1s",0,60_000,&[bar(0)],2,2).unwrap();
+        assert_eq!(catalog.read_bars(&other,"1s",0,60_000_000_000,100).unwrap().len(),1);
+        let _=fs::remove_dir_all(path);
+    }
+
+    #[test]
     fn filename_matches_python_nautilus_v2_exact_nanoseconds() {
         assert_eq!(
             file_name(1795132859999000000, 1795132919999000000).unwrap(),
