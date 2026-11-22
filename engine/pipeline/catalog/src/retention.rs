@@ -5,6 +5,31 @@ use fs2::FileExt;
 use std::fs::{self,OpenOptions};
 
 impl Catalog {
+    /// Prune every existing Bar interval for one exact Binance instrument.
+    /// Never delete other instruments or product identities.
+    pub fn prune_instrument_bars_before(
+        &self,instrument:&str,cutoff_ms:i64,
+    )->Result<usize,CatalogError>{
+        crate::reader::safe_component(instrument)?;
+        let parent=self.root.join("data/bars");
+        if !inspect_existing_directory(&parent)?{return Ok(0);}
+        let mut total=0usize;
+        let mut count=0usize;
+        for entry in fs::read_dir(parent)? {
+            count+=1;
+            if count>10_000{return Err(CatalogError::Limit("too many BarTypes".into()))}
+            let entry=entry?;
+            if entry.file_type()?.is_symlink(){return Err(CatalogError::Invalid("symlink BarType".into()))}
+            let name=entry.file_name().into_string()
+                .map_err(|_|CatalogError::Invalid("invalid BarType encoding".into()))?;
+            if !name.starts_with(&format!("{instrument}-")){continue}
+            let (id,_)=crate::parse_bar_type(&name)?;
+            if id!=instrument{continue}
+            total+=self.prune_bars_before(&name,cutoff_ms)?;
+        }
+        Ok(total)
+    }
+
     /// Remove only files strictly before the requested UTC-day cutoff.
     /// Fail *before deleting anything* when an older file straddles the cutoff.
     /// All writers must honor this BarType's .writer.lock.
