@@ -7,16 +7,34 @@ pub(super) async fn list_orders(
     Query(query): Query<EnvironmentQuery>,
 ) -> Result<Json<Value>, AppError> {
     let environment = query.environment.unwrap_or_else(|| "paper".into());
-    let orders = state
-        .runtime
-        .stored_orders(&tenant_id, &account_id, &environment)
-        .map_err(AppError::from)?;
-    let items = orders
+    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
+    // Orders are already persisted by Paper session completion; read the
+    // existing durable rows rather than passing through Runtime projections.
+    let connection = seealpha_database::Connection::open(&state.config.book_path())
+        .map_err(|error| AppError::bad_request(format!("状态库不可用。{error}")))?;
+    let mut statement = connection
+        .prepare(
+            "SELECT order_json FROM orders
+             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3
+             ORDER BY updated_at, client_order_id",
+        )
+        .map_err(|error| AppError::bad_request(format!("订单查询失败。{error}")))?;
+    let rows = statement
+        .query_map(
+            seealpha_database::params![tenant_id, account_id, environment],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| AppError::bad_request(format!("订单查询失败。{error}")))?;
+    let raw_orders = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppError::bad_request(format!("订单查询失败。{error}")))?;
+    let items = raw_orders
         .into_iter()
-        .map(|order| {
-            serde_json::from_str::<Value>(&order.order_json).unwrap_or(json!({ "venue": "paper" }))
+        .map(|raw| {
+            serde_json::from_str::<Value>(&raw)
+                .map_err(|_| AppError::conflict("持久化订单记录损坏。"))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(json!({ "orders": items })))
 }
 
