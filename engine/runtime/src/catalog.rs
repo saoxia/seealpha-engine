@@ -155,6 +155,11 @@ impl Runtime {
                 time_ns(start_ms)?, time_ns(end_ms)?, limit as usize,
             )
             .map_err(error)?;
+        // Product-specific price policy still guards historical reads.
+        for row in &rows {
+            seealpha_market::identity::validate_market_bar(row, product(product_name)?)
+                .map_err(|e| RuntimeError::Unprocessable(e.to_string()))?;
+        }
         Ok(rows.iter().map(one).collect())
     }
     /// The strict backtest variant refuses missing Parquet files, partial
@@ -184,6 +189,11 @@ impl Runtime {
                 start_ms, end_ms, limit as usize,
             )
             .map_err(error)?;
+        // Product-specific price policy still guards historical reads.
+        for row in &rows {
+            seealpha_market::identity::validate_market_bar(row, product(product_name)?)
+                .map_err(|e| RuntimeError::Unprocessable(e.to_string()))?;
+        }
         Ok(rows.iter().map(one).collect())
     }
     /// Store historical evidence in the Python-owned Parquet layout when that
