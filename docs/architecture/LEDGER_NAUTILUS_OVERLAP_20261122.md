@@ -14,13 +14,13 @@
 | 领域 | Nautilus 已有能力 | SeeAlpha 当前实现 | 处理 | 退出条件 |
 | --- | --- | --- | --- | --- |
 | 原生订单事件记录 | StreamingConfig.record_types、NautilusRecordType、原生 Feather/Parquet Catalog | ledger/native_events.rs 仅在测试中写入未认证 metadata | **第一批移除重复写入**，由 Nautilus 模块统一选择记录类型 | 实际 Streaming LiveNode 运行、关闭、持久化与重启测试；事件溯源与证据检验 |
-| 订单生命周期 | Order/ExecutionEngine/OrderStatusReport | ledger/order_intents.rs 的 order_observations，runtime/orders.rs 的旧兼容视图 | **暂缓移除**订单状态副本；将来以 Nautilus 为主，Ledger 仅保留不可变发送前指令 | Native 执行接线、部分成交与撤单竞争、断线未知、恢复完整核验 |
-| 成交和部分成交 | OrderFilled/FillReport/TradeId、Cache | ledger/verified_fills.rs、records.rs | **暂缓**；真实成交证据依赖交易所认证来源及完整性证明 | 认证 Trade ID、费用、账户归属、分页完整性、重启去重 |
-| 当前账户/持仓 | AccountState、Position、Cache | ledger/account_snapshots.rs、parity.rs | **暂缓**；Basket 版本 CAS 仍依赖账户快照 | 启动/持续对账、快照时效、跨租户与组合风险一致性 |
-| 对账操作 | Live Execution Reconciliation | ledger/order_reconciliation_tasks.rs | 保留唯一需要的持久恢复任务队列；**不要再造订单状态机** | 原生检查与任务调度接通并证明故障重启不重复发送 |
-| 下单前不可变预登记 | 原生引擎订单状态与事件持久化，不构成同步已落盘发送授权 | ledger/order_intents.rs 的 preregister_order_intent | **保留** | 若未来 Nautilus 提供等价的同步持久提交+单次发送约束，再重新评估 |
-| 资金费/期权结算 | Nautilus 可处理账户、成交和部分事件，但未证实覆盖所有 Binance 私有资金流水 | ledger/settlements.rs、account_events.rs | **保留** | 逐产品确认身份、签名来源、历史补齐和财务对账 |
-| Portfolio/Basket 状态 | 交易所持仓和执行状态，不包含 SeeAlpha 全部多策略业务不变量 | ledger/basket_journal.rs、coordinator_state.rs | **保留数据持久化；业务归 Portfolio** | 无需以 Nautilus 原生持仓代替跨腿风险状态机 |
+| 订单生命周期 | Order/ExecutionEngine/OrderStatusReport | ledger/execution_guard/order_intents.rs 的 order_observations，runtime/orders.rs 的旧兼容视图 | **暂缓移除**订单状态副本；将来以 Nautilus 为主，Ledger 仅保留不可变发送前指令 | Native 执行接线、部分成交与撤单竞争、断线未知、恢复完整核验 |
+| 成交和部分成交 | OrderFilled/FillReport/TradeId、Cache | ledger/exchange_evidence/verified_fills.rs、records.rs | **暂缓**；真实成交证据依赖交易所认证来源及完整性证明 | 认证 Trade ID、费用、账户归属、分页完整性、重启去重 |
+| 当前账户/持仓 | AccountState、Position、Cache | ledger/exchange_evidence/account_snapshots.rs、parity.rs | **暂缓**；Basket 版本 CAS 仍依赖账户快照 | 启动/持续对账、快照时效、跨租户与组合风险一致性 |
+| 对账操作 | Live Execution Reconciliation | ledger/execution_guard/order_reconciliation_tasks.rs | 保留唯一需要的持久恢复任务队列；**不要再造订单状态机** | 原生检查与任务调度接通并证明故障重启不重复发送 |
+| 下单前不可变预登记 | 原生引擎订单状态与事件持久化，不构成同步已落盘发送授权 | ledger/execution_guard/order_intents.rs 的 preregister_order_intent | **保留** | 若未来 Nautilus 提供等价的同步持久提交+单次发送约束，再重新评估 |
+| 资金费/期权结算 | Nautilus 可处理账户、成交和部分事件，但未证实覆盖所有 Binance 私有资金流水 | ledger/exchange_evidence/settlements.rs、account_events.rs | **保留** | 逐产品确认身份、签名来源、历史补齐和财务对账 |
+| Portfolio/Basket 状态 | 交易所持仓和执行状态，不包含 SeeAlpha 全部多策略业务不变量 | ledger/portfolio_state/basket_journal.rs、coordinator_state.rs | **保留数据持久化；业务归 Portfolio** | 无需以 Nautilus 原生持仓代替跨腿风险状态机 |
 | 策略净额与内部成交分配 | NETTING/HEDGING、策略虚拟持仓；不自动解决 SeeAlpha 跨策略内部撮合的成本规则 | Portfolio coordinator 和尚待补充的 allocations | 保留 SeeAlpha 业务逻辑，仅将真实发单交给 Nautilus | 明确虚拟成交价格、费用、净头寸守恒和历史回放 |
 
 ## 第一批实际变更

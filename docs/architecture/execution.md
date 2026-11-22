@@ -7,7 +7,7 @@
 - `engine/runtime/src/orders.rs`：订单命令门禁、原生意图转交、未完成订单的保守对账检查；真实外部发送被阻止。
 - `engine/runtime/src/native_handoff.rs`：Nautilus 原生订单意图的严格验证和 Ledger 预登记；**不会发送真实订单**。
 - `engine/runtime/src/fills.rs`：原生真实成交证据链尚未验收时失败关闭。
-- `engine/ledger/src/order_intents.rs`、`order_reconciliation_tasks.rs`、`verified_fills.rs`：不可变下单意图、待恢复任务、经核验的真实成交；不再复制未接线的 Nautilus 原生订单事件元数据。
+- `engine/ledger/src/execution_guard/order_intents.rs`、`order_reconciliation_tasks.rs`、`verified_fills.rs`：不可变下单意图、待恢复任务、经核验的真实成交；不再复制未接线的 Nautilus 原生订单事件元数据。
 - `engine/pipeline/sources/shared/nautilus/`：原生 Binance Spot/USD-M 工厂、事件类型清单和 Streaming/Catalog 离线配置测试；尚无可运行的 Runtime 实盘执行闭环。
 - `engine/connection/binance-options/`：Options 专属规范化能力，不能视为 Spot/USD-M 通用订单执行引擎。
 
@@ -25,3 +25,7 @@
 - 其他潜在重叠功能应先完成运行时证据链与回归验收后再逐步迁移，不能按表名直接删库。
 
 参见 [Ledger / Nautilus 功能重叠审计](LEDGER_NAUTILUS_OVERLAP_20261122.md)。
+
+## 功能块拆分（2026-11-22）
+
+Ledger 已按 Execution Guard、Exchange Evidence、Portfolio State、Compatibility 等子模块分组，原有 API 保持不变。详细边界与逐步替换验收见 [Ledger 功能块蓝图](LEDGER_FUNCTIONAL_BLOCKS_20261122.md)。
