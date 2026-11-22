@@ -2,6 +2,8 @@
 
 本 crate 目前仍是一个 SQLite 持久化入口，而不是独立 OMS、EMS 或 NautilusTrader 订单生命周期实现。**本次只做结构归组和 SQL 外置，不改变 API、数据表或交易行为。**
 
+**业务二级抽象已明确为 Accounts / Movements / Allocations / Reconciliation。** 当前四个源码文件夹只是迁移期的物理归组，不应被误认为最终业务二级划分。见 [账本与资金二级设计](../../docs/architecture/LEDGER_FUNDS_LEVEL2_20261122.md)。
+
 | 功能块 | 代码位置 | 现有职责 | 是否被 Nautilus 接管 |
 | --- | --- | --- | --- |
 | Execution Guard | `src/execution_guard/` | 不可变发送前意图、UNKNOWN / ReconcileOnly、恢复任务 | 订单状态和执行生命周期未来由 Nautilus 承担；安全发送前持久化暂保留 |
