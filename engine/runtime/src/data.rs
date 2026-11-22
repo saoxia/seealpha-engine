@@ -699,7 +699,12 @@ impl Runtime {
                         .map_err(|_| bad("资金费标记价无效。"))?,
                 })
             }).collect::<Result<Vec<_>, RuntimeError>>()?;
-            catalog.append_funding(symbol, &observations)
+            catalog.append_funding(
+                &seealpha_market::identity::instrument_id(
+                    symbol, seealpha_market::identity::MarketProduct::FuturesUm,
+                ).map_err(|e| bad(&e.to_string()))?,
+                &observations,
+            )
                 .map_err(|e| RuntimeError::Conflict(e.to_string()))?;
             return Ok(
                 json!({"action":"backfill","data_kind":"funding","symbol":symbol,
