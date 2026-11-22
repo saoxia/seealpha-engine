@@ -113,12 +113,28 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Build Rust-only Engine image
         run: docker build -f docker/engine.Dockerfile -t seealpha-engine:native .
+      - name: Export separate debug symbols
+        run: |
+          docker build -f docker/engine.Dockerfile --target debug-symbols \
+            --output type=local,dest=./debug-output .
+          for name in seealpha-engine binance-trade-archive-fetch native_account_observer; do
+            test -s "debug-output/symbols/$name.debug"
+          done
+      - name: Preserve matching symbols for crash analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: seealpha-engine-debug-symbols-${{ github.sha }}
+          path: debug-output/symbols/*.debug
+          if-no-files-found: error
+          retention-days: 14
       - name: Report Docker image size
         run: docker image inspect seealpha-engine:native --format 'Image size: {{.Size}} bytes'
       - name: Verify native image needs no Python
         run: |
           docker run --rm --entrypoint sh seealpha-engine:native -ec '
             test -x /usr/local/bin/seealpha-engine
+            test -z "$(find /usr/local/bin -name "*.debug" -print)"
+            test ! -d /symbols
             test ! -e /app/python
             test ! -e /app/packages
             test ! -e /app/core
