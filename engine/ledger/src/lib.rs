@@ -1,16 +1,13 @@
 //! SQLite runtime book for tenants, trading evidence, and paper orders.
-// Ledger/Funds business domains: state, movements, attribution, and checking.
-// The four Ledger/Funds business domains live beside src/ for a flat
-// repository layout. Keep src/lib.rs as the Rust crate root.
-#[path = "../accounts/mod.rs"]
-mod accounts;
+// Native Nautilus owns account/position state; this crate only persists
+// SeeAlpha-specific movement evidence, attribution and reconciliation data.
+// Keep src/lib.rs as the Rust crate root.
 #[path = "../movements/mod.rs"]
 mod movements;
 #[path = "../allocations/mod.rs"]
 mod allocations;
 #[path = "../reconciliation/mod.rs"]
 mod reconciliation;
-pub use accounts::AccountSnapshot;
 
 // Existing execution, portfolio and compatibility APIs remain unchanged.
 // They are not subdomains of Ledger/Funds and are not migrated in this PR.
@@ -18,7 +15,7 @@ mod order_intents;
 mod order_reconciliation_tasks;
 mod records;
 pub use order_reconciliation_tasks::ReconciliationTask;
-pub use order_intents::{BasketAdmission, IntentStart, OrderRecoveryItem};
+pub use order_intents::{IntentStart, OrderRecoveryItem};
 mod basket_journal;
 mod coordinator_state;
 pub use basket_journal::StoredBasketJournal;
@@ -104,17 +101,6 @@ CREATE TABLE IF NOT EXISTS account_evidence_events (
 );
 CREATE INDEX IF NOT EXISTS account_evidence_events_page
     ON account_evidence_events(tenant_id,account_id,environment,id);
-CREATE TABLE IF NOT EXISTS account_snapshots (
-    tenant_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    environment TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    evidence_id TEXT NOT NULL,
-    observed_at_ms INTEGER NOT NULL,
-    source TEXT NOT NULL,
-    balances_json TEXT NOT NULL,
-    PRIMARY KEY(tenant_id,account_id,environment)
-);
 CREATE TABLE IF NOT EXISTS tenants (
     tenant_id TEXT PRIMARY KEY,
     purpose TEXT NOT NULL,

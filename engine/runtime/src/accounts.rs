@@ -1,54 +1,103 @@
 //! Native-only account API boundary.
 //!
-//! The legacy Binance REST client has been removed. Credentials can be
-//! registered for a future Nautilus native execution actor, but registration
-//! is NOT evidence of connectivity or a trading permission. Until the native
-//! account/report subscriber is wired, evidence-dependent methods fail closed.
+//! The legacy Binance REST client and unused Runtime credential cache are
+//! removed. Native account/execution reports are not yet wired into Runtime.
+//! Until then, all remote-account evidence and registration fail closed.
 use crate::{Runtime, RuntimeError, map_ledger};
-use seealpha_portfolio::basket::Product;
 use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+#[cfg(unix)]
+use std::{
+    io::Read,
+    os::unix::{fs::{FileTypeExt, PermissionsExt}, net::UnixStream},
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
-// Stored for a future authenticated native actor; current Runtime intentionally
-// never reads credentials or makes private exchange requests.
-#[allow(dead_code)]
-#[derive(Clone)]
-struct NativeCredentials {
-    api_key: String,
-    secret: String,
-}
-type SecretMap = HashMap<(String, String, String), NativeCredentials>;
-
-fn secrets() -> &'static Mutex<SecretMap> {
-    static SECRETS: OnceLock<Mutex<SecretMap>> = OnceLock::new();
-    SECRETS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn identity(tenant: &str, account: &str, environment: &str) -> (String, String, String) {
-    (tenant.to_owned(), account.to_owned(), environment.to_owned())
-}
-
-fn validate_secret(api_key: &str, secret: &str) -> Result<(), RuntimeError> {
-    if api_key.is_empty() || secret.is_empty() || api_key == secret
-        || api_key.chars().any(|c| c == '\n' || c == '\r')
-        || secret.chars().any(|c| c == '\n' || c == '\r')
-    {
-        return Err(RuntimeError::Conflict("交易账户凭据无效。".into()));
-    }
-    Ok(())
-}
 
 fn native_evidence_unavailable() -> RuntimeError {
     RuntimeError::Conflict(
-        "Nautilus 原生账户及成交证据读取尚未接入，拒绝使用已删除的 REST 连接器。".into(),
+        "Nautilus 原生账户/成交报告尚未接入 Runtime；拒绝使用旧 REST 连接器或未经认证的数据。".into(),
     )
 }
 
+/// Read an already validated Nautilus testnet event from a private local node.
+/// Never accept an endpoint from HTTP input and never treat this as a send permit.
+#[cfg(unix)]
+fn read_native_account(tenant: &str, account: &str) -> Result<Value, RuntimeError> {
+    fn unavailable() -> RuntimeError {
+        RuntimeError::Conflict("可信 Nautilus testnet 账户进程尚未就绪。".into())
+    }
+    for identity in [tenant, account] {
+        if identity.is_empty() || identity.len() > 64
+            || !identity.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        {
+            return Err(RuntimeError::Unprocessable("账户身份无效。".into()));
+        }
+    }
+    let directory = std::env::var("ENGINE_NATIVE_ACCOUNT_SOCKET_DIR")
+        .map(PathBuf::from).map_err(|_| unavailable())?;
+    read_native_account_in(&directory, tenant, account)
+}
+
+#[cfg(unix)]
+fn read_native_account_in(directory: &Path, tenant: &str, account: &str) -> Result<Value, RuntimeError> {
+    let unavailable = || RuntimeError::Conflict("可信 Nautilus testnet 账户进程尚未就绪。".into());
+    if !directory.is_absolute() {
+        return Err(unavailable());
+    }
+    let dir_meta = std::fs::symlink_metadata(directory).map_err(|_| unavailable())?;
+    if !dir_meta.is_dir() || dir_meta.file_type().is_symlink()
+        || dir_meta.permissions().mode() & 0o077 != 0
+    {
+        return Err(unavailable());
+    }
+    let path = directory.join(format!("{tenant}--{account}--sandbox.sock"));
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| unavailable())?;
+    if !meta.file_type().is_socket() || meta.permissions().mode() & 0o077 != 0 {
+        return Err(unavailable());
+    }
+    let stream = UnixStream::connect(&path).map_err(|_| unavailable())?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(|_| unavailable())?;
+    stream.set_write_timeout(Some(Duration::from_secs(2))).map_err(|_| unavailable())?;
+    let mut response = Vec::new();
+    stream.take(65_537).read_to_end(&mut response).map_err(|_| unavailable())?;
+    if response.len() > 65_536 {
+        return Err(unavailable());
+    }
+    let report: Value = serde_json::from_slice(&response).map_err(|_| unavailable())?;
+    validate_native_report(report, tenant, account)
+
+}
+
+#[cfg(unix)]
+fn validate_native_report(report: Value, tenant: &str, account: &str) -> Result<Value, RuntimeError> {
+    let unavailable = || RuntimeError::Conflict("Nautilus testnet 账户报告缺失、错误或过期。".into());
+    if report["tenant_id"].as_str() != Some(tenant)
+        || report["account_id"].as_str() != Some(account)
+        || report["environment"] != "sandbox"
+        || report["source"] != "nautilus_testnet_read_only"
+        || report["native_account"]["account_id"].as_str().is_none_or(str::is_empty)
+        || report["native_account"]["event_id"].as_str().is_none_or(str::is_empty)
+        || !report["native_account"]["balances"].is_object()
+        || !report["native_account"]["margins"].is_array()
+    {
+        return Err(unavailable());
+    }
+    let ts = report["native_account"]["observed_at_ns"].as_u64().ok_or_else(unavailable)?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|_| unavailable())?.as_nanos();
+    if ts == 0 || u128::from(ts) > now || now - u128::from(ts) > 60_000_000_000 {
+        return Err(unavailable());
+    }
+    Ok(report)
+}
+
 impl Runtime {
+    /// Do not retain credentials for an execution client that does not exist.
+    /// A native LiveNode must own its own credentials and authenticated account.
     pub fn register_connection(
-        &self, tenant_id: &str, account_id: &str, environment: &str,
-        api_key: &str, secret: &str,
+        &self, tenant_id: &str, _account_id: &str, environment: &str,
+        _api_key: &str, _secret: &str,
     ) -> Result<Value, RuntimeError> {
         let tenant = self.require_active(tenant_id)?;
         if tenant.purpose != "production" {
@@ -57,26 +106,9 @@ impl Runtime {
         if !matches!(environment, "production" | "sandbox") {
             return Err(RuntimeError::Unprocessable("账户环境无效。".into()));
         }
-        validate_secret(api_key, secret)?;
-        secrets().lock()
-            .map_err(|_| RuntimeError::Conflict("账户凭据锁不可用。".into()))?
-            .insert(identity(tenant_id, account_id, environment), NativeCredentials {
-                api_key: api_key.into(), secret: secret.into(),
-            });
-        // "registered" means an in-process secret exists; NEVER "connected".
-        self.ledger.upsert_connection(
-            tenant_id, account_id, environment, "registered",
-        ).map_err(map_ledger)?;
-        self.ledger.add_event(
-            tenant_id, account_id, "connection",
-            &json!({"environment":environment,"status":"registered",
-                "backend":"nautilus_binance_native","connected":false}).to_string(),
-        ).map_err(map_ledger)?;
-        Ok(json!({
-            "tenant_id":tenant_id,"account_id":account_id,
-            "environment":environment,"status":"registered",
-            "execution_backend":"nautilus_binance_native","connected":false,
-        }))
+        Err(RuntimeError::Conflict(
+            "原生执行节点尚未与 Runtime 连接；不再接受没有实际连接效果的账户凭据登记。".into(),
+        ))
     }
 
     pub fn forget_connection(
@@ -86,9 +118,6 @@ impl Runtime {
         if !matches!(environment, "production" | "sandbox") {
             return Err(RuntimeError::Unprocessable("账户环境无效。".into()));
         }
-        secrets().lock()
-            .map_err(|_| RuntimeError::Conflict("账户凭据锁不可用。".into()))?
-            .remove(&identity(tenant_id, account_id, environment));
         self.ledger.upsert_connection(
             tenant_id, account_id, environment, "closed",
         ).map_err(map_ledger)?;
@@ -100,15 +129,6 @@ impl Runtime {
             "environment":environment,"status":"closed"}))
     }
 
-    /// Native reports are not yet authenticated to Ledger. Do not manufacture
-    /// a signed GET or silently mark a reconciliation job finished.
-    pub fn run_one_registered_order_reconciliation(
-        &self, tenant: &str, _worker: &str, _venue_base: &str,
-    ) -> Result<Option<Value>, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
-
     pub fn sync_registered_fills(
         &self, tenant: &str, _account: &str, _environment: &str,
         _request_id: &str, _venue_base: &str,
@@ -118,41 +138,90 @@ impl Runtime {
     }
 
     pub fn account_snapshot(
-        &self, tenant_id: &str, _account_id: &str, _environment: &str,
-        _api_key: &str, _secret: &str, _venue_base: Option<&str>,
+        &self, tenant_id: &str, account_id: &str, environment: &str,
+        api_key: &str, secret: &str, _venue_base: Option<&str>,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        Err(native_evidence_unavailable())
+        if environment != "sandbox" || !api_key.is_empty() || !secret.is_empty() {
+            return Err(native_evidence_unavailable());
+        }
+        #[cfg(unix)]
+        { read_native_account(tenant_id, account_id) }
+        #[cfg(not(unix))]
+        { Err(native_evidence_unavailable()) }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn reconcile_account_product(
-        &self, tenant: &str, _account: &str, _environment: &str,
-        _product: Product, _expected: &Value, _venue_base: &str,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn sync_registered_settlements(
-        &self, tenant: &str, _account: &str, _environment: &str,
-        _product: Product, _symbol: &str,
-        _start_ms: i64, _end_ms: i64, _venue_base: &str,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     #[test]
-    fn rejects_malformed_credentials_without_persisting_them() {
-        assert!(validate_secret("", "secret").is_err());
-        assert!(validate_secret("same", "same").is_err());
-        assert!(validate_secret("key\n", "secret").is_err());
-        assert!(validate_secret("key", "secret").is_ok());
+    fn sandbox_account_reads_private_unix_socket_and_rejects_bad_permissions() {
+        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+        use std::io::Write as _;
+        let tmp = std::env::temp_dir().join(format!(
+            "seealpha-native-account-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        std::fs::create_dir(&tmp).unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = tmp.join("tenant_1--account_1--sandbox.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+        let payload = json!({
+            "tenant_id": "tenant_1", "account_id": "account_1",
+            "environment": "sandbox", "source": "nautilus_testnet_read_only",
+            "native_account": {
+                "account_id": "BINANCE-SPOT-001", "event_id": "test-event",
+                "observed_at_ns": now, "balances": {}, "margins": []
+            }
+        }).to_string();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(payload.as_bytes()).unwrap();
+        });
+        assert!(read_native_account_in(&tmp, "tenant_1", "account_1").is_ok());
+        server.join().unwrap();
+        assert!(read_native_account_in(&tmp, "tenant_1", "other").is_err());
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(read_native_account_in(&tmp, "tenant_1", "account_1").is_err());
+        std::fs::remove_file(socket).unwrap();
+        std::fs::remove_dir(tmp).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_read_rejects_wrong_identity_source_and_stale_event() {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+        let good = json!({
+            "tenant_id": "tenant_1",
+            "account_id": "account_1",
+            "environment": "sandbox",
+            "source": "nautilus_testnet_read_only",
+            "native_account": {
+                "account_id": "BINANCE-SPOT-001",
+                "event_id": "test-event",
+                "observed_at_ns": now,
+                "balances": {"USDT": {"total": "100", "free": "80", "locked": "20"}},
+                "margins": []
+            }
+        });
+        assert!(validate_native_report(good.clone(), "tenant_1", "account_1").is_ok());
+        assert!(validate_native_report(good.clone(), "other", "account_1").is_err());
+        let mut forged = good.clone();
+        forged["source"] = json!("signed_exchange_account_query");
+        assert!(validate_native_report(forged, "tenant_1", "account_1").is_err());
+        let mut old = good;
+        old["native_account"]["observed_at_ns"] = json!(1);
+        assert!(validate_native_report(old, "tenant_1", "account_1").is_err());
+    }
+
+    #[test]
+    fn native_evidence_is_not_marked_available_by_stub() {
+        assert!(matches!(native_evidence_unavailable(), RuntimeError::Conflict(_)));
     }
 }

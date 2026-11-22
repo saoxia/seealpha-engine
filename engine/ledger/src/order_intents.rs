@@ -85,17 +85,6 @@ fn valid_intent(intent: &Value, environment: &str, client_id: &str) -> bool {
     }
 }
 
-/// A caller-verified reservation reference. The Ledger rechecks both CAS
-/// revisions inside the same transaction that inserts the immutable intent.
-/// This is NOT a trading permission: upstream must replay-verify the basket,
-/// authenticate account evidence, and independently authorize the exact leg.
-#[derive(Debug, Clone, Copy)]
-pub struct BasketAdmission<'a> {
-    pub basket_id: &'a str,
-    pub basket_revision: &'a str,
-    pub account_revision: i64,
-}
-
 /// Durable, read-only recovery work item. A terminal observation still
 /// requires independent fill/account reconciliation; it is NOT a send permit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,47 +239,7 @@ impl Ledger {
         Ok(items)
     }
 
-    /// Atomic, fail-closed reservation binding. No Venue call is made.
-    #[allow(clippy::too_many_arguments)]
-    pub fn preregister_basket_order_intent(
-        &self,
-        tenant: &str,
-        account: &str,
-        environment: &str,
-        request_id: &str,
-        client_order_id: &str,
-        fingerprint: &str,
-        intent: &Value,
-        reservation: BasketAdmission<'_>,
-    ) -> Result<IntentStart, LedgerError> {
-        if !identifier(reservation.basket_id)
-            || reservation.basket_revision.len() != 64
-            || !reservation
-                .basket_revision
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit())
-            || reservation.account_revision <= 0
-            || intent["basket_id"].as_str() != Some(reservation.basket_id)
-            || intent["basket_revision"].as_str() != Some(reservation.basket_revision)
-            || intent["account_revision"].as_i64() != Some(reservation.account_revision)
-            || intent["basket_request_id"].as_str() != Some(request_id)
-        {
-            return Err(conflict("basket intent reservation identity mismatch"));
-        }
-        self.preregister_order_intent_inner(
-            tenant,
-            account,
-            environment,
-            request_id,
-            client_order_id,
-            fingerprint,
-            intent,
-            Some(reservation),
-        )
-    }
-
-    /// Persist an immutable intent AND a Python-readable UNKNOWN request row
-    /// in one IMMEDIATE transaction. Only Fresh is eligible for *one* attempt.
+    /// Atomically preregister one immutable order request; never send here.
     #[allow(clippy::too_many_arguments)]
     pub fn preregister_order_intent(
         &self,
@@ -301,30 +250,6 @@ impl Ledger {
         client_order_id: &str,
         fingerprint: &str,
         intent: &Value,
-    ) -> Result<IntentStart, LedgerError> {
-        self.preregister_order_intent_inner(
-            tenant,
-            account,
-            environment,
-            request_id,
-            client_order_id,
-            fingerprint,
-            intent,
-            None,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn preregister_order_intent_inner(
-        &self,
-        tenant: &str,
-        account: &str,
-        environment: &str,
-        request_id: &str,
-        client_order_id: &str,
-        fingerprint: &str,
-        intent: &Value,
-        reservation: Option<BasketAdmission<'_>>,
     ) -> Result<IntentStart, LedgerError> {
         if !scoped(tenant, account, environment)
             || !identifier(request_id)
@@ -358,59 +283,6 @@ impl Ledger {
             return Err(conflict(
                 "tenant must be active before recording an order intent",
             ));
-        }
-        if let Some(reserved) = reservation {
-            // All checks occur with the order INSERT under one IMMEDIATE
-            // transaction, so a concurrent basket/account CAS update cannot
-            // make a stale reservation appear current.
-            let journal: Option<String> = tx
-                .query_row(
-                    "SELECT body_json FROM basket_journals WHERE tenant_id=?1
-                 AND account_id=?2 AND basket_id=?3 AND revision=?4",
-                    params![
-                        tenant,
-                        account,
-                        reserved.basket_id,
-                        reserved.basket_revision
-                    ],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(sql)?;
-            let journal =
-                journal.ok_or_else(|| conflict("basket reservation revision is stale"))?;
-            let encoded: Value = serde_json::from_str(&journal)
-                .map_err(|_| conflict("basket checkpoint is corrupt"))?;
-            let pending = encoded["payload"]["events"]
-                .as_array()
-                .and_then(|events| events.last())
-                .is_some_and(|event| {
-                    event["kind"] == "begin" && event["request_id"].as_str() == Some(request_id)
-                });
-            if encoded["revision"].as_str() != Some(reserved.basket_revision) || !pending {
-                return Err(conflict("basket is not awaiting this exact request"));
-            }
-            let snapshot: Option<(i64, String)> = tx
-                .query_row(
-                    "SELECT revision,source FROM account_snapshots WHERE tenant_id=?1
-                 AND account_id=?2 AND environment=?3",
-                    params![tenant, account, environment],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()
-                .map_err(sql)?;
-            let expected_source = if environment == "paper" {
-                "paper_simulator"
-            } else {
-                "signed_exchange_account_query"
-            };
-            if snapshot.as_ref().is_none_or(|(revision, source)| {
-                *revision != reserved.account_revision || source != expected_source
-            }) {
-                return Err(conflict(
-                    "authoritative account snapshot changed after risk reservation",
-                ));
-            }
         }
         let previous: Option<(String, String, String, String)> = tx
             .query_row(
@@ -760,112 +632,6 @@ mod tests {
         json!({"action":"NEW","environment":"production","client_order_id":"cl1",
             "symbol":"ETHUSDT","side":"BUY","quantity":"0.00000001","price":"1024.00000001"})
     }
-    #[test]
-    fn basket_admission_requires_atomic_revision_and_request_binding() {
-        let book = Ledger::open(std::path::Path::new(":memory:")).unwrap();
-        book.ensure_tenant("t", "production", "active").unwrap();
-        let revision = "a".repeat(64);
-        let encoded = json!({"revision":revision,"payload":{"events":[
-            {"kind":"begin","request_id":"req-basket"}
-        ]}})
-        .to_string();
-        book.save_basket_journal("t", "a", "basket1", &encoded, &revision, None)
-            .unwrap();
-        let account_state = json!({"balances":{"USDT":"100"},"positions":{}});
-        book.save_account_snapshot(
-            "t",
-            "a",
-            "production",
-            None,
-            "signed1",
-            1,
-            "signed_exchange_account_query",
-            &account_state,
-        )
-        .unwrap();
-        let mut intent = json!({"action":"NEW","environment":"production",
-            "client_order_id":"order1","symbol":"ETHUSDT","side":"BUY",
-            "quantity":"0.1","basket_id":"basket1","basket_revision":revision,
-            "basket_request_id":"req-basket","account_revision":1});
-        let guard = BasketAdmission {
-            basket_id: "basket1",
-            basket_revision: &revision,
-            account_revision: 1,
-        };
-        let fingerprint = "b".repeat(64);
-        assert!(
-            book.preregister_basket_order_intent(
-                "t",
-                "a",
-                "production",
-                "wrong-request",
-                "order1",
-                &fingerprint,
-                &intent,
-                guard
-            )
-            .is_err()
-        );
-        assert!(book.request("t", "a", "wrong-request").unwrap().is_none());
-        // The basket begin event must bind to the order request ID.
-        intent["basket_request_id"] = json!("req-basket");
-        assert_eq!(
-            book.preregister_basket_order_intent(
-                "t",
-                "a",
-                "production",
-                "req-basket",
-                "order1",
-                &fingerprint,
-                &intent,
-                guard
-            )
-            .unwrap(),
-            IntentStart::Fresh
-        );
-        assert_eq!(
-            book.preregister_basket_order_intent(
-                "t",
-                "a",
-                "production",
-                "req-basket",
-                "order1",
-                &fingerprint,
-                &intent,
-                guard
-            )
-            .unwrap(),
-            IntentStart::ReconcileOnly
-        );
-        let newer = json!({"balances":{"USDT":"101"},"positions":{}});
-        book.save_account_snapshot(
-            "t",
-            "a",
-            "production",
-            Some(1),
-            "signed2",
-            2,
-            "signed_exchange_account_query",
-            &newer,
-        )
-        .unwrap();
-        let mut second = intent.clone();
-        second["client_order_id"] = json!("order2");
-        assert!(
-            book.preregister_basket_order_intent(
-                "t",
-                "a",
-                "production",
-                "req-basket",
-                "order2",
-                &fingerprint,
-                &second,
-                guard
-            )
-            .is_err()
-        );
-    }
-
     #[test]
     fn recovered_unknown_order_survives_file_restart_without_new_send_grant() {
         let path = std::env::temp_dir().join(format!(

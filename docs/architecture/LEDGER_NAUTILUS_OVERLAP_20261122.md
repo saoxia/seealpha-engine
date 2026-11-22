@@ -1,5 +1,8 @@
 # Ledger / NautilusTrader 重叠能力审计 — 第一批（2026-11-22）
 
+> 历史设计记录：此文件描述的 Accounts SQLite 快照和 Basket 旧 CAS 实验已在后续 PR #193 中退休。当前状态请以 `engine/ledger/README.md` 和原生 Nautilus Observer 为准；下列旧矩阵不代表当前生产功能已完成。
+
+
 基线：main @ 32fdb064008e2a27d6eeb44ebc84ecf21b4569df。Nautilus 固定为 Rust crate 0.68.0 / 2.0.0rc9；本审计不以较新版本功能代替固定版本的构建验证。
 
 ## 归属原则

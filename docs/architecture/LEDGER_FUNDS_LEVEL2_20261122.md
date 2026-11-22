@@ -1,5 +1,8 @@
 # Ledger / Funds：四个二级业务功能块
 
+> 历史设计记录：此文件描述的 Accounts SQLite 快照和 Basket 旧 CAS 实验已在后续 PR #193 中退休。当前状态请以 `engine/ledger/README.md` 和原生 Nautilus Observer 为准；下列旧矩阵不代表当前生产功能已完成。
+
+
 ## 目标
 
 一级领域：**账本与资金（Ledger / Funds）**。此层仅划分资金及经济事实的内部业务职责，不重新划分 SeeAlpha 一级模块，不自行重写 NautilusTrader 已有的 OMS、账户和持仓引擎。

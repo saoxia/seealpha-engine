@@ -57,7 +57,7 @@ pub struct NativeAccountSession {
     account_type: AccountType,
     checkpoint_path: PathBuf,
     last: Option<RecoveryCursor>,
-    current: Option<ReportedAccountView>,
+    current: Option<AccountState>,
 }
 
 impl NativeAccountSession {
@@ -98,18 +98,23 @@ impl NativeAccountSession {
         self.current = None;
     }
 
-    /// Only expose an already observed view while it is within the caller's
-    /// absolute wall-clock freshness limit.
-    pub fn fresh(&self, now_ns: u64, max_age_ns: u64) -> Option<&ReportedAccountView> {
-        let view = self.current.as_ref()?;
-        if now_ns == 0
-            || max_age_ns == 0
-            || view.observed_at_ns > now_ns
-            || now_ns - view.observed_at_ns > max_age_ns
+    /// Return the original Nautilus report while fresh; no second account cache.
+    pub fn fresh_native(&self, now_ns: u64, max_age_ns: u64) -> Option<&AccountState> {
+        let event = self.current.as_ref()?;
+        let observed = event.ts_event.as_u64();
+        if now_ns == 0 || max_age_ns == 0
+            || observed > now_ns || now_ns - observed > max_age_ns
         {
             return None;
         }
-        Some(view)
+        Some(event)
+    }
+
+    /// Construct a JSON-compatible read-only presentation on demand.
+    /// This is not stored as another account state.
+    pub fn fresh(&self, now_ns: u64, max_age_ns: u64) -> Option<ReportedAccountView> {
+        let event = self.fresh_native(now_ns, max_age_ns)?;
+        project_view(event).ok()
     }
 
     /// Observe an event routed through the isolated Nautilus native node.
@@ -136,47 +141,8 @@ impl NativeAccountSession {
             );
         }
 
-        // Reuse Nautilus' own balance and margin amounts; do not infer assets
-        // from order acks or changes between two account-state observations.
-        let mut balances = BTreeMap::new();
-        for b in &event.balances {
-            ensure!(
-                b.total.currency == b.currency
-                    && b.locked.currency == b.currency
-                    && b.free.currency == b.currency
-                    && b.locked.checked_add(b.free) == Some(b.total),
-                "account balance values inconsistent"
-            );
-            let currency = b.currency.to_string();
-            ensure!(
-                balances.insert(currency, BalanceView {
-                    total: b.total.as_decimal().to_string(),
-                    locked: b.locked.as_decimal().to_string(),
-                    free: b.free.as_decimal().to_string(),
-                }).is_none(),
-                "duplicated currency in account report"
-            );
-        }
-        let mut margins = Vec::with_capacity(event.margins.len());
-        let mut margin_keys = std::collections::HashSet::new();
-        for m in &event.margins {
-            ensure!(
-                m.initial.currency == m.currency && m.maintenance.currency == m.currency,
-                "native account margin currency mismatch"
-            );
-            let instrument_id = m.instrument_id.map(|id| id.to_string());
-            let currency = m.currency.to_string();
-            ensure!(
-                margin_keys.insert((instrument_id.clone(), currency.clone())),
-                "duplicate native account margin"
-            );
-            margins.push(MarginView {
-                instrument_id,
-                currency,
-                initial: m.initial.as_decimal().to_string(),
-                maintenance: m.maintenance.as_decimal().to_string(),
-            });
-        }
+        // Validate before publishing the native event to readers.
+        project_view(event)?;
 
         let next_cursor = RecoveryCursor {
             account_id: candidate.account_id.clone(),
@@ -186,16 +152,64 @@ impl NativeAccountSession {
         persist_cursor(&self.checkpoint_path, &next_cursor)?;
         // Publishing state after durable cursor update prevents returning
         // an unrecorded view to callers. Error remains fail-closed.
-        self.current = Some(ReportedAccountView {
-            account_id: candidate.account_id,
-            event_id: candidate.event_id,
-            observed_at_ns: candidate.observed_at_ns,
-            balances,
-            margins,
-        });
+        self.current = Some(event.clone());
         self.last = Some(next_cursor);
         Ok(true)
     }
+}
+
+/// Convert a native event only for the observer's external JSON output.
+fn project_view(event: &AccountState) -> Result<ReportedAccountView> {
+    // Reuse Nautilus' own balance and margin amounts; do not infer assets
+    // from order acks or changes between two account-state observations.
+    let mut balances = BTreeMap::new();
+    for b in &event.balances {
+        ensure!(
+            b.total.currency == b.currency
+                && b.locked.currency == b.currency
+                && b.free.currency == b.currency
+                && b.locked.checked_add(b.free) == Some(b.total),
+            "account balance values inconsistent"
+        );
+        let currency = b.currency.to_string();
+        ensure!(
+            balances.insert(currency, BalanceView {
+                total: b.total.as_decimal().to_string(),
+                locked: b.locked.as_decimal().to_string(),
+                free: b.free.as_decimal().to_string(),
+            }).is_none(),
+            "duplicated currency in account report"
+        );
+    }
+    let mut margins = Vec::with_capacity(event.margins.len());
+    let mut margin_keys = std::collections::HashSet::new();
+    for m in &event.margins {
+        ensure!(
+            m.initial.currency == m.currency && m.maintenance.currency == m.currency,
+            "native account margin currency mismatch"
+        );
+        let instrument_id = m.instrument_id.map(|id| id.to_string());
+        let currency = m.currency.to_string();
+        ensure!(
+            margin_keys.insert((instrument_id.clone(), currency.clone())),
+            "duplicate native account margin"
+        );
+        margins.push(MarginView {
+            instrument_id,
+            currency,
+            initial: m.initial.as_decimal().to_string(),
+            maintenance: m.maintenance.as_decimal().to_string(),
+        });
+    }
+
+
+    Ok(ReportedAccountView {
+        account_id: event.account_id.to_string(),
+        event_id: event.event_id.to_string(),
+        observed_at_ns: event.ts_event.as_u64(),
+        balances,
+        margins,
+    })
 }
 
 fn persist_cursor(path: &Path, cursor: &RecoveryCursor) -> Result<()> {
@@ -217,6 +231,7 @@ fn persist_cursor(path: &Path, cursor: &RecoveryCursor) -> Result<()> {
 /// Subscribe to Nautilus' *typed* account-state message bus.
 pub struct NativeAccountSubscription {
     handler: TypedHandler<AccountState>,
+    topic: String,
     session: Rc<RefCell<NativeAccountSession>>,
 }
 
@@ -226,6 +241,7 @@ impl NativeAccountSubscription {
         now_ns: impl Fn() -> u64 + 'static,
         max_age_ns: u64,
     ) -> Self {
+        let topic = format!("events.account.{}", session.borrow().account_id);
         let received = Rc::clone(&session);
         let handler = TypedHandler::from(move |event: &AccountState| {
             let now = now_ns();
@@ -237,7 +253,7 @@ impl NativeAccountSubscription {
                     if let Some(view) = current.fresh(now, max_age_ns) {
                         // Read-only output of Nautilus-reported numbers, never
                         // "signed" or "verified" Ledger financial evidence.
-                        if let Ok(row) = serde_json::to_string(view) {
+                        if let Ok(row) = serde_json::to_string(&view) {
                             println!("{row}");
                         }
                     }
@@ -246,10 +262,11 @@ impl NativeAccountSubscription {
                 Err(error) => log::warn!("native account observation rejected: {error}"),
             }
         });
-        // A typed subscriber is safer than an untyped serializer/JSON stream;
-        // source and account IDs are still checked inside accept().
-        msgbus::subscribe_account_state("events.account.*".into(), handler.clone(), None);
-        Self { handler, session }
+        // Subscribe to this account only, rather than receiving all account
+        // events from a process-wide wildcard. Identity/type are still checked
+        // inside accept(): topic routing alone never authenticates a venue.
+        msgbus::subscribe_account_state(topic.clone().into(), handler.clone(), None);
+        Self { handler, topic, session }
     }
 
     pub fn session(&self) -> &Rc<RefCell<NativeAccountSession>> {
@@ -259,7 +276,7 @@ impl NativeAccountSubscription {
 
 impl Drop for NativeAccountSubscription {
     fn drop(&mut self) {
-        msgbus::unsubscribe_account_state("events.account.*".into(), &self.handler);
+        msgbus::unsubscribe_account_state(self.topic.clone().into(), &self.handler);
     }
 }
 
@@ -310,22 +327,28 @@ mod tests {
             assert!(session.fresh(1_000_000_000, 1).is_none());
             assert!(session.accept(&first, 1_001_000_000, 5_000_000).unwrap());
             let view = session.fresh(1_001_000_000, 5_000_000).unwrap();
+            let native = session.fresh_native(1_001_000_000, 5_000_000).unwrap();
+            assert_eq!(native.event_id, first.event_id);
+            assert_eq!(native.account_id, first.account_id);
             assert_eq!(view.balances["USD"].total.parse::<rust_decimal::Decimal>().unwrap(),
                 rust_decimal::Decimal::from(100));
             session.mark_disconnected();
             assert!(session.fresh(1_001_000_000, 5_000_000).is_none());
+            assert!(session.fresh_native(1_001_000_000, 5_000_000).is_none());
         }
         {
             let mut recovered = NativeAccountSession::open(
                 "BINANCE-SPOT-001", AccountType::Cash, &checkpoint,
             ).unwrap();
             assert!(recovered.fresh(1_001_000_000, 5_000_000).is_none());
+            assert!(recovered.fresh_native(1_001_000_000, 5_000_000).is_none());
             assert!(!recovered.accept(&first, 1_001_000_000, 5_000_000).unwrap());
             assert!(recovered.fresh(1_001_000_000, 5_000_000).is_none());
             let next = event("BINANCE-SPOT-001", 1_002_000_000, true);
             assert!(recovered.accept(&next, 1_002_000_000, 5_000_000).unwrap());
             assert!(recovered.fresh(1_002_000_000, 5_000_000).is_some());
             assert!(recovered.fresh(1_008_000_000, 5_000_000).is_none());
+            assert!(recovered.fresh_native(1_008_000_000, 5_000_000).is_none());
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -348,6 +371,39 @@ mod tests {
         assert!(NativeAccountSession::open(
             "BINANCE-SPOT-001", AccountType::Cash, &checkpoint
         ).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn account_subscriptions_are_independent_and_unsubscribe_without_cross_talk() {
+        let root = test_path("account-isolation");
+        let first_path = root.join("first.json");
+        let second_path = root.join("second.json");
+        let first = Rc::new(RefCell::new(NativeAccountSession::open(
+            "BINANCE-SPOT-001", AccountType::Cash, &first_path,
+        ).unwrap()));
+        let second = Rc::new(RefCell::new(NativeAccountSession::open(
+            "BINANCE-SPOT-002", AccountType::Cash, &second_path,
+        ).unwrap()));
+        let first_subscription = NativeAccountSubscription::attach(
+            Rc::clone(&first), || 2_000, 2_000,
+        );
+        let second_subscription = NativeAccountSubscription::attach(
+            Rc::clone(&second), || 2_000, 2_000,
+        );
+        msgbus::publish_account_state(
+            "events.account.BINANCE-SPOT-001".into(),
+            &event("BINANCE-SPOT-001", 1_000, true),
+        );
+        assert!(first.borrow().fresh(2_000, 2_000).is_some());
+        assert!(second.borrow().fresh(2_000, 2_000).is_none());
+        drop(first_subscription);
+        msgbus::publish_account_state(
+            "events.account.BINANCE-SPOT-002".into(),
+            &event("BINANCE-SPOT-002", 1_000, true),
+        );
+        assert!(second.borrow().fresh(2_000, 2_000).is_some());
+        drop(second_subscription);
         fs::remove_dir_all(root).unwrap();
     }
 
