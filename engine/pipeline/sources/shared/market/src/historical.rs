@@ -127,29 +127,42 @@ fn rebuild_minute(source:&Catalog,target:&Catalog,instrument:&str,
 fn higher_bar(target:&Catalog,instrument:&str,interval:&str,
     window_start:i64,window_end:i64)->Result<Option<CatalogBar>>{
     let id=seealpha_catalog::bar_type(instrument,"1s")?;
-    let mut cursor=window_start;
+    // Most instruments/windows are sparse. Try one bounded read first;
+    // only chunk exceptionally dense windows if the reader reports Limit.
+    let full=target.read_bars(&id,"1s",
+        window_start.checked_mul(NANO_PER_MS).ok_or("read start overflow")?,
+        window_end.checked_mul(NANO_PER_MS).ok_or("read end overflow")?,50_000);
+    let rows=match full {
+        Ok(rows)=>rows,
+        Err(CatalogError::Limit(_))=>{
+            let mut collected=Vec::new();
+            let mut cursor=window_start;
+            while cursor<window_end{
+                let until=cursor.saturating_add(READ_SECONDS*1_000).min(window_end);
+                collected.extend(target.read_bars(&id,"1s",
+                    cursor.checked_mul(NANO_PER_MS).ok_or("read start overflow")?,
+                    until.checked_mul(NANO_PER_MS).ok_or("read end overflow")?,50_000)?);
+                cursor=until;
+            }
+            collected
+        }
+        Err(error)=>return Err(error.into()),
+    };
     let mut merged:Option<CatalogBar>=None;
-    while cursor<window_end{
-        let until=cursor.saturating_add(READ_SECONDS*1_000).min(window_end);
-        let rows=target.read_bars(&id,"1s",
-            cursor.checked_mul(NANO_PER_MS).ok_or("read start overflow")?,
-            until.checked_mul(NANO_PER_MS).ok_or("read end overflow")?,50_000)?;
-        for second in rows{
-            match merged.as_mut(){
-                Some(bar)=>{
-                    bar.high=bar.high.max(second.high);
-                    bar.low=bar.low.min(second.low);
-                    bar.close=second.close;
-                    bar.volume=bar.volume.checked_add(second.volume).ok_or("higher volume overflow")?;
-                }
-                None=>{
-                    merged=Some(CatalogBar{open_time_ms:window_start,
-                        open:second.open,high:second.high,low:second.low,
-                        close:second.close,volume:second.volume});
-                }
+    for second in rows{
+        match merged.as_mut(){
+            Some(bar)=>{
+                bar.high=bar.high.max(second.high);
+                bar.low=bar.low.min(second.low);
+                bar.close=second.close;
+                bar.volume=bar.volume.checked_add(second.volume).ok_or("higher volume overflow")?;
+            }
+            None=>{
+                merged=Some(CatalogBar{open_time_ms:window_start,
+                    open:second.open,high:second.high,low:second.low,
+                    close:second.close,volume:second.volume});
             }
         }
-        cursor=until;
     }
     // Validate the same exchange-aligned duration rules used by live TickBars.
     let (_,actual_end)=bar_window(interval,window_start)?;
