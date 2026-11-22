@@ -1,6 +1,6 @@
 //! Immutable exchange funding-rate observations stored in the market Catalog,
  //! not in the tenant's account Ledger.
-use crate::{Catalog, CatalogError, model::{instrument_id, MarketProduct, NANO_PER_MS}, reader::{RecordKind, candidate_files}, writer::{file_name, safe_mkdir}};
+use crate::{Catalog, CatalogError, model::NANO_PER_MS, reader::{RecordKind, candidate_files}, writer::{file_name, safe_mkdir}};
 use arrow_array::{ArrayRef, Decimal128Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use arrow_schema::{Schema, Field, DataType, TimeUnit};
 use fs2::FileExt;
@@ -31,10 +31,11 @@ fn decimal_array(values: impl Iterator<Item = Decimal>) -> Result<ArrayRef, Cata
 impl Catalog {
     /// Write a verified public exchange observation batch. Neither an estimated
     /// rate nor this parquet artifact proves an account funding payment.
-    pub fn append_funding(&self, symbol: &str, rows: &[CatalogFunding]) -> Result<Option<PathBuf>, CatalogError> {
+    pub fn append_funding(&self, instrument_id: &str, rows: &[CatalogFunding]) -> Result<Option<PathBuf>, CatalogError> {
         if rows.len() > 5000 { return Err(CatalogError::Limit("资金费批次超出上限。".into())); }
         if rows.is_empty() { return Ok(None); }
-        let identity = instrument_id(symbol, MarketProduct::FuturesUm)?;
+        crate::reader::safe_component(instrument_id)?;
+        let identity = instrument_id.to_owned();
         let relative = RecordKind::FundingRate.directory(&identity)?;
         let dir = safe_mkdir(&self.root, &relative)?;
         let lease = OpenOptions::new().create(true).read(true).write(true).truncate(false)
@@ -43,7 +44,7 @@ impl Catalog {
         let mut previous = None;
         for row in rows {
             if row.funding_time_ms < 0 || row.mark_price <= Decimal::ZERO
-                || !matches!(row.rate_type.as_str(), "Regular" | "Special" | "Unknown")
+                || row.rate_type.is_empty() || row.rate_type.len() > 32
                 || previous.is_some_and(|last| row.funding_time_ms <= last) {
                 return Err(CatalogError::Invalid("资金费时间或数值无效、重复或倒退。".into()));
             }
@@ -78,7 +79,7 @@ impl Catalog {
         ], HashMap::from([
             ("type_name".to_string(), "FundingRateUpdate".to_string()),
             ("instrument_id".to_string(), identity.clone()),
-            ("source".to_string(), "binance_public_funding_history".to_string()),
+            ("source".to_string(), "exchange_public_funding_history".to_string()),
         ])));
         let batch = RecordBatch::try_new(schema.clone(), vec![
             decimal_array(rows.iter().map(|r| r.funding_rate))?,
@@ -130,17 +131,17 @@ mod tests {
             CatalogFunding { funding_time_ms: 200, rate_type: "Special".into(),
                 funding_rate: Decimal::new(-2,4), mark_price: Decimal::new(2100,0) },
         ];
-        assert!(catalog.append_funding("ETHUSDT", &rows).unwrap().is_some());
+        assert!(catalog.append_funding("ETHUSDT-PERP.BINANCE", &rows).unwrap().is_some());
         assert!(catalog.append_funding("ETHUSDT", &rows).is_ok());
-        let identity = instrument_id("ETHUSDT", MarketProduct::FuturesUm).unwrap();
+        let identity = "ETHUSDT-PERP.BINANCE";
         let records = catalog.read_records(&RecordKind::FundingRate, &identity,
             0, 300 * NANO_PER_MS, 10).unwrap();
         assert_eq!(records.len(), 2);
         assert_eq!(records[1]["rate_type"], "Special");
         let mut conflict = rows.clone();
         conflict[0].funding_rate = Decimal::new(3,4);
-        assert!(catalog.append_funding("ETHUSDT", &conflict).is_err());
-        assert!(catalog.append_funding("BTCUSDT", &rows).is_ok());
+        assert!(catalog.append_funding("ETHUSDT-PERP.BINANCE", &conflict).is_err());
+        assert!(catalog.append_funding("BTCUSDT-PERP.BINANCE", &rows).is_ok());
         let _ = fs::remove_dir_all(root);
     }
 }
