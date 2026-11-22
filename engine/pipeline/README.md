@@ -1,32 +1,27 @@
-# SeeAlpha 行情服务（pipeline）
+# SeeAlpha 行情 Pipeline
 
-本目录只保留两个一级领域：`sources/`（来源适配、采集和导入）与 `catalog/`（历史存储、查询及数据完整性相关能力）。
+Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `catalog/`（存储、查询及可信性检查）。`sources/` 按 Binance 产品类型组织；共享代码不会为每个产品重复复制。
 
-## 当前实际目录
-
-| 目录 | 职责 | 状态 |
+| 位置 | 现有责任 | 当前状态 |
 | --- | --- | --- |
-| `sources/binance/nautilus/` | Binance Spot/USD-M NautilusTrader 原生只读实时节点、Feather → Parquet、历史 ZIP 原生导入器 | 独立 Cargo 项目；实验性，尚未通过 READY |
-| `sources/binance/archive/` | Binance 官方日 ZIP 下载、来源校验、租户采集策略清单 | `seealpha-binance-market-data-source` |
-| `sources/binance/market/` | Binance 公共 REST、K 线、Options、Funding、Exercise，以及当前仍在此 crate 的通用市场模型/计算 | `seealpha-market`；通用逻辑后续再逐个拆分 |
-| `catalog/` | 现有历史 Nautilus Parquet Catalog 读写、缺口检索、修复与派生 SQLite 缓存 | `seealpha-catalog`；原生读侧完整替代尚待验收 |
-| `catalog/integrity/` | K 线/成交校验、来源证明、READY 门禁和实时交付安全规则 | 原 `seealpha-quality` crate 完整保留；临时放在 Catalog 下，后续按职责逐步内聚 |
+| `sources/binance_spot/` | Spot 产品身份、Instrument ID 与原生数据客户端标识 | 由共享 Nautilus 进程以 `spot` 模式运行；独立于 USD-M 进程 |
+| `sources/binance_futures/` | USD-M Futures 产品身份与 Funding 数据 | 由共享 Nautilus 进程以 `futures_um` 模式运行；尚未支持 COIN-M |
+| `sources/binance_option/` | EAPI 期权 REST、合约及公开流消息解析、行权数据 | 期权实时 WebSocket 客户端**尚未接通**，只有解析能力 |
+| `sources/shared/nautilus/` | Spot / USD-M 共用的独立 Rust NautilusTrader LiveNode 和原生历史 ZIP 导入程序 | 编译为同一二进制，但按产品启动独立进程；实验性，未通过 READY |
+| `sources/shared/archive/` | 跨 Spot / USD-M 的 Binance 官方历史 ZIP 获取、来源校验与 Manifest | 现有 `seealpha-binance-market-data-source` crate |
+| `sources/shared/market/` | 当前共用的公共市场模型、REST 客户端、K 线和时间校验工具 | 现有 `seealpha-market` crate，公共 API 不变 |
+| `catalog/` | Parquet/SQLite 历史存储、读取、修复和派生缓存 | 当前兼容实现 |
+| `catalog/integrity/` | 原 `seealpha-quality` 的数据校验、缺口与 READY 规则 | 保留现有功能；以后再按职责整理 |
 
-这次仅整理目录，**未删除 Quality 规则，未更改 crate 名称、HTTP 契约、存储路径、策略行为或数据安全门禁**。不能因为多个来源可以互相补齐，就将收到数据等同于经过验证的数据。
+## 连接生命周期
 
-## 当前调用关系
+- 现货和 USD-M 目前通过 `engine/runtime/src/sources.rs` 按租户、产品分别启动原生 Nautilus 数据子进程；每个节点可以复用其内部连接订阅多个交易对。**不要求每个交易对一个 WebSocket**。
+- `binance_option` 当前只存在公共 REST 与 WebSocket 消息解析函数，不表示已建立 Options WebSocket 或具备生产级实时订阅。
+- `sources/shared/` 存放跨产品共用的代码，不形成一个混合 Spot / USD-M WebSocket 连接；运行时仍按产品隔离。
+- 新目录不改变现有编译目标、启动参数、数据卷路径、恢复门禁及交易安全策略。
 
-- `engine/runtime/src/sources.rs`：显式启动、停止和监测 Nautilus 行情子进程。
-- `engine/runtime/src/data.rs`：管理租户授权配置、历史采集任务及策略只读订阅声明；**尚非跨进程实时推送**。
-- `sources/binance/nautilus/src/main.rs`：原生 Binance 实时 TradeTick 订阅、Feather 暂存、正常关闭时 Parquet 提交。
-- `sources/binance/archive/` 与 Nautilus 的 `import_archive`：官方 ZIP 下载、验证、原生历史导入。
-- `catalog/`：Runtime 当前使用的历史数据读写与派生缓存。
-- `catalog/integrity/`：保留完整性/来源证明相关规则；仍需接入可信协调器，不能自动报告 READY。
+## 安全限制
 
-## 安全边界
+Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、历史与实时交接、Catalog 一致性和 READY 均未通过生产验收；不得把收到行情或进程运行当作数据可用/允许开新风险。策略实时交付仍待实现。
 
-Nautilus 实时节点仍须显式启用并独立部署；当前不提供经验证的独立策略实时推送。实时/历史衔接、缺口恢复、Native Catalog 读侧兼容和 READY 均未完成生产验收；不得放宽 `data_ready=false`、`allow_new_risk=false` 等限制。
-
-数据文件不存放在此源码目录中。按 [数据目录约定](../../docs/architecture/DATA_LAYOUT.md) 保存在仓库根目录 `data/` 或生产挂载卷。
-
-后续逐个文件夹优化时，再决定 `catalog/integrity/` 内哪些功能属于数据源校验、Catalog 一致性或 Runtime 交易门禁；本次先保持实现及安全约束不变。
+行情数据不提交到此源码目录。参见 [数据目录约定](../../docs/architecture/DATA_LAYOUT.md)。

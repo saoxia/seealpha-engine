@@ -29,6 +29,12 @@ use nautilus_model::{
 };
 use nautilus_persistence::config::{DataCatalogConfig, RotationConfig, StreamingConfig};
 
+// Product-specific Binance identifiers live outside the shared native runtime.
+#[path = "../../../binance_spot/native.rs"]
+mod binance_spot;
+#[path = "../../../binance_futures/native.rs"]
+mod binance_futures;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Product {
     Spot,
@@ -46,15 +52,15 @@ impl Product {
 
     fn binance(self) -> BinanceProductType {
         match self {
-            Self::Spot => BinanceProductType::Spot,
-            Self::UsdM => BinanceProductType::UsdM,
+            Self::Spot => binance_spot::product_type(),
+            Self::UsdM => binance_futures::product_type(),
         }
     }
 
     fn instrument(self, symbol: &str) -> InstrumentId {
         match self {
-            Self::Spot => InstrumentId::from(format!("{symbol}.BINANCE").as_str()),
-            Self::UsdM => InstrumentId::from(format!("{symbol}-PERP.BINANCE").as_str()),
+            Self::Spot => binance_spot::instrument_id(symbol),
+            Self::UsdM => binance_futures::instrument_id(symbol),
         }
     }
 }
@@ -153,8 +159,8 @@ async fn main() -> Result<()> {
         ensure!(path.canonicalize()?.is_dir(), "invalid storage path: {root}");
     }
     let client_name = match product {
-        Product::Spot => "SEEALPHA-BINANCE-SPOT-DATA",
-        Product::UsdM => "SEEALPHA-BINANCE-UM-DATA",
+        Product::Spot => binance_spot::client_name(),
+        Product::UsdM => binance_futures::client_name(),
     };
     let client_id = ClientId::from(client_name);
 

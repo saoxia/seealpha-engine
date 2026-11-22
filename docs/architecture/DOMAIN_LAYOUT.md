@@ -10,7 +10,7 @@
 | `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
 | `engine/portfolio/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
 | `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
-| `engine/connection/` | Binance Options 专属协议规范化；Spot/USD-M 执行工厂位于 `engine/pipeline/sources/binance/nautilus/`，真实订单发送尚未接通 |
+| `engine/connection/` | Binance Options 专属协议规范化；Spot/USD-M 执行工厂位于 `engine/pipeline/sources/shared/nautilus/`，真实订单发送尚未接通 |
 | `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
 
 ### Binance Options 专属代码边界（分步迁移）
@@ -21,8 +21,8 @@
 
 | 规划目录 | 目标职责 | 当前归属 |
 | --- | --- | --- |
-| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/`、`engine/runtime/`、`engine/pipeline/sources/binance/nautilus/` |
-| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/ledger/`、`engine/pipeline/sources/binance/nautilus/` |
+| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/portfolio/`、`engine/runtime/`、`engine/pipeline/sources/shared/nautilus/` |
+| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/ledger/`、`engine/pipeline/sources/shared/nautilus/` |
 
 已清理未被业务代码调用的独立 `seealpha-execution` crate；订单状态安全规则仍应在实际执行/对账接入时由其真实所有者实现和验证。不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
 
@@ -38,7 +38,7 @@
 
 ## 工程设施与资产
 
-本节目录均在仓库根目录，与 `engine/` 并列。根目录 `Cargo.toml` 和 `Cargo.lock` 管理 Rust Workspace，`engine/pipeline/sources/binance/nautilus` 作为独立 Cargo 项目被明确排除，`benchmarks/rust` 仍属于 Workspace。
+本节目录均在仓库根目录，与 `engine/` 并列。根目录 `Cargo.toml` 和 `Cargo.lock` 管理 Rust Workspace，`engine/pipeline/sources/shared/nautilus` 作为独立 Cargo 项目被明确排除，`benchmarks/rust` 仍属于 Workspace。
 
 
 - 测试：crate 单测、集成测试均就近放置；不再保留只有 Python `__init__.py` 的根目录 `tests/`

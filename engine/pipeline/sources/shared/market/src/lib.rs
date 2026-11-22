@@ -5,9 +5,13 @@
 //! features. Neither path starts a collector as a side effect of a read.
 mod binance;
 pub mod clock;
+#[path = "../../../binance_option/exercise.rs"]
 pub mod exercise;
+#[path = "../../../binance_futures/funding.rs"]
 pub mod funding;
+#[path = "../../../binance_option/option_stream.rs"]
 pub mod option_stream;
+#[path = "../../../binance_option/options.rs"]
 pub mod options;
 mod pipeline;
 

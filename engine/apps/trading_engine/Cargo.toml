@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 seealpha-http = { path = "../../gateway/api" }
-seealpha-market = { path = "../../pipeline/sources/binance/market" }
+seealpha-market = { path = "../../pipeline/sources/shared/market" }
 seealpha-runtime = { path = "../../runtime" }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
