@@ -1,5 +1,5 @@
 use crate::{Ledger, LedgerError};
-use rusqlite::{OptionalExtension, params};
+use seealpha_database::{OptionalExtension, params};
 
 impl Ledger {
     pub fn get_order_request(
@@ -13,16 +13,16 @@ impl Ledger {
             .query_row(
                 "SELECT COALESCE(
                     (SELECT body_json FROM order_request_views
-                     WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3
+                     WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3
                      ORDER BY id DESC LIMIT 1),
                     body_json)
                  FROM order_requests
-                 WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+                 WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
                 params![tenant_id, account_id, request_id],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
+            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     /// Append a durable API projection without changing the immutable pre-send
@@ -49,7 +49,7 @@ impl Ledger {
         let connection = self.lock()?;
         let raw: String = connection
             .query_row(
-                "SELECT body_json FROM order_requests WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+                "SELECT body_json FROM order_requests WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
                 params![tenant_id, account_id, request_id],
                 |row| row.get(0),
             )
@@ -83,13 +83,13 @@ impl Ledger {
         let latest: Option<String> = connection
             .query_row(
                 "SELECT body_json FROM order_request_views
-                 WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3
+                 WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3
                  ORDER BY id DESC LIMIT 1",
                 params![tenant_id, account_id, request_id],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         if latest.as_deref() == Some(body) {
             return Ok(());
         }
@@ -97,10 +97,10 @@ impl Ledger {
             .execute(
                 "INSERT INTO order_request_views
                  (tenant_id,account_id,request_id,body_json,recorded_at)
-                 VALUES (?1,?2,?3,?4,?5)",
+                 VALUES ($1,$2,$3,$4,$5)",
                 params![tenant_id, account_id, request_id, body, now_ms()],
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -122,9 +122,9 @@ impl Ledger {
         let connection = self.lock()?;
         connection
             .execute(
-                "INSERT OR IGNORE INTO fills
+                "INSERT INTO fills
              (tenant_id,account_id,environment,fill_id,fill_json,updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6)",
+             VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
                 params![
                     tenant_id,
                     account_id,
@@ -134,15 +134,15 @@ impl Ledger {
                     now_ms()
                 ],
             )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         let original: String = connection
             .query_row(
-                "SELECT fill_json FROM fills WHERE tenant_id=?1 AND account_id=?2
-             AND environment=?3 AND fill_id=?4",
+                "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2
+             AND environment=$3 AND fill_id=$4",
                 params![tenant_id, account_id, environment, fill_id],
                 |r| r.get(0),
             )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         if original != fill_json {
             return Err(LedgerError::Conflict("fill evidence is immutable".into()));
         }
@@ -158,16 +158,16 @@ impl Ledger {
         let connection = self.lock()?;
         let mut statement = connection
             .prepare(
-                "SELECT fill_json FROM fills WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 ORDER BY fill_id",
+                "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 ORDER BY fill_id",
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         let rows = statement
             .query_map(params![tenant_id, account_id, environment], |row| {
                 row.get(0)
             })
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
+            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     pub fn put_gap(
@@ -182,12 +182,12 @@ impl Ledger {
         connection
             .execute(
                 "INSERT INTO gaps (tenant_id, account_id, scope, gap_key, gap_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT(tenant_id, account_id, scope, gap_key) DO UPDATE SET
                    gap_json=excluded.gap_json, updated_at=excluded.updated_at",
                 params![tenant_id, account_id, scope, gap_key, gap_json, now_ms()],
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -195,14 +195,14 @@ impl Ledger {
         let connection = self.lock()?;
         let mut statement = connection
             .prepare(
-                "SELECT gap_json FROM gaps WHERE tenant_id=?1 AND account_id=?2 ORDER BY gap_key",
+                "SELECT gap_json FROM gaps WHERE tenant_id=$1 AND account_id=$2 ORDER BY gap_key",
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         let rows = statement
             .query_map(params![tenant_id, account_id], |row| row.get(0))
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
+            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     /// Read the persisted account connection registrations without credentials.
@@ -217,11 +217,11 @@ impl Ledger {
             .prepare(
                 "SELECT tenant_id,account_id,environment,status,updated_at
                  FROM connections
-                 WHERE tenant_id=?1 AND account_id=?2
+                 WHERE tenant_id=$1 AND account_id=$2
                    AND environment IN ('production','sandbox')
                  ORDER BY CASE environment WHEN 'production' THEN 0 ELSE 1 END",
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         let rows = statement
             .query_map(params![tenant_id, account_id], |row| {
                 Ok(serde_json::json!({
@@ -232,9 +232,9 @@ impl Ledger {
                     "updated_at": row.get::<_, i64>(4)?,
                 }))
             })
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
+            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     pub fn upsert_connection(
@@ -248,12 +248,12 @@ impl Ledger {
         connection
             .execute(
                 "INSERT INTO connections (tenant_id, account_id, environment, status, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT(tenant_id, account_id, environment) DO UPDATE SET
                    status=excluded.status, updated_at=excluded.updated_at",
                 params![tenant_id, account_id, environment, status, now_ms()],
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -267,10 +267,10 @@ impl Ledger {
         let connection = self.lock()?;
         connection
             .execute(
-                "INSERT INTO events (tenant_id, account_id, kind, body_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO events (tenant_id, account_id, kind, body_json, created_at) VALUES ($1, $2, $3, $4, $5)",
                 params![tenant_id, account_id, kind, body, now_ms()],
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -281,15 +281,15 @@ impl Ledger {
     ) -> Result<Vec<(String, String)>, LedgerError> {
         let connection = self.lock()?;
         let mut statement = connection
-            .prepare("SELECT kind, body_json FROM events WHERE tenant_id=?1 AND account_id=?2 ORDER BY id")
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .prepare("SELECT kind, body_json FROM events WHERE tenant_id=$1 AND account_id=$2 ORDER BY id")
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         let rows = statement
             .query_map(params![tenant_id, account_id], |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
+            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     pub fn save_backtest(
@@ -303,12 +303,12 @@ impl Ledger {
         connection
             .execute(
                 "INSERT INTO backtest_results (tenant_id, account_id, kind, report_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT(tenant_id, account_id, kind) DO UPDATE SET
                    report_json=excluded.report_json, updated_at=excluded.updated_at",
                 params![tenant_id, account_id, kind, report, now_ms()],
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -321,12 +321,12 @@ impl Ledger {
         let connection = self.lock()?;
         connection
             .query_row(
-                "SELECT report_json FROM backtest_results WHERE tenant_id=?1 AND account_id=?2 AND kind=?3",
+                "SELECT report_json FROM backtest_results WHERE tenant_id=$1 AND account_id=$2 AND kind=$3",
                 params![tenant_id, account_id, kind],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
+            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     pub fn save_snapshot(
@@ -340,10 +340,10 @@ impl Ledger {
         connection
             .execute(
                 "INSERT INTO research_snapshots (tenant_id, snapshot_id, sha256, body_json, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                 VALUES ($1, $2, $3, $4, $5)",
                 params![tenant_id, snapshot_id, sha256, body, now_ms()],
             )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -355,12 +355,12 @@ impl Ledger {
         let connection = self.lock()?;
         connection
             .query_row(
-                "SELECT sha256, body_json FROM research_snapshots WHERE tenant_id=?1 AND snapshot_id=?2",
+                "SELECT sha256, body_json FROM research_snapshots WHERE tenant_id=$1 AND snapshot_id=$2",
                 params![tenant_id, snapshot_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
+            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 }
 
