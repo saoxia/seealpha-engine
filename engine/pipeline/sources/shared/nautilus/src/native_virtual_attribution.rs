@@ -85,7 +85,7 @@ fn allocate_fifo(
             });
         }
     }
-    ensure!(offset == cumulative || offset > cumulative, "fill exceeds registered claims");
+    ensure!(offset >= cumulative, "fill exceeds registered claims");
     let sum = fills.iter().try_fold(Decimal::ZERO, |acc, f| {
         acc.checked_add(f.signed_quantity.abs()).context("fill sum overflow")
     })?;
