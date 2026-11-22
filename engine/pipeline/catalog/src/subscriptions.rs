@@ -28,10 +28,23 @@ impl PipelineSubscription {
 }
 
 pub fn validate_subscription(value:&PipelineSubscription)->Result<(),ControlError>{
-    if !matches!(value.product.as_str(),"spot"|"futures_um") {
-        return Err(ControlError::Conflict("only spot and futures_um supported".into()));
+    if !matches!(value.product.as_str(),"spot"|"futures_um"|"options") {
+        return Err(ControlError::Conflict("only spot, futures_um and options supported".into()));
     }
-    if !(5..=30).contains(&value.symbol.len())
+    if value.product == "options" {
+        // Keep contract validation local to the config store; the Pipeline
+        // source performs the authoritative Binance identity validation again.
+        let parts=value.symbol.split('-').collect::<Vec<_>>();
+        if parts.len()!=4 || !(2..=15).contains(&parts[0].len())
+            || !parts[0].bytes().all(|c|c.is_ascii_uppercase()||c.is_ascii_digit())
+            || parts[1].len()!=6 || !parts[1].bytes().all(|c|c.is_ascii_digit())
+            || chrono::NaiveDate::parse_from_str(&format!("20{}",parts[1]),"%Y%m%d").is_err()
+            || parts[2].is_empty() || !parts[2].bytes().all(|c|c.is_ascii_digit()||c==b'.')
+            || parts[2].parse::<rust_decimal::Decimal>().ok().is_none_or(|n|n<=rust_decimal::Decimal::ZERO)
+            || !matches!(parts[3],"C"|"P") {
+            return Err(ControlError::Conflict("invalid Binance options contract symbol".into()));
+        }
+    } else if !(5..=30).contains(&value.symbol.len())
        || !value.symbol.bytes().all(|c|c.is_ascii_uppercase()||c.is_ascii_digit())
        || (value.product=="futures_um" && !value.symbol.ends_with("USDT") && !value.symbol.ends_with("USDC")) {
        return Err(ControlError::Conflict("invalid Binance symbol".into()));
@@ -71,7 +84,7 @@ impl ControlStore {
         Ok(())
     }
     pub fn subscriptions(&self,tenant:&str,product:Option<&str>)->Result<Vec<PipelineSubscription>,ControlError>{
-        if product.is_some_and(|p| !matches!(p,"spot"|"futures_um")) {
+        if product.is_some_and(|p| !matches!(p,"spot"|"futures_um"|"options")) {
             return Err(ControlError::Conflict("invalid product".into()));
         }
         let conn=self.lock()?;
@@ -96,7 +109,7 @@ impl ControlStore {
     }
     /// Disabled configuration retains its data; no deletion without an explicit cutoff.
     pub fn product_subscriptions(&self,product:&str)->Result<Vec<(String,PipelineSubscription)>,ControlError>{
-        if !matches!(product,"spot"|"futures_um"){
+        if !matches!(product,"spot"|"futures_um"|"options"){
             return Err(ControlError::Conflict("invalid product".into()));
         }
         let conn=self.lock()?;
@@ -113,7 +126,7 @@ impl ControlStore {
         }).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
     }
     pub fn enabled_subscriptions(&self,product:&str)->Result<Vec<(String,PipelineSubscription)>,ControlError>{
-        if !matches!(product,"spot"|"futures_um") {
+        if !matches!(product,"spot"|"futures_um"|"options") {
             return Err(ControlError::Conflict("invalid product".into()));
         }
         let conn=self.lock()?;
@@ -138,6 +151,16 @@ mod tests {
         PipelineSubscription {product:"spot".into(),symbol:"ETHUSDT".into(),
             history_start:start.into(),realtime_enabled:true,enabled:true,
             price_precision:None,size_precision:None}
+    }
+    #[test] fn valid_options_contract_is_independent_of_spot_symbols() {
+        let mut option=item("2025-01-01");
+        option.product="options".into();
+        option.symbol="BTC-271231-90000-P".into();
+        assert!(validate_subscription(&option).is_ok());
+        option.symbol="ALL".into();
+        assert!(validate_subscription(&option).is_err());
+        option.symbol="BTC-270230-90000-P".into();
+        assert!(validate_subscription(&option).is_err());
     }
     #[test] fn strict_utc_dates_and_schema(){
         assert_eq!(item("2025-01-01").start_ms().unwrap(),1735689600000);

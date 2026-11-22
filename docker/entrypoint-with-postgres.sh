@@ -22,10 +22,11 @@ engine_pid=""
 observer_pid=""
 pipeline_spot_pid=""
 pipeline_um_pid=""
+pipeline_options_pid=""
 
 shutdown() {
   trap - TERM INT EXIT
-  for worker in "$pipeline_spot_pid" "$pipeline_um_pid"; do
+  for worker in "$pipeline_spot_pid" "$pipeline_um_pid" "$pipeline_options_pid"; do
     if [[ -n "$worker" ]]; then
       kill -TERM "$worker" 2>/dev/null || true
       wait "$worker" 2>/dev/null || true
@@ -206,6 +207,8 @@ if [[ "${SEEALPHA_PIPELINE_ENABLED:-1}" == "1" ]]; then
   pipeline_spot_pid=$!
   seealpha-pipeline futures_um &
   pipeline_um_pid=$!
+  seealpha-pipeline options &
+  pipeline_options_pid=$!
 elif [[ "${SEEALPHA_PIPELINE_ENABLED:-1}" != "0" ]]; then
   echo "SEEALPHA_PIPELINE_ENABLED must be 0 or 1" >&2
   exit 1
@@ -218,6 +221,7 @@ processes=("$engine_pid" "$postgres_pid")
 if [[ -n "$observer_pid" ]]; then processes+=("$observer_pid"); fi
 if [[ -n "$pipeline_spot_pid" ]]; then processes+=("$pipeline_spot_pid"); fi
 if [[ -n "$pipeline_um_pid" ]]; then processes+=("$pipeline_um_pid"); fi
+if [[ -n "$pipeline_options_pid" ]]; then processes+=("$pipeline_options_pid"); fi
 wait -n -p finished_pid "${processes[@]}"
 status=$?
 set -e

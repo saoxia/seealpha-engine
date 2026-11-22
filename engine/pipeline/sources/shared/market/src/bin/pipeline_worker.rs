@@ -1,7 +1,7 @@
 //! One autonomous reconciliation process per Binance product.
 //! Database config is desired state; data is never declared READY here.
 use seealpha_catalog::{Catalog,ControlStore,PipelineSubscription,DAY_MS,validate_subscription};
-use seealpha_market::{BinanceSource,Product,identity::{self,MarketProduct}};
+use seealpha_market::{BinanceSource,Product,options::{OptionsSource,parse_option_symbol},identity::{self,MarketProduct}};
 use std::{collections::{BTreeMap,BTreeSet},env,error::Error,path::{Path,PathBuf},process::{Child,Command,Stdio},time::{Duration,SystemTime,UNIX_EPOCH}};
 
 type Result<T> = std::result::Result<T,Box<dyn Error>>;
@@ -137,6 +137,70 @@ async fn reconcile_history(
     Ok(())
 }
 
+/// Options never use Spot / USD-M native trade client. A 15m Bar is the
+/// finest daily-bounded unit supported by the existing OptionsSource.
+async fn reconcile_options(
+    catalog:&Catalog,source:&OptionsSource,symbol:&str,
+    retain_from:i64,fetch_from:i64,precision:Option<(u32,u32)>,
+)->Result<()>{
+    let contract=parse_option_symbol(symbol)?;
+    let id=identity::bar_type(symbol,MarketProduct::Options,"15m")?;
+    let instrument=identity::instrument_id(symbol,MarketProduct::Options)?;
+    catalog.prune_instrument_bars_before(&instrument,retain_from)?;
+    // Do not query a contract past its expiry date or fabricate bars on a
+    // nonexistent history window. Expiry-day partial history needs separate
+    // exchange-calendar reconciliation; only closed prior UTC days are used.
+    let expiry=chrono::NaiveDate::parse_from_str(&format!("20{}",contract.expiry),"%Y%m%d")?
+        .and_hms_opt(0,0,0).ok_or("invalid expiry")?.and_utc().timestamp_millis();
+    let end=utc_today_ms()?.min(expiry);
+    if fetch_from>=end{return Ok(())}
+    let (price_precision,size_precision)=precision.ok_or(
+        "Options Bar publication requires verified Instrument price/size precision in subscription"
+    )?;
+    let mut day=fetch_from;
+    let mut scanned=0;
+    while day<end && scanned<31 {
+        let after=day.checked_add(DAY_MS).ok_or("date overflow")?;
+        let gaps=catalog.bar_gaps(&id,"15m",day,after,100)?;
+        if !gaps.is_empty(){
+            let bars=source.history(symbol,"15m",day,after).await?;
+            let mapped=bars.into_iter().map(|bar|seealpha_catalog::CatalogBar{
+                open_time_ms:bar.open_time_ms,open:bar.open,high:bar.high,
+                low:bar.low,close:bar.close,volume:bar.volume,
+            }).collect::<Vec<_>>();
+            // Never overwrite a partial existing day or manufacture missing
+            // bars. Existing contract requires strict contiguous full-day history.
+            if gaps.len()!=1 || gaps[0].start_ms!=day || gaps[0].end_ms!=after {
+                eprintln!("options {symbol}: partial 15m day requires explicit safe repair");
+            } else if mapped.len()==96 {
+                catalog.append_bars(&id,"15m",&mapped,price_precision,size_precision)?;
+            }
+        }
+        scanned+=1;
+        day=after;
+    }
+    Ok(())
+}
+
+async fn cycle_options(
+    control:&ControlStore,catalog:&Catalog,source:&OptionsSource,
+)->Result<()>{
+    let rows=control.product_subscriptions("options")?;
+    let expected=desired(&rows)?;
+    if rows.iter().any(|(_,row)|row.enabled&&row.realtime_enabled) {
+        eprintln!("options realtime requested but WebSocket connector is not implemented; no subscription started");
+    }
+    for (symbol,settings) in expected {
+        let Some(fetch_from)=settings.fetch_from else{continue};
+        if let Err(error)=reconcile_options(
+            catalog,source,&symbol,settings.retain_from,fetch_from,settings.precision
+        ).await {
+            eprintln!("options {symbol}: {error}");
+        }
+    }
+    Ok(())
+}
+
 async fn cycle(
     control:&ControlStore,catalog:&Catalog,product:Product,source:&BinanceSource,
     active:&mut Option<Collector>,
@@ -160,19 +224,28 @@ async fn cycle(
 
 #[tokio::main]
 async fn main()->Result<()>{
-    let product=env::args().nth(1).ok_or("usage: seealpha-pipeline <spot|futures_um>")?;
-    let product=Product::parse(&product)?;
+    let name=env::args().nth(1).ok_or("usage: pipeline_worker <spot|futures_um|options>")?;
+    let product=MarketProduct::parse(&name)?;
     let control=ControlStore::open(Path::new("pipeline-control"))?;
-    let source=BinanceSource::new()?;
+    let source=if product==MarketProduct::Options {None} else {Some(BinanceSource::new()?)};
+    let options=if product==MarketProduct::Options {Some(OptionsSource::new()?)} else {None};
     let mut native=None;
     loop {
         match Catalog::open_existing(&catalog_path()) {
             Ok(catalog)=>{
-                if let Err(error)=cycle(&control,&catalog,product,&source,&mut native).await {
-                    eprintln!("pipeline {} cycle: {error}",product.as_str());
+                let result=match (source.as_ref(),options.as_ref()) {
+                    (Some(market),None)=>{
+                        let product=Product::parse(&name)?;
+                        cycle(&control,&catalog,product,market,&mut native).await
+                    }
+                    (None,Some(options))=>cycle_options(&control,&catalog,options).await,
+                    _=>Err("invalid Pipeline source state".into()),
+                };
+                if let Err(error)=result {
+                    eprintln!("pipeline {name} cycle: {error}");
                 }
             }
-            Err(error)=>eprintln!("pipeline {} catalog: {error}",product.as_str()),
+            Err(error)=>eprintln!("pipeline {name} catalog: {error}"),
         }
         tokio::time::sleep(Duration::from_secs(30)).await;
     }

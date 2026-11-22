@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS paper_sessions (
 
 -- Pipeline desired state. One row per tenant/product/instrument.
 CREATE TABLE IF NOT EXISTS pipeline_subscriptions (
- tenant_id TEXT NOT NULL, product TEXT NOT NULL CHECK(product IN ('spot','futures_um')),
+ tenant_id TEXT NOT NULL, product TEXT NOT NULL CHECK(product IN ('spot','futures_um','options')),
  symbol TEXT NOT NULL, history_start TEXT NOT NULL,
  realtime_enabled BOOLEAN NOT NULL DEFAULT FALSE,
  enabled BOOLEAN NOT NULL DEFAULT TRUE,

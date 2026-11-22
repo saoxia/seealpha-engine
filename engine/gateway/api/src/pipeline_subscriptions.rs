@@ -41,7 +41,7 @@ async fn disable(
     Path((tenant,product,symbol)):Path<(String,String,String)>,
 )->Result<Json<Value>,AppError>{
     state.runtime.require_active(&tenant).map_err(AppError::from)?;
-    if !matches!(product.as_str(),"spot"|"futures_um"){
+    if !matches!(product.as_str(),"spot"|"futures_um"|"options"){
         return Err(AppError::bad_request("invalid product"));
     }
     if !state.runtime.control.disable_subscription(&tenant,&product,&symbol)
