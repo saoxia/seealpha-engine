@@ -167,3 +167,13 @@ Independent tenant/account/venue provenance checks and immutable economic
 movement evidence remain required before Ledger attribution or settlement.
 The deletion does not assert that the native live account session has passed
 production acceptance or that any genuine account reconciliation is complete.
+
+## Option exercise settlement ownership
+
+The uncalled `execution::settlement` offline cash/payoff reconciliation
+entrypoint has been removed. Exchange-signed option exercise evidence is
+normalized in `engine/connection/binance-options/src/settlement.rs`.
+Durable economic events and strategy attribution belong to Ledger; native
+account state and reports must be independently reconciled. Do not infer
+account cash movements or mark settlement complete from modelled option
+payoff formulas.
