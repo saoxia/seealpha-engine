@@ -1,13 +1,13 @@
 //! Transactional, exchange-authored fill evidence. Never infer a fill
 //! merely because an order was accepted, canceled, or had executedQty > 0.
 use crate::{Ledger, LedgerError};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn sqlite(err: rusqlite::Error) -> LedgerError {
-    LedgerError::Sqlite(err.to_string())
+fn db_error(err: seealpha_database::Error) -> LedgerError {
+    LedgerError::Database(err.to_string())
 }
 fn invalid() -> LedgerError {
     LedgerError::Conflict("交易所成交证据无效或与已保存记录冲突。".into())
@@ -28,12 +28,12 @@ impl Ledger {
         let mut conn = self.lock()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let mut stmt = tx
             .prepare("SELECT tenant_id,account_id,environment,fill_id,fill_json FROM fills")
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let rows = stmt
-            .query_map([], |r| {
+            .query_map(&[], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -42,10 +42,10 @@ impl Ledger {
                     r.get::<_, String>(4)?,
                 ))
             })
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let mut suspected = Vec::new();
         for row in rows {
-            let (tenant, account, env, id, text) = row.map_err(sqlite)?;
+            let (tenant, account, env, id, text) = row.map_err(db_error)?;
             let Ok(value) = serde_json::from_str::<Value>(&text) else {
                 continue;
             };
@@ -63,20 +63,20 @@ impl Ledger {
         drop(stmt);
         for (tenant, account, env, id, text) in &suspected {
             tx.execute(
-                "INSERT OR IGNORE INTO quarantined_unverified_fills
+                "INSERT INTO quarantined_unverified_fills
                  (tenant_id,account_id,environment,fill_id,fill_json,reason,quarantined_at)
-                 VALUES(?1,?2,?3,?4,?5,'synthetic_order_ack_fill',?6)",
+                 VALUES($1,$2,$3,$4,$5,'synthetic_order_ack_fill',$6) ON CONFLICT DO NOTHING",
                 params![tenant, account, env, id, text, now_ms()],
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
             tx.execute(
-                "DELETE FROM fills WHERE tenant_id=?1 AND account_id=?2
-                 AND environment=?3 AND fill_id=?4",
+                "DELETE FROM fills WHERE tenant_id=$1 AND account_id=$2
+                 AND environment=$3 AND fill_id=$4",
                 params![tenant, account, env, id],
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         }
-        tx.commit().map_err(sqlite)?;
+        tx.commit().map_err(db_error)?;
         Ok(suspected.len())
     }
 
@@ -94,7 +94,7 @@ impl Ledger {
         let mut conn = self.lock()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         for row in rows {
             let id = row["trade_id"].as_str().ok_or_else(invalid)?;
             let qty = row["quantity"]
@@ -119,13 +119,13 @@ impl Ledger {
             let text = row.to_string();
             let prior: Option<String> = tx
                 .query_row(
-                    "SELECT fill_json FROM fills WHERE tenant_id=?1 AND account_id=?2
-                 AND environment=?3 AND fill_id=?4",
+                    "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2
+                 AND environment=$3 AND fill_id=$4",
                     params![tenant, account, environment, id],
                     |r| r.get(0),
                 )
                 .optional()
-                .map_err(sqlite)?;
+                .map_err(db_error)?;
             if let Some(previous) = prior {
                 if previous != text {
                     return Err(invalid());
@@ -134,22 +134,22 @@ impl Ledger {
                 tx.execute(
                     "INSERT INTO fills
                      (tenant_id,account_id,environment,fill_id,fill_json,updated_at)
-                     VALUES(?1,?2,?3,?4,?5,?6)",
+                     VALUES($1,$2,$3,$4,$5,$6)",
                     params![tenant, account, environment, id, text, now_ms()],
                 )
-                .map_err(sqlite)?;
+                .map_err(db_error)?;
             }
         }
-        tx.commit().map_err(sqlite)?;
+        tx.commit().map_err(db_error)?;
         Ok(rows.len())
     }
 
     pub fn quarantined_fill_count(&self, tenant: &str, account: &str) -> Result<i64, LedgerError> {
         let conn = self.lock()?;
         conn.query_row(
-            "SELECT COUNT(*) FROM quarantined_unverified_fills WHERE tenant_id=?1 AND account_id=?2",
+            "SELECT COUNT(*) FROM quarantined_unverified_fills WHERE tenant_id=$1 AND account_id=$2",
             params![tenant,account],|r|r.get(0),
-        ).map_err(sqlite)
+        ).map_err(db_error)
     }
 }
 
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn quarantines_fabricated_ack_without_losing_raw_evidence() {
         let path = std::env::temp_dir().join(format!(
-            "seealpha-fill-{}-{}.sqlite",
+            "seealpha-fill-{}-{}.db_error",
             std::process::id(),
             now_ms()
         ));
@@ -171,8 +171,8 @@ mod tests {
             let conn = book.lock().unwrap();
             conn.execute(
                 "INSERT INTO fills(tenant_id,account_id,environment,fill_id,fill_json,updated_at)
-                 VALUES('t','a','production','fill-A',?1,0)",
-                rusqlite::params![legacy.to_string()],
+                 VALUES('t','a','production','fill-A',$1,0)",
+                seealpha_database::params![legacy.to_string()],
             )
             .unwrap();
         }

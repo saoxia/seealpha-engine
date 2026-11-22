@@ -1,12 +1,12 @@
 //! Tenant/account/environment-isolated evidence events. These are not
 //! balance postings: order ACKs and public funding observations never mint cash.
 use crate::{Ledger, LedgerError, now_ms};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 
-fn sql(e: rusqlite::Error) -> LedgerError {
-    LedgerError::Sqlite(e.to_string())
+fn sql(e: seealpha_database::Error) -> LedgerError {
+    LedgerError::Database(e.to_string())
 }
 fn invalid() -> LedgerError {
     LedgerError::Conflict("account event lacks immutable verified evidence".into())
@@ -38,8 +38,8 @@ impl Ledger {
         let raw: Option<String> = match kind {
             "VERIFIED_FILL" => tx
                 .query_row(
-                    "SELECT fill_json FROM fills WHERE tenant_id=?1 AND account_id=?2
-                 AND environment=?3 AND fill_id=?4",
+                    "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2
+                 AND environment=$3 AND fill_id=$4",
                     params![tenant, account, environment, evidence_id],
                     |r| r.get(0),
                 )
@@ -53,8 +53,8 @@ impl Ledger {
                 };
                 tx.query_row(
                     "SELECT evidence_json FROM account_settlements
-                     WHERE tenant_id=?1 AND account_id=?2 AND environment=?3
-                     AND product=?4 AND event_kind=?5 AND event_id=?6",
+                     WHERE tenant_id=$1 AND account_id=$2 AND environment=$3
+                     AND product=$4 AND event_kind=$5 AND event_id=$6",
                     params![
                         tenant,
                         account,
@@ -110,7 +110,7 @@ impl Ledger {
         let prior: Option<(i64, String)> = tx
             .query_row(
                 "SELECT id,evidence_json FROM account_evidence_events WHERE
-             tenant_id=?1 AND account_id=?2 AND environment=?3 AND kind=?4 AND evidence_id=?5",
+             tenant_id=$1 AND account_id=$2 AND environment=$3 AND kind=$4 AND evidence_id=$5",
                 params![tenant, account, environment, kind, evidence_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -125,7 +125,7 @@ impl Ledger {
         tx.execute(
             "INSERT INTO account_evidence_events
              (tenant_id,account_id,environment,kind,evidence_id,evidence_json,recorded_at_ms)
-             VALUES(?1,?2,?3,?4,?5,?6,?7)",
+             VALUES($1,$2,$3,$4,$5,$6,$7)",
             params![
                 tenant,
                 account,
@@ -137,7 +137,7 @@ impl Ledger {
             ],
         )
         .map_err(sql)?;
-        let id = tx.last_insert_rowid();
+        let id = tx.last_identity().map_err(sql)?;
         tx.commit().map_err(sql)?;
         Ok(id)
     }
@@ -157,8 +157,8 @@ impl Ledger {
         let mut stmt = conn
             .prepare(
                 "SELECT id,evidence_json,recorded_at_ms FROM account_evidence_events
-             WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND id>?4
-             ORDER BY id LIMIT ?5",
+             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 AND id>$4
+             ORDER BY id LIMIT $5",
             )
             .map_err(sql)?;
         let rows = stmt

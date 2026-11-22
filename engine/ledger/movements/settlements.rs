@@ -1,13 +1,13 @@
 //! Append-only account settlement evidence, scoped to tenant/account/environment.
 //! Cash impact is never inferred from public funding rates or option greeks.
 use crate::{Ledger, LedgerError};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::str::FromStr;
 
-fn error(e: rusqlite::Error) -> LedgerError {
-    LedgerError::Sqlite(e.to_string())
+fn error(e: seealpha_database::Error) -> LedgerError {
+    LedgerError::Database(e.to_string())
 }
 fn invalid() -> LedgerError {
     LedgerError::Conflict("交易所结算记录无效、未完成分页或与既存证据冲突。".into())
@@ -86,8 +86,8 @@ impl Ledger {
             let previous: Option<String> = tx
                 .query_row(
                     "SELECT evidence_json FROM account_settlements
-                 WHERE tenant_id=?1 AND account_id=?2 AND environment=?3
-                 AND product=?4 AND event_kind=?5 AND event_id=?6",
+                 WHERE tenant_id=$1 AND account_id=$2 AND environment=$3
+                 AND product=$4 AND event_kind=$5 AND event_id=$6",
                     params![tenant, account, environment, product, kind, event_id],
                     |r| r.get(0),
                 )
@@ -102,7 +102,7 @@ impl Ledger {
                     "INSERT INTO account_settlements
                      (tenant_id,account_id,environment,product,event_kind,event_id,
                       symbol,evidence_json)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
                     params![
                         tenant,
                         account,
@@ -132,7 +132,7 @@ impl Ledger {
         let mut stmt = conn
             .prepare(
                 "SELECT evidence_json FROM account_settlements
-             WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND product=?4
+             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 AND product=$4
              ORDER BY event_kind,event_id LIMIT 1000",
             )
             .map_err(error)?;

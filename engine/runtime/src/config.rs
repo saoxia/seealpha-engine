@@ -80,6 +80,11 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        let url = std::env::var("SEEALPHA_DATABASE_URL")
+            .map_err(|_| "SEEALPHA_DATABASE_URL must be configured for PostgreSQL".to_string())?;
+        if url.is_empty() || (!url.starts_with("postgres://") && !url.starts_with("postgresql://")) {
+            return Err("SEEALPHA_DATABASE_URL must be a PostgreSQL connection URI".into());
+        }
         match self.auth_mode {
             AuthMode::Token => {
                 if self.token.len() < 32
@@ -115,7 +120,7 @@ impl Config {
     }
 
     pub fn book_path(&self) -> PathBuf {
-        self.state_dir.join("book.sqlite")
+        self.state_dir.join("postgres-state")
     }
 }
 

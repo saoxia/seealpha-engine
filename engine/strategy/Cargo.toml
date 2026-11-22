@@ -12,4 +12,5 @@ rust_decimal = "1"
 sha2 = "0.10"
 thiserror = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
+postgres = "0.19"
+seealpha-database = { path = "../database" }

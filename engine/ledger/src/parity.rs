@@ -1,10 +1,10 @@
 //! Trading account compatibility reads. Non-financial Pipeline state lives in ControlStore.
 use crate::{Ledger, LedgerError};
-use rusqlite::params;
+use seealpha_database::params;
 use serde_json::{Value, json};
 
-fn sqlite(err: rusqlite::Error) -> LedgerError {
-    LedgerError::Sqlite(err.to_string())
+fn db_error(err: seealpha_database::Error) -> LedgerError {
+    LedgerError::Database(err.to_string())
 }
 
 fn parse(text: &str) -> Result<Value, LedgerError> {
@@ -21,16 +21,16 @@ impl Ledger {
         let conn = self.lock()?;
         let mut query = conn
             .prepare(
-                "SELECT position_json FROM positions WHERE tenant_id=?1 AND account_id=?2
-             AND environment=?3 ORDER BY position_id",
+                "SELECT position_json FROM positions WHERE tenant_id=$1 AND account_id=$2
+             AND environment=$3 ORDER BY position_id",
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let rows = query
             .query_map(params![tenant_id, account_id, environment], |row| {
                 row.get::<_, String>(0)
             })
-            .map_err(sqlite)?;
-        rows.map(|row| parse(&row.map_err(sqlite)?)).collect()
+            .map_err(db_error)?;
+        rows.map(|row| parse(&row.map_err(db_error)?)).collect()
     }
 
     pub fn request(
@@ -53,16 +53,16 @@ impl Ledger {
         let conn = self.lock()?;
         let mut query = conn
             .prepare(
-                "SELECT gap_json FROM gaps WHERE tenant_id=?1 AND account_id=?2
-             AND (?3 IS NULL OR scope=?3) ORDER BY scope,gap_key",
+                "SELECT gap_json FROM gaps WHERE tenant_id=$1 AND account_id=$2
+             AND ($3 IS NULL OR scope=$3) ORDER BY scope,gap_key",
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let rows = query
             .query_map(params![tenant_id, account_id, scope], |r| {
                 r.get::<_, String>(0)
             })
-            .map_err(sqlite)?;
-        rows.map(|r| parse(&r.map_err(sqlite)?)).collect()
+            .map_err(db_error)?;
+        rows.map(|r| parse(&r.map_err(db_error)?)).collect()
     }
 
     pub fn event_page(
@@ -76,9 +76,9 @@ impl Ledger {
         let mut query = conn
             .prepare(
                 "SELECT id,kind,body_json,created_at FROM events
-             WHERE tenant_id=?1 AND account_id=?2 AND id>?3 ORDER BY id LIMIT ?4",
+             WHERE tenant_id=$1 AND account_id=$2 AND id>$3 ORDER BY id LIMIT $4",
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let rows = query
             .query_map(
                 params![tenant_id, account_id, after, limit.clamp(1, 1000)],
@@ -91,11 +91,11 @@ impl Ledger {
                     ))
                 },
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let mut items = Vec::new();
         let mut next = after;
         for row in rows {
-            let (id, kind, body, time) = row.map_err(sqlite)?;
+            let (id, kind, body, time) = row.map_err(db_error)?;
             let body = parse(&body)?;
             items.push(json!({"id":id,"kind":kind,"body":body,"created_at":time}));
             next = id;

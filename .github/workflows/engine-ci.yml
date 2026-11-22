@@ -67,11 +67,27 @@ jobs:
   rust-and-strategy:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: seealpha
+          POSTGRES_PASSWORD: seealpha-ci-only
+          POSTGRES_DB: seealpha
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seealpha -d seealpha"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      SEEALPHA_DATABASE_URL: postgres://seealpha:seealpha-ci-only@127.0.0.1:5432/seealpha
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
+      - name: Validate one-time migration script syntax
+        run: python3 -m py_compile scripts/migrate_legacy_sqlite_to_postgres.py
       # Run compilation first so pre-existing workspace formatting debt does not
       # prevent us from observing type/borrow-checker failures in the PR.
       - name: Compile check

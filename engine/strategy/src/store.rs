@@ -1,6 +1,6 @@
 //! Strategy package and issuance persistence on an immutable filesystem.
-//! SQLite indexes issuance metadata; executable artifacts live only in files.
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+//! PostgreSQL indexes issuance metadata; executable artifacts live only in files.
+use seealpha_database::{Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::{self, OpenOptions}, io::{Read, Write}, path::{Component, Path, PathBuf}, sync::{Mutex, atomic::{AtomicU64, Ordering}}};
@@ -72,26 +72,26 @@ CREATE TABLE IF NOT EXISTS strategy_issuances (
 );
 CREATE INDEX IF NOT EXISTS strategy_name_version ON strategy_issuances (tenant_id,code_key,version);
 ";
-fn insert_index(tx: &Transaction<'_>, record: &StoredRecord) -> Result<(), StoreError> {
+fn insert_index(tx: &mut Transaction<'_>, record: &StoredRecord) -> Result<(), StoreError> {
     let l = &record.load;
     tx.execute(
         "INSERT INTO strategy_issuances
          (tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
           parameters_json,entry_point,package_hash,zip_sha256)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        params![l.tenant_id,l.account_id,l.issuance_id,l.code_key,l.version,
-                l.grant_purpose,l.parameters_json,l.entry_point,l.package_hash,record.zip_sha256]
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING",
+        &[&l.tenant_id,&l.account_id,&l.issuance_id,&l.code_key,&l.version,
+                &l.grant_purpose,&l.parameters_json,&l.entry_point,&l.package_hash,&record.zip_sha256]
     ).map_err(err)?;
     Ok(())
 }
 type IndexedIdentity = (String,String,String,String,String,String,Option<String>);
-fn read_index_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StrategyLoad> {
-    Ok(StrategyLoad {
-        tenant_id: row.get(0)?, account_id: row.get(1)?, issuance_id: row.get(2)?,
-        code_key: row.get(3)?, version: row.get(4)?, grant_purpose: row.get(5)?,
-        parameters_json: row.get(6)?, entry_point: row.get(7)?,
-        package_hash: row.get(8)?, archive: Vec::new(),
-    })
+fn read_index_row(row: &postgres::Row) -> StrategyLoad {
+    StrategyLoad {
+        tenant_id: row.get(0), account_id: row.get(1), issuance_id: row.get(2),
+        code_key: row.get(3), version: row.get(4), grant_purpose: row.get(5),
+        parameters_json: row.get(6), entry_point: row.get(7),
+        package_hash: row.get(8), archive: Vec::new(),
+    }
 }
 
 /// Accept ZIP transport with a root manifest.json. Reject unsafe paths,
@@ -139,14 +139,8 @@ impl StrategyStore {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(root, fs::Permissions::from_mode(0o700)).map_err(err)?;
         }
-        let index_file = root.join("index.sqlite");
-        if fs::symlink_metadata(&index_file).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(conflict("strategy index cannot be a symlink"));
-        }
-        let connection = Connection::open(index_file).map_err(err)?;
-        connection.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;"
-        ).map_err(err)?;
+        let connection = Connection::open(root).map_err(err)?;
+        // The index and trading Ledger use the same dedicated PostgreSQL schema.
         connection.execute_batch(INDEX_SCHEMA).map_err(err)?;
         let store = Self { root: root.into(), lock: Mutex::new(()), index: Mutex::new(connection) };
         store.rebuild_index()?;
@@ -158,8 +152,8 @@ impl StrategyStore {
     fn rebuild_index(&self) -> Result<(), StoreError> {
         let _guard = self.lock.lock().map_err(err)?;
         let mut conn = self.index.lock().map_err(err)?;
-        let tx = conn.transaction().map_err(err)?;
-        tx.execute("DELETE FROM strategy_issuances", []).map_err(err)?;
+        let mut tx = conn.transaction().map_err(err)?;
+        // Never erase other Engine instances' metadata in a shared database.
         for tenant in fs::read_dir(&self.root).map_err(err)? {
             let tenant = tenant.map_err(err)?;
             if !tenant.file_type().map_err(err)?.is_dir() { continue; }
@@ -176,7 +170,20 @@ impl StrategyStore {
                         || record.load.issuance_id != item.file_name().to_string_lossy()
                     { return Err(conflict("issuance scope mismatch on startup")); }
                     self.check_artifact(&item.path(), &record)?;
-                    insert_index(&tx, &record)?;
+                    insert_index(&mut tx, &record)?;
+                    let l = &record.load;
+                    let prior = tx.query_one(
+                        "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+                         FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
+                        &[&l.tenant_id,&l.account_id,&l.issuance_id],
+                    ).map_err(err)?;
+                    let identity: IndexedIdentity = (prior.get(0),prior.get(1),prior.get(2),
+                        prior.get(3),prior.get(4),prior.get(5),prior.get(6));
+                    if identity != (l.code_key.clone(),l.version.clone(),l.grant_purpose.clone(),
+                        l.parameters_json.clone(),l.entry_point.clone(),l.package_hash.clone(),
+                        record.zip_sha256.clone()) {
+                        return Err(conflict("indexed issuance differs from verified disk record"));
+                    }
                 }
             }
         }
@@ -206,36 +213,45 @@ impl StrategyStore {
 
     fn index_record(&self, record: &StoredRecord) -> Result<(), StoreError> {
         let mut conn = self.index.lock().map_err(err)?;
-        let tx = conn.transaction().map_err(err)?;
+        let mut tx = conn.transaction().map_err(err)?;
         let l = &record.load;
-        let current: Option<IndexedIdentity> = tx.query_row(
+        let current: Option<IndexedIdentity> = tx.query_opt(
             "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
-             FROM strategy_issuances WHERE tenant_id=?1 AND account_id=?2 AND issuance_id=?3",
-            params![l.tenant_id,l.account_id,l.issuance_id],
-            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)),
-        ).optional().map_err(err)?;
+             FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
+            &[&l.tenant_id,&l.account_id,&l.issuance_id],
+        ).map_err(err)?.map(|r| (r.get(0),r.get(1),r.get(2),r.get(3),r.get(4),r.get(5),r.get(6)));
         let expected = (l.code_key.clone(),l.version.clone(),l.grant_purpose.clone(),
             l.parameters_json.clone(),l.entry_point.clone(),l.package_hash.clone(),
             record.zip_sha256.clone());
         match current {
             Some(prior) if prior != expected => return Err(conflict("indexed issuance differs")),
             Some(_) => (),
-            None => insert_index(&tx, record)?,
+            None => {
+                insert_index(&mut tx, record)?;
+                let actual = tx.query_one(
+                    "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+                     FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
+                    &[&l.tenant_id,&l.account_id,&l.issuance_id],
+                ).map_err(err)?;
+                let indexed: IndexedIdentity = (actual.get(0),actual.get(1),actual.get(2),
+                    actual.get(3),actual.get(4),actual.get(5),actual.get(6));
+                if indexed != expected { return Err(conflict("indexed issuance differs")); }
+            },
         }
         tx.commit().map_err(err)
     }
 
-    /// Metadata-only lookup using SQLite, without walking strategy folders.
+    /// Metadata-only lookup using PostgreSQL, without walking strategy folders.
     pub fn list(&self, tenant: &str, account: &str) -> Result<Vec<StrategyLoad>, StoreError> {
         if !valid_id(tenant) || !valid_id(account) { return Err(conflict("invalid scope")); }
         let conn = self.index.lock().map_err(err)?;
-        let mut stmt = conn.prepare(
+        let rows = conn.query(
             "SELECT tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
                     parameters_json,entry_point,package_hash
-             FROM strategy_issuances WHERE tenant_id=?1 AND account_id=?2 ORDER BY issuance_id"
+             FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 ORDER BY issuance_id",
+            &[&tenant,&account],
         ).map_err(err)?;
-        let rows = stmt.query_map(params![tenant,account],read_index_row).map_err(err)?;
-        rows.collect::<Result<Vec<_>,_>>().map_err(err)
+        Ok(rows.iter().map(read_index_row).collect())
     }
     fn folder(&self, load: &StrategyLoad) -> PathBuf {
         self.root.join(&load.tenant_id).join(&load.account_id).join(&load.issuance_id)
@@ -330,7 +346,7 @@ impl StrategyStore {
         self.index_record(&record)
     }
 
-    /// Execution: find issuance metadata in SQLite, then verify on-disk bytes.
+    /// Execution: find issuance metadata in PostgreSQL, then verify on-disk bytes.
     pub fn strategies(&self, tenant: &str, account: &str) -> Result<Vec<StrategyLoad>, StoreError> {
         let indexed = self.list(tenant, account)?;
         let _guard = self.lock.lock().map_err(err)?;
@@ -369,6 +385,7 @@ mod tests {
         let bytes = buffer.into_inner();
         assert_eq!(unpack_native_zip(&bytes).unwrap().0, manifest);
         let root = std::env::temp_dir().join(format!("seealpha-zip-{}-{}",std::process::id(),STAGING.fetch_add(1,Ordering::Relaxed)));
+        if std::env::var("SEEALPHA_DATABASE_URL").is_err() { return; }
         let db = StrategyStore::open(&root).unwrap();
         let load = StrategyLoad {
             tenant_id:"tenant".into(), account_id:"account".into(), issuance_id:"zip-issue".into(),
@@ -405,6 +422,7 @@ mod tests {
     }
     #[test]
     fn persists_and_rejects_changed_issuance() {
+        if std::env::var("SEEALPHA_DATABASE_URL").is_err() { return; }
         let root = std::env::temp_dir().join(format!("seealpha-fs-{}-{}",std::process::id(),STAGING.fetch_add(1,Ordering::Relaxed)));
         let load=StrategyLoad{tenant_id:"tenant".into(),account_id:"account".into(),issuance_id:"issue".into(),
             code_key:"ema_crossover".into(),version:"1".into(),grant_purpose:"development".into(),
@@ -414,10 +432,13 @@ mod tests {
          let mut altered=load.clone();altered.archive=b"other".to_vec();altered.package_hash=sha(b"other");assert!(db.insert(&altered).is_err());}
         let db=StrategyStore::open(&root).unwrap();
         assert_eq!(db.strategies("tenant","account").unwrap(),vec![load]);
-        let conn = Connection::open(root.join("index.sqlite")).unwrap();
-        let columns: String = conn.query_row("SELECT sql FROM sqlite_master WHERE name='strategy_issuances'", [], |row| row.get(0)).unwrap();
-        assert!(!columns.contains("BLOB"));
-        assert!(!columns.contains("archive"));
+        let conn = db.index.lock().unwrap();
+        let columns = conn.query(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema=current_schema() AND table_name='strategy_issuances'
+             AND column_name IN ('archive','package_blob')", &[]
+        ).unwrap();
+        assert!(columns.is_empty());
         drop(conn);
         assert!(db.strategies("tenant","another").unwrap().is_empty());
         drop(db);let _=fs::remove_dir_all(root);

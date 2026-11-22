@@ -7,6 +7,13 @@ PG_CLUSTER=seealpha
 PG_DATA="${SEEALPHA_POSTGRES_DATA_DIR:-/app/.local/state/postgresql}"
 PG_RUNTIME=/run/postgresql
 PG_CREDENTIAL_FILE="${SEEALPHA_POSTGRES_CREDENTIAL_FILE:-/app/.local/state/.postgres-password}"
+# Never start a fresh PostgreSQL ledger while unmigrated trading evidence exists.
+legacy_state_dir="${ENGINE_STATE:-/app/.local/state/engine}"
+if [[ ( -f "$legacy_state_dir/book.sqlite" || -f "$legacy_state_dir/control.sqlite" ) \
+      && ! -f "$legacy_state_dir/.postgres-cutover-complete" ]]; then
+  echo "Unmigrated SQLite state detected. Complete offline import before starting Engine." >&2
+  exit 1
+fi
 new_database=0
 
 postgres_pid=""
@@ -131,6 +138,9 @@ fi
 
 # The observer reads the credential from this file. No password command-line flag.
 export SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE="$PG_CREDENTIAL_FILE"
+# The Engine uses the existing local PostgreSQL instance for SeeAlpha-owned state.
+# Do not print the connection string: it includes the persistent database password.
+export SEEALPHA_DATABASE_URL="postgresql://seealpha_cache:${PG_PASSWORD}@127.0.0.1:5432/seealpha_cache"
 # Local endpoint hint only; actual native Cache is enabled explicitly on observer.
 
 unset PG_PASSWORD

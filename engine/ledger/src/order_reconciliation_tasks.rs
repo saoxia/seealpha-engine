@@ -2,10 +2,10 @@
 //! This queue is NOT an exchange sender, an ACK verifier or a fill source.
 //! A crashed worker lease may expire; only signed read queries can be retried.
 use crate::{Ledger, LedgerError};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 
-fn sql(err: rusqlite::Error) -> LedgerError {
-    LedgerError::Sqlite(err.to_string())
+fn sql(err: seealpha_database::Error) -> LedgerError {
+    LedgerError::Database(err.to_string())
 }
 fn conflict(msg: &str) -> LedgerError {
     LedgerError::Conflict(msg.into())
@@ -50,12 +50,12 @@ impl Ledger {
             .map_err(sql)?;
         let inserted = tx
             .execute(
-                "INSERT OR IGNORE INTO order_reconciliation_tasks(
+                "INSERT INTO order_reconciliation_tasks(
                 tenant_id,account_id,environment,request_id,client_order_id,
                 state,attempts,next_due_ms,updated_at_ms)
              SELECT tenant_id,account_id,environment,request_id,client_order_id,
-                    'pending',0,?2,?2
-             FROM order_intents WHERE tenant_id=?1",
+                    'pending',0,$2,$2
+             FROM order_intents WHERE tenant_id=$1 ON CONFLICT DO NOTHING",
                 params![tenant, now_ms],
             )
             .map_err(sql)?;
@@ -90,9 +90,9 @@ impl Ledger {
         let found: Option<(String, String)> = tx
             .query_row(
                 "SELECT account_id,request_id FROM order_reconciliation_tasks
-             WHERE tenant_id=?1 AND (
-                (state IN ('pending','retry') AND next_due_ms<=?2)
-                 OR (state='leased' AND lease_until_ms<=?2)
+             WHERE tenant_id=$1 AND (
+                (state IN ('pending','retry') AND next_due_ms<=$2)
+                 OR (state='leased' AND lease_until_ms<=$2)
              )
              ORDER BY next_due_ms,account_id,request_id LIMIT 1",
                 params![tenant, now_ms],
@@ -105,8 +105,8 @@ impl Ledger {
         };
         tx.execute(
             "UPDATE order_reconciliation_tasks SET state='leased',attempts=attempts+1,
-                lease_owner=?4,lease_until_ms=?5,updated_at_ms=?3
-             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?6",
+                lease_owner=$4,lease_until_ms=$5,updated_at_ms=$3
+             WHERE tenant_id=$1 AND account_id=$2 AND request_id=$6",
             params![tenant, account, now_ms, worker, deadline, request],
         )
         .map_err(sql)?;
@@ -115,7 +115,7 @@ impl Ledger {
                 "SELECT tenant_id,account_id,environment,request_id,client_order_id,
                     state,attempts,next_due_ms,lease_owner,lease_until_ms,last_error_code
              FROM order_reconciliation_tasks
-             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+             WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
                 params![tenant, account, request],
                 |row| {
                     Ok(ReconciliationTask {
@@ -171,7 +171,7 @@ impl Ledger {
             .query_row(
                 "SELECT state,lease_owner,lease_until_ms,attempts
              FROM order_reconciliation_tasks
-             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+             WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
                 params![tenant, account, request],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
@@ -200,10 +200,10 @@ impl Ledger {
             .checked_add(delay)
             .ok_or_else(|| conflict("retry clock overflow"))?;
         tx.execute(
-            "UPDATE order_reconciliation_tasks SET state=?4,
-             next_due_ms=?5,lease_owner=NULL,lease_until_ms=NULL,
-             last_error_code=?6,updated_at_ms=?7
-             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+            "UPDATE order_reconciliation_tasks SET state=$4,
+             next_due_ms=$5,lease_owner=NULL,lease_until_ms=NULL,
+             last_error_code=$6,updated_at_ms=$7
+             WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
             params![
                 tenant, account, request, next_state, due, error_code, now_ms
             ],
@@ -226,7 +226,7 @@ impl Ledger {
             "SELECT tenant_id,account_id,environment,request_id,client_order_id,
                     state,attempts,next_due_ms,lease_owner,lease_until_ms,last_error_code
              FROM order_reconciliation_tasks
-             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+             WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
             params![tenant, account, request],
             |row| {
                 Ok(ReconciliationTask {
