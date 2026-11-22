@@ -48,3 +48,20 @@ USD-M 当前只支持显式的 **OneWay/Netting** 测试观测。已有 Hedge �
 - 通用 Basket 状态检查点、不可变订单意图与真实成交/结算证据仍由 SeeAlpha 维护；这些不是重复账户余额缓存。
 
 后续生产接线应直接消费可信 Nautilus Account / Position / Cache，并将状态验证与实际发送统一交由原生执行节点处理。禁止重新引入旧余额 JSON 快照表。
+
+## Runtime 只读接线（本地 Unix Socket）
+
+在 Linux/macOS 上，原生观察进程和 Engine 使用**同一个仅服务账户进程所属用户可访问的私有目录**（0700），例如 `/var/lib/seealpha/native-account-sockets`；目录必须预先创建，不接受符号链接。运行测试网原生观察进程时配置：
+
+```bash
+export SEEALPHA_ACCOUNT_SOCKET_DIR=/var/lib/seealpha/native-account-sockets
+export SEEALPHA_TENANT_ID=tenant1
+export SEEALPHA_ENGINE_ACCOUNT_ID=account1
+# 另外提供观察器原有的 Binance Testnet 凭据
+cargo run --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml \
+  --bin native_account_observer -- spot BINANCE-SPOT-001 ./nautilus-account-state
+```
+
+Engine 启动时为同一目录配置 `ENGINE_NATIVE_ACCOUNT_SOCKET_DIR`。Runtime 在账户快照查询中只接受 `sandbox`，不再收取 API 密钥；它读取由固定账户的原生节点提供的 `tenant1--account1--sandbox.sock`，校验来源、账户、环境和 60 秒时效。Socket 权限为 0600，目录权限为 0700；目录内已有同名 Socket 时原生进程拒绝覆盖。节点退出时移除 Socket。没有原生有效报告则返回冲突错误，而不是回退到旧 SQLite 或可伪造的外部 JSON。
+
+这是单机部署中的**只读测试网账户余额和保证金查询**。目录访问控制并非跨主机或同 Unix UID 进程之间的强身份认证，因此不应允许不可信程序以同一 Unix 用户运行。它没有读取 Nautilus Position Cache、没有完成资金费/成交历史对账，也没有接通实盘或发送订单；任何真实交易均继续 fail-closed。
