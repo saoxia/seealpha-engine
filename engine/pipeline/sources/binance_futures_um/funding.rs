@@ -435,6 +435,39 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[test]
+    fn funding_catalog_round_trip_and_conflict_policy() {
+        let path = std::env::temp_dir().join(format!("seealpha-um-funding-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()));
+        std::fs::create_dir_all(&path).unwrap();
+        let catalog = Catalog::open_existing(&path).unwrap();
+        let rows = vec![
+            FundingObservation { symbol: "BTCUSDT".into(), funding_time_ms: 100,
+                funding_rate: "-0.0002".into(), mark_price: "30000".into(),
+                rate_type: "Unknown".into() },
+            FundingObservation { symbol: "BTCUSDT".into(), funding_time_ms: 150,
+                funding_rate: "0.0001".into(), mark_price: "31000".into(),
+                rate_type: "Special".into() },
+        ];
+        assert_eq!(persist_funding(&catalog, "BTCUSDT", &rows).unwrap(), 2);
+        assert_eq!(persist_funding(&catalog, "BTCUSDT", &rows).unwrap(), 0);
+        let old = read_funding(&catalog, "BTCUSDT", 0, 200, 100).unwrap();
+        assert_eq!(old.len(), 2);
+        assert_eq!(old[0].rate_type, "Unknown");
+        assert_eq!(old[1].funding_rate.parse::<Decimal>().unwrap(), Decimal::new(1, 4));
+        let extra = FundingObservation { symbol:"BTCUSDT".into(), funding_time_ms:200,
+            funding_rate:"-0.0003".into(), mark_price:"32000".into(),
+            rate_type:"Regular".into() };
+        assert_eq!(persist_funding(&catalog, "BTCUSDT", &[rows[1].clone(), extra]).unwrap(), 1);
+        assert_eq!(read_funding(&catalog, "BTCUSDT", 0, 300, 100).unwrap().len(), 3);
+        let changed = FundingObservation { funding_rate:"0.0009".into(), ..rows[0].clone() };
+        assert!(persist_funding(&catalog, "BTCUSDT", &[changed]).is_err());
+        assert!(read_funding(&catalog, "ETHUSDT", 0, 300, 100).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
     fn settled_funding_parses_without_fabricated_eight_hour_intervals() {
         let raw = json!([{"symbol":"BTCUSDT","fundingTime":11,
             "fundingRate":"-0.0002","markPrice":"30000","rateType":"Regular"},
