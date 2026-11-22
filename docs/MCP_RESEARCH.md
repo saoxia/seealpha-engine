@@ -1,5 +1,8 @@
 # Engine 原生 MCP Research 接口（可选）
 
+> **当前实现说明（2026-11-22，PR #209）**：MCP 现在仅公开只读 `list_datasets` 工具，异步回测提交/查询/取消和候选回测工具已移除。下述其他工具映射属于旧规划或历史记录，不代表当前可用能力。
+
+
 SeeAlpha Engine 在现有独立 `/research/v1/*` HTTP Research API 之外，可以**显式启用**
 一个 JSON-only、无会话的 **MCP Streamable HTTP** 适配层。其用途是供已获任务授权的
 AI 研究客户端发现和调用 Engine 研究工具，**不是交易管理 API，也不替代 Platform**。

@@ -12,7 +12,7 @@ pub struct Tenant {
 use seealpha_database::{Connection, OptionalExtension, params};
 
 impl StateStore {
-    /// Enumerate active tenant scopes for safe recovery of never-started jobs.
+    /// Enumerate active tenant scopes for read-only outstanding order recovery.
     /// This does not grant a new execution or exchange order permission.
     pub fn active_tenant_ids(&self) -> Result<Vec<String>, LedgerError> {
         let connection = self.lock()?;

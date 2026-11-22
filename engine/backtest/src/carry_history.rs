@@ -153,7 +153,7 @@ mod tests {
             low: Decimal::ONE,
             close: Decimal::ONE,
         };
-        let bars = align_bars(&[bar.clone()], &[bar], 60_000_000_000, Some(0), None).unwrap();
+        let bars = align_bars(std::slice::from_ref(&bar), std::slice::from_ref(&bar), 60_000_000_000, Some(0), None).unwrap();
         let events = merge_funding(
             bars,
             &[FundingObservation {

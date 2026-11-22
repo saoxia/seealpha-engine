@@ -1,5 +1,8 @@
 # Engine Research HTTP v1（开发阶段）
 
+> **当前实现说明（2026-11-22，PR #209）**：本页包含已退役的设计与历史计划。当前 Research HTTP 仅保留 `GET /research/v1/datasets` 和明确返回不可用的快照入口；`/research/v1/backtests*`、候选回测及其队列已删除。同步历史回测属于 Engine 常规 API，不受此变更影响。下文回测队列、Python 候选及 TaskCoordinator 内容仅供历史参考，不代表当前功能。
+
+
 > 本接口位于独立 `saoxia/seealpha-engine`，是对已有 Engine HTTP v2 的**新增、默认关闭**的研究服务。不能视为生产环境已启用或平台/Harness 已完成联调。
 
 ## 启用条件

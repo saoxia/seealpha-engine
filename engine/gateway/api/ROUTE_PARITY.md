@@ -2,7 +2,9 @@
 
 > 基线：`main` 提交 `83a19d857bca0ec16faf1a731ccb9835081672ab`（2026-11-21）；本表由 Python 六个路由源文件及 Rust 四个路由源文件的装饰器与 `.route(...)` 声明逐条扫描后，结合实现语义复核。它是入口覆盖矩阵，**不是**逐字段行为已通过验收的声明。
 
-Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（包含 Rust 原生新增路由）。Python 同名路由中的 GET/POST 按不同 method 计数；MCP 位于 `POST /research/mcp`，未纳入 Python decorators 数。所有下面的“已路由”均不等于功能完全等价。
+历史扫描：Python 基线 **101** 条 method/path；当时 Rust 分支找到 **87** 条声明（包含 Rust 原生新增路由）。该数字是历史快照，非当前路由数量。Python 同名路由中的 GET/POST 按不同 method 计数；MCP 位于 `POST /research/mcp`，未纳入 Python decorators 数。所有下面的“已路由”均不等于功能完全等价。
+
+> **当前变更（2026-11-22，PR #209）**：按产品决策删除账户连接/快照、应用异常事件、ClickHouse 配置、实验性原生行情源管理、公共 Catalog K 线服务、候选演示回测和异步回测任务。下方“已移除（按需精简）”不是未完成事项，不应按旧 Python parity 自动恢复。历史计数和其他条目需以当前 Router 代码为准。保留租户安全校验、历史数据任务及同步真实历史回测所需的内部 Catalog 操作。
 
 ## 统一安全与契约边界
 
@@ -12,9 +14,9 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 | 契约版本 | 管理路由提供 v2 请求时不匹配 426；响应头为 `X-SeeAlpha-Engine-Contract-Version: 2` | 保留管理 v2；Research HTTP 必须同时提供 v2 与 Research v1，缺失/不符 426；MCP 使用自己的协议头 | Research 错误响应也返回双契约头 |
 | 租户边界 | 固定租户不匹配 403；Research HMAC Grant 必须绑定开发租户与活跃状态 | 固定租户 gate 403；独立 Research 签名、有效期、租户用途、租户活跃状态二次检查 | 不接受请求体 tenant_id/purpose 代替 Grant |
 | 请求验证 | Pydantic V2 字段类型/长度、extra=forbid，422 | 研究请求用 serde `deny_unknown_fields` + 业务校验 422；管理各路由仍存在 400/422 差异 | 未宣称所有 422 响应体逐字一致 |
-| 异步任务 | TaskCoordinator：PENDING/RUNNING/SUCCEEDED/FAILED/CANCELLED/INTERRUPTED | Rust 队列为 queued/running/completed/failed/cancelled/interrupted；已登记、状态可读，取消仅 queued；研究任务绑定 Grant `task_id` | 未完成 Python 重试/工作者资源配额完全等价 |
+| 异步任务 | TaskCoordinator：PENDING/RUNNING/SUCCEEDED/FAILED/CANCELLED/INTERRUPTED | 当前仅保留 **历史行情数据任务** 的持久队列；异步回测任务已主动退役 | 回测仍可通过同步历史回测入口运行 |
 | 快照 | 持久队列写入不可变 Parquet + SHA-256，202，按任务下载 | Runtime 当前只保存原请求文本摘要，未创建 Parquet；HTTP 改为明确 501 | 需 Runtime 新增真正快照任务接口 |
-| MCP | 按 grant.ops 过滤工具与执行权限，JSON-RPC | 只宣告真正可执行的 datasets、回测提交/读取/取消；无虚构回测或假取消 | 仅开发租户、默认关闭、拒绝 Origin、工具仍二次验权 |
+| MCP | 按 grant.ops 过滤工具与执行权限，JSON-RPC | 仅发布只读 `list_datasets`；回测提交/读取/取消已主动退役 | 仅开发租户、默认关闭、拒绝 Origin、工具仍二次验权 |
 
 ## 全量 Python 路由逐条对照
 
@@ -23,7 +25,7 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 | Method | Path | Python 请求 | Python 成功响应 | Rust 状态 | 核心差异 / 失败语义 |
 |---|---|---|---|---|---|
 | GET | `/health` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| PUT | `/tenants/{tenant_id}` | `TenantBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| PUT | `/tenants/{tenant_id}` | `TenantBody` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/runnable` | `RunnableBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/drop` | `无体或对象` | 删除租户状态 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/workers/{worker_id}` | `Query / path` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
@@ -36,10 +38,10 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 
 | Method | Path | Python 请求 | Python 成功响应 | Rust 状态 | 核心差异 / 失败语义 |
 |---|---|---|---|---|---|
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/connections` | `Credentials` | JSON 对象/列表 | **已路由（受限）** | 凭据不落库；网关不可用时 409；公共 401/403/426；422/404/409 按实现复核 |
-| DELETE | `/tenants/{tenant_id}/accounts/{account_id}/connections` | `Query / path` | JSON 对象/列表 | **已路由（受限）** | 凭据不落库；网关不可用时 409；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/connections` | `Credentials` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
+| DELETE | `/tenants/{tenant_id}/accounts/{account_id}/connections` | `Query / path` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/health` | `Query / path` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/snapshots` | `Credentials` | 账户快照 | **已路由（受限）** | 凭据不落库；网关不可用时 409；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/snapshots` | `Credentials` | 账户快照 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/trading/state` | `TradingStateBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/spot/trading/state` | `SpotTradingStateBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/spot/orders` | `SpotCommandBody` | 委托/受理状态（非成交） | **已路由（受限）** | 实盘写入关闭/须预登记，不能当作完整 Python 交易行为等价；公共 401/403/426；422/404/409 按实现复核 |
@@ -48,12 +50,12 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/orders` | `Query / path` | 委托/受理状态（非成交） | **已路由（受限）** | 实盘写入关闭/须预登记，不能当作完整 Python 交易行为等价；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/fills` | `Query / path` | 真实 Fill 证据 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/positions` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| GET | `/tenants/{tenant_id}/accounts/{account_id}/gaps` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/gaps` | `GapBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| GET | `/tenants/{tenant_id}/accounts/{account_id}/gaps` | `Query / path` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/gaps` | `GapBody` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/reconcile` | `ReconcileBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/ledger-sync` | `无体或对象` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| GET | `/tenants/{tenant_id}/accounts/{account_id}/events` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| GET | `/tenants/{tenant_id}/accounts/{account_id}/events` | `Query / path` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers/note` | `WorkerNote` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers` | `WorkerBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/strategy-preview` | `PreviewBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
@@ -92,11 +94,11 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 |---|---|---|---|---|---|
 | POST | `/tenants/{tenant_id}/data/funding` | `FundingQuery` | JSON 对象/列表 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/data/datasets` | `Inventory` | JSON 对象/列表 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/data/latest` | `Inventory` | 最新持久结果 / 404 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/data/coverage` | `Range` | 历史覆盖 / 缺口 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/data/prepare-plan` | `Range` | 历史覆盖 / 缺口 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/data/page` | `Page` | 历史数据 / 图表 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/data/chart` | `Chart` | 历史数据 / 图表 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/data/latest` | `Inventory` | 最新持久结果 / 404 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
+| POST | `/tenants/{tenant_id}/data/coverage` | `Range` | 历史覆盖 / 缺口 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
+| POST | `/tenants/{tenant_id}/data/prepare-plan` | `Range` | 历史覆盖 / 缺口 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
+| POST | `/tenants/{tenant_id}/data/page` | `Page` | 历史数据 / 图表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
+| POST | `/tenants/{tenant_id}/data/chart` | `Chart` | 历史数据 / 图表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 
 ### 行情控制（15）
 
