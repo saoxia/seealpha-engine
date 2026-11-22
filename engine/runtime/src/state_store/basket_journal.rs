@@ -1,5 +1,5 @@
 //! PostgreSQL compare-and-swap persistence for research basket journals.
-//! The caller must validate journal state with seealpha-portfolio before writing.
+//! The caller must validate journal state with seealpha-execution before writing.
 use super::{StateStore, LedgerError};
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 #[derive(Debug, Clone, PartialEq, Eq)]

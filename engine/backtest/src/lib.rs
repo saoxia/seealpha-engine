@@ -10,7 +10,7 @@ pub mod timeline;
 pub mod window;
 
 use rust_decimal::Decimal;
-use seealpha_portfolio::{
+use seealpha_execution::{
     MemberTarget, PaperFill, TargetHolding, TargetPublication, clip_member_targets,
     net_signed_quantity, quantize_toward_zero, replay_targets,
 };
@@ -311,7 +311,7 @@ pub fn clip_to_risk(quantity: Decimal, risk_limit: Decimal) -> Result<Decimal, B
         signed_quantity: quantity,
         risk_exit: false,
     }];
-    let clipped = seealpha_portfolio::clip_member_targets(&targets, risk_limit)
+    let clipped = seealpha_execution::clip_member_targets(&targets, risk_limit)
         .map_err(|error| BacktestError::Portfolio(error.to_string()))?;
     Ok(clipped[0].signed_quantity)
 }

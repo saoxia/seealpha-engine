@@ -1,8 +1,8 @@
 //! Native target publication through the portfolio coordinator.
 //! Validates the strategy holding contract without involving Python sizing.
 use rust_decimal::Decimal;
-use seealpha_portfolio::coordinator::{Command, Coordinator, CoordinatorError};
-use seealpha_portfolio::{TargetHolding, TargetHoldingError};
+use seealpha_execution::coordinator::{Command, Coordinator, CoordinatorError};
+use seealpha_execution::{TargetHolding, TargetHoldingError};
 
 fn holding(q: Option<Decimal>, w: Option<Decimal>) -> TargetHolding {
     TargetHolding::new("ETHUSDT", q, w).unwrap()

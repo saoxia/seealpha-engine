@@ -1,7 +1,7 @@
 //! Research-only native basket runtime adapter with authenticated tenant scope
 //! and transactional checkpoint persistence. No venue transport is exposed.
 use crate::{Runtime, RuntimeError, map_ledger};
-use seealpha_portfolio::{
+use seealpha_execution::{
     basket::{BasketError, Checkpoint, LegId},
     journal::{StoredCheckpoint, decode_checkpoint, encode_checkpoint},
 };
@@ -119,8 +119,8 @@ impl Runtime {
         account: &str,
         basket: &str,
         expected_revision: &str,
-        manifest: &seealpha_portfolio::order_evidence::BoundPhase,
-        orders: &[seealpha_portfolio::order_evidence::OrderEvidence],
+        manifest: &seealpha_execution::order_evidence::BoundPhase,
+        orders: &[seealpha_execution::order_evidence::OrderEvidence],
         positions: &std::collections::BTreeMap<LegId, rust_decimal::Decimal>,
         position_ts: u64,
         now_ns: u64,
@@ -132,7 +132,7 @@ impl Runtime {
         if stored.revision != expected_revision {
             return Err(RuntimeError::Conflict("stale basket revision".into()));
         }
-        let updated = seealpha_portfolio::order_evidence::reconcile_order_evidence(
+        let updated = seealpha_execution::order_evidence::reconcile_order_evidence(
             stored.checkpoint,
             manifest,
             orders,
@@ -153,17 +153,17 @@ impl Runtime {
         basket: &str,
         expected_revision: &str,
         positions: &std::collections::BTreeMap<LegId, rust_decimal::Decimal>,
-        evidence: &std::collections::BTreeMap<LegId, seealpha_portfolio::basket::Evidence>,
-        limits: seealpha_portfolio::risk::RiskLimits,
+        evidence: &std::collections::BTreeMap<LegId, seealpha_execution::basket::Evidence>,
+        limits: seealpha_execution::risk::RiskLimits,
         pending_since_ns: Option<u64>,
-    ) -> Result<seealpha_portfolio::risk::RiskObservation, RuntimeError> {
+    ) -> Result<seealpha_execution::risk::RiskObservation, RuntimeError> {
         let stored = self
             .recover_basket_checkpoint(tenant, account, basket)?
             .ok_or_else(|| RuntimeError::NotFound("basket checkpoint missing".into()))?;
         if stored.revision != expected_revision {
             return Err(RuntimeError::Conflict("stale basket revision".into()));
         }
-        let observation = seealpha_portfolio::risk::observe_phase(
+        let observation = seealpha_execution::risk::observe_phase(
             stored.checkpoint,
             positions,
             evidence,

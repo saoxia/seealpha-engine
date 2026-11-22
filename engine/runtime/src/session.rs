@@ -2,7 +2,7 @@ use crate::{Runtime, RuntimeError, map_ledger, map_strategy};
 use rust_decimal::Decimal;
 use crate::state_store::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
-use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
+use seealpha_execution::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
 use seealpha_strategy::executor::{ExecutionInput, IssuedNativeEmaExecutor, NativeEmaExecutor, StrategyExecutor};
 use seealpha_strategy::{
     AccountScope, IssuedStrategy, Publication, StrategyBar, digest_dir,

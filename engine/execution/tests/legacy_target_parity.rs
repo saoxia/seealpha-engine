@@ -1,7 +1,7 @@
-//! Contract parity cases from legacy engine/portfolio/targets.py.
+//! Contract parity cases from legacy engine/execution/targets.py.
 //! Native-only tests do not authorize removing the legacy Python runtime.
 use rust_decimal::Decimal;
-use seealpha_portfolio::{TargetHolding, TargetHoldingError};
+use seealpha_execution::{TargetHolding, TargetHoldingError};
 use std::str::FromStr;
 
 fn dec(value: &str) -> Decimal {

@@ -4,17 +4,17 @@
 use rust_decimal::Decimal;
 use std::collections::BTreeMap;
 
-use seealpha_portfolio::basket::{Checkpoint, Evidence, LegId, Phase, Plan, Product, State};
-use seealpha_portfolio::coordinator::{
+use seealpha_execution::basket::{Checkpoint, Evidence, LegId, Phase, Plan, Product, State};
+use seealpha_execution::coordinator::{
     Bar, Command, Coordinator, CoordinatorError, Side, VirtualKind, VirtualOrder,
 };
-use seealpha_portfolio::coordinator_snapshot::{decode_coordinator, encode_coordinator};
-use seealpha_portfolio::journal::{decode_checkpoint, encode_checkpoint};
-use seealpha_portfolio::order_evidence::{
+use seealpha_execution::coordinator_snapshot::{decode_coordinator, encode_coordinator};
+use seealpha_execution::journal::{decode_checkpoint, encode_checkpoint};
+use seealpha_execution::order_evidence::{
     OrderEvidence, VenueOrderStatus, bind_phase_orders, reconcile_order_evidence,
 };
-use seealpha_portfolio::phase_gate::{PhaseGateLimits, gate_next_phase};
-use seealpha_portfolio::risk::{RiskLimits, observe_phase};
+use seealpha_execution::phase_gate::{PhaseGateLimits, gate_next_phase};
+use seealpha_execution::risk::{RiskLimits, observe_phase};
 
 fn d(x: i64) -> Decimal {
     Decimal::from(x)

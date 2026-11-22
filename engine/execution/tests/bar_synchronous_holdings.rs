@@ -1,7 +1,7 @@
 //! Bar-synchronous portfolio target replay: avoid artificial fills from
 //! opposing strategies publishing on the same market bar.
 use rust_decimal::Decimal;
-use seealpha_portfolio::{
+use seealpha_execution::{
     HoldingPublication, HoldingReplayError, IndexedHoldingPublication,
     TargetHolding, replay_holdings_by_bar,
 };

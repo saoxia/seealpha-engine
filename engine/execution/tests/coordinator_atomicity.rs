@@ -1,6 +1,6 @@
 //! Coordinator failure atomicity and explicit flatten semantics.
 use rust_decimal::Decimal;
-use seealpha_portfolio::coordinator::{
+use seealpha_execution::coordinator::{
     Coordinator, CoordinatorError, Side, VirtualKind, VirtualOrder,
 };
 

@@ -2,7 +2,7 @@
 //! Commands are never sent to the venue by this adapter.
 use crate::{Runtime, RuntimeError, map_ledger};
 use rust_decimal::Decimal;
-use seealpha_portfolio::{
+use seealpha_execution::{
     TargetHolding,
     coordinator::{Bar, Command, Coordinator, VirtualFill, VirtualKind, VirtualOrder},
     coordinator_snapshot::{decode_coordinator, encode_coordinator},

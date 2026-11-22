@@ -7,7 +7,7 @@ use seealpha_backtest::{
     AllocatedPublishedTarget, HistoryBar, report_json, run_allocated_backtest_with_curve,
 };
 use seealpha_market::{check_symbol, interval_ms};
-use seealpha_portfolio::TargetHolding;
+use seealpha_execution::TargetHolding;
 use seealpha_strategy::{AccountScope, IssuedStrategy, StrategyBar, executor::{ExecutionInput, IssuedNativeEmaExecutor, StrategyExecutor}};
 use serde_json::{Value, json};
 
