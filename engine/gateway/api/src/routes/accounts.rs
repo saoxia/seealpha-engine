@@ -46,7 +46,6 @@ pub(super) async fn account_health(
         .map_err(AppError::from)?;
     let connections = state
         .runtime
-        .ledger
         .account_connections(&tenant_id, &account_id)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
     Ok(Json(json!({
