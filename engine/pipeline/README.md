@@ -45,7 +45,7 @@ Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、�
 
 ## 私有账户事件 Pipeline（新增 V2）
 
-`account_events/` 是独立的 Rust crate `seealpha-account-events-pipeline`，负责将经过交易所连接层获取的 Binance 私有账户经济事件规范化为跨交易所的 `MovementInput`，然后由 `ledger/movements` 提供通用、幂等、不可变的事件持久化。这里的 **Pipeline** 表达数据处理过程，不意味着所有账户事件必须进入行情 Parquet Catalog。
+`binance_account_events/` 是独立的 Rust crate `seealpha-binance-account-events-pipeline`，负责将经过交易所连接层获取的 Binance 私有账户经济事件规范化为跨交易所的 `MovementInput`，然后由 `ledger/movements` 提供通用、幂等、不可变的事件持久化。这里的 **Pipeline** 表达数据处理过程，不意味着所有账户事件必须进入行情 Parquet Catalog。
 
 - Binance 特有的字段、产品代码、成交 ID、资金费结算类型和 Instrument ID 映射只放在本层或其 Binance source adapter 中；Ledger 不知道 Binance API 结构。
 - API 签名、密钥、分页、水位和断线补偿应由连接器/采集调度负责；当前 V2 只实现离线规范化，**不声称已接通私有采集或完成证据认证**。
