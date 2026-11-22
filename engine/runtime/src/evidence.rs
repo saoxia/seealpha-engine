@@ -98,9 +98,7 @@ impl Runtime {
             let rate = row.funding_rate.as_str()
                 .parse::<Decimal>()
                 .map_err(|_| error("结算资金费率无效。"))?;
-            let mark = row["mark_price"]
-                .as_str()
-                .ok_or_else(|| error("资金费结算价格无效。"))?
+            let mark = row.mark_price.as_str()
                 .parse::<Decimal>()
                 .map_err(|_| error("资金费结算价格无效。"))?;
             settlement.push(SettledFunding {
@@ -233,9 +231,7 @@ impl Runtime {
                     rate: row.funding_rate.as_str()
                         .parse::<Decimal>()
                         .map_err(|_| error("资金费率无效。"))?,
-                    mark_price: row["mark_price"]
-                        .as_str()
-                        .ok_or_else(|| error("结算标记价缺失。"))?
+                    mark_price: row.mark_price.as_str()
                         .parse::<Decimal>()
                         .map_err(|_| error("结算标记价无效。"))?,
                 })
