@@ -110,8 +110,9 @@ async fn reconcile_history(
     if start>=today{return Ok(())}
     let gaps=catalog.bar_gaps(&id,"1d",start,today,50_000)?;
     if gaps.is_empty(){return Ok(())}
-    let Some((price_precision,size_precision))=precision else{
-        return Err(format!("missing verified instrument precision for {symbol}; refusing guessed Parquet precision").into());
+    let (price_precision,size_precision)=match precision {
+        Some(values)=>values,
+        None=>source.instrument_precisions(product,symbol).await?,
     };
     let mut done=0;
     for gap in gaps {
