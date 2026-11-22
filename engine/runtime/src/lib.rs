@@ -77,31 +77,8 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn open(config: &Config) -> Result<Self, RuntimeError> {
-        match Self::open_book(config, &config.book_path()) {
-            Ok(runtime) => Ok(runtime),
-            Err(error) => {
-                // An implicit /tmp book loses request-idempotency, exchange
-                // reconciliation and verified fills on restart. It is never
-                // a safe replacement for a production account ledger.
-                let explicitly_ephemeral =
-                    std::env::var("ENGINE_ALLOW_EPHEMERAL_STATE").is_ok_and(|value| value == "1");
-                if !explicitly_ephemeral
-                    || config.tenant_purpose.as_deref() != Some("development")
-                    || config.venue_base.is_some()
-                {
-                    return Err(error);
-                }
-                let fallback =
-                    std::env::temp_dir().join(format!("seealpha-ephemeral-{}", std::process::id()));
-                eprintln!(
-                    "explicit development-only ephemeral state for {}: {}; using {}",
-                    config.book_path().display(),
-                    error,
-                    fallback.display()
-                );
-                Self::open_book(config, &fallback.join("book.sqlite"))
-            }
-        }
+        // PostgreSQL is mandatory; no ephemeral or SQLite fallback is permitted.
+        Self::open_book(config, &config.book_path())
     }
 
     fn open_book(config: &Config, book: &std::path::Path) -> Result<Self, RuntimeError> {
@@ -112,7 +89,7 @@ impl Runtime {
         let ledger = Ledger::open(book).map_err(map_ledger)?;
         let strategy_store = StrategyStore::open(&book.with_file_name("strategies")).map_err(map_store)?;
         // Interrupted writer tasks are never blindly retried after a process crash.
-        let control = ControlStore::open(&book.with_file_name("control.sqlite")).map_err(map_control)?;
+        let control = ControlStore::open(&book.with_file_name("control-state")).map_err(map_control)?;
         control.restore_interrupted_data_jobs().map_err(map_control)?;
         // A previous Rust version invented empty fills for NEW order
         // acknowledgements. Preserve those rows in an audit quarantine,
@@ -456,7 +433,7 @@ impl Drop for Runtime {
 pub fn map_ledger(error: LedgerError) -> RuntimeError {
     match error {
         LedgerError::Conflict(message) => RuntimeError::Conflict(message),
-        LedgerError::Sqlite(detail) => RuntimeError::BadRequest(format!("状态库不可用。{detail}")),
+        LedgerError::Database(detail) => RuntimeError::BadRequest(format!("状态库不可用。{detail}")),
     }
 }
 
@@ -494,6 +471,6 @@ pub(crate) fn write_archive(bytes: &[u8]) -> Result<PathBuf, RuntimeError> {
 pub fn map_control(error: ControlError) -> RuntimeError {
     match error {
         ControlError::Conflict(message) => RuntimeError::Conflict(message),
-        ControlError::Sqlite(detail) => RuntimeError::BadRequest(format!("控制状态库不可用。{detail}")),
+        ControlError::Database(detail) => RuntimeError::BadRequest(format!("控制状态库不可用。{detail}")),
     }
 }
