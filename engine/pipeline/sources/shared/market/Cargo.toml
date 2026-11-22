@@ -7,6 +7,8 @@ license = "Apache-2.0"
 
 [dependencies]
 async-trait = "0.1"
+arrow-array = "60"
+arrow-schema = "60"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 rust_decimal = "1"
 seealpha-catalog = { path = "../../../catalog" }
