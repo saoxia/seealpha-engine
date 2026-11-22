@@ -292,7 +292,7 @@ impl Catalog {
             let _=fs::remove_file(tmp);
         }
         File::open(directory)?.sync_all()?;
-        Ok(result.ok_or_else(||CatalogError::Invalid("no published Bar".into()))?)
+        result.ok_or_else(||CatalogError::Invalid("no published Bar".into()))
     }
 }
 #[cfg(test)]
