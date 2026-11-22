@@ -1,6 +1,6 @@
 use crate::{Runtime, RuntimeError, map_ledger, map_strategy};
 use rust_decimal::Decimal;
-use seealpha_ledger::{SessionStart, SessionWrite};
+use crate::state_store::{SessionStart, SessionWrite};
 use seealpha_market::{Bar, MarketSnapshot, run_pipeline};
 use seealpha_portfolio::{HoldingPublication, IndexedHoldingPublication, PaperFill, TargetHolding, replay_holdings_by_bar};
 use seealpha_strategy::executor::{ExecutionInput, IssuedNativeEmaExecutor, NativeEmaExecutor, StrategyExecutor};
@@ -53,7 +53,7 @@ impl Runtime {
             .unwrap_or_else(|| fingerprint.clone());
         let symbol = request.snapshot.symbol.clone();
         let start = self
-            .ledger
+            .state_store
             .begin_session(
                 &request.tenant_id,
                 &request.account_id,
@@ -84,7 +84,7 @@ impl Runtime {
                     Err(error) => {
                         let message = error.to_string();
                         let report = json!({ "detail": message }).to_string();
-                        let _ = self.ledger.reject_session(&SessionWrite {
+                        let _ = self.state_store.reject_session(&SessionWrite {
                             tenant_id: &request.tenant_id,
                             account_id: &request.account_id,
                             symbol: &request.snapshot.symbol,
@@ -292,7 +292,7 @@ impl Runtime {
             "request_id": request_id,
         });
         let report_json = report.to_string();
-        self.ledger
+        self.state_store
             .complete_session(
                 &SessionWrite {
                     tenant_id: &request.tenant_id,
@@ -459,10 +459,10 @@ mod tests {
         let pubs = report["publications"].as_array().unwrap();
         assert!(pubs.iter().any(|item| item["quantity"] == "1"));
         assert!(pubs.iter().any(|item| item["quantity"] == "0"));
-        let before = runtime.ledger.order_count("dev", "native-paper").unwrap();
+        let before = runtime.state_store.order_count("dev", "native-paper").unwrap();
         assert!(before > 0);
         assert_eq!(runtime.run_paper(request).unwrap()["replay"], true);
-        assert_eq!(runtime.ledger.order_count("dev", "native-paper").unwrap(), before);
+        assert_eq!(runtime.state_store.order_count("dev", "native-paper").unwrap(), before);
         let _ = std::fs::remove_dir_all(state);
     }
 
@@ -502,7 +502,7 @@ mod tests {
             request_id: Some("deny-native".into()),
         });
         assert!(result.is_err());
-        assert_eq!(runtime.ledger.order_count("prod", "a").unwrap(), 0);
+        assert_eq!(runtime.state_store.order_count("prod", "a").unwrap(), 0);
         let _ = std::fs::remove_dir_all(state);
     }
 
