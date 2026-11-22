@@ -66,6 +66,76 @@ fn window(interval:&str, timestamp_ms:i64)->Result<(i64,i64),String>{
     Ok((from,from.checked_add(width).ok_or("bar time overflow")?))
 }
 
+/// Build historical OHLCV from already final, validated 1s Bar observations.
+/// Unlike the live path, this reads each 1s Bar ONCE instead of replaying
+/// every trade into every target timeframe. Empty seconds are not synthesized.
+///
+/// covered_until_ms is the *verified* exclusive end of the underlying 1s
+/// dataset. A Bar is final only when its entire window is covered; the last
+/// window may be returned open if the input ends before its close.
+// Compiled into native live collector through its shared TickBars module,
+// but called only by the market historical-reconstruction library.
+#[allow(dead_code)]
+pub fn aggregate_historical_seconds(
+    seconds: &[TickBar],
+    interval: &str,
+    covered_until_ms: i64,
+) -> Result<Vec<TickBar>, String> {
+    if interval == "1s" || !INTERVALS.contains(&interval) {
+        return Err("historical 1s source requires a larger supported interval".into());
+    }
+    if covered_until_ms < 0 {
+        return Err("invalid verified coverage end".into());
+    }
+    let mut output: Vec<TickBar> = Vec::new();
+    let mut previous_start = None;
+    for second in seconds {
+        if second.interval != "1s"
+            || !second.closed
+            || second.open_time_ms < 0
+            || second.open_time_ms % 1_000 != 0
+            || second.close_time_ms != second.open_time_ms + 999
+            || second.close_time_ms >= covered_until_ms
+            || second.open <= Decimal::ZERO
+            || second.high < second.open
+            || second.high < second.close
+            || second.low > second.open
+            || second.low > second.close
+            || second.volume <= Decimal::ZERO
+            || previous_start.is_some_and(|last| second.open_time_ms <= last)
+        {
+            return Err("invalid, duplicated or unordered historical 1s Bar".into());
+        }
+        previous_start = Some(second.open_time_ms);
+        let (start, end) = window(interval, second.open_time_ms)?;
+        if let Some(current) = output.last_mut()
+            && current.open_time_ms == start
+        {
+            current.high = current.high.max(second.high);
+            current.low = current.low.min(second.low);
+            current.close = second.close;
+            current.volume = current.volume.checked_add(second.volume)
+                .ok_or("historical Bar volume overflow")?;
+            continue;
+        }
+        output.push(TickBar {
+            interval: interval.into(),
+            open_time_ms: start,
+            close_time_ms: end - 1,
+            open: second.open,
+            high: second.high,
+            low: second.low,
+            close: second.close,
+            volume: second.volume,
+            closed: false,
+        });
+    }
+    for bar in &mut output {
+        bar.closed = bar.close_time_ms < covered_until_ms;
+    }
+    Ok(output)
+}
+
 impl TickBars {
     /// Returns one current snapshot for EACH supported period, immediately.
     /// A closed final snapshot for the previous bucket is additionally
@@ -156,6 +226,57 @@ mod tests{
         assert_eq!(result.iter().filter(|b|b.interval=="1s").count(),2);
         assert_eq!(result.iter().filter(|b|b.interval=="1s"&&b.open_time_ms==1_000).count(),0);
         assert!(a.on_tick(&tick("late",200,11,1)).is_err());
+    }
+
+    fn second(start:i64,open:i64,high:i64,low:i64,close:i64,volume:i64)->TickBar{
+        TickBar {
+            interval:"1s".into(),open_time_ms:start,close_time_ms:start+999,
+            open:Decimal::from(open),high:Decimal::from(high),
+            low:Decimal::from(low),close:Decimal::from(close),
+            volume:Decimal::from(volume),closed:true,
+        }
+    }
+
+    #[test]
+    fn historical_second_bars_aggregate_ohlcv_once_without_fabricated_empty_windows(){
+        let rows = vec![
+            second(0,100,110,100,105,2),
+            second(1_000,105,120,104,119,3),
+            second(901_000,90,95,89,92,4),
+        ];
+        let result=aggregate_historical_seconds(&rows,"15m",1_800_000).unwrap();
+        assert_eq!(result.len(),2);
+        assert_eq!((result[0].open,result[0].high,result[0].low,
+            result[0].close,result[0].volume),
+            (Decimal::from(100),Decimal::from(120),Decimal::from(100),
+             Decimal::from(119),Decimal::from(5)));
+        assert!(result.iter().all(|bar|bar.closed));
+        assert_eq!(result[1].open_time_ms,900_000);
+        assert_eq!(result[1].volume,Decimal::from(4));
+        let partial=aggregate_historical_seconds(&rows,"15m",1_000_000).unwrap();
+        assert!(partial[0].closed);
+        assert!(!partial[1].closed);
+    }
+
+    #[test]
+    fn historical_second_bars_validate_source_and_calendar_boundaries(){
+        let rows=[second(0,100,100,100,100,1)];
+        assert!(aggregate_historical_seconds(&rows,"1s",60_000).is_err());
+        assert!(aggregate_historical_seconds(&rows,"15m",1_000).is_ok());
+        assert!(aggregate_historical_seconds(&rows,"15m",500).is_err());
+        assert!(aggregate_historical_seconds(&[rows[0].clone(),rows[0].clone()],"15m",2_000).is_err());
+        let mut unclosed=rows[0].clone();
+        unclosed.closed=false;
+        assert!(aggregate_historical_seconds(&[unclosed],"1m",2_000).is_err());
+        let feb=Utc.with_ymd_and_hms(2026,2,28,23,59,59).single().unwrap().timestamp_millis();
+        let march=Utc.with_ymd_and_hms(2026,3,1,0,0,0).single().unwrap().timestamp_millis();
+        let result=aggregate_historical_seconds(
+            &[second(feb,100,100,100,100,2),second(march,101,101,101,101,3)],
+            "1M",march+1_000,
+        ).unwrap();
+        assert_eq!(result.len(),2);
+        assert!(result[0].closed);
+        assert!(!result[1].closed);
     }
     #[test]
     fn windows_match_week_and_calendar_month(){
