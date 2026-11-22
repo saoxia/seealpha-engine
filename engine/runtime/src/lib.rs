@@ -6,7 +6,6 @@ mod inspection;
 mod session;
 mod orders;
 mod native_handoff;
-mod research;
 mod state_store;
 pub use orders::OrderCommand;
 pub use state_store::OrderRecoveryItem;

@@ -26,6 +26,14 @@ pub struct SessionWrite<'a> {
 
 
 impl StateStore {
+    /// Read the existing paper position without reserving or writing a session.
+    pub fn paper_position(
+        &self, tenant_id: &str, account_id: &str, symbol: &str,
+    ) -> Result<Decimal, LedgerError> {
+        let connection = self.lock()?;
+        position_of(&connection, tenant_id, account_id, symbol)
+    }
+
     pub fn begin_session(
         &self,
         tenant_id: &str,
@@ -77,15 +85,16 @@ impl StateStore {
     }
 
     pub fn reject_session(&self, finish: &SessionWrite<'_>) -> Result<(), LedgerError> {
-        self.finish_session(finish, "rejected", false, &[])
+        self.finish_session(finish, "rejected", false, &[], &[])
     }
 
     pub fn complete_session(
         &self,
         finish: &SessionWrite<'_>,
         orders: &[String],
+        fills: &[String],
     ) -> Result<(), LedgerError> {
-        self.finish_session(finish, "completed", true, orders)
+        self.finish_session(finish, "completed", true, orders, fills)
     }
 
 
@@ -108,7 +117,11 @@ impl StateStore {
         status: &str,
         apply_position: bool,
         orders: &[String],
+        fills: &[String],
     ) -> Result<(), LedgerError> {
+        if orders.len() != fills.len() {
+            return Err(LedgerError::Conflict("模拟订单和成交记录数量不匹配。".into()));
+        }
         let mut connection = self.lock()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -156,7 +169,7 @@ impl StateStore {
                 )
                 .map_err(|error| LedgerError::Database(error.to_string()))?;
             let now = now_ms();
-            for (index, order) in orders.iter().enumerate() {
+            for (index, (order, fill)) in orders.iter().zip(fills).enumerate() {
                 let client_order_id = format!("{}-{index}", finish.request_id);
                 transaction
                     .execute(
@@ -175,7 +188,7 @@ impl StateStore {
                             finish.tenant_id,
                             finish.account_id,
                             format!("fill-{client_order_id}"),
-                            order,
+                            fill,
                             now
                         ],
                     )

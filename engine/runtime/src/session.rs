@@ -77,6 +77,7 @@ impl Runtime {
                     position,
                     &request_id,
                     &fingerprint,
+                    true,
                 ) {
                     Ok(report) => Ok(report),
                     Err(error) => {
@@ -99,6 +100,28 @@ impl Runtime {
         }
     }
 
+    /// Evaluate a paper strategy without creating a session, changing positions,
+    /// or inserting orders/fills. Keep the same execution and authorization rules.
+    pub fn run_paper_preview(&self, request: PaperRequest) -> Result<Value, RuntimeError> {
+        self.require_active(&request.tenant_id)?;
+        if request.strategies.is_empty() {
+            return Err(RuntimeError::Conflict("该租户账户没有已下发的策略。".into()));
+        }
+        let pipeline = run_pipeline(&request.snapshot)
+            .map_err(|error| RuntimeError::BadRequest(error.to_string()))?;
+        let fingerprint = session_fingerprint(&request, &pipeline.klines);
+        let request_id = request.request_id.clone().unwrap_or_else(|| fingerprint.clone());
+        let position = self.state_store.paper_position(
+            &request.tenant_id, &request.account_id, &request.snapshot.symbol,
+        ).map_err(map_ledger)?;
+        let mut report = self.execute_fresh(
+            &request, &pipeline.klines, &pipeline, position,
+            &request_id, &fingerprint, false,
+        )?;
+        report["preview"] = Value::Bool(true);
+        Ok(report)
+    }
+
     fn execute_fresh(
         &self,
         request: &PaperRequest,
@@ -107,6 +130,7 @@ impl Runtime {
         starting_position: Decimal,
         request_id: &str,
         fingerprint: &str,
+        persist: bool,
     ) -> Result<Value, RuntimeError> {
         let mut tagged = Vec::new();
         let mut risk_limit: Option<Decimal> = None;
@@ -266,6 +290,22 @@ impl Runtime {
                 .to_string()
             })
             .collect::<Vec<_>>();
+        let fill_json = fills
+            .iter()
+            .enumerate()
+            .map(|(index, fill)| {
+                json!({
+                    "fill_id": format!("fill-{request_id}-{index}"),
+                    "client_order_id": format!("{request_id}-{index}"),
+                    "symbol": request.snapshot.symbol,
+                    "side": fill.side,
+                    "quantity": fill.quantity.to_string(),
+                    "price": fill.price.to_string(),
+                    "venue": "paper",
+                    "environment": "paper",
+                }).to_string()
+            })
+            .collect::<Vec<_>>();
         let report = json!({
             "replay": false,
             "symbol": request.snapshot.symbol,
@@ -285,21 +325,24 @@ impl Runtime {
             "request_id": request_id,
         });
         let report_json = report.to_string();
-        self.state_store
-            .complete_session(
-                &SessionWrite {
-                    tenant_id: &request.tenant_id,
-                    account_id: &request.account_id,
-                    symbol: &request.snapshot.symbol,
-                    request_id,
-                    fingerprint,
-                    report: &report_json,
-                    expected_position: starting_position,
-                    ending_position: ending,
-                },
-                &order_json,
-            )
-            .map_err(map_ledger)?;
+        if persist {
+            self.state_store
+                .complete_session(
+                    &SessionWrite {
+                        tenant_id: &request.tenant_id,
+                        account_id: &request.account_id,
+                        symbol: &request.snapshot.symbol,
+                        request_id,
+                        fingerprint,
+                        report: &report_json,
+                        expected_position: starting_position,
+                        ending_position: ending,
+                    },
+                    &order_json,
+                    &fill_json,
+                )
+                .map_err(map_ledger)?;
+        }
         Ok(report)
     }
 }
@@ -445,6 +488,10 @@ mod tests {
             }],
             request_id: Some("native-ema-request".into()),
         };
+        let preview = runtime.run_paper_preview(request.clone()).unwrap();
+        assert_eq!(preview["preview"], true);
+        assert_eq!(runtime.state_store.order_count("dev", "native-paper").unwrap(), 0);
+        // Preview cannot reserve the request ID or mutate the paper position.
         let report = runtime.run_paper(request.clone()).unwrap();
         assert_eq!(report["exchange_orders"], 0);
         assert_eq!(report["venue"], "paper");
