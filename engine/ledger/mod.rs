@@ -1,4 +1,4 @@
-//! PostgreSQL evidence book for tenants and verified trading facts.
+//! PostgreSQL evidence book for verified trading facts.
 //! Nautilus owns account and position state; Ledger owns verified economic evidence.
 #[path = "movements/mod.rs"]
 mod movements;
