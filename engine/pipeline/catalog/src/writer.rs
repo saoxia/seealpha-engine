@@ -379,7 +379,7 @@ mod tests {
                 "ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL","1m",
                 0,120_000,100,
             ).unwrap(),
-            vec![bars[0].clone(),revised],
+            vec![bars[0].clone(),revised.clone()],
         );
         // The first partial snapshot of the next minute creates a new
         // Parquet file; later Tick revisions must replace only that minute.
