@@ -1,4 +1,4 @@
-//! Read-only ClickHouse access for external Binance Spot raw trade evidence.
+//! Read-only ClickHouse access for external Binance USD-M raw trade evidence.
 //! No migrations, mutations, producer lifecycle, or implicit catalog writes.
 use reqwest::{Client, Url};
 use rust_decimal::Decimal;
@@ -21,7 +21,7 @@ pub enum ClickHouseError {
     Data(&'static str),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClickHouseConfig {
     /// HTTP(S) endpoint, e.g. http://127.0.0.1:8123
     pub url: String,
@@ -74,14 +74,35 @@ fn identifier(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-fn symbol_ok(s: &str) -> bool {
-    (2..=20).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+/// Convert an engine-native USD-M symbol to the CCXT-style symbol stored in
+/// the existing ClickHouse binance_trade table (e.g. ETHUSDT -> ETH/USDT:USDT).
+/// No implicit Spot mapping and no guess for unsupported quote assets.
+pub fn um_storage_symbol(symbol: &str) -> Result<String, ClickHouseError> {
+    for quote in ["USDT", "USDC"] {
+        if let Some(base) = symbol.strip_suffix(quote)
+            && (2..=15).contains(&base.len())
+            && base.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        {
+            return Ok(format!("{base}/{quote}:{quote}"));
+        }
+    }
+    Err(ClickHouseError::Query("unsupported USD-M symbol"))
+}
+
+fn storage_symbol_ok(s: &str) -> bool {
+    for quote in ["USDT", "USDC"] {
+        if let Some(base) = s.strip_suffix(format!("/{quote}:{quote}").as_str()) {
+            return (2..=15).contains(&base.len())
+                && base.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
+        }
+    }
+    false
 }
 
 /// Values retain the source's full precision. Decimal(32,12) may exceed
 /// rust_decimal's 96-bit range, so no narrowing conversion is automatic.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SpotTrade {
+pub struct UmRawTrade {
     pub symbol: String,
     pub timestamp_ms: i64,
     pub trade_id: u64,
@@ -91,7 +112,7 @@ pub struct SpotTrade {
     pub is_buyer_maker: bool,
 }
 
-impl SpotTrade {
+impl UmRawTrade {
     pub fn price_decimal(&self) -> Result<Decimal, ClickHouseError> {
         self.price.parse().map_err(|_| ClickHouseError::Data("price exceeds decimal range"))
     }
@@ -123,16 +144,16 @@ impl ClickHouseConnection {
 
     /// Read a bounded half-open UTC interval [start_ms, end_ms).
     /// Cursor is exclusive; continue from the last returned row.
-    /// The source is explicitly Spot raw trade, never USD-M aggTrades.
-    pub async fn read_spot_trades(
+    /// The source is explicitly USD-M raw trades, not USD-M aggTrades.
+    pub async fn read_um_trades(
         &self,
         symbol: &str,
         start_ms: i64,
         end_ms: i64,
         after: Option<TradeCursor>,
         limit: usize,
-    ) -> Result<Vec<SpotTrade>, ClickHouseError> {
-        if !symbol_ok(symbol) || start_ms < 0 || end_ms <= start_ms {
+    ) -> Result<Vec<UmRawTrade>, ClickHouseError> {
+        if !storage_symbol_ok(symbol) || start_ms < 0 || end_ms <= start_ms {
             return Err(ClickHouseError::Query("invalid symbol or UTC range"));
         }
         if !(1..=MAX_ROWS).contains(&limit) {
@@ -217,7 +238,7 @@ fn unsigned(v: &Value, field: &str) -> Result<u64, ClickHouseError> {
         .ok_or(ClickHouseError::Data("invalid trade id"))
 }
 
-fn parse_trade(v: &Value) -> Result<SpotTrade, ClickHouseError> {
+fn parse_trade(v: &Value) -> Result<UmRawTrade, ClickHouseError> {
     let maker = v.get("is_buyer_maker").ok_or(ClickHouseError::Data("missing maker flag"))?;
     let is_buyer_maker = match maker {
         Value::Bool(b) => *b,
@@ -225,7 +246,7 @@ fn parse_trade(v: &Value) -> Result<SpotTrade, ClickHouseError> {
         Value::Number(n) if n.as_u64() == Some(1) => true,
         _ => return Err(ClickHouseError::Data("invalid maker flag")),
     };
-    let row = SpotTrade {
+    let row = UmRawTrade {
         symbol: string(v, "symbol")?.to_owned(),
         timestamp_ms: signed(v, "timestamp_ms")?,
         trade_id: unsigned(v, "trade_id")?,
@@ -256,13 +277,28 @@ mod tests {
         invalid = config;
         invalid.url = "http://user:secret@localhost:8123".into();
         assert!(invalid.validate().is_err());
-        assert!(!symbol_ok("BTCUSDT' OR 1=1"));
+        assert!(!storage_symbol_ok("BTC/USDT:USDT' OR 1=1"));
+    }
+
+    #[test]
+    fn maps_engine_symbols_to_um_clickhouse_storage() {
+        assert_eq!(um_storage_symbol("ETHUSDT").unwrap(), "ETH/USDT:USDT");
+        assert_eq!(um_storage_symbol("BTCUSDT").unwrap(), "BTC/USDT:USDT");
+        assert_eq!(um_storage_symbol("SOLUSDT").unwrap(), "SOL/USDT:USDT");
+        assert_eq!(um_storage_symbol("DOGEUSDT").unwrap(), "DOGE/USDT:USDT");
+        assert_eq!(um_storage_symbol("ETHUSDC").unwrap(), "ETH/USDC:USDC");
+        assert_eq!(um_storage_symbol("BTCUSDC").unwrap(), "BTC/USDC:USDC");
+        assert_eq!(um_storage_symbol("SOLUSDC").unwrap(), "SOL/USDC:USDC");
+        assert!(um_storage_symbol("ETHBTC").is_err());
+        assert!(um_storage_symbol("ETH/USDT:USDT").is_err());
+        assert!(storage_symbol_ok("ETH/USDT:USDT"));
+        assert!(!storage_symbol_ok("ETHUSDT"));
     }
 
     #[test]
     fn parses_decimal_strings_and_u64_without_float_rounding() {
         let row = parse_trade(&json!({
-            "symbol":"BTCUSDT", "timestamp_ms": "1780000000000",
+            "symbol":"BTC/USDT:USDT", "timestamp_ms": "1780000000000",
             "trade_id":"18446744073709551615",
             "price":"12345.000000000001", "qty":"0.000000000001",
             "quote_qty":"0.000000012345", "is_buyer_maker":1

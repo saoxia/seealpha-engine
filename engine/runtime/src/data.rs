@@ -699,12 +699,7 @@ impl Runtime {
                         .map_err(|_| bad("资金费标记价无效。"))?,
                 })
             }).collect::<Result<Vec<_>, RuntimeError>>()?;
-            catalog.append_funding(
-                &seealpha_market::identity::instrument_id(
-                    symbol, seealpha_market::identity::MarketProduct::FuturesUm,
-                ).map_err(|e| bad(&e.to_string()))?,
-                &observations,
-            )
+            catalog.append_funding(symbol, &observations)
                 .map_err(|e| RuntimeError::Conflict(e.to_string()))?;
             return Ok(
                 json!({"action":"backfill","data_kind":"funding","symbol":symbol,
@@ -1038,7 +1033,19 @@ impl Runtime {
         let fetch = self.run_market_repair_child(tenant, &json!({
             "action":"archive_fetch","product":product,
             "dataset":dataset,"symbol":symbol,"day":day
-        })).await?;
+        })).await;
+        let fetch = match fetch {
+            Ok(fetch) => fetch,
+            Err(zip_error) if product == "futures_um" => {
+                // Only attempt external USD-M raw trades when the official ZIP
+                // cannot be acquired. Do not change the verified ZIP importer.
+                // A successful read is evidence, NOT a Catalog import or READY.
+                return self.clickhouse_um_repair_fallback(
+                    symbol, start, end, &response, &zip_error,
+                ).await;
+            }
+            Err(error) => return Err(error),
+        };
         response["archive_fetch_job_id"] = fetch["id"].clone();
 
         let price = payload["price_precision"].as_u64()
@@ -1076,6 +1083,62 @@ impl Runtime {
         response["result"] = json!("archive_imported_recalculation_pending");
         response["needs_recalculation"] = json!(true);
         Ok(response)
+    }
+
+    /// Bounded, read-only fallback when the verified Spot ZIP is unavailable.
+    /// Deliberately does not bypass Nautilus archive-import provenance checks.
+    async fn clickhouse_um_repair_fallback(
+        &self,
+        symbol: &str,
+        start_ms: i64,
+        end_ms: i64,
+        response: &Value,
+        zip_error: &RuntimeError,
+    ) -> Result<Value, RuntimeError> {
+        use seealpha_market::clickhouse::{ClickHouseConfig, ClickHouseConnection, um_storage_symbol};
+        let Some(config) = ClickHouseConfig::from_env()
+            .map_err(|e| repair_error(format!("ClickHouse 配置无效：{e}")))?
+        else {
+            return Err(repair_error(format!(
+                "Binance ZIP 无法获取，且未配置 ClickHouse 备用连接：{zip_error}"
+            )));
+        };
+        let connection = ClickHouseConnection::new(config)
+            .map_err(|e| repair_error(format!("ClickHouse 连接初始化失败：{e}")))?;
+
+        // Probe only the first suspect minute, rather than potentially pulling
+        // millions of trades into memory. The existing ZIP import path is
+        // unchanged; no completeness assertion follows from a limited page.
+        let minute = response["missing_minutes"].as_array()
+            .and_then(|items| items.first())
+            .or_else(|| response["conflicting_minutes"].as_array().and_then(|items| items.first()))
+            .and_then(Value::as_i64)
+            .ok_or_else(|| repair_error("缺少待核验的分钟窗口。"))?;
+        if minute < start_ms || minute >= end_ms {
+            return Err(repair_error("待核验分钟窗口超出 UTC 日期。"));
+        }
+        let stop = minute.saturating_add(60_000).min(end_ms);
+        let storage_symbol = um_storage_symbol(symbol)
+            .map_err(|e| repair_error(format!("ClickHouse USD-M 交易对映射失败：{e}")))?;
+        let rows = connection.read_um_trades(&storage_symbol, minute, stop, None, 10_000)
+            .await
+            .map_err(|e| repair_error(format!(
+                "Binance ZIP 无法获取，ClickHouse 备用读取也失败：{e}；ZIP：{zip_error}"
+            )))?;
+        let mut result = response.clone();
+        result["result"] = json!("clickhouse_fallback_evidence_only");
+        result["source"] = json!("clickhouse");
+        result["zip_error"] = json!(zip_error.to_string());
+        result["fallback_minute_ms"] = json!(minute);
+        result["fallback_rows"] = json!(rows.len());
+        result["clickhouse_symbol"] = json!(storage_symbol);
+        result["data_kind"] = json!("raw_trades");
+        result["catalog_import_compatible"] = json!(false);
+        result["fallback_page_may_be_truncated"] = json!(rows.len() == 10_000);
+        result["catalog_committed"] = json!(false);
+        result["coverage_complete"] = json!(false);
+        result["needs_recalculation"] = json!(true);
+        Ok(result)
     }
 
     /// The nested executor is boxed so a repair job can reuse the existing
