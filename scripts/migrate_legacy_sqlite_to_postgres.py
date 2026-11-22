@@ -152,7 +152,7 @@ def main():
     if marker.exists():
         raise RuntimeError("Cutover marker already exists; refusing to overwrite")
     marker.write_text("PostgreSQL table-count verification completed at "
-                      + datetime.now(timezone.utc).isoformat() + "\\n", encoding="utf-8")
+                      + datetime.now(timezone.utc).isoformat() + "\n", encoding="utf-8")
     marker.chmod(0o600)
     print("Imported and count-verified:", counts)
     print("Audit snapshots retained in:", args.backup_dir)
