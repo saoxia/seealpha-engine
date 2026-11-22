@@ -2,7 +2,8 @@
 //! This module is not a transport, a native submitter, or live-trading approval.
 //! A new execution path must additionally enforce portfolio/risk reservation
 //! and native lifecycle acceptance before consuming a fresh registration.
-use seealpha_ledger::{IntentStart, Ledger, LedgerError};
+use crate::state_store::{IntentStart, StateStore};
+use seealpha_ledger::LedgerError;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -34,7 +35,7 @@ pub(crate) struct NativeIntent<'a> {
 /// Native dispatch is NOT invoked: risk authorization and an atomic pre-native
 /// send cutover gate are still missing in the production Runtime.
 pub(crate) fn stage_native_intent(
-    ledger: &Ledger,
+    ledger: &StateStore,
     intent: &NativeIntent<'_>,
 ) -> Result<NativeIntentDecision, LedgerError> {
     let invalid = || LedgerError::Conflict("invalid native execution intent".into());
@@ -177,7 +178,7 @@ pub(crate) fn stage_native_order_command(
         price: required("price")?,
         position_mode: required("position_mode")?,
     };
-    let decision = stage_native_intent(&runtime.ledger, &native).map_err(map_ledger)?;
+    let decision = stage_native_intent(&runtime.state_store, &native).map_err(map_ledger)?;
     // A durable first registration is still not an authorization to issue
     // the Nautilus native command. No send-capable native node is connected.
     Ok(serde_json::json!({
@@ -214,8 +215,8 @@ mod tests {
         }
     }
 
-    fn ledger() -> Ledger {
-        let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+    fn ledger() -> StateStore {
+        let ledger = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         ledger.ensure_tenant("tenant1", "production", "active").unwrap();
         ledger
     }
@@ -268,11 +269,11 @@ mod tests {
         assert!(runtime.execute_order(external).is_err());
         let second = runtime.execute_order(command(base.clone())).unwrap();
         assert_eq!(second["replay"], true);
-        let stored = runtime.ledger.registered_order_intent(
+        let stored = runtime.state_store.registered_order_intent(
             "tenant1", "account1", "00000000-0000-0000-0000-000000000001",
         ).unwrap().unwrap();
         assert_eq!(stored["execution_backend"], "nautilus_binance_native");
-        assert_eq!(runtime.ledger.order_recovery_page("tenant1", 0, 10).unwrap().len(), 1);
+        assert_eq!(runtime.state_store.order_recovery_page("tenant1", 0, 10).unwrap().len(), 1);
         assert!(runtime.ledger.fills("tenant1", "account1", "sandbox").unwrap().is_empty());
         let mut changed = base.clone();
         changed["quantity"] = serde_json::json!("0.30");
@@ -343,7 +344,7 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&path);
         {
-            let ledger = Ledger::open(&path).unwrap();
+            let ledger = StateStore::open(&path).unwrap();
             ledger.ensure_tenant("tenant1", "production", "active").unwrap();
             assert_eq!(
                 stage_native_intent(&ledger, &intent()).unwrap(),
@@ -351,7 +352,7 @@ mod tests {
             );
         }
         {
-            let recovered = Ledger::open(&path).unwrap();
+            let recovered = StateStore::open(&path).unwrap();
             assert_eq!(
                 stage_native_intent(&recovered, &intent()).unwrap(),
                 NativeIntentDecision::ReconcileOnly
