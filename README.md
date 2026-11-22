@@ -13,7 +13,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 - `engine/pipeline/`：完整行情服务（Nautilus 原生订阅、补充来源、数据完整性、实时和历史访问）
 - `engine/strategy/`：Rust 内置策略、授权清单和目标持仓发布
 - `engine/portfolio/`：目标净额和风险裁剪
-- `engine/ledger/`：SQLite 账本
+- `engine/ledger/`：PostgreSQL 账本（SeeAlpha 专属 schema）
 - `engine/connection/`：Binance Options 专属规范化接口（Spot/USD-M 原生工厂位于 `pipeline/sources/shared/nautilus/`）
 - `engine/backtest/`：历史回放与回测
 - `engine/runtime/`：Runtime、租户和交易会话编排
@@ -78,7 +78,7 @@ cargo run --locked --release -p seealpha-engine
 
 上面的命令仅供后续自主验证；本次改动没有执行。
 
-状态库位于 `$ENGINE_STATE/book.sqlite`（默认 `.local/state/engine/book.sqlite`）。公开行情不需要交易所密钥。研究签名密钥必须不同于 `ENGINE_TOKEN`。旧的 Python 代码可从 Git 历史恢复。
+状态库存储于 PostgreSQL 的 `seealpha` schema，使用 `SEEALPHA_DATABASE_URL` 连接。Docker 镜像复用内置 PostgreSQL，开发环境需要显式提供数据库 URL。历史 SQLite 文件必须先通过 `scripts/migrate_legacy_sqlite_to_postgres.py` 离线备份并导入，不能直接删除。公开行情不需要交易所密钥。研究签名密钥必须不同于 `ENGINE_TOKEN`。旧的 Python 代码可从 Git 历史恢复。
 
 迁移历史与功能限制参见 `docs/RUST_CUTOVER_AUDIT_20261121.md`，该文档包含历史状态记录，不代表当前功能验收结论。
 
