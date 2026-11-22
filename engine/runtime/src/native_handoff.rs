@@ -237,7 +237,6 @@ mod tests {
             tenant_id: None, tenant_purpose: None,
             research_signing_key: None, research_mcp_enabled: false,
             venue_base: Some("http://127.0.0.1:18767".into()),
-            python: std::path::PathBuf::from("python3"),
         };
         let runtime = Runtime::open(&config).unwrap();
         runtime.ensure_tenant("tenant1", "production", "active").unwrap();
