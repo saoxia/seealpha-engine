@@ -363,6 +363,41 @@ mod tests {
     }
 
     #[test]
+    fn each_binance_interval_produces_native_unclosed_bar() {
+        let tick=nautilus_model::data::stubs::stub_trade_ethusdt_buy();
+        for &interval in tick_bars::INTERVALS {
+            let snapshot=tick_bars::TickBar {
+                interval:interval.into(),
+                open_time_ms:0,close_time_ms:999,
+                open:"100".parse().unwrap(),
+                high:"105".parse().unwrap(),
+                low:"99".parse().unwrap(),
+                close:"102".parse().unwrap(),
+                volume:"3".parse().unwrap(),
+                closed:false,
+            };
+            let bar=native_bar(tick.instrument_id,&snapshot,&tick).unwrap();
+            assert_eq!(bar.ts_event,tick.ts_event, "{interval} must not pretend to be closed");
+            assert_eq!(bar.open.to_string().parse::<rust_decimal::Decimal>().unwrap(),snapshot.open);
+            assert_eq!(bar.close.to_string().parse::<rust_decimal::Decimal>().unwrap(),snapshot.close);
+            assert!(bar.bar_type.to_string().ends_with("-LAST-INTERNAL"));
+        }
+    }
+
+    #[test]
+    fn closing_bar_uses_period_end_not_future_tick_time() {
+        let tick=nautilus_model::data::stubs::stub_trade_ethusdt_buy();
+        let snapshot=tick_bars::TickBar {
+            interval:"1s".into(),open_time_ms:1_000,close_time_ms:1_999,
+            open:"100".parse().unwrap(),high:"101".parse().unwrap(),
+            low:"99".parse().unwrap(),close:"100".parse().unwrap(),
+            volume:"3".parse().unwrap(),closed:true,
+        };
+        let bar=native_bar(tick.instrument_id,&snapshot,&tick).unwrap();
+        assert_eq!(bar.ts_event.as_u64(),2_000_000_000-1);
+    }
+
+    #[test]
     fn spot_and_um_use_distinct_native_instrument_ids() {
         let spot = instrument_ids(Product::Spot, "BTCUSDT,ETHBTC").unwrap();
         let um = instrument_ids(Product::UsdM, "BTCUSDT,ETHUSDT").unwrap();
