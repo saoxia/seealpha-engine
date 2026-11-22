@@ -355,6 +355,39 @@ mod tests {
     }
 
     #[test]
+    fn account_subscriptions_are_independent_and_unsubscribe_without_cross_talk() {
+        let root = test_path("account-isolation");
+        let first_path = root.join("first.json");
+        let second_path = root.join("second.json");
+        let first = Rc::new(RefCell::new(NativeAccountSession::open(
+            "BINANCE-SPOT-001", AccountType::Cash, &first_path,
+        ).unwrap()));
+        let second = Rc::new(RefCell::new(NativeAccountSession::open(
+            "BINANCE-SPOT-002", AccountType::Cash, &second_path,
+        ).unwrap()));
+        let first_subscription = NativeAccountSubscription::attach(
+            Rc::clone(&first), || 2_000, 2_000,
+        );
+        let second_subscription = NativeAccountSubscription::attach(
+            Rc::clone(&second), || 2_000, 2_000,
+        );
+        msgbus::publish_account_state(
+            "events.account.BINANCE-SPOT-001".into(),
+            &event("BINANCE-SPOT-001", 1_000, true),
+        );
+        assert!(first.borrow().fresh(2_000, 2_000).is_some());
+        assert!(second.borrow().fresh(2_000, 2_000).is_none());
+        drop(first_subscription);
+        msgbus::publish_account_state(
+            "events.account.BINANCE-SPOT-002".into(),
+            &event("BINANCE-SPOT-002", 1_000, true),
+        );
+        assert!(second.borrow().fresh(2_000, 2_000).is_some());
+        drop(second_subscription);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn typed_message_bus_account_subscription_delivers_only_matching_account() {
         let root = test_path("msgbus");
         let checkpoint = root.join("account.json");
