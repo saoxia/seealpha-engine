@@ -97,7 +97,6 @@ impl Runtime {
     /// A native LiveNode must own its own credentials and authenticated account.
     pub fn register_connection(
         &self, tenant_id: &str, _account_id: &str, environment: &str,
-        _api_key: &str, _secret: &str,
     ) -> Result<Value, RuntimeError> {
         let tenant = self.require_active(tenant_id)?;
         if tenant.purpose != "production" {
@@ -129,20 +128,11 @@ impl Runtime {
             "environment":environment,"status":"closed"}))
     }
 
-    pub fn sync_registered_fills(
-        &self, tenant: &str, _account: &str, _environment: &str,
-        _request_id: &str, _venue_base: &str,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        Err(native_evidence_unavailable())
-    }
-
     pub fn account_snapshot(
         &self, tenant_id: &str, account_id: &str, environment: &str,
-        api_key: &str, secret: &str, _venue_base: Option<&str>,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        if environment != "sandbox" || !api_key.is_empty() || !secret.is_empty() {
+        if environment != "sandbox" {
             return Err(native_evidence_unavailable());
         }
         #[cfg(unix)]
