@@ -28,12 +28,7 @@ impl Runtime {
         bars: &[seealpha_backtest::HistoryBar],
         targets: &[seealpha_backtest::PublishedTarget],
     ) -> Result<serde_json::Value, RuntimeError> {
-        let tenant = self.require_active(tenant_id)?;
-        if tenant.purpose != "development" {
-            return Err(RuntimeError::Conflict(
-                "正式租户不能使用这条历史回测。".into(),
-            ));
-        }
+        self.require_development(tenant_id)?;
         let report = seealpha_backtest::run_backtest(bars, targets, starting, risk_limit)
             .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
         let body = seealpha_backtest::report_json(symbol, quote, &report);
@@ -243,14 +238,6 @@ impl Runtime {
         tenant_id: &str,
         account_id: &str,
     ) -> Result<serde_json::Value, RuntimeError> {
-        match self
-            .state_store
-            .latest_backtest(tenant_id, account_id, "history")
-            .map_err(map_ledger)?
-        {
-            Some(report) => serde_json::from_str(&report)
-                .map_err(|_| RuntimeError::BadRequest("回测记录损坏。".into())),
-            None => Err(RuntimeError::NotFound("还没有回测".into())),
-        }
+        self.latest_kind(tenant_id, account_id, "history", "还没有回测")
     }
 }
