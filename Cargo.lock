@@ -1452,11 +1452,9 @@ dependencies = [
  "chrono",
  "fs2",
  "parquet",
- "rusqlite",
  "rust_decimal",
  "serde",
  "serde_json",
- "sha2",
  "thiserror",
 ]
 
