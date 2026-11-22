@@ -1,6 +1,6 @@
 //! Native-only order entry and conservative ledger completion checks.
 use crate::{Runtime, RuntimeError, map_ledger};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub struct OrderCommand {
     pub tenant_id: String,
