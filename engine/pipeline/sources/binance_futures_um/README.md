@@ -32,8 +32,8 @@
 
 ## 按日层级修复（Rust 数据任务）
 
-由 `repair.rs` 判断何时需要官方 ZIP；`engine/runtime/src/data.rs` 只负责子任务调度和实时写者冲突保护。使用现有 Data Job 接口提交 `repair_futures_day`，参数含 `product=futures_um`、`symbol`、`day` 和经过 Instrument 核对的 `price_precision/size_precision`。该任务实现旧版逐级扫描顺序 `1d → 4h → 1h → 15m → 5m → 1m`：仅对上一层异常范围进行更细周期的比较，每个下钻层最多读取一整天官方收盘 K 线（总计不超过 6 次 REST 历史请求）。
+由 `repair.rs` 固定 USD-M 产品，并复用 `../shared/market/src/repair.rs` 的扫描算法来判断何时需要官方 ZIP；`engine/runtime/src/data.rs` 只负责子任务调度和实时写者冲突保护。使用现有 Data Job 接口提交 `repair_futures_day`，参数含 `product=futures_um`、`symbol`、`day` 和经过 Instrument 核对的 `price_precision/size_precision`。该任务实现旧版逐级扫描顺序 `1d → 4h → 1h → 15m → 5m → 1m`：仅对上一层异常范围进行更细周期的比较，每个下钻层最多读取一整天官方收盘 K 线（总计不超过 6 次 REST 历史请求）。
 
-仅识别到**缺失分钟 K 线且无现存分钟数据冲突**时，任务才自动创建并执行 `archive_fetch`，使用 Binance 官方 `futures/um/daily/aggTrades` 及 SHA256；然后创建 `archive_import`，复用既有 Nautilus 原生导入程序。已有实时 Catalog 写者运行时不强行导入，而将导入子任务留在 `queued` 并在结果中返回 `archive_import_job_id`，后续需在安全停止 LiveNode 后运行该任务。
+识别到**缺失分钟 K 线或已存分钟 OHLCV 不一致**时，任务才自动创建并执行 `archive_fetch`，使用 Binance 官方 `futures/um/daily/aggTrades` 及 SHA256；然后创建 `archive_import`，复用既有 Nautilus 原生导入程序。已有实时 Catalog 写者运行时不强行导入，而将导入子任务留在 `queued` 并在结果中返回 `archive_import_job_id`，后续需在安全停止 LiveNode 后运行该任务。
 
-ZIP 导入成功只是 Tick 数据写入，不代表已自动重新生成分钟/小时/日 K 线；任务返回 `needs_recalculation=true`。已有分钟记录与交易所 K 线不一致时不自动覆盖，返回 `minute_conflicts_require_review`。上层不一致但下层完全一致时返回 `parent_bar_recalculation_required`。这是历史数据维护流程，不改变实盘 READY、安全门禁及交易授权。
+ZIP 导入成功只是 Tick 数据写入，不代表已自动重新生成分钟/小时/日 K 线；任务返回 `needs_recalculation=true`。已有分钟记录与交易所 K 线不一致时先下载 ZIP 以确认底层成交证据，不直接覆盖同 ID 的冲突记录。上层不一致但下层完全一致时返回 `parent_bar_recalculation_required`。这是历史数据维护流程，不改变实盘 READY、安全门禁及交易授权。

@@ -7,6 +7,7 @@ use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
 use seealpha_ledger::CatalogBar;
 use seealpha_catalog::DAY_MS;
 use seealpha_market::futures_repair::{RepairNextStep, scan_day};
+use seealpha_market::spot_repair;
 use seealpha_market::exercise::{ExerciseSource, as_evidence};
 use seealpha_market::funding::FundingSource;
 use seealpha_market::options::{OptionsSource, parse_option_symbol};
@@ -18,6 +19,14 @@ use std::collections::BTreeSet;
 fn bad(message: &str) -> RuntimeError {
     RuntimeError::Unprocessable(message.into())
 }
+fn repair_archive_dataset(action: &str, product: &str) -> Option<&'static str> {
+    match (action, product) {
+        ("repair_spot_day", "spot") => Some("trades"),
+        ("repair_futures_day", "futures_um") => Some("aggTrades"),
+        _ => None,
+    }
+}
+
 fn field<'a>(object: &'a Value, name: &str) -> Result<&'a str, RuntimeError> {
     object
         .get(name)
@@ -183,15 +192,16 @@ impl Runtime {
         let action = field(payload, "action")?;
         // Never claim support for deletion/trim without a verified snapshot or
         // delegate unsafe file system operations to a generic executor.
-        if action == "repair_futures_day" {
+        if matches!(action, "repair_futures_day" | "repair_spot_day") {
             let product = field(payload, "product")?;
             let symbol = field(payload, "symbol")?;
             let day = field(payload, "day")?;
-            if product != "futures_um"
-                || check_symbol(symbol).is_err()
-                || ArchiveSpec::new(product, "aggTrades", symbol, day).is_err()
+            let dataset = repair_archive_dataset(action, product)
+                .ok_or_else(|| bad("按日修复任务和 Binance 产品类型不匹配。"))?;
+            if check_symbol(symbol).is_err()
+                || ArchiveSpec::new(product, dataset, symbol, day).is_err()
             {
-                return Err(bad("USD-M 按日修复仅接受合法合约与 UTC 日期。"));
+                return Err(bad("Binance 按日修复仅接受合法合约与 UTC 日期。"));
             }
             let precision = |key| {
                 payload.get(key).and_then(Value::as_u64)
@@ -199,8 +209,8 @@ impl Runtime {
                     .ok_or_else(|| bad("必须提供经 Instrument 确认的价格和数量精度。"))
             };
             let normalized = json!({
-                "action":"repair_futures_day",
-                "product":"futures_um",
+                "action":action,
+                "product":product,
                 "symbol":symbol,
                 "day":day,
                 "price_precision":precision("price_precision")?,
@@ -380,8 +390,8 @@ impl Runtime {
         } else if original["action"] == "archive_import" {
             self.archive_import_job(tenant_id, &original["payload"])
                 .await
-        } else if original["action"] == "repair_futures_day" {
-            self.repair_futures_day_job(tenant_id, &original["payload"]).await
+        } else if matches!(original["action"].as_str(), Some("repair_futures_day" | "repair_spot_day")) {
+            self.repair_market_day_job(tenant_id, &original["payload"]).await
         } else if original["action"] == "backfill" {
             self.backfill_job(tenant_id, &original["payload"]).await
         } else {
@@ -973,7 +983,7 @@ impl Runtime {
     /// Explicit user/worker-submitted historical repair job. Never start a
     /// data source implicitly in a read request, or write an active LiveNode
     /// Catalog while that node owns its writer reservation.
-    pub(crate) async fn repair_futures_day_job(
+    pub(crate) async fn repair_market_day_job(
         &self,
         tenant: &str,
         payload: &Value,
@@ -982,21 +992,28 @@ impl Runtime {
             .ok_or_else(|| repair_error("修复合约缺失。"))?;
         let day = payload["day"].as_str()
             .ok_or_else(|| repair_error("修复 UTC 日期缺失。"))?;
-        let spec = ArchiveSpec::new("futures_um", "aggTrades", symbol, day)
-            .map_err(|e| repair_error(format!("USD-M 修复日期或合约无效：{e}")))?;
+        let action = field(payload, "action")?;
+        let product = field(payload, "product")?;
+        let dataset = repair_archive_dataset(action, product)
+            .ok_or_else(|| repair_error("修复任务与产品不匹配。"))?;
+        let spec = ArchiveSpec::new(product, dataset, symbol, day)
+            .map_err(|e| repair_error(format!("Binance 修复日期或合约无效：{e}")))?;
         let (start, end) = spec.utc_day_bounds_ms()
-            .map_err(|e| repair_error(format!("USD-M 修复 UTC 日期无效：{e}")))?;
+            .map_err(|e| repair_error(format!("Binance 修复 UTC 日期无效：{e}")))?;
         if start < 0 || start % DAY_MS != 0 || end - start != DAY_MS {
             return Err(repair_error("修复日期必须按 UTC 天对齐。"));
         }
         let catalog = self.native_catalog()?;
-        let scan = scan_day(symbol, start, end, catalog.as_ref().map(|c| c.root()))
-            .await
-            .map_err(|e| repair_error(e.to_string()))?;
+        let root = catalog.as_ref().map(|c| c.root());
+        let scan = if product == "spot" {
+            spot_repair::scan_day(symbol, start, end, root).await
+        } else {
+            scan_day(symbol, start, end, root).await
+        }.map_err(|e| repair_error(e.to_string()))?;
         let next_step = scan.next_step();
 
         let mut response = json!({
-            "action":"repair_futures_day","product":"futures_um",
+            "action":action,"product":product,
             "symbol":symbol,"day":day,
             "levels_checked":scan.levels_checked,
             "missing_minute_count":scan.missing_minutes.len(),
@@ -1010,10 +1027,6 @@ impl Runtime {
         });
 
         match next_step {
-            RepairNextStep::ReviewMinuteConflict => {
-                response["result"] = json!("minute_conflicts_require_review");
-                return Ok(response);
-            }
             RepairNextStep::RecalculateParent => {
                 response["result"] = json!("parent_bar_recalculation_required");
                 return Ok(response);
@@ -1027,9 +1040,9 @@ impl Runtime {
 
         // Preserve a durable, tenant-scoped ZIP receipt through the *existing*
         // downloader; never trust user-supplied archive paths or SHA hashes.
-        let fetch = self.run_futures_repair_child(tenant, &json!({
-            "action":"archive_fetch","product":"futures_um",
-            "dataset":"aggTrades","symbol":symbol,"day":day
+        let fetch = self.run_market_repair_child(tenant, &json!({
+            "action":"archive_fetch","product":product,
+            "dataset":dataset,"symbol":symbol,"day":day
         })).await?;
         response["archive_fetch_job_id"] = fetch["id"].clone();
 
@@ -1047,7 +1060,7 @@ impl Runtime {
         }))?;
         response["archive_import_job_id"] = import["id"].clone();
 
-        let key = format!("{tenant}:futures_um");
+        let key = format!("{tenant}:{product}");
         let active_writer = {
             let mut processes = self.source_processes.lock()
                 .map_err(|_| repair_error("实时节点状态锁不可用。"))?;
@@ -1093,7 +1106,7 @@ impl Runtime {
         Ok(job)
     }
 
-    async fn run_futures_repair_child(
+    async fn run_market_repair_child(
         &self,
         tenant: &str,
         payload: &Value,
@@ -1103,3 +1116,16 @@ impl Runtime {
     }
 }
 
+
+#[cfg(test)]
+mod repair_action_mapping_tests {
+    use super::repair_archive_dataset;
+
+    #[test]
+    fn spot_uses_raw_trades_and_usdm_uses_aggregate_trades() {
+        assert_eq!(repair_archive_dataset("repair_spot_day", "spot"), Some("trades"));
+        assert_eq!(repair_archive_dataset("repair_futures_day", "futures_um"), Some("aggTrades"));
+        assert_eq!(repair_archive_dataset("repair_spot_day", "futures_um"), None);
+        assert_eq!(repair_archive_dataset("repair_futures_day", "spot"), None);
+    }
+}

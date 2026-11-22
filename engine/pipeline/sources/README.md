@@ -5,3 +5,5 @@
 `shared/` 是当前共用的 Nautilus、历史 ZIP 与市场模型/REST crate，避免重复实现相同的采集持久化能力。以后逐个优化各产品模块时再下沉专用逻辑；**目录划分不是创建三个可运行连接的声明**。
 
 目录只对应 Binance USD-M Futures；未来 COIN-M 独立放在 `binance_futures_cm/`，不混用 WebSocket、合约 ID 或数据目录。
+
+Spot 与 USD-M 现已具有各自的 `repair.rs` 入口，共用 `shared/market/src/repair.rs` 的大周期到小周期 K 线分层检查。Spot 的归档数据集是 `trades`，USD-M 是 `aggTrades`；两条数据链路不可混合。

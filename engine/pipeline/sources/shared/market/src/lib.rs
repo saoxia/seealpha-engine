@@ -18,6 +18,9 @@ pub mod option_stream;
 #[path = "../../../binance_option/options.rs"]
 pub mod options;
 mod pipeline;
+mod repair;
+#[path = "../../../binance_spot/repair.rs"]
+pub mod spot_repair;
 
 pub use binance::{BinanceSource, MemorySource};
 pub use pipeline::{

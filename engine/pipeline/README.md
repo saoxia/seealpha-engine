@@ -4,7 +4,7 @@ Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `c
 
 | 位置 | 现有责任 | 当前状态 |
 | --- | --- | --- |
-| `sources/binance_spot/` | Spot 产品身份、Instrument ID 与原生数据客户端标识 | 由共享 Nautilus 进程以 `spot` 模式运行；独立于 USD-M 进程 |
+| `sources/binance_spot/` | Spot 产品身份、Instrument ID、分层历史修复入口 | 由共享 Nautilus 进程以 `spot` 模式运行；独立于 USD-M 进程 |
 | `sources/binance_futures_um/` | USD-M Futures 产品身份、聚合成交 REST 对齐与 Funding 数据 | 由共享 Nautilus 进程以 `futures_um` 模式运行；尚未支持 COIN-M |
 | `sources/binance_option/` | EAPI 期权 REST、合约及公开流消息解析、行权数据 | 期权实时 WebSocket 客户端**尚未接通**，只有解析能力 |
 | `sources/shared/nautilus/` | Spot / USD-M 共用的独立 Rust NautilusTrader LiveNode 和原生历史 ZIP 导入程序 | 编译为同一二进制，但按产品启动独立进程；实验性，未通过 READY |
@@ -29,4 +29,9 @@ Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、�
 
 ### USD-M Futures 历史数据自维护
 
-`engine/pipeline/sources/binance_futures_um/repair.rs` 通过 `seealpha-market::futures_repair` 使用已有 Catalog 分层聚合和 Binance REST K 线进行 `1d → 4h → 1h → 15m → 5m → 1m` 异常定位。仅在定位到缺失分钟记录后，才通过数据任务调用官方 ZIP 下载与 Nautilus 导入；若实时节点持有写锁，则将导入保留为待处理任务。导入后 K 线重建仍需后续对接。
+`engine/pipeline/sources/binance_futures_um/repair.rs` 通过 `seealpha-market::futures_repair` 使用已有 Catalog 分层聚合和 Binance REST K 线进行 `1d → 4h → 1h → 15m → 5m → 1m` 异常定位。仅在定位到分钟缺失或 OHLCV 差异后，才通过数据任务调用官方 ZIP 下载与 Nautilus 导入；若实时节点持有写锁，则将导入保留为待处理任务。导入后 K 线重建仍需后续对接。
+
+
+### Spot 历史数据自维护
+
+`sources/binance_spot/repair.rs` 与 USD-M 复用 `sources/shared/market/src/repair.rs` 的分层比较逻辑。Data Job 动作 `repair_spot_day` 使用独立的 `spot` 产品和官方 `spot/daily/trades`（原始成交）归档；只有定位到分钟缺失或 OHLCV 差异后才发起 ZIP 下载与 Nautilus 导入。导入与实时写入互斥，导入后 K 线重算尚待完成。
