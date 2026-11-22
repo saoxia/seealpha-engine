@@ -84,6 +84,7 @@ fn insert_index(tx: &Transaction<'_>, record: &StoredRecord) -> Result<(), Store
     ).map_err(err)?;
     Ok(())
 }
+type IndexedIdentity = (String,String,String,String,String,String,Option<String>);
 fn read_index_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StrategyLoad> {
     Ok(StrategyLoad {
         tenant_id: row.get(0)?, account_id: row.get(1)?, issuance_id: row.get(2)?,
@@ -95,15 +96,16 @@ fn read_index_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StrategyLoad> {
 
 /// Accept ZIP transport with a root manifest.json. Reject unsafe paths,
 /// symlinks, encryption, duplicate names and decompression bombs.
-pub fn unpack_native_zip(bytes: &[u8]) -> Result<(Vec<u8>, Vec<(PathBuf, Vec<u8>)>), StoreError> {
+type ExtractedFiles = Vec<(PathBuf, Vec<u8>)>;
+pub fn unpack_native_zip(bytes: &[u8]) -> Result<(Vec<u8>, ExtractedFiles), StoreError> {
     if bytes.is_empty() || bytes.len() > MAX_ZIP { return Err(conflict("ZIP too large")); }
     let mut zip = ZipArchive::new(std::io::Cursor::new(bytes)).map_err(err)?;
-    if zip.len() == 0 || zip.len() > MAX_FILES { return Err(conflict("ZIP file count invalid")); }
+    if zip.is_empty() || zip.len() > MAX_FILES { return Err(conflict("ZIP file count invalid")); }
     let mut seen = std::collections::HashSet::new();
     let mut files = Vec::new();
     let mut total = 0_u64;
     for i in 0..zip.len() {
-        let mut item = zip.by_index(i).map_err(err)?;
+        let item = zip.by_index(i).map_err(err)?;
         let item_size = item.size();
         let name = item.name().to_string();
         if name == "." || name == ".." { return Err(conflict("unsafe ZIP path")); }
@@ -206,7 +208,7 @@ impl StrategyStore {
         let mut conn = self.index.lock().map_err(err)?;
         let tx = conn.transaction().map_err(err)?;
         let l = &record.load;
-        let current: Option<(String,String,String,String,String,String,Option<String>)> = tx.query_row(
+        let current: Option<IndexedIdentity> = tx.query_row(
             "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
              FROM strategy_issuances WHERE tenant_id=?1 AND account_id=?2 AND issuance_id=?3",
             params![l.tenant_id,l.account_id,l.issuance_id],
@@ -255,9 +257,9 @@ impl StrategyStore {
             || load.entry_point.is_empty()
         { return Err(conflict("invalid issuance identity or manifest digest")); }
         let expanded = zip.map(unpack_native_zip).transpose()?;
-        if let Some((manifest,_)) = &expanded {
-            if manifest != &load.archive { return Err(conflict("ZIP manifest differs from trusted bytes")); }
-        }
+        if let Some((manifest,_)) = &expanded
+            && manifest != &load.archive
+        { return Err(conflict("ZIP manifest differs from trusted bytes")); }
         let mut stored_load = load.clone();
         stored_load.archive.clear(); // executable bytes live only in manifest.json
         let record = StoredRecord {
@@ -275,11 +277,9 @@ impl StrategyStore {
             if current != load.archive || sha(&current) != load.package_hash {
                 return Err(conflict("stored manifest was modified"));
             }
-            if let Some(z) = zip {
-                if sha(&fs::read(final_dir.join("package.zip")).map_err(err)?) != sha(z) {
-                    return Err(conflict("stored ZIP was modified"));
-                }
-            }
+            if let Some(z) = zip
+                && sha(&fs::read(final_dir.join("package.zip")).map_err(err)?) != sha(z)
+            { return Err(conflict("stored ZIP was modified")); }
             self.check_artifact(&final_dir, &record)?;
             self.index_record(&record)?;
             return Ok(());
