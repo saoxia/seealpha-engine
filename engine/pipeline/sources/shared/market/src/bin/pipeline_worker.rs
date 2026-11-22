@@ -16,23 +16,25 @@ fn utc_today_ms()->Result<i64> {
     Ok((i64::try_from(now.as_millis())?/DAY_MS)*DAY_MS)
 }
 
+struct Desired {retain_from:i64,fetch_from:Option<i64>,precision:Option<(u32,u32)>}
+
 fn desired(rows:&[(String,PipelineSubscription)])
-    ->Result<BTreeMap<String,(i64,Option<i64>,Option<(u32,u32)>)>>
+    ->Result<BTreeMap<String,Desired>>
 {
     let mut out=BTreeMap::new();
     for (_,row) in rows {
         validate_subscription(row)?;
         let start=row.start_ms()?;
         let entry=out.entry(row.symbol.clone())
-            .or_insert((start,None::<i64>,None::<(u32,u32)>));
-        entry.0=entry.0.min(start);
+            .or_insert(Desired{retain_from:start,fetch_from:None,precision:None});
+        entry.retain_from=entry.retain_from.min(start);
         if row.enabled {
-            entry.1=Some(entry.1.map_or(start,|earliest|earliest.min(start)));
+            entry.fetch_from=Some(entry.fetch_from.map_or(start,|earliest|earliest.min(start)));
             if let (Some(price),Some(size))=(row.price_precision,row.size_precision) {
-                if entry.2.is_some_and(|previous|previous!=(price,size)) {
+                if entry.precision.is_some_and(|previous|previous!=(price,size)) {
                     return Err(format!("conflicting instrument precision: {}",row.symbol).into());
                 }
-                entry.2=Some((price,size));
+                entry.precision=Some((price,size));
             }
         }
     }
@@ -147,9 +149,9 @@ async fn cycle(
     if let Err(error)=sync_collector(product.as_str(),&live,active) {
         eprintln!("pipeline {} realtime: {error}",product.as_str());
     }
-    for (symbol,(retain_from,fetch_from,precision)) in expected {
-        let Some(fetch_from)=fetch_from else{continue};
-        if let Err(error)=reconcile_history(catalog,product,source,&symbol,retain_from,fetch_from,precision).await{
+    for (symbol,settings) in expected {
+        let Some(fetch_from)=settings.fetch_from else{continue};
+        if let Err(error)=reconcile_history(catalog,product,source,&symbol,settings.retain_from,fetch_from,settings.precision).await{
             eprintln!("pipeline {} {symbol} history: {error}",product.as_str());
         }
     }
@@ -186,7 +188,7 @@ mod tests{
         let rows=vec![("a".into(),make("2025-06-01",true)),
                       ("b".into(),make("2025-01-01",false))];
         let spec=desired(&rows).unwrap();
-        assert_eq!(spec["BTCUSDT"].0,make("2025-01-01",false).start_ms().unwrap());
-        assert_eq!(spec["BTCUSDT"].1,Some(make("2025-06-01",true).start_ms().unwrap()));
+        assert_eq!(spec["BTCUSDT"].retain_from,make("2025-01-01",false).start_ms().unwrap());
+        assert_eq!(spec["BTCUSDT"].fetch_from,Some(make("2025-06-01",true).start_ms().unwrap()));
     }
 }
