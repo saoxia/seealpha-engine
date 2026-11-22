@@ -79,6 +79,21 @@ CREATE TABLE IF NOT EXISTS account_evidence_events (
 );
 CREATE INDEX IF NOT EXISTS account_evidence_events_page
     ON account_evidence_events(tenant_id,account_id,environment,id);
+-- Strategy attribution of immutable, verified account evidence.
+-- No balance/position cache and no synthetic exchange fills.
+CREATE TABLE IF NOT EXISTS account_event_allocations (
+    tenant_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL CHECK(environment IN ('production','sandbox')),
+    event_id BIGINT NOT NULL REFERENCES account_evidence_events(id),
+    strategy_id TEXT NOT NULL,
+    basis_points BIGINT NOT NULL CHECK(basis_points BETWEEN 1 AND 10000),
+    recorded_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (tenant_id,account_id,environment,event_id,strategy_id)
+);
+CREATE INDEX IF NOT EXISTS account_event_allocations_by_evidence
+    ON account_event_allocations(tenant_id,account_id,environment,event_id);
+
 CREATE TABLE IF NOT EXISTS tenants (
     tenant_id TEXT PRIMARY KEY,
     purpose TEXT NOT NULL,
