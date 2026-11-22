@@ -1036,11 +1036,11 @@ impl Runtime {
         })).await;
         let fetch = match fetch {
             Ok(fetch) => fetch,
-            Err(zip_error) if product == "spot" => {
-                // Only attempt external Spot raw trades when the official ZIP
+            Err(zip_error) if product == "futures_um" => {
+                // Only attempt external USD-M raw trades when the official ZIP
                 // cannot be acquired. Do not change the verified ZIP importer.
                 // A successful read is evidence, NOT a Catalog import or READY.
-                return self.clickhouse_spot_repair_fallback(
+                return self.clickhouse_um_repair_fallback(
                     symbol, start, end, &response, &zip_error,
                 ).await;
             }
@@ -1087,7 +1087,7 @@ impl Runtime {
 
     /// Bounded, read-only fallback when the verified Spot ZIP is unavailable.
     /// Deliberately does not bypass Nautilus archive-import provenance checks.
-    async fn clickhouse_spot_repair_fallback(
+    async fn clickhouse_um_repair_fallback(
         &self,
         symbol: &str,
         start_ms: i64,
@@ -1095,7 +1095,7 @@ impl Runtime {
         response: &Value,
         zip_error: &RuntimeError,
     ) -> Result<Value, RuntimeError> {
-        use seealpha_market::clickhouse::{ClickHouseConfig, ClickHouseConnection};
+        use seealpha_market::clickhouse::{ClickHouseConfig, ClickHouseConnection, um_storage_symbol};
         let Some(config) = ClickHouseConfig::from_env()
             .map_err(|e| repair_error(format!("ClickHouse 配置无效：{e}")))?
         else {
@@ -1118,7 +1118,9 @@ impl Runtime {
             return Err(repair_error("待核验分钟窗口超出 UTC 日期。"));
         }
         let stop = minute.saturating_add(60_000).min(end_ms);
-        let rows = connection.read_spot_trades(symbol, minute, stop, None, 10_000)
+        let storage_symbol = um_storage_symbol(symbol)
+            .map_err(|e| repair_error(format!("ClickHouse USD-M 交易对映射失败：{e}")))?;
+        let rows = connection.read_um_trades(&storage_symbol, minute, stop, None, 10_000)
             .await
             .map_err(|e| repair_error(format!(
                 "Binance ZIP 无法获取，ClickHouse 备用读取也失败：{e}；ZIP：{zip_error}"
@@ -1129,6 +1131,9 @@ impl Runtime {
         result["zip_error"] = json!(zip_error.to_string());
         result["fallback_minute_ms"] = json!(minute);
         result["fallback_rows"] = json!(rows.len());
+        result["clickhouse_symbol"] = json!(storage_symbol);
+        result["data_kind"] = json!("raw_trades");
+        result["catalog_import_compatible"] = json!(false);
         result["fallback_page_may_be_truncated"] = json!(rows.len() == 10_000);
         result["catalog_committed"] = json!(false);
         result["coverage_complete"] = json!(false);
