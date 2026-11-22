@@ -118,9 +118,9 @@ impl Runtime {
         if !matches!(environment, "production" | "sandbox") {
             return Err(RuntimeError::Unprocessable("账户环境无效。".into()));
         }
-        self.ledger.upsert_connection(
+        self.upsert_connection(
             tenant_id, account_id, environment, "closed",
-        ).map_err(map_ledger)?;
+        )?;
         self.state_store.add_event(
             tenant_id, account_id, "connection",
             &json!({"environment":environment,"status":"closed"}).to_string(),
