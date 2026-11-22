@@ -1,5 +1,6 @@
 //! Strategy package and issuance persistence on an immutable filesystem.
-//! A legacy Ledger SQLite reader is retained only for one-way migration.
+//! SQLite indexes issuance metadata; executable artifacts live only in files.
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::{self, OpenOptions}, io::{Read, Write}, path::{Component, Path, PathBuf}, sync::{Mutex, atomic::{AtomicU64, Ordering}}};
@@ -40,7 +41,7 @@ struct StoredRecord {
     /// Hash of the original ZIP when an uploaded ZIP was provided.
     zip_sha256: Option<String>,
 }
-pub struct StrategyStore { root: PathBuf, lock: Mutex<()> }
+pub struct StrategyStore { root: PathBuf, lock: Mutex<()>, index: Mutex<Connection> }
 
 fn err(error: impl std::fmt::Display) -> StoreError { StoreError::Io(error.to_string()) }
 fn conflict(message: &str) -> StoreError { StoreError::Conflict(message.into()) }
@@ -60,6 +61,38 @@ fn write_new(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
 fn read_record(path: &Path) -> Result<StoredRecord, StoreError> {
     serde_json::from_slice(&fs::read(path).map_err(err)?).map_err(err)
 }
+
+const INDEX_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS strategy_issuances (
+ tenant_id TEXT NOT NULL, account_id TEXT NOT NULL, issuance_id TEXT NOT NULL,
+ code_key TEXT NOT NULL, version TEXT NOT NULL, grant_purpose TEXT NOT NULL,
+ parameters_json TEXT NOT NULL, entry_point TEXT NOT NULL,
+ package_hash TEXT NOT NULL, zip_sha256 TEXT,
+ PRIMARY KEY (tenant_id,account_id,issuance_id)
+);
+CREATE INDEX IF NOT EXISTS strategy_name_version ON strategy_issuances (tenant_id,code_key,version);
+";
+fn insert_index(tx: &Transaction<'_>, record: &StoredRecord) -> Result<(), StoreError> {
+    let l = &record.load;
+    tx.execute(
+        "INSERT INTO strategy_issuances
+         (tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
+          parameters_json,entry_point,package_hash,zip_sha256)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![l.tenant_id,l.account_id,l.issuance_id,l.code_key,l.version,
+                l.grant_purpose,l.parameters_json,l.entry_point,l.package_hash,record.zip_sha256]
+    ).map_err(err)?;
+    Ok(())
+}
+fn read_index_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StrategyLoad> {
+    Ok(StrategyLoad {
+        tenant_id: row.get(0)?, account_id: row.get(1)?, issuance_id: row.get(2)?,
+        code_key: row.get(3)?, version: row.get(4)?, grant_purpose: row.get(5)?,
+        parameters_json: row.get(6)?, entry_point: row.get(7)?,
+        package_hash: row.get(8)?, archive: Vec::new(),
+    })
+}
+
 /// Accept ZIP transport with a root manifest.json. Reject unsafe paths,
 /// symlinks, encryption, duplicate names and decompression bombs.
 pub fn unpack_native_zip(bytes: &[u8]) -> Result<(Vec<u8>, Vec<(PathBuf, Vec<u8>)>), StoreError> {
@@ -104,7 +137,18 @@ impl StrategyStore {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(root, fs::Permissions::from_mode(0o700)).map_err(err)?;
         }
-        Ok(Self { root: root.into(), lock: Mutex::new(()) })
+        let index_file = root.join("index.sqlite");
+        if fs::symlink_metadata(&index_file).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(conflict("strategy index cannot be a symlink"));
+        }
+        let connection = Connection::open(index_file).map_err(err)?;
+        connection.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;"
+        ).map_err(err)?;
+        connection.execute_batch(INDEX_SCHEMA).map_err(err)?;
+        let store = Self { root: root.into(), lock: Mutex::new(()), index: Mutex::new(connection) };
+        store.rebuild_index()?;
+        Ok(store)
     }
     fn folder(&self, load: &StrategyLoad) -> PathBuf {
         self.root.join(&load.tenant_id).join(&load.account_id).join(&load.issuance_id)
