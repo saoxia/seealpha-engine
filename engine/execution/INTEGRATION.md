@@ -152,3 +152,18 @@ Spot/UM bar alignment and observed funding-rate merging now live in
 observations and must not generate exchange fills or funding cash movements.
 Execution uses authoritative position/order evidence; Ledger records actual
 exchange-confirmed funding and settlement movements.
+
+## Native account evidence boundary
+
+Removed the unused `execution::account_evidence` implementation that
+decoded Binance Spot/UM account JSON into a separate account view. Account
+events and runtime balances belong to Nautilus `AccountState`, with typed
+observations already supplied by `pipeline/sources/shared/nautilus` and
+subscribed through the Binance account pipeline. The SeeAlpha execution crate
+must not parse exchange account JSON, create an alternative live account
+cache, or treat a reported event as proof of venue authenticity.
+
+Independent tenant/account/venue provenance checks and immutable economic
+movement evidence remain required before Ledger attribution or settlement.
+The deletion does not assert that the native live account session has passed
+production acceptance or that any genuine account reconciliation is complete.
