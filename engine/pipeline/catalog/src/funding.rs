@@ -134,7 +134,7 @@ mod tests {
         assert!(catalog.append_funding("ETHUSDT-PERP.BINANCE", &rows).unwrap().is_some());
         assert!(catalog.append_funding("ETHUSDT", &rows).is_ok());
         let identity = "ETHUSDT-PERP.BINANCE";
-        let records = catalog.read_records(&RecordKind::FundingRate, &identity,
+        let records = catalog.read_records(&RecordKind::FundingRate, identity,
             0, 300 * NANO_PER_MS, 10).unwrap();
         assert_eq!(records.len(), 2);
         assert_eq!(records[1]["rate_type"], "Special");
