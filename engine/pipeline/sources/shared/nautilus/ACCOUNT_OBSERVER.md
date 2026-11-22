@@ -5,7 +5,7 @@
 ## 已实现
 
 - **账户事件订阅**：`native_account_session.rs` 使用固定版本的 *typed* AccountState 消息总线订阅；`src/bin/native_account_observer.rs` 启动只读的 Binance **Testnet** 原生执行节点，不添加交易策略、不提交订单。节点使用 Nautilus 自带断线连接管理和 `with_reconciliation(true)`。
-- **账户绑定与余额同步**：由单一原生节点连接**一个显式 AccountId**；过滤 AccountType、`is_reported`、观察时效，按原生 AccountBalance 的 `total/locked/free`、MarginBalance 的 `initial/maintenance` 读取数值，检查同币种重复与金额守恒，形成**进程内只读视图**，并作为 JSON 输出。绝不根据 ACK 或余额差值生成真实结算和成交。
+- **账户绑定与余额同步**：由单一原生节点连接**一个显式 AccountId**；过滤 AccountType、`is_reported`、观察时效，按原生 AccountBalance 的 `total/locked/free`、MarginBalance 的 `initial/maintenance` 读取数值，检查同币种重复与金额守恒，以原始 Nautilus `AccountState` 作为**唯一进程内账户状态**，按需生成只读 JSON 展示。绝不根据 ACK 或余额差值生成真实结算和成交。
 - **重启恢复**：独立文件中原子持久化上次接受的 *账户 ID、事件 ID、纳秒时戳*；重启后旧余额不可用，仅较新、来源与身份检查通过的完整 AccountState 可重新形成视图。过期、未来、重复或乱序报告 fail-closed；`mark_disconnected()` 可在已知断线时立即冻结。Native `with_reconciliation(true)` 会请求其原生执行恢复，但是否真正获得完整交易所区间仍须单独验证。
 
 ## 如何运行（仅测试网）
@@ -57,4 +57,8 @@ USD-M 当前只支持显式的 **OneWay/Netting** 测试观测。已有 Hedge �
 
 `NativeAccountSession::fresh_native(now_ns, max_age_ns)` 返回当前已经通过该隔离会话校验、仍处于时效窗口内的原始 Nautilus `AccountState` 引用。重启未获新报告、主动断线或超时均返回 `None`。这为后续在同一可信进程中直接使用 Nautilus 类型提供接入点，避免将 JSON projection 当成新的权威账户模型。
 
-当前实现为兼容只读观察 JSON，同时保留最新原生事件和只读展示投影；这是过渡期的进程内数据，不写入第二套账户数据库。该 API 本身**不认证交易所来源，不包含 Position Cache，不提供跨进程 Runtime 访问或下单权限**，不得直接替换 Basket 原子账户版本门禁。
+当前实现只保留最新原生事件，JSON 投影在读取时临时构建，不再缓存第二份 balances/margins；不会写入另一套账户数据库。该 API 本身**不认证交易所来源，不包含 Position Cache，不提供跨进程 Runtime 访问或下单权限**，不得直接替换 Basket 原子账户版本门禁。
+
+## 简化记录（2026-11-22）
+
+已删除 `NativeAccountSession` 中重复保存的 `ReportedAccountView` 状态字段，改为只缓存 Nautilus `AccountState`。`fresh_native` 直接读取原生数据；`fresh` 只为现有 CLI JSON 输出按需生成投影。`accept` 在更新游标前验证余额一致性和重复币种/保证金，仍然先持久化游标再公布最新事件。此变更不启用 Runtime 原生交易或删除 Basket 的事务版本检查。
