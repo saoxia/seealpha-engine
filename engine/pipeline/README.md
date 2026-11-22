@@ -94,3 +94,13 @@ SEEALPHA_DATABASE_URL='postgresql://...' cargo run --locked -p seealpha-market -
 旧 Runtime `data.rs`、`data_policies` / `data_jobs` 的创建与调度 API 已从代码中移除。数据订阅统一使用 `/tenants/{tenant}/pipeline/subscriptions` 的 GET/PUT/DELETE；调用仅写入 PostgreSQL，Spot、USD-M、Options Worker 独立按配置运行，不再产生一次性数据任务 ID、状态队列或重试 API。
 
 **数据迁移边界：** 已安装数据库中的旧表不会自动 DROP（避免升级时破坏历史记录），但不再创建或访问。一次性 ZIP 归档下载/导入以及旧按日修复操作不再通过 Runtime API 执行；它们的底层代码仍保留在 Pipeline。要让这些操作自动执行，需继续在各产品 Pipeline 中接入对应的配置驱动流程。
+
+## Spot / USD-M K 线唯一来源与实时更新规则
+
+- 正式 OHLCV **只允许从 TradeTick 聚合**；不把 Binance Kline REST/WS 数据当作正式 Bar。现有历史 Kline API 解析仅为兼容/研究代码，Pipeline 不执行其历史 Bar 写入。
+- 聚合周期：`1s, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M`。最小固定为 **1s**，周一 UTC 起周，月线按 UTC 自然月。
+- **每来一笔有效的新 Tick，都要计算并发布所有周期的当前 OHLCV**；不等待周期收盘，不遗漏首笔 Tick；周期切换时同时发上一周期最终快照以及新周期的首笔快照。
+- 时间窗口内完全没有 Tick 不凭空生成零成交 Bar；重复 Tick 不应重复累计成交量；时间倒退的数据须由历史数据修复处理，不直接覆盖实时状态。
+- Native `TradeSubscriber::on_trade` 已将 Bar 更新发布到同一 Nautilus LiveNode 的原生 typed Bar topic，`BarType` 为 `LAST-INTERNAL`。尚未闭合的更新使用**真实 Tick 事件时间**作为 `ts_event`，不得提前标记为未来收盘时间。
+- 采集进程与策略引擎是**不同进程**。当前实现仅证明 LiveNode 内的原生消息发布，**尚未证明跨进程策略订阅可见**。需要额外打通跨进程消费和实时 Bar 状态恢复后才能宣称端到端完成。
+- Nautilus 原生流持久化仍只写原始 TradeTick；不要求每笔 Tick 都重复写 Parquet。SeeAlpha Catalog 已支持通过原子文件重写修订同一时间桶的 Bar，但历史 Tick 无缺口重放/聚合、重启恢复与 Bar Catalog 全周期落盘尚未验收。
