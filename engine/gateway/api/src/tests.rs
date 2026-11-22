@@ -204,26 +204,29 @@ use super::*;
                 .body(Body::from(body.to_owned()))
                 .unwrap()
         };
-        let (status,_,policy)=call(&app,make(
-            "/tenants/42/data/control/sync","POST",
-            r#"{"policies":[{"product":"spot","symbol":"ETHUSDT","realtime_enabled":true,"base_level":"1m"}]}"#
+        let (status, _, updated) = call(&app, make(
+            "/tenants/42/pipeline/subscriptions/spot/ETHUSDT", "PUT",
+            r#"{"product":"spot","symbol":"ETHUSDT","history_start":"2025-01-01",
+                "enabled":true,"realtime_enabled":true}"#
         )).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(policy["synced"], 1);
-        let (status, _, subscription) = call(
-            &app,
-            make("/tenants/42/data/control/subscriptions", "POST", "{}"),
-        )
-        .await;
+        assert_eq!(updated["effect"], "configuration_only");
+        assert_eq!(updated["data_ready"], false);
+        let (status, _, subscriptions) = call(&app, make(
+            "/tenants/42/pipeline/subscriptions?product=spot", "GET", ""
+        )).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(subscription["items"].as_array().unwrap().len(), 1);
-        let (status, _, service) = call(
-            &app,
-            make("/tenants/42/data/control/services", "POST", "{}"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(service["active_collectors"], 0);
+        assert_eq!(subscriptions["items"].as_array().unwrap().len(), 1);
+        assert_eq!(subscriptions["items"][0]["symbol"], "ETHUSDT");
+        for path in [
+            "/tenants/42/data/control/sync",
+            "/tenants/42/data/control/subscriptions",
+            "/tenants/42/data/control/job/start",
+            "/tenants/42/jobs",
+        ] {
+            let (status, _, _) = call(&app,make(path,"POST","{}")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        }
         let (status,_,_)=call(&app,make(
             "/tenants/42/accounts/a/strategy-market/subscriptions","POST",
             r#"{"issuance_id":"unissued","streams":[{"product":"spot","symbol":"ETHUSDT","interval":"1m"}]}"#
