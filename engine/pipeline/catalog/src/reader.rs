@@ -2,7 +2,7 @@
 //! layout. No Python interpreter, SQLite rewrite or implicit directory creation.
 use crate::{
     Catalog, CatalogError,
-    model::{CatalogBar, NANO_PER_MS, bar_type, bar_window, parse_bar_type},
+    model::{CatalogBar, NANO_PER_MS, bar_window, parse_bar_type},
 };
 use arrow_array::types::{Int8Type, Int16Type, Int32Type, UInt8Type, UInt16Type, UInt32Type};
 use arrow_array::{
@@ -860,7 +860,7 @@ mod tests {
     }
     #[test]
     fn path_names_and_windows_are_ported_from_python() {
-        let identifier = bar_type("ETHUSDT-PERP.BINANCE", "1m").unwrap();
+        let identifier = crate::bar_type("ETHUSDT-PERP.BINANCE", "1m").unwrap();
         assert_eq!(
             RecordKind::Bars.directory(&identifier).unwrap(),
             PathBuf::from("data/bars/ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL")
