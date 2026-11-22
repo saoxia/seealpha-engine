@@ -148,6 +148,12 @@ def main():
         actual = int(psql(args.url, sql=f'SELECT COUNT(*) FROM seealpha."{table}"'))
         if actual != expected:
             raise RuntimeError(f"Verification mismatch: {table}: {actual} != {expected}")
+    marker = args.state / ".postgres-cutover-complete"
+    if marker.exists():
+        raise RuntimeError("Cutover marker already exists; refusing to overwrite")
+    marker.write_text("PostgreSQL table-count verification completed at "
+                      + datetime.now(timezone.utc).isoformat() + "\\n", encoding="utf-8")
+    marker.chmod(0o600)
     print("Imported and count-verified:", counts)
     print("Audit snapshots retained in:", args.backup_dir)
     print("Strategy issuance index is reconstructed from validated artifacts at Engine startup.")
