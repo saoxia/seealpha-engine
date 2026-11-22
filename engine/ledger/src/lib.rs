@@ -11,13 +11,8 @@ mod allocations;
 #[path = "../reconciliation/mod.rs"]
 mod reconciliation;
 
-// Existing execution, portfolio and compatibility APIs remain unchanged.
-// They are not subdomains of Ledger/Funds and are not migrated in this PR.
-mod order_intents;
-mod order_reconciliation_tasks;
+// Economic evidence and account registration remain in Ledger.
 mod records;
-pub use order_reconciliation_tasks::ReconciliationTask;
-pub use order_intents::{IntentStart, OrderRecoveryItem};
 mod parity;
 use seealpha_database::{Connection, OptionalExtension, params};
 use std::path::Path;
@@ -38,11 +33,6 @@ pub struct Tenant {
     pub tenant_id: String,
     pub purpose: String,
     pub status: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct StoredOrder {
-    pub order_json: String,
 }
 
 pub struct Ledger {
@@ -102,31 +92,6 @@ impl Ledger {
     pub fn tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, LedgerError> {
         let connection = self.lock()?;
         self.tenant_with(&connection, tenant_id)
-    }
-
-    pub fn orders(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        environment: &str,
-    ) -> Result<Vec<StoredOrder>, LedgerError> {
-        let connection = self.lock()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT order_json FROM orders
-                 WHERE tenant_id=$1 AND account_id=$2 AND environment=$3
-                 ORDER BY updated_at, client_order_id",
-            )
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        let rows = statement
-            .query_map(params![tenant_id, account_id, environment], |row| {
-                Ok(StoredOrder {
-                    order_json: row.get(0)?,
-                })
-            })
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     fn tenant_with(
