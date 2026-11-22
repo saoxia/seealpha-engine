@@ -11,12 +11,9 @@ mod system_routes;
 mod strategy_routes;
 #[path = "routes/orders.rs"]
 mod order_routes;
-#[path = "routes/backtests.rs"]
-mod backtest_routes;
 use system_routes::*;
 use strategy_routes::*;
 use order_routes::*;
-use backtest_routes::*;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -84,30 +81,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/fills",
             get(list_fills),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/backtests",
-            post(run_backtest),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/backtests/latest",
-            get(latest_backtest),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/carry-backtests",
-            post(run_carry),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/carry-backtests/latest",
-            get(latest_carry),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests",
-            post(run_protected),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests/latest",
-            get(latest_protected),
         )
         .merge(parity::routes())
         .merge(pipeline_subscriptions::routes())
@@ -182,28 +155,6 @@ async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Re
         );
     }
     response
-}
-
-fn decimal_field(
-    body: &Value,
-    field: &str,
-    default: &str,
-) -> Result<rust_decimal::Decimal, AppError> {
-    body.get(field)
-        .and_then(Value::as_str)
-        .unwrap_or(default)
-        .parse()
-        .map_err(|_| AppError::bad_request("数值无效。"))
-}
-
-fn window_count(body: &Value) -> Result<usize, AppError> {
-    let start = body.get("start").and_then(Value::as_str).unwrap_or("");
-    let end = body.get("end").and_then(Value::as_str).unwrap_or("");
-    let interval = body.get("interval").and_then(Value::as_str).unwrap_or("1m");
-    let start_ms = parse_time_ms(start).ok_or_else(|| AppError::bad_request("开始时间无效。"))?;
-    let end_ms = parse_time_ms(end).ok_or_else(|| AppError::bad_request("结束时间无效。"))?;
-    seealpha_backtest::matching::window_bars(start_ms, end_ms, interval)
-        .map_err(|error| AppError::conflict(error.to_owned()))
 }
 
 fn parse_time_ms(value: &str) -> Option<i64> {
