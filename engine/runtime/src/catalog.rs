@@ -322,6 +322,28 @@ impl Runtime {
             .read_records(kind, identity, start_ns, end_ns, limit)
             .map_err(error)
     }
+    pub fn funding_observations(&self, tenant: &str, symbol: &str, start_ms: i64, end_ms: i64, limit: usize) -> Result<Vec<Value>, RuntimeError> {
+        if start_ms < 0 || end_ms <= start_ms || !(1..=50_000).contains(&limit) {
+            return Err(RuntimeError::Unprocessable("资金费查询范围无效。".into()));
+        }
+        let identity = seealpha_market::identity::instrument_id(symbol, seealpha_market::identity::MarketProduct::FuturesUm)
+            .map_err(|e| RuntimeError::Unprocessable(e.to_string()))?;
+        let from = start_ms.checked_mul(NANO_PER_MS).ok_or_else(|| RuntimeError::Unprocessable("时间溢出。".into()))?;
+        let to = end_ms.checked_mul(NANO_PER_MS).ok_or_else(|| RuntimeError::Unprocessable("时间溢出。".into()))?;
+        let rows = self.native_market_events(tenant, &RecordKind::FundingRate, &identity, from, to, limit)?;
+        rows.into_iter().map(|record| {
+            let at = record["ts_event"].as_str().and_then(|s| s.parse::<i64>().ok())
+                .filter(|ns| ns % NANO_PER_MS == 0)
+                .ok_or_else(|| RuntimeError::Conflict("资金费时间格式无效。".into()))? / NANO_PER_MS;
+            let rate = record.get("funding_rate").or_else(|| record.get("rate")).and_then(Value::as_str)
+                .ok_or_else(|| RuntimeError::Conflict("资金费率缺失。".into()))?;
+            let mark = record["mark_price"].as_str()
+                .ok_or_else(|| RuntimeError::Conflict("资金费标记价格缺失。".into()))?;
+            let kind = record["rate_type"].as_str().unwrap_or("Unknown");
+            Ok(json!({"symbol":symbol,"funding_time_ms":at,"funding_rate":rate,"mark_price":mark,
+                "rate_type":kind,"settlement":"official_observation"}))
+        }).collect()
+    }
     pub fn native_dataset_inventory(
         &self,
         tenant: &str,
