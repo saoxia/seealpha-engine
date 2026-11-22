@@ -4,7 +4,7 @@ on:
     paths:
       - "engine/pipeline/sources/shared/nautilus/**"
       - "engine/pipeline/sources/binance_spot/**"
-      - "engine/pipeline/sources/binance_futures/native.rs"
+      - "engine/pipeline/sources/binance_futures_um/native.rs"
       - ".github/workflows/nautilus-native-data.yml"
       - "Cargo.toml"
   workflow_dispatch:

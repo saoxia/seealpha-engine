@@ -32,8 +32,8 @@ use nautilus_persistence::config::{DataCatalogConfig, RotationConfig, StreamingC
 // Product-specific Binance identifiers live outside the shared native runtime.
 #[path = "../../../binance_spot/native.rs"]
 mod binance_spot;
-#[path = "../../../binance_futures/native.rs"]
-mod binance_futures;
+#[path = "../../../binance_futures_um/native.rs"]
+mod binance_futures_um;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Product {
@@ -53,14 +53,14 @@ impl Product {
     fn binance(self) -> BinanceProductType {
         match self {
             Self::Spot => binance_spot::product_type(),
-            Self::UsdM => binance_futures::product_type(),
+            Self::UsdM => binance_futures_um::product_type(),
         }
     }
 
     fn instrument(self, symbol: &str) -> InstrumentId {
         match self {
             Self::Spot => binance_spot::instrument_id(symbol),
-            Self::UsdM => binance_futures::instrument_id(symbol),
+            Self::UsdM => binance_futures_um::instrument_id(symbol),
         }
     }
 }
@@ -160,7 +160,7 @@ async fn main() -> Result<()> {
     }
     let client_name = match product {
         Product::Spot => binance_spot::client_name(),
-        Product::UsdM => binance_futures::client_name(),
+        Product::UsdM => binance_futures_um::client_name(),
     };
     let client_id = ClientId::from(client_name);
 

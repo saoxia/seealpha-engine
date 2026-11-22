@@ -4,14 +4,14 @@
 //! closed klines, aggregates trades into OHLCV bars, and computes decimal
 //! features. Neither path starts a collector as a side effect of a read.
 mod binance;
-#[path = "../../../binance_futures/agg_trades.rs"]
+#[path = "../../../binance_futures_um/agg_trades.rs"]
 mod futures_agg_trades;
-#[path = "../../../binance_futures/repair.rs"]
+#[path = "../../../binance_futures_um/repair.rs"]
 pub mod futures_repair;
 pub mod clock;
 #[path = "../../../binance_option/exercise.rs"]
 pub mod exercise;
-#[path = "../../../binance_futures/funding.rs"]
+#[path = "../../../binance_futures_um/funding.rs"]
 pub mod funding;
 #[path = "../../../binance_option/option_stream.rs"]
 pub mod option_stream;
