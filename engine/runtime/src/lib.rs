@@ -112,9 +112,6 @@ impl Runtime {
         }
         let ledger = Ledger::open(book).map_err(map_ledger)?;
         let strategy_store = StrategyStore::open(&book.with_file_name("strategies")).map_err(map_store)?;
-        // Import prior ledger-issued manifests before serving any requests.
-        // Keep legacy rows untouched for safe rollback and idempotent restarts.
-        strategy_store.import_legacy_ledger(book).map_err(map_store)?;
         // Interrupted writer tasks are never blindly retried after a process crash.
         let control = ControlStore::open(&book.with_file_name("control.sqlite")).map_err(map_control)?;
         control.restore_interrupted_data_jobs().map_err(map_control)?;

@@ -1,34 +1,25 @@
-# Self-describing strategy packages (transition)
+# Strategy ZIP packages and filesystem storage
 
-Strategy packages are distributed through the existing authenticated strategy API as Base64-encoded ZIP bytes in the `archive` JSON field. A ZIP must include a root-level `manifest.json`:
+The Engine receives self-describing strategy ZIP packages over the existing API. Each ZIP includes a root `manifest.json` containing `format`, `runtime`, `name`, `version`, and `entry_point`; optional `description` is supported for the current native format.
 
-```json
-{"format":1,"runtime":"rust-builtin","name":"ema_crossover","version":"1","entry_point":"native:ema_crossover"}
-```
+The API transport remains Base64 in JSON as `archive`. `account_id` and `issuance_id` are required trusted issuance scope. The metadata fields `version`, `code_key`, `entry_point`, and `package_hash` are derived from the verified Manifest when omitted and checked if present. Tenant purpose must be authenticated; the ZIP itself does not confer authorization.
 
-The name, version, runtime and entry point belong to the ZIP. API `code_key`, `version`, `entry_point`, `package_hash` and `grant_purpose` may be omitted; when supplied, each is checked against the trusted tenant and verified Manifest. `tenant_id` remains derived from the authenticated API route; `account_id` and `issuance_id` remain mandatory trusted issuance scope. A package Manifest **does not confer authorization**.
-
-This first phase accepts ZIPs only when their manifest identifies the already supported compiled-in `rust-builtin` EMA strategy; it does not enable arbitrary Rust/Python execution. The package hash currently used by the native executor is SHA-256 of the exact manifest bytes; the ZIP itself is also independently hashed to detect changes.
-
-Uploaded ZIPs are bounded (1 MiB ZIP, 4 MiB total uncompressed, 128 entries), checked for duplicate paths, traversal, symlinks and encrypted content, and extracted into a staging directory before publication. Published storage:
+The strategy store uses only the local filesystem, never a strategy SQLite database. New ZIPs are extracted into immutable directories:
 
 ```text
-<ENGINE_STATE>/
-  strategies/
-    <tenant_id>/
-      <account_id>/
-        <issuance_id>/
-          manifest.json
-          ... (other extracted files)
-          package.zip
-          issuance.json     # trusted scope, parameters and package hashes
-  book.sqlite
+<ENGINE_STATE>/strategies/<tenant_id>/<account_id>/<issuance_id>/
+  manifest.json
+  package.zip
+  issuance.json
+  ...other extracted files
 ```
 
-The issuance directory is immutable; a repeated identical package is idempotent, while a different payload under the same issuance ID is rejected. The existing runtime still verifies authorized scope and exact Manifest bytes before executing its built-in native strategy.
+The incoming ZIP is size-bounded (1 MiB), with at most 128 entries and 4 MiB total uncompressed. Extraction rejects unsafe paths, symlinks, encryption and duplicate entries. The store checks hashes and refuses conflicting re-uploads under the same issuance ID. The Runtime only authorizes the existing compiled-in native EMA execution path, **not arbitrary uploaded Python or Rust code**.
 
-## Legacy and rollback
+## Legacy code removal
 
-Startup copies legacy `strategy_loads` records from `book.sqlite` into folders, preserving all original bytes. A legacy ZIP is saved as `legacy-archive.bin` rather than pretending it is a Native Manifest. The source SQLite rows remain unchanged. After a migration has been verified in a staging environment, remove legacy strategy tables and the temporary SQLite import dependency in a separate audited change.
+The former Ledger `strategy_loads` and `native_strategy_loads` schema declarations, structs and read/write APIs have been removed. No automatic migration reads old strategy rows. Previously issued packages must be re-issued via the ZIP API; trading-account Ledger tables are otherwise untouched. Already existing SQLite files may still contain the old tables, but the new code will not use them or delete them automatically.
 
-This is a migration-phase implementation. It does not yet implement a dedicated centralized strategy catalog, Python runtime admission, hot swaps, or full lifecycle activation records. Before production use, run Cargo fmt/check/tests, concurrency/restart/fault-injection tests, backup/recovery tests and endpoint integration tests.
+## Verification required
+
+Run `cargo fmt --all --check`, `cargo check --workspace --locked`, and `cargo test --workspace --locked`, plus API and restart tests. Do not merge before successful verification.

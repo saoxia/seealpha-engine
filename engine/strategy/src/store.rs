@@ -1,6 +1,5 @@
 //! Strategy package and issuance persistence on an immutable filesystem.
 //! A legacy Ledger SQLite reader is retained only for one-way migration.
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::{self, OpenOptions}, io::{Read, Write}, path::{Component, Path, PathBuf}, sync::{Mutex, atomic::{AtomicU64, Ordering}}};
@@ -233,23 +232,6 @@ impl StrategyStore {
         }
         output.sort_by(|a,b| a.issuance_id.cmp(&b.issuance_id));
         Ok(output)
-    }
-    /// Read-only one-way migration, never deletes legacy rows.
-    pub fn import_legacy_ledger(&self, book: &Path) -> Result<(), StoreError> {
-        let conn = Connection::open_with_flags(book,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(err)?;
-        let mut stmt = conn.prepare(
-            "SELECT tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
-                    parameters_json,entry_point,package_hash,archive
-             FROM strategy_loads ORDER BY tenant_id,account_id,issuance_id"
-        ).map_err(err)?;
-        let rows = stmt.query_map([],|r| Ok(StrategyLoad {
-            tenant_id:r.get(0)?,account_id:r.get(1)?,issuance_id:r.get(2)?,
-            code_key:r.get(3)?,version:r.get(4)?,grant_purpose:r.get(5)?,
-            parameters_json:r.get(6)?,entry_point:r.get(7)?,
-            package_hash:r.get(8)?,archive:r.get(9)?,
-        })).map_err(err)?;
-        for row in rows { self.insert(&row.map_err(err)?)?; }
-        Ok(())
     }
 }
 

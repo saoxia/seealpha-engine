@@ -1,6 +1,4 @@
-//! SQLite runtime book for tenants, strategy packages, trading evidence, and paper orders.
-mod native_issuance;
-pub use native_issuance::NativeStrategyLoad;
+//! SQLite runtime book for tenants, trading evidence, and paper orders.
 mod order_intents;
 mod native_events;
 pub use native_events::UnverifiedNativeOrderEvent;
@@ -209,36 +207,6 @@ CREATE TABLE IF NOT EXISTS events (
     body_json TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS strategy_loads (
-    tenant_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    issuance_id TEXT NOT NULL,
-    code_key TEXT NOT NULL,
-    version TEXT NOT NULL,
-    grant_purpose TEXT NOT NULL,
-    parameters_json TEXT NOT NULL,
-    entry_point TEXT NOT NULL,
-    package_hash TEXT NOT NULL,
-    archive BLOB NOT NULL,
-    loaded_at INTEGER NOT NULL,
-    PRIMARY KEY (tenant_id, account_id, issuance_id)
-);
--- Native strategy artifacts are separate from legacy Python ZIP loads.
--- Strictly immutable by issuance ID; never silently replace granted code.
-CREATE TABLE IF NOT EXISTS native_strategy_loads (
-    tenant_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    issuance_id TEXT NOT NULL,
-    code_key TEXT NOT NULL,
-    version TEXT NOT NULL,
-    grant_purpose TEXT NOT NULL,
-    parameters_json TEXT NOT NULL,
-    entry_point TEXT NOT NULL,
-    package_hash TEXT NOT NULL,
-    manifest BLOB NOT NULL,
-    loaded_at INTEGER NOT NULL,
-    PRIMARY KEY (tenant_id, account_id, issuance_id)
-);
 CREATE TABLE IF NOT EXISTS paper_positions (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -301,20 +269,6 @@ pub struct Tenant {
     pub tenant_id: String,
     pub purpose: String,
     pub status: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct StrategyLoad {
-    pub tenant_id: String,
-    pub account_id: String,
-    pub issuance_id: String,
-    pub code_key: String,
-    pub version: String,
-    pub grant_purpose: String,
-    pub parameters_json: String,
-    pub entry_point: String,
-    pub package_hash: String,
-    pub archive: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -408,71 +362,6 @@ impl Ledger {
     pub fn tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, LedgerError> {
         let connection = self.lock()?;
         self.tenant_with(&connection, tenant_id)
-    }
-
-    pub fn upsert_strategy(&self, load: &StrategyLoad) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        let now = now_ms();
-        connection
-            .execute(
-                "INSERT INTO strategy_loads (
-                    tenant_id, account_id, issuance_id, code_key, version, grant_purpose,
-                    parameters_json, entry_point, package_hash, archive, loaded_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                 ON CONFLICT(tenant_id, account_id, issuance_id) DO UPDATE SET
-                    code_key=excluded.code_key, version=excluded.version,
-                    grant_purpose=excluded.grant_purpose, parameters_json=excluded.parameters_json,
-                    entry_point=excluded.entry_point, package_hash=excluded.package_hash,
-                    archive=excluded.archive, loaded_at=excluded.loaded_at",
-                params![
-                    load.tenant_id,
-                    load.account_id,
-                    load.issuance_id,
-                    load.code_key,
-                    load.version,
-                    load.grant_purpose,
-                    load.parameters_json,
-                    load.entry_point,
-                    load.package_hash,
-                    load.archive,
-                    now,
-                ],
-            )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        Ok(())
-    }
-
-    pub fn strategies(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-    ) -> Result<Vec<StrategyLoad>, LedgerError> {
-        let connection = self.lock()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT tenant_id, account_id, issuance_id, code_key, version, grant_purpose,
-                        parameters_json, entry_point, package_hash, archive
-                 FROM strategy_loads WHERE tenant_id=?1 AND account_id=?2 ORDER BY issuance_id",
-            )
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        let rows = statement
-            .query_map(params![tenant_id, account_id], |row| {
-                Ok(StrategyLoad {
-                    tenant_id: row.get(0)?,
-                    account_id: row.get(1)?,
-                    issuance_id: row.get(2)?,
-                    code_key: row.get(3)?,
-                    version: row.get(4)?,
-                    grant_purpose: row.get(5)?,
-                    parameters_json: row.get(6)?,
-                    entry_point: row.get(7)?,
-                    package_hash: row.get(8)?,
-                    archive: row.get(9)?,
-                })
-            })
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
     pub fn begin_session(
