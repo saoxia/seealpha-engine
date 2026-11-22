@@ -1,6 +1,6 @@
 //! Public derivatives read-side routes. No private credentials and no
 //! order submission. Historical funding evidence is returned from the local
-//! tenant book, never estimated from ticker or mark-price projections.
+//! USD-M market-data Catalog, never estimated from ticker projections.
 use crate::{AppError, AppState, parse_time_ms};
 use axum::{
     Json, Router,
@@ -8,6 +8,7 @@ use axum::{
     routing::post,
 };
 use seealpha_market::options::{OptionsSource, parse_option_symbol};
+use seealpha_market::funding::{read_funding, latest_funding};
 use serde_json::{Value, json};
 
 pub(crate) fn routes() -> Router<AppState> {
@@ -39,6 +40,8 @@ async fn read_funding(
         .as_str()
         .ok_or_else(|| AppError::bad_request("资金费合约无效。"))?;
     seealpha_market::check_symbol(symbol).map_err(|_| AppError::bad_request("合约无效。"))?;
+    let catalog = state.runtime.native_catalog().map_err(AppError::from)?
+        .ok_or_else(|| AppError::bad_request("资金费率 Catalog 尚不存在。"))?;
     let rows = if let (Some(start), Some(end)) = (
         body["start_ms"]
             .as_i64()
@@ -50,22 +53,21 @@ async fn read_funding(
         if start < 0 || end <= start || end - start > 365 * 86_400_000 {
             return Err(AppError::bad_request("资金费查询时间范围无效。"));
         }
-        state
-            .runtime
-            .ledger
-            .funding_events(&tenant, symbol, start, end, 5000)
+        read_funding(&catalog, symbol, start, end, 5000)
             .map_err(|e| AppError::bad_request(e.to_string()))?
     } else {
         let limit = body["limit"].as_i64().unwrap_or(100);
         if !(1..=500).contains(&limit) {
             return Err(AppError::bad_request("资金费分页数量超出上限。"));
         }
-        state
-            .runtime
-            .ledger
-            .latest_funding_events(&tenant, symbol, limit)
+        latest_funding(&catalog, symbol, limit as usize)
             .map_err(|e| AppError::bad_request(e.to_string()))?
     };
+    let rows: Vec<Value> = rows.iter().map(|r| json!({
+        "symbol":r.symbol,"funding_time_ms":r.funding_time_ms,
+        "funding_rate":r.funding_rate,"mark_price":r.mark_price,
+        "rate_type":r.rate_type,"settlement":"official_observation"
+    })).collect();
     Ok(Json(
         json!({"symbol":symbol,"rows":rows,"source":"local_verified_exchange_events",
         "completeness":"not_certified","no_synthetic_funding":true}),
