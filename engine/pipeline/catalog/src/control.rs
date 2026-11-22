@@ -528,3 +528,60 @@ impl ControlStore {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn isolated() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("seealpha-control-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
+    }
+
+    #[test]
+    fn pipeline_and_backtest_jobs_have_disjoint_queues_and_recover_safely() {
+        let path=isolated();
+        let old=path.with_extension("legacy");
+        let store=ControlStore::open(&path,&old).unwrap();
+        let payload=json!({"symbol":"ETHUSDT"});
+        store.queue_data_job("t","data-1","backfill",&payload).unwrap();
+        store.queue_backtest_job("t","test-1","backtest",&payload).unwrap();
+        assert!(store.queue_data_job("t","bad","backtest",&payload).is_err());
+        assert!(store.queue_backtest_job("t","bad","backfill",&payload).is_err());
+        assert_eq!(store.data_jobs("t").unwrap().len(),1);
+        assert_eq!(store.backtest_jobs("t").unwrap().len(),1);
+        store.transition_data_job("t","data-1","queued","running",None).unwrap();
+        store.transition_backtest_job("t","test-1","queued","running",None).unwrap();
+        drop(store);
+        let reopened=ControlStore::open(&path,&old).unwrap();
+        assert_eq!(reopened.restore_interrupted_data_jobs().unwrap(),2);
+        assert_eq!(reopened.data_job("t","data-1").unwrap().unwrap()["status"],"interrupted");
+        assert_eq!(reopened.backtest_job("t","test-1").unwrap().unwrap()["status"],"interrupted");
+        assert!(reopened.data_jobs("other").unwrap().is_empty());
+        drop(reopened);
+        let _=std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_migration_is_copy_only_once_and_preserves_user_changes() {
+        let path=isolated();
+        let old=path.with_extension("legacy");
+        let conn=Connection::open(&old).unwrap();
+        conn.execute_batch("CREATE TABLE data_policies(tenant_id TEXT,product TEXT,symbol TEXT,policy_json TEXT,updated_at INTEGER);
+            INSERT INTO data_policies VALUES('t','futures_um','ETHUSDT','{\"product\":\"futures_um\",\"symbol\":\"ETHUSDT\"}',1);
+            CREATE TABLE data_jobs(tenant_id TEXT,job_id TEXT,operation TEXT,payload_json TEXT,status TEXT,result_json TEXT,created_at INTEGER,updated_at INTEGER);
+            INSERT INTO data_jobs VALUES('t','b','backtest','{}','queued',NULL,1,1);").unwrap();
+        drop(conn);
+        let control=ControlStore::open(&path,&old).unwrap();
+        assert_eq!(control.policies("t").unwrap().len(),1);
+        assert!(control.data_job("t","b").unwrap().is_none());
+        assert!(control.backtest_job("t","b").unwrap().is_some());
+        control.replace_policies("t",&[json!({"product":"spot","symbol":"BTCUSDT"})]).unwrap();
+        drop(control);
+        let reopened=ControlStore::open(&path,&old).unwrap();
+        assert_eq!(reopened.policies("t").unwrap()[0]["symbol"],"BTCUSDT");
+        drop(reopened);
+        let _=std::fs::remove_file(path);
+        let _=std::fs::remove_file(old);
+    }
+}
