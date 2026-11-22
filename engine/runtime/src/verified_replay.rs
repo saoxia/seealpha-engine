@@ -84,7 +84,7 @@ impl Runtime {
             "venue": "offline_verified_replay",
             "data_ready_for_live": false,
         });
-        self.ledger
+        self.state_store
             .save_backtest(tenant, account, "verified_evidence", &result.to_string())
             .map_err(map_ledger)?;
         Ok(result)
