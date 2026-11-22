@@ -21,8 +21,6 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/jobs/{identity}/retry",post(task_retry))
         .route("/tenants/{tenant_id}/accounts/{account_id}/positions",get(positions))
         .route("/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}",get(request))
-        .route("/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/fills/sync",
-            post(sync_verified_fills))
         .route("/tenants/{tenant_id}/accounts/{account_id}/market/subscriptions",
             get(subscriptions).post(subscription_put))
         .route("/tenants/{tenant_id}/accounts/{account_id}/strategy-market/subscriptions",
@@ -93,32 +91,6 @@ async fn request(
         .order_request_view(&tenant, &account, &request_id)
         .map_err(AppError::from)?;
     Ok(Json(value))
-}
-
-async fn sync_verified_fills(
-    State(state): State<AppState>,
-    Path((tenant, account, request_id)): Path<(String, String, String)>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    let environment = body["environment"]
-        .as_str()
-        .ok_or_else(|| AppError::bad_request("账户环境缺失。"))?;
-    if body.get("api_key").is_some() || body.get("secret").is_some() {
-        return Err(AppError::bad_request(
-            "对账请求不得携带密钥，必须先登记账户连接。",
-        ));
-    }
-    let venue = state
-        .config
-        .venue_base
-        .as_deref()
-        .ok_or_else(|| AppError::conflict("交易网关未配置，拒绝读取账户。"))?;
-    Ok(Json(
-        state
-            .runtime
-            .sync_registered_fills(&tenant, &account, environment, &request_id, venue)
-            .map_err(AppError::from)?,
-    ))
 }
 
 async fn subscriptions(
