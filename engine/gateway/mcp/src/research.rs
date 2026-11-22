@@ -1,9 +1,8 @@
 //! Task-scoped Research MCP Streamable HTTP adapter.
 //! The API gateway mounts this handler at the existing `/research/mcp` route.
-//! It deliberately shares the Research grant and job operations, without a second server.
+//! It shares scoped read-only dataset discovery with the HTTP gateway.
 use super::{
-    AppError, AppState, ResearchBacktestRequest, authorize, available_datasets, cancel_job,
-    read_job, submit_job,
+    AppError, AppState, authorize, available_datasets,
 };
 use axum::Json;
 use axum::body::Bytes;
@@ -42,73 +41,18 @@ fn tool_success(data: Value) -> Value {
 }
 
 fn tool_catalog() -> Vec<(&'static str, &'static str, Value)> {
-    vec![
-        (
-            "list_datasets",
-            "datasets:read",
-            json!({
-                "type":"object","properties":{},"additionalProperties":false
-            }),
-        ),
-        (
-            "submit_backtest",
-            "backtests:submit",
-            json!({
-                "type":"object", "properties": {
-                    "purpose":{"const":"development"}, "execution":{"const":"simulation"},
-                    "strategy_ref":{"type":"string"}, "dataset_refs":{"type":"array"},
-                    "start":{"type":"string"}, "end":{"type":"string"},
-                    "starting_balance":{"type":"string"}, "quote_currency":{"type":"string"},
-                    "parameters":{"type":"object"}, "idempotency_key":{"type":"string"}
-                },
-                "required":["purpose","execution","strategy_ref","dataset_refs","start",
-                    "end","starting_balance","quote_currency","idempotency_key"],
-                "additionalProperties":false
-            }),
-        ),
-        (
-            "get_backtest",
-            "backtests:read",
-            json!({
-                "type":"object",
-                "properties":{"backtest_id":{"type":"string"}},
-                "required":["backtest_id"],"additionalProperties":false
-            }),
-        ),
-        (
-            "cancel_backtest",
-            "backtests:cancel",
-            json!({
-                "type":"object",
-                "properties":{"backtest_id":{"type":"string"}},
-                "required":["backtest_id"],"additionalProperties":false
-            }),
-        ),
-    ]
+    vec![(
+        "list_datasets",
+        "datasets:read",
+        json!({"type":"object","properties":{},"additionalProperties":false}),
+    )]
 }
 
 fn tool_call(state: &AppState, grant: &Grant, name: &str, args: &Value) -> Result<Value, AppError> {
-    let object = args
-        .as_object()
+    let object = args.as_object()
         .ok_or_else(|| AppError::unprocessable("Invalid research tool arguments"))?;
     match name {
         "list_datasets" if object.is_empty() => available_datasets(state, grant),
-        "submit_backtest" => {
-            let request: ResearchBacktestRequest = serde_json::from_value(args.clone())
-                .map_err(|_| AppError::unprocessable("Invalid research tool arguments"))?;
-            submit_job(state, grant, &request)
-        }
-        "get_backtest" | "cancel_backtest" if object.len() == 1 => {
-            let id = object
-                .get("backtest_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| AppError::unprocessable("Invalid research backtest identity"))?;
-            if name == "get_backtest" {
-                read_job(state, grant, id)
-            } else {
-                cancel_job(state, grant, id)
-            }
-        }
         _ => Err(AppError::unprocessable("Invalid research tool arguments")),
     }
 }
