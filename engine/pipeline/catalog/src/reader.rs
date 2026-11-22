@@ -482,7 +482,7 @@ impl Catalog {
         let (instrument, recorded_interval) = parse_bar_type(bar_identity)?;
         if recorded_interval != interval { return Err(CatalogError::Invalid("BarType 周期与请求不一致。".into())); }
         let id = bar_identity;
-        let rel = RecordKind::Bars.directory(&id)?;
+        let rel = RecordKind::Bars.directory(id)?;
         let files = candidate_files(&self.root, &rel, start_ns, end_ns)?;
         let mut result = Vec::new();
         let mut seen = BTreeSet::new();
