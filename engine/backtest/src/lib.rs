@@ -7,13 +7,15 @@ pub mod carry_history;
 pub mod evidence;
 pub mod matching;
 pub mod option_quotes;
+pub mod paper;
+pub use paper::{HoldingPublication, HoldingReplayError, IndexedHoldingPublication, PaperFill, TargetPublication, replay_holdings_by_bar, replay_targets};
 pub mod timeline;
 pub mod window;
 
 use rust_decimal::Decimal;
 use seealpha_execution::{
-    MemberTarget, PaperFill, TargetHolding, TargetPublication, clip_member_targets,
-    net_signed_quantity, quantize_toward_zero, replay_targets,
+    MemberTarget, TargetHolding, clip_member_targets,
+    net_signed_quantity, quantize_toward_zero,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
