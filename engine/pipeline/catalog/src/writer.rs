@@ -97,204 +97,201 @@ fn schema(
         ]),
     ))
 }
+/// Stage a complete immutable Parquet object. The Catalog can update a
+/// logical Bar by atomically REPLACING the object at its existing file path.
+fn stage_bars(
+    path:&Path,kind:&str,instrument:&str,interval:&str,bars:&[CatalogBar],
+    price_precision:u32,size_precision:u32,
+)->Result<(),CatalogError>{
+    let events=bars.iter().map(|b|b.event_ns(interval)).collect::<Result<Vec<_>,_>>()?;
+    let mut columns=Vec::with_capacity(7);
+    for col in 0..5 {
+        let values=bars.iter().map(|bar|decimal(match col {
+            0=>bar.open,1=>bar.high,2=>bar.low,3=>bar.close,_=>bar.volume,
+        })).collect::<Result<Vec<_>,_>>()?;
+        columns.push(array(values)?);
+    }
+    let mut event_builder=TimestampNanosecondBuilder::with_capacity(events.len()).with_timezone("UTC");
+    let mut init_builder=TimestampNanosecondBuilder::with_capacity(events.len()).with_timezone("UTC");
+    for ts in &events {
+        event_builder.append_value(*ts);
+        init_builder.append_value(*ts);
+    }
+    columns.push(Arc::new(event_builder.finish()));
+    columns.push(Arc::new(init_builder.finish()));
+    let batch=RecordBatch::try_new(schema(kind,instrument,price_precision,size_precision),columns)
+        .map_err(|e|CatalogError::Arrow(e.to_string()))?;
+    let file=OpenOptions::new().create_new(true).write(true).open(path)?;
+    let options=WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_max_row_group_row_count(Some(5_000)).build();
+    let mut writer=ArrowWriter::try_new(file,batch.schema(),Some(options))
+        .map_err(|e|CatalogError::Parquet(e.to_string()))?;
+    writer.write(&batch).map_err(|e|CatalogError::Parquet(e.to_string()))?;
+    writer.close().map_err(|e|CatalogError::Parquet(e.to_string()))?;
+    File::open(path)?.sync_all()?;
+    Ok(())
+}
+fn validate_batch(interval:&str,rows:&[CatalogBar],price_precision:u32,size_precision:u32)
+    ->Result<(),CatalogError>
+{
+    if rows.is_empty() || rows.len()>MAX_WRITE {
+        return Err(CatalogError::Limit("Bar batch exceeds writer bound".into()));
+    }
+    let mut next=rows[0].open_time_ms;
+    for bar in rows {
+        bar.validate(interval)?;
+        if bar.open_time_ms!=next {
+            return Err(CatalogError::Conflict("Bar batch is not contiguous".into()));
+        }
+        for (value,precision) in [
+            (bar.open,price_precision),(bar.high,price_precision),
+            (bar.low,price_precision),(bar.close,price_precision),
+            (bar.volume,size_precision),
+        ] {
+            if value.round_dp(precision)!=value {
+                return Err(CatalogError::Invalid("Bar exceeds Instrument decimal precision".into()));
+            }
+        }
+        next=crate::bar_window(interval,next)?.1;
+    }
+    Ok(())
+}
 impl Catalog {
     /// Insert or update a validated Bar batch. If a timestamp already exists,
     /// the incoming Bar replaces it and untouched rows remain intact.
     /// The writer lock serializes other writers and guarded Catalog readers.
     pub fn append_bars(
-        &self,
-        bar_identity: &str,
-        interval: &str,
-        bars: &[CatalogBar],
-        price_precision: u32,
-        size_precision: u32,
-    ) -> Result<PathBuf, CatalogError> {
-        if bars.is_empty() || bars.len() > MAX_WRITE || price_precision > 16 || size_precision > 16
-        {
-            return Err(CatalogError::Invalid(
-                "单次写入数据量或精度超出范围。".into(),
-            ));
+        &self,bar_identity:&str,interval:&str,bars:&[CatalogBar],
+        price_precision:u32,size_precision:u32,
+    )->Result<PathBuf,CatalogError>{
+        if bars.is_empty() || bars.len()>MAX_WRITE || price_precision>16 || size_precision>16 {
+            return Err(CatalogError::Invalid("invalid Bar batch length or precision".into()));
         }
-        let (instrument, recorded_interval) = parse_bar_type(bar_identity)?;
-        if recorded_interval != interval {
-            return Err(CatalogError::Invalid("BarType 周期与请求不一致。".into()));
+        let (instrument,recorded_interval)=parse_bar_type(bar_identity)?;
+        if recorded_interval!=interval {
+            return Err(CatalogError::Invalid("BarType interval mismatch".into()));
         }
-        let kind = bar_identity;
-        let dir_rel = RecordKind::Bars.directory(kind)?;
-        let directory = safe_mkdir(&self.root, &dir_rel)?;
-        // The lock lives with this one native BarType writer. Readers do
-        // not acquire this lock because files become visible atomically.
-        let lock_path = directory.join(".writer.lock");
-        let lease = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
+        validate_batch(interval,bars,price_precision,size_precision)?;
+        let rel=RecordKind::Bars.directory(bar_identity)?;
+        let directory=safe_mkdir(&self.root,&rel)?;
+        let lease=OpenOptions::new().create(true).truncate(false).read(true).write(true)
+            .open(directory.join(".writer.lock"))?;
         lease.lock_exclusive()?;
-        let mut expected = bars[0].open_time_ms;
-        let mut events = Vec::with_capacity(bars.len());
-        for bar in bars {
-            bar.validate(interval)?;
-            for (value, precision) in [
-                (bar.open, price_precision),
-                (bar.high, price_precision),
-                (bar.low, price_precision),
-                (bar.close, price_precision),
-                (bar.volume, size_precision),
-            ] {
-                if value.round_dp(precision) != value {
-                    return Err(CatalogError::Invalid(
-                        "K 线数值超过声明的价格或数量精度。".into(),
-                    ));
-                }
+        let first=bars[0].event_ns(interval)?;
+        let last=bars.last().ok_or_else(||CatalogError::Invalid("empty batch".into()))?
+            .event_ns(interval)?;
+        let overlapping=candidate_files(&self.root,&rel,first,last.saturating_add(1))?;
+        let mut incoming=bars.iter().cloned()
+            .map(|bar|(bar.open_time_ms,bar)).collect::<BTreeMap<_,_>>();
+        let mut revisions:Vec<(PathBuf,Vec<CatalogBar>,bool)>=Vec::new();
+        for path in overlapping {
+            let name=path.file_name().and_then(|n|n.to_str())
+                .ok_or_else(||CatalogError::Invalid("invalid Bar filename".into()))?;
+            let (begin,end)=filename_bounds(name)?;
+            let reader=parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+                File::open(&path)?
+            ).map_err(|e|CatalogError::Parquet(e.to_string()))?;
+            let meta=reader.schema().metadata();
+            if meta.get("price_precision").map(String::as_str)!=Some(price_precision.to_string().as_str())
+                || meta.get("size_precision").map(String::as_str)!=Some(size_precision.to_string().as_str()) {
+                return Err(CatalogError::Conflict("Instrument decimal precision changed".into()));
             }
-            if bar.open_time_ms != expected {
-                return Err(CatalogError::Invalid(
-                    "要写入的 K 线缺失、重复或乱序。".into(),
-                ));
+            let existing=self.read_bars_unlocked(bar_identity,interval,begin,end.saturating_add(1),MAX_WRITE)?;
+            if existing.is_empty()
+                || existing.first().ok_or_else(||CatalogError::Invalid("missing Bar".into()))?
+                    .event_ns(interval)?!=begin
+                || existing.last().ok_or_else(||CatalogError::Invalid("missing Bar".into()))?
+                    .event_ns(interval)?!=end {
+                return Err(CatalogError::Invalid("existing Parquet filename does not match Bar rows".into()));
             }
-            events.push(bar.event_ns(interval)?);
-            expected = crate::model::bar_window(interval, expected)?.1;
+            let mut merged=existing.iter().cloned()
+                .map(|bar|(bar.open_time_ms,bar)).collect::<BTreeMap<_,_>>();
+            let keys=incoming.iter()
+                .filter_map(|(&key,bar)|match bar.event_ns(interval) {
+                    Ok(ts) if (begin..=end).contains(&ts)=>Some(key),
+                    _=>None,
+                }).collect::<Vec<_>>();
+            for key in keys {
+                let bar=incoming.remove(&key)
+                    .ok_or_else(||CatalogError::Conflict("incoming Bar vanished".into()))?;
+                merged.insert(key,bar);
+            }
+            let updated=merged.into_values().collect::<Vec<_>>();
+            validate_batch(interval,&updated,price_precision,size_precision)?;
+            if updated!=existing {
+                revisions.push((path,updated,true));
+            }
         }
-        let first = *events
-            .first()
-            .ok_or_else(|| CatalogError::Invalid("缺少历史数据。".into()))?;
-        let last = *events
-            .last()
-            .ok_or_else(|| CatalogError::Invalid("缺少历史数据。".into()))?;
-        let overlapping = candidate_files(&self.root, &dir_rel, first, last.saturating_add(1))?;
-        let (published, replaced) = if overlapping.is_empty() {
-            (bars.to_vec(), Vec::<PathBuf>::new())
-        } else {
-            // We cannot mutate Parquet rows in place. Read every original
-            // affected file, merge by UTC bucket, then publish a replacement.
-            // Readers use a shared lock so they never observe duplicate rows
-            // during the replacement transaction.
-            let mut first_old = first;
-            let mut last_old = last;
-            for path in &overlapping {
-                let name = path.file_name().and_then(|n| n.to_str())
-                    .ok_or_else(|| CatalogError::Invalid("invalid Parquet name".into()))?;
-                let (a, b) = filename_bounds(name)?;
-                first_old = first_old.min(a);
-                last_old = last_old.max(b);
-                let metadata = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
-                    File::open(path)?
-                ).map_err(|e| CatalogError::Parquet(e.to_string()))?;
-                let meta = metadata.schema().metadata();
-                if meta.get("price_precision").map(String::as_str) != Some(price_precision.to_string().as_str())
-                    || meta.get("size_precision").map(String::as_str) != Some(size_precision.to_string().as_str())
-                {
-                    return Err(CatalogError::Conflict(
-                        "existing Bar precision differs from requested Instrument precision".into(),
-                    ));
-                }
+        // New time buckets are written as new files. Updating an old Bar
+        // rewrites only its existing Parquet file (same name/time bounds),
+        // rather than introducing overlapping or duplicate Parquet records.
+        let mut pending=Vec::<CatalogBar>::new();
+        let mut previous=None;
+        for bar in incoming.into_values() {
+            if let Some(prev)=previous
+                && crate::bar_window(interval,prev)?.1!=bar.open_time_ms
+            {
+                let first=pending.first().ok_or_else(||CatalogError::Invalid("empty Bar group".into()))?
+                    .event_ns(interval)?;
+                let last=pending.last().ok_or_else(||CatalogError::Invalid("empty Bar group".into()))?
+                    .event_ns(interval)?;
+                revisions.push((directory.join(file_name(first,last)?),std::mem::take(&mut pending),false));
             }
-            let existing = self.read_bars_unlocked(
-                bar_identity, interval, first_old, last_old.saturating_add(1), MAX_WRITE
-            )?;
-            let mut merged = BTreeMap::new();
-            for bar in existing {
-                merged.insert(bar.open_time_ms, bar);
-            }
-            for bar in bars {
-                merged.insert(bar.open_time_ms, bar.clone());
-            }
-            if merged.len() > MAX_WRITE {
-                return Err(CatalogError::Limit("merged Bar batch exceeds writer bound".into()));
-            }
-            (merged.into_values().collect::<Vec<_>>(), overlapping)
-        };
-        // Preserve all adjacent old rows; do not replace a historical range
-        // with only the current Tick's partial Bar.
-        let mut expected = published[0].open_time_ms;
-        let mut published_events = Vec::with_capacity(published.len());
-        for bar in &published {
-            bar.validate(interval)?;
-            if bar.open_time_ms != expected {
-                return Err(CatalogError::Conflict(
-                    "overlapping file merge contains a gap; publish smaller intervals".into(),
-                ));
-            }
-            published_events.push(bar.event_ns(interval)?);
-            expected = crate::bar_window(interval,expected)?.1;
+            previous=Some(bar.open_time_ms);
+            pending.push(bar);
         }
-        let destination = directory.join(file_name(
-            *published_events.first().ok_or_else(|| CatalogError::Invalid("no Bar rows".into()))?,
-            *published_events.last().ok_or_else(|| CatalogError::Invalid("no Bar rows".into()))?,
-        )?);
-        let staging = safe_mkdir(&self.root, Path::new(".staging"))?;
-        let nanos = std::time::SystemTime::now()
+        if !pending.is_empty() {
+            let first=pending.first().ok_or_else(||CatalogError::Invalid("empty Bar group".into()))?
+                .event_ns(interval)?;
+            let last=pending.last().ok_or_else(||CatalogError::Invalid("empty Bar group".into()))?
+                .event_ns(interval)?;
+            revisions.push((directory.join(file_name(first,last)?),pending,false));
+        }
+        if revisions.is_empty() {
+            return Ok(directory.join(file_name(first,last)?));
+        }
+        let staging=safe_mkdir(&self.root,Path::new(".staging"))?;
+        let stamp=std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| CatalogError::Invalid("当前时钟无效。".into()))?
+            .map_err(|_|CatalogError::Invalid("invalid system clock".into()))?
             .as_nanos();
-        let tmp = staging.join(format!("bar-{}-{nanos}.parquet.tmp", std::process::id()));
-        let write = (|| -> Result<(), CatalogError> {
-            let mut columns = Vec::with_capacity(7);
-            for column in 0..5 {
-                let data = published
-                    .iter()
-                    .map(|bar| {
-                        decimal(match column {
-                            0 => bar.open,
-                            1 => bar.high,
-                            2 => bar.low,
-                            3 => bar.close,
-                            _ => bar.volume,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                columns.push(array(data)?);
-            }
-            let mut events_builder =
-                TimestampNanosecondBuilder::with_capacity(published_events.len()).with_timezone("UTC");
-            let mut init_builder =
-                TimestampNanosecondBuilder::with_capacity(published_events.len()).with_timezone("UTC");
-            for stamp in &published_events {
-                events_builder.append_value(*stamp);
-                init_builder.append_value(*stamp);
-            }
-            columns.push(Arc::new(events_builder.finish()));
-            columns.push(Arc::new(init_builder.finish()));
-            let data = RecordBatch::try_new(
-                schema(kind, &instrument, price_precision, size_precision),
-                columns,
-            )
-            .map_err(|e| CatalogError::Arrow(e.to_string()))?;
-            let file = OpenOptions::new().create_new(true).write(true).open(&tmp)?;
-            let opts = WriterProperties::builder()
-                .set_compression(Compression::SNAPPY)
-                .set_max_row_group_row_count(Some(5_000))
-                .build();
-            let mut writer = ArrowWriter::try_new(file, data.schema(), Some(opts))
-                .map_err(|e| CatalogError::Parquet(e.to_string()))?;
-            writer
-                .write(&data)
-                .map_err(|e| CatalogError::Parquet(e.to_string()))?;
-            writer
-                .close()
-                .map_err(|e| CatalogError::Parquet(e.to_string()))?;
-            File::open(&tmp)?.sync_all()?;
-            if replaced.is_empty() {
-                fs::hard_link(&tmp, &destination)?;
-            } else {
-                // Atomic replacement for an existing timestamp range.
-                // Reader shared locks prevent observation of intermediate files.
-                fs::rename(&tmp, &destination)?;
-                for path in &replaced {
-                    if *path != destination {
-                        fs::remove_file(path)?;
-                    }
+        let mut staged=Vec::new();
+        for (index,(destination,rows,replace)) in revisions.iter().enumerate() {
+            let tmp=staging.join(format!("bar-{}-{stamp}-{index}.parquet.tmp",std::process::id()));
+            if let Err(error)=stage_bars(&tmp,bar_identity,&instrument,interval,rows,price_precision,size_precision) {
+                let _=fs::remove_file(&tmp);
+                for (prior,_,_) in &staged {
+                    let _=fs::remove_file(prior);
                 }
+                return Err(error);
             }
-            File::open(&directory)?.sync_all()?;
-            Ok(())
-        })();
-        let _ = fs::remove_file(&tmp);
-        write?;
-        drop(lease);
-        Ok(destination)
+            staged.push((tmp,destination.clone(),*replace));
+        }
+        // The complete new content is durable before publication. Each
+        // individual object replacement is atomic even across a process crash.
+        // A multi-file partial commit remains valid and an identical retry
+        // finishes the outstanding files without creating duplicate buckets.
+        let mut result=None;
+        for (tmp,dest,replace) in &staged {
+            let published=if *replace {
+                fs::rename(tmp,dest)
+            } else {
+                fs::hard_link(tmp,dest)
+            };
+            if let Err(error)=published {
+                for (rest,_,_) in &staged {
+                    let _=fs::remove_file(rest);
+                }
+                return Err(CatalogError::Io(error));
+            }
+            result=Some(dest.clone());
+        }
+        for (tmp,_,_) in &staged {
+            let _=fs::remove_file(tmp);
+        }
+        File::open(directory)?.sync_all()?;
+        Ok(result.ok_or_else(||CatalogError::Invalid("no published Bar".into()))?)
     }
 }
 #[cfg(test)]
