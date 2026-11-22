@@ -37,6 +37,26 @@ pub enum VirtualKind {
         triggered: bool,
     },
 }
+impl VirtualKind {
+    fn valid(&self) -> bool {
+        match self {
+            Self::Market => true,
+            Self::Limit { price } | Self::StopMarket { trigger: price } => {
+                *price > Decimal::ZERO
+            }
+            Self::StopLimit { trigger, price, .. } => {
+                *trigger > Decimal::ZERO && *price > Decimal::ZERO
+            }
+        }
+    }
+
+    fn reset_trigger(&mut self) {
+        if let Self::StopLimit { triggered, .. } = self {
+            *triggered = false;
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VirtualOrder {
     pub id: String,
@@ -203,26 +223,15 @@ impl Coordinator {
             || order.filled >= order.quantity
             || !(order.quantity % self.increment).is_zero()
             || !(order.filled % self.increment).is_zero()
+            || !order.kind.valid()
             || self.orders.contains_key(&order.id)
             || !self.members.contains_key(&order.member_id)
         {
             return Err(CoordinatorError::Invalid);
         }
-        if self.orders.values().any(|o| o.id == order.id) {
-            return Err(CoordinatorError::Duplicate);
-        }
-        match &order.kind {
-            VirtualKind::Market => (),
-            VirtualKind::Limit { price } if *price > Decimal::ZERO => (),
-            VirtualKind::StopMarket { trigger } if *trigger > Decimal::ZERO => (),
-            VirtualKind::StopLimit { trigger, price, .. }
-                if *trigger > Decimal::ZERO && *price > Decimal::ZERO => {}
-            _ => return Err(CoordinatorError::Invalid),
-        }
-        if let VirtualKind::StopLimit { triggered, .. } = &mut order.kind {
-            // Never trust a caller-provided pre-triggered order state.
-            *triggered = false;
-        }
+        // Conditional activation belongs to the virtual order, never the
+        // venue OMS. Caller-supplied trigger state is not trusted.
+        order.kind.reset_trigger();
         if !matches!(&order.kind, VirtualKind::Market) {
             order.armed_at = now;
         }
@@ -250,20 +259,10 @@ impl Coordinator {
             amended.quantity = q;
         }
         if let Some(mut k) = kind {
-            let valid = match &k {
-                VirtualKind::Market => true,
-                VirtualKind::Limit { price } => *price > Decimal::ZERO,
-                VirtualKind::StopMarket { trigger } => *trigger > Decimal::ZERO,
-                VirtualKind::StopLimit { trigger, price, .. } => {
-                    *trigger > Decimal::ZERO && *price > Decimal::ZERO
-                }
-            };
-            if !valid {
+            if !k.valid() {
                 return Err(CoordinatorError::Invalid);
             }
-            if let VirtualKind::StopLimit { triggered, .. } = &mut k {
-                *triggered = false;
-            }
+            k.reset_trigger();
             amended.kind = k;
             amended.armed_at = None;
         }
@@ -680,6 +679,7 @@ impl Coordinator {
         for (key, order) in &self.orders {
             if key != &order.id
                 || !self.members.contains_key(&order.member_id)
+                || !order.kind.valid()
                 || order.quantity <= Decimal::ZERO
                 || order.filled < Decimal::ZERO
                 || order.filled >= order.quantity
@@ -751,6 +751,32 @@ mod tests {
             close: d(10),
         }
     }
+    #[test]
+    fn invalid_conditional_order_cannot_enter_or_restore_virtual_book() {
+        let mut coordinator = Coordinator::new(Decimal::ONE, Decimal::from(10)).unwrap();
+        coordinator.register("member").unwrap();
+        let invalid = VirtualOrder {
+            id: "invalid".into(),
+            member_id: "member".into(),
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            filled: Decimal::ZERO,
+            kind: VirtualKind::Limit { price: Decimal::ZERO },
+            risk_exit: false,
+            armed_at: None,
+        };
+        assert_eq!(
+            coordinator.accept_order(invalid.clone(), Some(1)),
+            Err(CoordinatorError::Invalid)
+        );
+        assert!(coordinator.virtual_order("invalid").is_none());
+
+        // A syntactically valid serialized snapshot can still carry an
+        // invalid virtual trigger. Reject it before persisted recovery.
+        coordinator.orders.insert(invalid.id.clone(), invalid);
+        assert_eq!(coordinator.validate_restored(), Err(CoordinatorError::Invalid));
+    }
+
     #[test]
     fn internal_cross_has_no_external_order() {
         let mut c = Coordinator::new(d(1), d(10)).unwrap();
