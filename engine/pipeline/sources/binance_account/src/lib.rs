@@ -103,6 +103,11 @@ pub fn attach_native_virtual_attribution(
             NativeOrderObservation::Filled(x) => &x.client_order_id,
             NativeOrderObservation::FillVoided { client_order_id } => client_order_id,
         };
+        // Native identity was already checked. An ACK cannot advance
+        // virtual attribution and must not consume a persistence CAS.
+        if matches!(&event, NativeOrderObservation::Accepted(_)) {
+            return;
+        }
         let Some(binding) = resolver_for_events(client_id) else {
             errors_for_events("native attribution binding disappeared".into());
             return;
