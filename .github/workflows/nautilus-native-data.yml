@@ -17,6 +17,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  execution-cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt, clippy
+      - name: Compile production Rust workspace after legacy OMS removal
+        run: cargo check --workspace --all-targets --locked
+      - name: Run pure Execution and Backtest regressions
+        run: cargo test -p seealpha-execution -p seealpha-backtest --locked
+      - name: Check Execution/Backtest lint
+        run: cargo clippy -p seealpha-execution -p seealpha-backtest --all-targets --locked -- -D warnings
+
   native-binance-data:
     runs-on: ubuntu-latest
     timeout-minutes: 90
