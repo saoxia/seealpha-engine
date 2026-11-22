@@ -70,7 +70,7 @@ pub(super) async fn import_bars(
             close,
             volume,
         });
-        evidence.push(seealpha_ledger::CatalogBar {
+        evidence.push(seealpha_runtime::CatalogBar {
             open_time_ms: start,
             open: open.to_string(),
             high: high.to_string(),

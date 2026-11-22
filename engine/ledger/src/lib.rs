@@ -1,4 +1,4 @@
-//! SQLite runtime book for tenants, strategy packages, paper orders, and catalog bars.
+//! SQLite runtime book for tenants, strategy packages, trading evidence, and paper orders.
 mod legacy;
 mod native_issuance;
 pub use native_issuance::NativeStrategyLoad;
@@ -17,12 +17,10 @@ mod basket_journal;
 mod coordinator_state;
 pub use basket_journal::StoredBasketJournal;
 pub use coordinator_state::StoredCoordinatorState;
-mod exercises;
 mod funding;
 mod parity;
 mod settlements;
 mod verified_fills;
-pub use records::CatalogBar;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use std::path::Path;
@@ -263,28 +261,6 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, symbol)
 );
-CREATE TABLE IF NOT EXISTS catalog_bars (
-    tenant_id TEXT NOT NULL,
-    product TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    interval TEXT NOT NULL,
-    open_time_ms INTEGER NOT NULL,
-    open TEXT NOT NULL,
-    high TEXT NOT NULL,
-    low TEXT NOT NULL,
-    close TEXT NOT NULL,
-    volume TEXT NOT NULL,
-    PRIMARY KEY (tenant_id, product, symbol, interval, open_time_ms)
-);
-CREATE TABLE IF NOT EXISTS option_exercise_observations (
-    tenant_id TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    expiry_time_ms INTEGER NOT NULL,
-    evidence_json TEXT NOT NULL,
-    PRIMARY KEY(tenant_id,symbol,expiry_time_ms)
-);
-CREATE INDEX IF NOT EXISTS option_exercise_scope
-    ON option_exercise_observations(tenant_id,expiry_time_ms);
 CREATE TABLE IF NOT EXISTS account_settlements (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,

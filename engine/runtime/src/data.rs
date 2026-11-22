@@ -4,7 +4,7 @@
 //! the Rust catalog after the complete requested interval is validated.
 use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
-use seealpha_ledger::CatalogBar;
+use crate::catalog::CatalogBar;
 use seealpha_catalog::DAY_MS;
 use seealpha_market::futures_repair::{RepairNextStep, scan_day};
 use seealpha_market::spot_repair;
@@ -740,7 +740,6 @@ impl Runtime {
                 .or_else(|| instrument.and_then(|p| p.get(key)).and_then(Value::as_u64));
             match requested {
                 Some(value) if value <= 16 => Ok(value as u32),
-                None if self.market_data_backend()? == "engine_sqlite_compat" => Ok(8),
                 _ => Err(bad(
                     "原生 Parquet 归档必须使用 Instrument 或明确配置的价格与数量精度。",
                 )),

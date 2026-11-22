@@ -139,8 +139,6 @@ impl Ledger {
             "account_snapshots",
             "quarantined_unverified_fills",
             "paper_positions",
-            "catalog_bars",
-            "option_exercise_observations",
             "account_settlements",
             "funding_observations",
             "backtest_results",
@@ -163,6 +161,23 @@ impl Ledger {
                 return Err(invalid(
                     "Python v1 export would omit Rust-only tenant evidence; use a complete v2 backup",
                 ));
+            }
+        }
+        // Older SQLite databases may retain retired market-data tables.
+        // Never silently omit their rows from a Python v1 export.
+        for table in ["catalog_bars", "option_exercise_observations"] {
+            let exists: bool = conn.query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+                params![table], |_| Ok(()),
+            ).optional().map_err(sqlite)?.is_some();
+            if exists {
+                let present: bool = conn.query_row(
+                    &format!("SELECT 1 FROM {table} WHERE tenant_id=?1 LIMIT 1"),
+                    params![tenant_id], |_| Ok(()),
+                ).optional().map_err(sqlite)?.is_some();
+                if present {
+                    return Err(invalid("legacy market data is not included in Python v1 tenant export"));
+                }
             }
         }
         let tenant: Option<(String, String, String)> = conn

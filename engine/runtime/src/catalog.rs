@@ -1,13 +1,22 @@
 //! Single historical-data facade for the Python Engine's existing
-//! Nautilus v2 Parquet Catalog, with isolated legacy SQLite dev support.
+//! Nautilus v2 Parquet Catalog, without SQLite market-data fallback.
 //! Python used data/catalog as the source of truth; Rust no longer requires
 //! copying the entire catalog into the Engine's small control-plane book.
-use crate::{Runtime, RuntimeError, map_ledger};
+use crate::{Runtime, RuntimeError};
 use rust_decimal::Decimal;
 use seealpha_catalog::{
     Catalog, CatalogBar as NativeBar, CatalogError, MarketProduct, NANO_PER_MS, RecordKind,
 };
-use seealpha_ledger::CatalogBar as BookBar;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogBar {
+    pub open_time_ms: i64,
+    pub open: String,
+    pub high: String,
+    pub low: String,
+    pub close: String,
+    pub volume: String,
+}
+type BookBar = CatalogBar;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -113,13 +122,6 @@ impl Runtime {
         }))
     }
 
-    pub fn market_data_backend(&self) -> Result<&'static str, RuntimeError> {
-        Ok(if self.native_catalog()?.is_some() {
-            "nautilus_v2_parquet"
-        } else {
-            "engine_sqlite_compat"
-        })
-    }
     /// Read [start,end) UTC, matching HistoricalMarketData.bars() exactly:
     /// Parquet event timestamp is candle close minus 1 millisecond.
     // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
@@ -140,31 +142,16 @@ impl Runtime {
                 "历史 K 线查询范围无效。".into(),
             ));
         }
-        if let Some(catalog) = self.native_catalog()? {
-            let rows = catalog
-                .read_bars(
-                    symbol,
-                    product(product_name)?,
-                    interval,
-                    time_ns(start_ms)?,
-                    time_ns(end_ms)?,
-                    limit as usize,
-                )
-                .map_err(error)?;
-            Ok(rows.iter().map(one).collect())
-        } else {
-            self.ledger
-                .catalog_bars(
-                    tenant,
-                    product_name,
-                    symbol,
-                    interval,
-                    start_ms,
-                    end_ms,
-                    limit,
-                )
-                .map_err(map_ledger)
-        }
+        let catalog = self.native_catalog()?.ok_or_else(|| {
+            RuntimeError::NotFound("未挂载 Nautilus v2 Catalog。".into())
+        })?;
+        let rows = catalog
+            .read_bars(
+                symbol, product(product_name)?, interval,
+                time_ns(start_ms)?, time_ns(end_ms)?, limit as usize,
+            )
+            .map_err(error)?;
+        Ok(rows.iter().map(one).collect())
     }
     /// The strict backtest variant refuses missing Parquet files, partial
     /// coverage, out-of-order clocks, fabricated bars and cross-product data.
@@ -184,45 +171,16 @@ impl Runtime {
         if !(1..=50_000).contains(&limit) {
             return Err(RuntimeError::Unprocessable("回测范围超过上限。".into()));
         }
-        if let Some(catalog) = self.native_catalog()? {
-            let rows = catalog
-                .read_contiguous_bars(
-                    symbol,
-                    product(product_name)?,
-                    interval,
-                    start_ms,
-                    end_ms,
-                    limit as usize,
-                )
-                .map_err(error)?;
-            Ok(rows.iter().map(one).collect())
-        } else {
-            let rows = self
-                .ledger
-                .catalog_bars(
-                    tenant,
-                    product_name,
-                    symbol,
-                    interval,
-                    start_ms,
-                    end_ms,
-                    limit,
-                )
-                .map_err(map_ledger)?;
-            let mut expected = start_ms;
-            for bar in &rows {
-                if bar.open_time_ms != expected {
-                    return Err(RuntimeError::Conflict("历史 K 线存在缺口。".into()));
-                }
-                expected = seealpha_catalog::bar_window(interval, expected)
-                    .map_err(error)?
-                    .1;
-            }
-            if expected != end_ms {
-                return Err(RuntimeError::Conflict("历史 K 线不完整。".into()));
-            }
-            Ok(rows)
-        }
+        let catalog = self.native_catalog()?.ok_or_else(|| {
+            RuntimeError::NotFound("未挂载 Nautilus v2 Catalog。".into())
+        })?;
+        let rows = catalog
+            .read_contiguous_bars(
+                symbol, product(product_name)?, interval,
+                start_ms, end_ms, limit as usize,
+            )
+            .map_err(error)?;
+        Ok(rows.iter().map(one).collect())
     }
     /// Store historical evidence in the Python-owned Parquet layout when that
     /// directory is mounted. Never rewrite old Parquet into SQLite.
@@ -292,30 +250,17 @@ impl Runtime {
             previous = Some(row.open_time_ms);
             native.push(row);
         }
-        let published = if let Some(catalog) = self.native_catalog()? {
-            let path = catalog
-                .append_bars(
-                    symbol,
-                    product,
-                    interval,
-                    &native,
-                    price_precision,
-                    size_precision,
-                )
-                .map_err(error)?;
-            // Never return an absolute local path to untrusted clients.
-            json!({"imported":bars.len(),"verified":true,
-                "backend":"nautilus_v2_parquet",
-                "file":path.strip_prefix(catalog.root()).ok()
-                    .map(|p|p.to_string_lossy().to_string()),
-                "exchange_orders":0})
-        } else {
-            self.ledger
-                .import_verified_catalog_bars(tenant, product_name, symbol, interval, bars)
-                .map_err(map_ledger)?;
-            json!({"imported":bars.len(),"verified":true,
-                "backend":"engine_sqlite_compat","exchange_orders":0})
-        };
+        let catalog = self.native_catalog()?.ok_or_else(|| {
+            RuntimeError::NotFound("未挂载 Nautilus v2 Catalog。".into())
+        })?;
+        let path = catalog
+            .append_bars(symbol, product, interval, &native, price_precision, size_precision)
+            .map_err(error)?;
+        let published = json!({"imported":bars.len(),"verified":true,
+            "backend":"nautilus_v2_parquet",
+            "file":path.strip_prefix(catalog.root()).ok()
+                .map(|p|p.to_string_lossy().to_string()),
+            "exchange_orders":0});
         // Derived 1m rollups are a repairable cache, never authoritative
         // Catalog evidence. Failure must not recast a committed import as
         // uncommitted or elevate the live data/venue readiness gate.
@@ -414,7 +359,7 @@ impl Runtime {
 mod tests {
     use super::*;
     #[test]
-    fn quote_precision_is_not_lost_in_sqlite_compat_bridge() {
+    fn quote_precision_is_not_lost_in_catalog_bar_conversion() {
         let b = NativeBar {
             open_time_ms: 0,
             open: Decimal::new(123456789, 8),

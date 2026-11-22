@@ -363,63 +363,6 @@ impl Ledger {
 }
 
 impl Ledger {
-    /// A verified native import never silently rewrites pre-existing evidence.
-    /// Whole-batch insertion rolls back on any conflicting historical bar.
-    pub fn import_verified_catalog_bars(
-        &self,
-        tenant_id: &str,
-        product: &str,
-        symbol: &str,
-        interval: &str,
-        rows: &[crate::CatalogBar],
-    ) -> Result<usize, LedgerError> {
-        let mut conn = self.lock()?;
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite)?;
-        for bar in rows {
-            let old:Option<(String,String,String,String,String)>=tx.query_row(
-                "SELECT open,high,low,close,volume FROM catalog_bars
-                 WHERE tenant_id=?1 AND product=?2 AND symbol=?3 AND interval=?4 AND open_time_ms=?5",
-                params![tenant_id,product,symbol,interval,bar.open_time_ms],
-                |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))
-            ).optional().map_err(sqlite)?;
-            if let Some(value) = old {
-                if value.0.as_str() != bar.open.as_str()
-                    || value.1.as_str() != bar.high.as_str()
-                    || value.2.as_str() != bar.low.as_str()
-                    || value.3.as_str() != bar.close.as_str()
-                    || value.4.as_str() != bar.volume.as_str()
-                {
-                    return Err(LedgerError::Conflict(
-                        "历史 K 线与已保存证据冲突，未写入。".into(),
-                    ));
-                }
-                continue;
-            }
-            tx.execute(
-                "INSERT INTO catalog_bars
-                 (tenant_id,product,symbol,interval,open_time_ms,open,high,low,close,volume)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                params![
-                    tenant_id,
-                    product,
-                    symbol,
-                    interval,
-                    bar.open_time_ms,
-                    bar.open.as_str(),
-                    bar.high.as_str(),
-                    bar.low.as_str(),
-                    bar.close.as_str(),
-                    bar.volume.as_str()
-                ],
-            )
-            .map_err(sqlite)?;
-        }
-        tx.commit().map_err(sqlite)?;
-        Ok(rows.len())
-    }
-
     pub fn restore_interrupted_data_jobs(&self) -> Result<usize, LedgerError> {
         let conn = self.lock()?;
         conn.execute(

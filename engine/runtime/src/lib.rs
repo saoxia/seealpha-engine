@@ -5,6 +5,7 @@ mod basket_phase;
 mod portfolio;
 pub use portfolio::{NativePortfolioEvent, NativePortfolioResult, NativePortfolioState};
 mod catalog;
+pub use catalog::CatalogBar;
 mod native_calculation;
 mod config;
 mod data;
