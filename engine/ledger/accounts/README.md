@@ -49,7 +49,7 @@ let checked = ledger.account_snapshot_for_risk(
 
 **后续：** 在固定版本 Nautilus 0.68.0 的原生执行节点上，先打通 AccountState 的报告订阅、账户身份映射、真实性分类、断线恢复和账户 Cache 观察，再评估是否能替代 `account_snapshots` 的某些运行时读取。风险所需的不可变来源、版本和时效约束在证明等价之前不能删除。
 
-父模块文档：[Ledger README](../../README.md)。
+父模块文档：[Ledger README](../README.md)。
 
 ## Nautilus AccountState 的下一步接入（独立堆叠 PR）
 
