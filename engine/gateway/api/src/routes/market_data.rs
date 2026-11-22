@@ -86,9 +86,12 @@ pub(super) async fn import_bars(
     // SQLite copy that backtests cannot see.
     let native = state
         .runtime
-        .market_data_backend()
+        .native_catalog()
         .map_err(AppError::from)?
-        == "nautilus_v2_parquet";
+        .is_some();
+    if !native {
+        return Err(AppError::conflict("未挂载原生 Parquet Catalog，拒绝写入。"));
+    }
     // Python derives the precision from authoritative Instrument metadata.
     // The Rust importer refuses to invent it for a native Parquet publication.
     if native && (body.get("price_precision").is_none() || body.get("size_precision").is_none()) {
