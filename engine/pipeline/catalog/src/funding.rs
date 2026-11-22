@@ -110,3 +110,37 @@ impl Catalog {
         Ok(Some(destination))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn public_rates_are_catalog_only_and_immutable() {
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-catalog-funding-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let catalog = Catalog::open_existing(&root).unwrap();
+        let rows = vec![
+            CatalogFunding { funding_time_ms: 100, rate_type: "Regular".into(),
+                funding_rate: Decimal::new(1,4), mark_price: Decimal::new(2000,0) },
+            CatalogFunding { funding_time_ms: 200, rate_type: "Special".into(),
+                funding_rate: Decimal::new(-2,4), mark_price: Decimal::new(2100,0) },
+        ];
+        assert!(catalog.append_funding("ETHUSDT", &rows).unwrap().is_some());
+        assert!(catalog.append_funding("ETHUSDT", &rows).is_ok());
+        let identity = instrument_id("ETHUSDT", MarketProduct::FuturesUm).unwrap();
+        let records = catalog.read_records(&RecordKind::FundingRate, &identity,
+            0, 300 * NANO_PER_MS, 10).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1]["rate_type"], "Special");
+        let mut conflict = rows.clone();
+        conflict[0].funding_rate = Decimal::new(3,4);
+        assert!(catalog.append_funding("ETHUSDT", &conflict).is_err());
+        assert!(catalog.append_funding("BTCUSDT", &rows).is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+}
