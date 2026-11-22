@@ -128,6 +128,18 @@ impl Connection {
         }
     }
 
+    pub fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<postgres::Row>, Error> {
+        self.with_client(|client| Ok(client.query(sql, params)?))
+    }
+    pub fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<postgres::Row>, Error> {
+        self.with_client(|client| Ok(client.query_opt(sql, params)?))
+    }
+    pub fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<postgres::Row, Error> {
+        self.with_client(|client| Ok(client.query_one(sql, params)?))
+    }
+    pub fn transaction(&mut self) -> Result<Transaction<'_>, Error> {
+        self.transaction_with_behavior(TransactionBehavior::Immediate)
+    }
     pub fn prepare<'a>(&'a self, sql: &str) -> Result<Statement<'a>, Error> {
         Ok(Statement { conn: self, sql: sql.into() })
     }
@@ -153,6 +165,12 @@ impl std::ops::Deref for Transaction<'_> {
     fn deref(&self) -> &Self::Target { self.conn }
 }
 impl Transaction<'_> {
+    pub fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<postgres::Row, Error> {
+        self.conn.query_one(sql, params)
+    }
+    pub fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<postgres::Row>, Error> {
+        self.conn.query_opt(sql, params)
+    }
     pub fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<usize, Error> {
         self.conn.execute(sql, params)
     }
