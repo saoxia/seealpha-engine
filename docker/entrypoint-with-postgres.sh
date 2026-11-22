@@ -95,7 +95,39 @@ if ! runuser -u postgres -- psql -h "$PG_RUNTIME" -d postgres -Atqc \
   runuser -u postgres -- createdb -h "$PG_RUNTIME" -O seealpha_cache seealpha_cache
 fi
 
-# Loopback-only DSN for a future Nautilus native Cache setup (not yet wired).
+# Initialize the exact pinned NautilusTrader rc9 schema once, as the database
+# owner. The native Postgres cache refuses missing/incompatible schemas.
+SCHEMA_DIR=/usr/local/share/nautilus-postgres-schema
+schema_ready="$(runuser -u postgres -- psql -h "$PG_RUNTIME" -d seealpha_cache -Atqc \
+  "SELECT CASE WHEN to_regclass('public.account_event') IS NOT NULL AND to_regclass('public.order_event') IS NOT NULL AND to_regclass('public.position_event') IS NOT NULL THEN 'yes' ELSE 'no' END")"
+if [[ "$schema_ready" != "yes" ]]; then
+  # Existing partial schema should never be overwritten silently.
+  object_count="$(runuser -u postgres -- psql -h "$PG_RUNTIME" -d seealpha_cache -Atqc \
+    "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m')")"
+  if [[ "$object_count" != "0" ]]; then
+    echo "Incomplete Nautilus PostgreSQL schema; refusing automatic migration" >&2
+    exit 1
+  fi
+  for sql in types.sql functions.sql partitions.sql tables.sql; do
+    runuser -u postgres -- psql -X -h "$PG_RUNTIME" -U postgres -d seealpha_cache \
+      -v ON_ERROR_STOP=1 -f "$SCHEMA_DIR/$sql" >/dev/null
+  done
+  # Schema tables created by postgres need permissions for the account cache.
+  runuser -u postgres -- psql -X -h "$PG_RUNTIME" -d seealpha_cache \
+    -v ON_ERROR_STOP=1 -q <<SQL
+GRANT USAGE, CREATE ON SCHEMA public TO seealpha_cache;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO seealpha_cache;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO seealpha_cache;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO seealpha_cache;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO seealpha_cache;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO seealpha_cache;
+SQL
+fi
+
+# The observer reads the credential from this file. No password command-line flag.
+export SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE="$PG_CREDENTIAL_FILE"
+# Local endpoint hint only; actual native Cache is enabled explicitly on observer.
+
 export SEEALPHA_POSTGRES_URL="postgresql://seealpha_cache:${PG_PASSWORD}@127.0.0.1:5432/seealpha_cache"
 unset PG_PASSWORD
 
