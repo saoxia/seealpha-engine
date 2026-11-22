@@ -217,6 +217,7 @@ fn persist_cursor(path: &Path, cursor: &RecoveryCursor) -> Result<()> {
 /// Subscribe to Nautilus' *typed* account-state message bus.
 pub struct NativeAccountSubscription {
     handler: TypedHandler<AccountState>,
+    topic: String,
     session: Rc<RefCell<NativeAccountSession>>,
 }
 
@@ -226,6 +227,7 @@ impl NativeAccountSubscription {
         now_ns: impl Fn() -> u64 + 'static,
         max_age_ns: u64,
     ) -> Self {
+        let topic = format!("events.account.{}", session.borrow().account_id);
         let received = Rc::clone(&session);
         let handler = TypedHandler::from(move |event: &AccountState| {
             let now = now_ns();
@@ -246,10 +248,11 @@ impl NativeAccountSubscription {
                 Err(error) => log::warn!("native account observation rejected: {error}"),
             }
         });
-        // A typed subscriber is safer than an untyped serializer/JSON stream;
-        // source and account IDs are still checked inside accept().
-        msgbus::subscribe_account_state("events.account.*".into(), handler.clone(), None);
-        Self { handler, session }
+        // Subscribe to this account only, rather than receiving all account
+        // events from a process-wide wildcard. Identity/type are still checked
+        // inside accept(): topic routing alone never authenticates a venue.
+        msgbus::subscribe_account_state(topic.clone().into(), handler.clone(), None);
+        Self { handler, topic, session }
     }
 
     pub fn session(&self) -> &Rc<RefCell<NativeAccountSession>> {
@@ -259,7 +262,7 @@ impl NativeAccountSubscription {
 
 impl Drop for NativeAccountSubscription {
     fn drop(&mut self) {
-        msgbus::unsubscribe_account_state("events.account.*".into(), &self.handler);
+        msgbus::unsubscribe_account_state(self.topic.clone().into(), &self.handler);
     }
 }
 
