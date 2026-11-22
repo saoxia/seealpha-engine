@@ -1,16 +1,11 @@
-//! PostgreSQL evidence book for tenants and verified trading facts.
+//! PostgreSQL evidence book for verified trading facts.
 //! Nautilus owns account and position state; Ledger owns verified economic evidence.
-//! Tenant registration metadata is isolated in `accounts`, not the crate root.
-#[path = "accounts/mod.rs"]
-mod accounts;
 #[path = "movements/mod.rs"]
 mod movements;
 #[path = "allocations/mod.rs"]
 mod allocations;
 #[path = "reconciliation/mod.rs"]
 mod reconciliation;
-
-pub use accounts::Tenant;
 
 use seealpha_database::Connection;
 use std::path::Path;
@@ -32,6 +27,9 @@ impl Ledger {
     pub fn open(path: &Path) -> Result<Self, LedgerError> {
         let connection = Connection::open(path)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
+        // Standalone Ledger unit fixtures need the shared schema; production
+        // bootstrap belongs to Runtime before Ledger and StateStore open.
+        #[cfg(test)]
         seealpha_database::bootstrap_engine_schema(&connection)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
         Ok(Self {

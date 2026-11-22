@@ -15,12 +15,12 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 
 ## 四个最小业务核心（2026-11-22）
 
-- **Accounts**：`account_registry_view` 复用现有租户和连接登记，只返回业务元信息；不存余额、持仓、账户快照，不授予发送权限。原生账户状态仍由 Nautilus 维护。
+- **Accounts 登记**：已迁往 Runtime StateStore 的 `registry.rs`，保留租户、连接的业务元信息；不存余额、持仓、账户快照，不授予发送权限。原生账户状态仍由 Nautilus 维护。
 - **Movements**：沿用经过认证的成交、资金费、结算及 `account_evidence_events`，没有上游证据时拒绝生成事件，既不凭 ACK 入账也不建一套现金余额账。
 - **Allocations**：`attribute_account_event` 将已登记的可信账户经济事件按整数 basis points（总计最多 10000）不可变地归属策略；跨租户/账户/环境、重复改写和超额分配均拒绝；尚不计算策略盈亏或合成虚拟成交。
 - **Reconciliation**：`reconcile_account_attribution` 汇总已存证据的已归属/未归属情况，明确标记历史完整性、交易所余额和持仓对账均**未完成**；这不是通过真实账户对账的证明。
 
-本轮只搭建 Ledger 的数据核心，不新增 HTTP 路由、自动执行任务或与 Nautilus 并行的账户状态机。共享 Schema 在 Ledger 打开时通过 `seealpha_database::bootstrap_engine_schema` 初始化；已有历史表保持原状。
+本轮只搭建 Ledger 的数据核心，不新增 HTTP 路由、自动执行任务或与 Nautilus 并行的账户状态机。共享 Schema 由 Runtime 统一初始化；已有历史表保持原状。
 
 ## Accounts 迁移
 
@@ -55,12 +55,12 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 
 ## Execution persistence ownership
 
-Durable order intents, GET-only recovery scheduling, order request views and stored order projections are Runtime-owned (`runtime/src/state_store/`). Ledger retains tenant registration, signed fills, settlements and economic evidence. Historical execution tables remain intact; no DROP or backfill.
+Durable order intents, GET-only recovery scheduling, order request views and stored order projections are Runtime-owned (`runtime/src/state_store/`). Ledger retains signed fills, settlements and economic evidence; Runtime owns tenant and connection registration. Historical execution tables remain intact; no DROP or backfill.
 
 ## Ledger 源码收敛（2026-11-22）
 
 - `mod.rs` 是 Ledger crate 根入口，维护 Ledger 初始化、公共类型、连接锁和保留历史表的安全测试；原 `src/lib.rs` 已移除。
-- `accounts/mod.rs` 持有租户与账户连接登记，包括 `active_tenant_ids`、`ensure_tenant`、`tenant`、`account_connections` 和 `upsert_connection`。
+- 租户与账户连接登记已经从 Ledger 迁至 `engine/runtime/src/state_store/registry.rs`，包括 `active_tenant_ids`、`ensure_tenant`、`tenant`、`account_connections` 和 `upsert_connection`。
 - `movements/verified_fills.rs` 持有 `fills()` 读取与认证成交写入；不新增原生订单状态机。
 - 旧 `src/records.rs` 已删除，迁移不修改 SQL Schema 或现有 API 方法签名。
-- 共享 PostgreSQL Schema 的执行实现位于 `engine/database/src/lib.rs::bootstrap_engine_schema`，目前仍由 `Ledger::open` 调用，保留 Runtime StateStore 依赖的启动顺序。Schema 所有权/迁移生命周期的完全解耦仍需单独部署回归。
+- 共享 PostgreSQL Schema 由 Runtime 启动时调用 `seealpha_database::bootstrap_engine_schema`，然后打开 Ledger / StateStore。Ledger 仅在单元测试构建下为独立 fixture 初始化 Schema；不执行 DROP 或历史数据转换。

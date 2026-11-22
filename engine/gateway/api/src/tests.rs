@@ -153,17 +153,14 @@ use super::*;
             .unwrap();
         setup
             .runtime
-            .ledger
             .upsert_connection("42", "a", "production", "registered")
             .unwrap();
         setup
             .runtime
-            .ledger
             .upsert_connection("42", "other", "sandbox", "registered")
             .unwrap();
         setup
             .runtime
-            .ledger
             .upsert_connection("43", "a", "sandbox", "registered")
             .unwrap();
         let app = router(setup);

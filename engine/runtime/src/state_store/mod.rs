@@ -1,6 +1,8 @@
 //! Application-owned durable state: research outputs and Portfolio checkpoints.
 //! This is not a balance, position, or exchange fill ledger. Uses the same
-//! PostgreSQL schema already initialized by Ledger::open during Runtime::open.
+//! PostgreSQL schema initialized by Runtime before stores are opened.
+mod registry;
+pub use registry::Tenant;
 mod basket_journal;
 mod coordinator_state;
 mod research;
@@ -25,9 +27,9 @@ impl StateStore {
         let connection = Connection::open(path)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
         // Tests use standalone :memory: fixtures; production schema creation is
-        // owned by Ledger::open, called before this store is constructed.
+        // owned by Runtime::open, called before this store is constructed.
         #[cfg(test)]
-        connection.execute_batch(include_str!("../../../../docker/seealpha-postgres-schema.sql"))
+        seealpha_database::bootstrap_engine_schema(&connection)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
         Ok(Self { connection: Mutex::new(connection) })
     }
@@ -46,12 +48,6 @@ pub(super) fn now_ms() -> i64 {
 
 #[cfg(test)]
 impl StateStore {
-    // Preserve the original Ledger test fixtures without exposing tenant writes to production.
-    fn ensure_tenant(&self, tenant: &str, purpose: &str, status: &str) -> Result<(), LedgerError> {
-        use seealpha_database::params;
-        self.lock()?.execute("INSERT INTO tenants(tenant_id,purpose,status) VALUES ($1,$2,$3) ON CONFLICT(tenant_id) DO UPDATE SET purpose=excluded.purpose,status=excluded.status", params![tenant,purpose,status]).map_err(|e| LedgerError::Database(e.to_string()))?;
-        Ok(())
-    }
     fn request(&self, tenant: &str, account: &str, request: &str) -> Result<Option<serde_json::Value>, LedgerError> {
         self.get_order_request(tenant,account,request)?.map(|s| serde_json::from_str(&s).map_err(|e| LedgerError::Database(e.to_string()))).transpose()
     }

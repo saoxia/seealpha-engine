@@ -1,6 +1,7 @@
-//! Accounts — tenant-scoped registration view, not an exchange balance cache.
+//! Runtime-owned tenant and account connection registration metadata.
 //! Trading balances and positions are authoritative only in Nautilus.
-use crate::{Ledger, LedgerError, now_ms};
+use super::{StateStore, now_ms};
+use seealpha_ledger::LedgerError;
 
 /// Local registration metadata synchronized from Platform, not user ownership or authorization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,7 +13,7 @@ pub struct Tenant {
 use seealpha_database::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
-impl Ledger {
+impl StateStore {
     /// Enumerate active tenant scopes for safe recovery of never-started jobs.
     /// This does not grant a new execution or exchange order permission.
     pub fn active_tenant_ids(&self) -> Result<Vec<String>, LedgerError> {
@@ -158,7 +159,7 @@ mod tests {
     use super::*;
     #[test]
     fn registry_is_tenant_scoped_and_never_claims_live_evidence() {
-        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let db = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         db.ensure_tenant("t", "production", "active").unwrap();
         db.ensure_tenant("other", "production", "active").unwrap();
         db.upsert_connection("t", "a", "sandbox", "closed").unwrap();
