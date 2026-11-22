@@ -21,10 +21,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use seealpha_market::{MarketSnapshot, Product, PublicSource, check_symbol};
+use seealpha_market::{MarketSnapshot, Product, PublicSource};
 use seealpha_runtime::{
     AuthMode, Config, OrderCommand, PreviewRequest, Runtime, RuntimeError,
-    StrategyInput, StrategySubmission,
+    StrategySubmission,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};

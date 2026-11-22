@@ -743,8 +743,12 @@ mod tests {
                 .count(),
             11
         );
-        assert!(ledger.request("t", "a", "req1").unwrap().unwrap()["reconcile_required"] == true);
-        assert!(ledger.request("other", "a", "req1").unwrap().is_none());
+        assert_eq!(
+            ledger.registered_order_intent("t", "a", "req1").unwrap().unwrap(),
+            new_intent()
+        );
+        assert!(ledger.registered_order_intent("other", "a", "req1").unwrap().is_none());
+        assert!(ledger.order_recovery_page("t", 0, 10).unwrap()[0].reconciliation_only);
         assert!(
             ledger
                 .preregister_order_intent(

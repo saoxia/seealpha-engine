@@ -1671,7 +1671,6 @@ dependencies = [
  "hmac 0.12.1",
  "http-body-util",
  "rust_decimal",
- "seealpha-backtest",
  "seealpha-catalog",
  "seealpha-database",
  "seealpha-ledger",
