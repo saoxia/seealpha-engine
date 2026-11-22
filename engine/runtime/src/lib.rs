@@ -11,7 +11,7 @@ mod native_handoff;
 mod research;
 mod state_store;
 pub use orders::OrderCommand;
-pub use state_store::{OrderRecoveryItem, ReconciliationTask, StoredOrder};
+pub use state_store::{OrderRecoveryItem, ReconciliationTask};
 
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
@@ -186,11 +186,6 @@ impl Runtime {
                 error_code,
             )
             .map_err(map_ledger)
-    }
-
-    /// Read persisted order projections owned by Runtime execution.
-    pub fn stored_orders(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<StoredOrder>, RuntimeError> {
-        self.state_store.orders(tenant, account, env).map_err(map_ledger)
     }
 
     pub fn inflight(&self) -> usize {
