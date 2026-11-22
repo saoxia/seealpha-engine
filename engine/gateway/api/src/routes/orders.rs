@@ -9,8 +9,7 @@ pub(super) async fn list_orders(
     let environment = query.environment.unwrap_or_else(|| "paper".into());
     let orders = state
         .runtime
-        .ledger
-        .orders(&tenant_id, &account_id, &environment)
+        .stored_orders(&tenant_id, &account_id, &environment)
         .map_err(|error| match error {
             seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
             seealpha_ledger::LedgerError::Database(detail) => {
