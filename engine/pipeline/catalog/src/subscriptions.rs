@@ -39,7 +39,8 @@ pub fn validate_subscription(value:&PipelineSubscription)->Result<(),ControlErro
     let date=NaiveDate::parse_from_str(&value.history_start,"%Y-%m-%d")
         .map_err(|_|ControlError::Conflict("history_start must be YYYY-MM-DD".into()))?;
     if date.format("%Y-%m-%d").to_string()!=value.history_start
-       || date < NaiveDate::from_ymd_opt(2017,1,1).unwrap() {
+       || date < NaiveDate::from_ymd_opt(2017,1,1).unwrap()
+       || date > chrono::Utc::now().date_naive() {
         return Err(ControlError::Conflict("history_start is invalid or unsupported".into()));
     }
     if [value.price_precision,value.size_precision].iter().flatten().any(|p|*p>16)
@@ -140,7 +141,7 @@ mod tests {
     }
     #[test] fn strict_utc_dates_and_schema(){
         assert_eq!(item("2025-01-01").start_ms().unwrap(),1735689600000);
-        for bad in ["2025-02-30","2025-1-1","2016-01-01","bad"] {
+        for bad in ["2025-02-30","2025-1-1","2016-01-01","2099-01-01","bad"] {
             assert!(validate_subscription(&item(bad)).is_err());
         }
         assert!(serde_json::from_str::<PipelineSubscription>(
