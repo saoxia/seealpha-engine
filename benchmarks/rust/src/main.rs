@@ -1,26 +1,21 @@
 //! Same-workload hot-path measurements. Setup is outside the timer.
 use rust_decimal::Decimal;
 use seealpha_backtest::{HistoryBar, PublishedTarget, run_backtest};
-use seealpha_market::{PublicTrade, aggregate_trades};
-use seealpha_quality::{
-    EventRange, Kline, Trade, missing_event_ranges, validate_klines, validate_trades,
-};
+use seealpha_market::{Bar, PublicTrade, aggregate_trades, validate_bars};
 use serde_json::json;
 use std::hint::black_box;
 use std::time::Instant;
 
 fn main() {
-    let name = std::env::args().nth(1).unwrap_or_else(|| "gaps".into());
+    let name = std::env::args().nth(1).unwrap_or_else(|| "aggregate".into());
     let n = std::env::args()
         .nth(2)
         .and_then(|value| value.parse().ok())
         .unwrap_or(200_000);
     let (elapsed_s, result, peak_rss_kib) = match name.as_str() {
-        "gaps" => gaps(n),
         "net" => net(n),
         "aggregate" => aggregate(n),
         "klines" => klines(n),
-        "trades" => trades(n),
         "sqlite" => sqlite(n),
         "backtest" => backtest(n),
         other => {
@@ -38,21 +33,6 @@ fn main() {
             "result": result,
         })
     );
-}
-
-fn gaps(n: usize) -> (f64, serde_json::Value, u64) {
-    let intervals = (0..n)
-        .step_by(2)
-        .map(|index| EventRange {
-            start: index as i64 * 100,
-            end: index as i64 * 100,
-        })
-        .collect::<Vec<_>>();
-    let started = Instant::now();
-    let missing =
-        missing_event_ranges(black_box(&intervals), 0, n as i64 * 100, 100).expect("ranges");
-    let elapsed = started.elapsed().as_secs_f64();
-    (elapsed, json!(missing.len()), peak_rss_kib())
 }
 
 fn net(n: usize) -> (f64, serde_json::Value, u64) {
@@ -101,38 +81,21 @@ fn klines(n: usize) -> (f64, serde_json::Value, u64) {
     let rows = (0..n)
         .map(|index| {
             let open_time_ms = index as i64 * 60_000;
-            Kline {
+            Bar {
                 open_time_ms,
                 close_time_ms: open_time_ms + 59_999,
-                open: 100.0,
-                high: 100.0,
-                low: 100.0,
-                close: 100.0,
-                volume: 1.0,
+                open: Decimal::from(100),
+                high: Decimal::from(100),
+                low: Decimal::from(100),
+                close: Decimal::from(100),
+                volume: Decimal::ONE,
             }
         })
         .collect::<Vec<_>>();
     let started = Instant::now();
-    validate_klines(black_box(&rows), 60_000).expect("klines");
+    validate_bars(black_box(&rows), 60_000).expect("klines");
     let elapsed = started.elapsed().as_secs_f64();
     (elapsed, json!(n), peak_rss_kib())
-}
-
-fn trades(n: usize) -> (f64, serde_json::Value, u64) {
-    let rows = (0..n)
-        .map(|index| Trade {
-            trade_id: index as i64 + 1,
-            timestamp: 1_700_000_000_000 + index as i64,
-            price: 2000.0,
-            quantity: 0.01,
-            quote_quantity: 20.0,
-            buyer_maker: index % 2 == 0,
-        })
-        .collect::<Vec<_>>();
-    let started = Instant::now();
-    let kept = validate_trades(black_box(&rows), false).expect("trades");
-    let elapsed = started.elapsed().as_secs_f64();
-    (elapsed, json!(kept.len()), peak_rss_kib())
 }
 
 fn backtest(n: usize) -> (f64, serde_json::Value, u64) {
