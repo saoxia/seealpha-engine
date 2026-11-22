@@ -339,7 +339,7 @@ async fn task_retry(
     }
     if !state
         .runtime
-        .ledger
+        .control
         .transition_data_job(&tenant, &id, status, "queued", None)
         .map_err(|e| AppError::bad_request(e.to_string()))?
     {
@@ -546,7 +546,7 @@ async fn data_retry(
     }
     if !state
         .runtime
-        .ledger
+        .control
         .transition_data_job(&tenant, id, previous, "queued", None)
         .map_err(|e| AppError::bad_request(e.to_string()))?
     {
@@ -618,7 +618,7 @@ fn data_query_range(body: &Value) -> Result<(&str, &str, &str, i64, i64, i64), A
     }
     Ok((product, symbol, interval, start, end, step))
 }
-fn catalog_bar_json(bar: &seealpha_ledger::CatalogBar) -> Value {
+fn catalog_bar_json(bar: &seealpha_runtime::CatalogBar) -> Value {
     json!({"open_time_ms":bar.open_time_ms,"open":bar.open,
         "high":bar.high,"low":bar.low,"close":bar.close,"volume":bar.volume,
         "is_closed":true})
@@ -647,7 +647,7 @@ async fn data_inventory(
     }
     let policies = state
         .runtime
-        .ledger
+        .control
         .policies(&tenant)
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     let items = policies
@@ -699,8 +699,8 @@ async fn data_coverage(
         "start_ms":start,"end_ms":end,"expected_bars":expected,
         "present_bars":rows.len(),"missing_count":gaps.len(),
         "missing_open_times_ms":gaps,"complete":gaps.is_empty(),
-        "quality":"unverified","backend":"native_sqlite",
-        "message":"仅验证本地 SQLite K 线连续性，不等于交易所归档或 Tick 完整性。"}),
+        "quality":"unverified","backend":"nautilus_v2_parquet",
+        "message":"仅验证本地 Parquet K 线连续性，不等于交易所归档或 Tick 完整性。"}),
     ))
 }
 async fn data_prepare_plan(
