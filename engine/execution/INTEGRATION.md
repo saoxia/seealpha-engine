@@ -131,9 +131,13 @@ cargo test --workspace --locked
 python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
 
+## Paper replay moved to Backtest
+
+The Execution crate exports target netting and sizing only. PaperFill, TargetPublication and bar-synchronous replay now belong to `seealpha-backtest::paper`. Runtime's paper sessions import this backtest module; no live Nautilus execution uses it.
+
 ## Native bar-synchronous holding replay
 
-The Runtime calls `replay_holdings_by_bar` to resolve member quantity/weight
+The Runtime calls `seealpha_backtest::replay_holdings_by_bar` to resolve member quantity/weight
 publications, retain the last target for each member within a closed bar,
 net member targets once per bar, and generate paper deltas. Each batch rejects
 mixed symbols, out-of-order bar indices, inconsistent close prices and invalid
