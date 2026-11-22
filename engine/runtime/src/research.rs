@@ -1,4 +1,4 @@
-//! Research snapshots and historical/backtest use cases.
+//! Historical/backtest use cases.
 use crate::{Runtime, RuntimeError, map_ledger};
 use serde_json::json;
 use std::collections::HashSet;
