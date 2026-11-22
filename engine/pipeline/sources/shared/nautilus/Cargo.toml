@@ -30,4 +30,5 @@ serde = { version = "1", features = ["derive"] }
 fs2 = "0.4"
 
 [profile.release]
-strip = "symbols"
+debug = 1
+strip = "none"  # Docker splits symbols before packaging
