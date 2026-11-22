@@ -1,5 +1,5 @@
 //! Durable non-financial Pipeline and research control-plane state.
-use rusqlite::{Connection,TransactionBehavior,params};
+use rusqlite::{Connection,OptionalExtension,TransactionBehavior,params};
 use serde_json::{Value,json};
 use std::{path::Path,sync::Mutex,time::{SystemTime,UNIX_EPOCH}};
 use thiserror::Error;
@@ -23,21 +23,19 @@ CREATE TABLE IF NOT EXISTS worker_settings(singleton_id INTEGER PRIMARY KEY CHEC
 INSERT OR IGNORE INTO worker_settings(singleton_id,max_workers,timeout_seconds) VALUES(1,1,3600);
 "#;
 impl ControlStore {
- pub fn open(path:&Path,old:&Path)->Result<Self,ControlError>{
-  let mut cimpl ControlStore {
-    /// Open the current control-plane store. No legacy Ledger import is needed.
+    /// Current control state only: no legacy book import or migration tracking.
     pub fn open(path: &Path) -> Result<Self, ControlError> {
         let connection = Connection::open(path).map_err(sqlite)?;
         connection.execute_batch("PRAGMA journal_mode=DELETE;").map_err(sqlite)?;
         connection.execute_batch(SCHEMA).map_err(sqlite)?;
         Ok(Self { conn: Mutex::new(connection) })
     }
-
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, ControlError> {
         self.conn.lock().map_err(|_| ControlError::Conflict("控制状态锁不可用".into()))
     }
 }
-act parity is verified.
+
+impl ControlStore {
     #[allow(clippy::too_many_arguments)]
     pub fn record_subscription(
         &self,
