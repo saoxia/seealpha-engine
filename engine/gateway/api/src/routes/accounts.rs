@@ -7,12 +7,10 @@ pub(super) async fn register_connection(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let environment = text(&body, "environment");
-    let api_key = text(&body, "api_key");
-    let secret = text(&body, "api_secret");
     Ok(Json(
         state
             .runtime
-            .register_connection(&tenant_id, &account_id, &environment, &api_key, &secret)
+            .register_connection(&tenant_id, &account_id, &environment)
             .map_err(AppError::from)?,
     ))
 }
@@ -44,15 +42,17 @@ pub(super) async fn account_health(
         .runtime
         .require_active(&tenant_id)
         .map_err(AppError::from)?;
-    let connections = state
+    let registry = state
         .runtime
         .ledger
-        .account_connections(&tenant_id, &account_id)
+        .account_registry_view(&tenant_id, &account_id)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
     Ok(Json(json!({
         "status": "ok",
         "workers": state.runtime.inflight(),
-        "connections": connections
+        "connections": registry["connections"],
+        "live_account_verified": registry["live_account_verified"],
+        "execution_authorized": registry["execution_authorized"]
     })))
 }
 
@@ -62,8 +62,11 @@ pub(super) async fn account_snapshot(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let environment = text(&body, "environment");
-    let api_key = text(&body, "api_key");
-    let secret = text(&body, "api_secret");
+    // The legacy HTTP contract is accepted for compatibility, but credentials
+    // must never enter the native read-only account observation boundary.
+    if !text(&body, "api_key").is_empty() || !text(&body, "api_secret").is_empty() {
+        return Err(AppError::conflict("原生账户观察不接受请求内凭据。"));
+    }
     Ok(Json(
         state
             .runtime
@@ -71,9 +74,6 @@ pub(super) async fn account_snapshot(
                 &tenant_id,
                 &account_id,
                 &environment,
-                &api_key,
-                &secret,
-                state.config.venue_base.as_deref(),
             )
             .map_err(AppError::from)?,
     ))
