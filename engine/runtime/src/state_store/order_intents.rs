@@ -1,6 +1,7 @@
 //! Durable pre-send intent gate and append-only authoritative order observations.
 //! This module cannot send an order. A repeated/unknown intent is NEVER a send permit.
-use crate::{Ledger, LedgerError, now_ms};
+use super::{StateStore, now_ms};
+use seealpha_ledger::LedgerError;
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -101,7 +102,7 @@ pub struct OrderRecoveryItem {
     pub reconciliation_only: bool,
 }
 
-impl Ledger {
+impl StateStore {
     /// Retrieve the exact immutable registration envelope for signed GET
     /// reconciliation. Never infer a new send authorization from this read.
     pub fn registered_order_intent(
@@ -642,7 +643,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let intent = new_intent();
         {
-            let ledger = Ledger::open(&path).unwrap();
+            let ledger = StateStore::open(&path).unwrap();
             ledger.ensure_tenant("t", "production", "active").unwrap();
             assert_eq!(
                 ledger
@@ -659,7 +660,7 @@ mod tests {
                 IntentStart::Fresh
             );
         }
-        let reopened = Ledger::open(&path).unwrap();
+        let reopened = StateStore::open(&path).unwrap();
         let page = reopened.order_recovery_page("t", 0, 100).unwrap();
         assert_eq!(page.len(), 1);
         assert!(page[0].reconciliation_only);
@@ -684,7 +685,7 @@ mod tests {
 
     #[test]
     fn recovery_listing_is_read_only_scoped_and_restart_safe() {
-        let book = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let book = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         book.ensure_tenant("t", "production", "active").unwrap();
         book.ensure_tenant("other", "production", "active").unwrap();
         let intent = new_intent();
@@ -734,7 +735,7 @@ mod tests {
 
     #[test]
     fn parallel_registration_has_exactly_one_initial_send_permit() {
-        let ledger = Arc::new(Ledger::open(std::path::Path::new(":memory:")).unwrap());
+        let ledger = Arc::new(StateStore::open(std::path::Path::new(":memory:")).unwrap());
         ledger.ensure_tenant("t", "production", "active").unwrap();
         let handles: Vec<_> = (0..12)
             .map(|_| {
@@ -812,7 +813,7 @@ mod tests {
 
     #[test]
     fn partial_and_complete_orders_require_exact_verified_decimal_sum() {
-        let book = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let book = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         book.ensure_tenant("t", "production", "active").unwrap();
         let intent = json!({"action":"NEW","environment":"production","client_order_id":"c3",
             "symbol":"ETHUSDT","side":"BUY","quantity":"0.3"});
@@ -860,7 +861,7 @@ mod tests {
 
     #[test]
     fn observed_partial_fills_cannot_disappear_on_later_snapshots() {
-        let book = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let book = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         book.ensure_tenant("t", "production", "active").unwrap();
         let intent = json!({"action":"NEW","environment":"production","client_order_id":"client",
             "symbol":"ETHUSDT","side":"BUY","quantity":"0.3"});
@@ -915,7 +916,7 @@ mod tests {
 
     #[test]
     fn ack_unknown_cannot_be_rewritten_into_a_fill() {
-        let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let ledger = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         ledger.ensure_tenant("t", "production", "active").unwrap();
         ledger
             .preregister_order_intent(

@@ -121,7 +121,7 @@ impl Runtime {
         self.ledger.upsert_connection(
             tenant_id, account_id, environment, "closed",
         ).map_err(map_ledger)?;
-        self.ledger.add_event(
+        self.state_store.add_event(
             tenant_id, account_id, "connection",
             &json!({"environment":environment,"status":"closed"}).to_string(),
         ).map_err(map_ledger)?;

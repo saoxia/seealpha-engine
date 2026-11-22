@@ -1,7 +1,8 @@
 //! Durable GET-only reconciliation work scheduling.
 //! This queue is NOT an exchange sender, an ACK verifier or a fill source.
 //! A crashed worker lease may expire; only signed read queries can be retried.
-use crate::{Ledger, LedgerError};
+use super::StateStore;
+use seealpha_ledger::LedgerError;
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 
 fn sql(err: seealpha_database::Error) -> LedgerError {
@@ -33,7 +34,7 @@ pub struct ReconciliationTask {
     pub last_error_code: Option<String>,
 }
 
-impl Ledger {
+impl StateStore {
     /// Synchronize the queue from immutable order intents. Repeated scans
     /// preserve current leases, retries and manual-review decisions.
     pub fn enqueue_order_reconciliations(
@@ -255,7 +256,7 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Barrier};
     use std::thread;
-    fn seed(db: &Ledger) {
+    fn seed(db: &StateStore) {
         db.ensure_tenant("t", "production", "active").unwrap();
         let intent = json!({"action":"NEW","environment":"production",
             "client_order_id":"client","symbol":"ETHUSDT",
@@ -273,7 +274,7 @@ mod tests {
     }
     #[test]
     fn concurrent_workers_claim_once_and_retries_do_not_create_orders() {
-        let db = Arc::new(Ledger::open(std::path::Path::new(":memory:")).unwrap());
+        let db = Arc::new(StateStore::open(std::path::Path::new(":memory:")).unwrap());
         seed(&db);
         assert_eq!(db.enqueue_order_reconciliations("t", 10).unwrap(), 1);
         assert_eq!(db.enqueue_order_reconciliations("t", 11).unwrap(), 0);
@@ -341,7 +342,7 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&path);
         {
-            let db = Ledger::open(&path).unwrap();
+            let db = StateStore::open(&path).unwrap();
             seed(&db);
             db.enqueue_order_reconciliations("t", 100).unwrap();
             let claimed = db
@@ -362,7 +363,7 @@ mod tests {
             .unwrap();
         }
         {
-            let db = Ledger::open(&path).unwrap();
+            let db = StateStore::open(&path).unwrap();
             let persisted = db
                 .order_reconciliation_task("t", "a", "request")
                 .unwrap()
@@ -392,7 +393,7 @@ mod tests {
             .unwrap();
         }
         {
-            let db = Ledger::open(&path).unwrap();
+            let db = StateStore::open(&path).unwrap();
             assert_eq!(db.enqueue_order_reconciliations("t", 30_000).unwrap(), 0);
             assert!(
                 db.claim_order_reconciliation("t", "worker3", 100_000, 1000)
@@ -413,7 +414,7 @@ mod tests {
 
     #[test]
     fn lease_expiry_is_read_recovery_only_and_manual_stops_claims() {
-        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let db = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         seed(&db);
         db.enqueue_order_reconciliations("t", 100).unwrap();
         let first = db

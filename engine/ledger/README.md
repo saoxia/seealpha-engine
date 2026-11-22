@@ -10,7 +10,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 | `movements/` | 有认证来源的成交、费用、资金费和结算 | 不依据 ACK、余额差值或公共费率推断资金事实 |
 | `allocations/` | 可信经济事件的策略归属（基础实现） | 不将内部成交冒充交易所成交 |
 | `reconciliation/` | 经济事件归属核验 | 不替代 Nautilus 原生订单/持仓对账或交易所余额校验 |
-| `src/order_intents.rs` | 不可变发送前委托意图和未知状态恢复 | 单次预登记、重复请求只核验、不重复发送 |
+| `../runtime/src/state_store/order_intents.rs` | 不可变发送前委托意图和未知状态恢复 | 单次预登记、重复请求只核验、不重复发送 |
 | `runtime/src/state_store/` | Basket/Coordinator/Paper/Research 业务状态 | 由 Runtime 持久化，不归 Ledger Funds |
 
 ## 四个最小业务核心（2026-11-22）
@@ -52,3 +52,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 - 订单发送前意图必须持久化；未知结果只允许查证，不得自动重发。
 - 未接通的原生执行报告和余额服务必须 fail-closed，不能以模拟数据替代实盘认证。
 - 历史成交及结算证明归 Movements；资产余额变化不等于已经确认的成交或结算。
+
+## Execution persistence ownership
+
+Durable order intents, GET-only recovery scheduling, order request views and stored order projections are Runtime-owned (`runtime/src/state_store/`). Ledger retains tenant registration, signed fills, settlements and economic evidence. Historical execution tables remain intact; no DROP or backfill.

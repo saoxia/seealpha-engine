@@ -1,28 +1,48 @@
-//! Trading account compatibility reads. Non-financial Pipeline state lives in ControlStore.
-use crate::{Ledger, LedgerError};
+//! Application-owned gap and operational event projections, not economic evidence.
+use super::{StateStore, now_ms};
+use seealpha_ledger::LedgerError;
 use seealpha_database::params;
 use serde_json::{Value, json};
-
-fn db_error(err: seealpha_database::Error) -> LedgerError {
-    LedgerError::Database(err.to_string())
-}
-
-fn parse(text: &str) -> Result<Value, LedgerError> {
-    serde_json::from_str(text).map_err(|_| LedgerError::Conflict("存储的 JSON 记录损坏。".into()))
-}
-
-impl Ledger {
-    pub fn request(
+fn db_error(err: seealpha_database::Error) -> LedgerError { LedgerError::Database(err.to_string()) }
+fn parse(text: &str) -> Result<Value, LedgerError> { serde_json::from_str(text).map_err(|_| LedgerError::Conflict("存储的 JSON 记录损坏。".into())) }
+impl StateStore {
+    pub fn put_gap(
         &self,
         tenant_id: &str,
         account_id: &str,
-        request_id: &str,
-    ) -> Result<Option<Value>, LedgerError> {
-        self.get_order_request(tenant_id, account_id, request_id)?
-            .map(|value| parse(&value))
-            .transpose()
+        scope: &str,
+        gap_key: &str,
+        gap_json: &str,
+    ) -> Result<(), LedgerError> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO gaps (tenant_id, account_id, scope, gap_key, gap_json, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT(tenant_id, account_id, scope, gap_key) DO UPDATE SET
+                   gap_json=excluded.gap_json, updated_at=excluded.updated_at",
+                params![tenant_id, account_id, scope, gap_key, gap_json, now_ms()],
+            )
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
+        Ok(())
     }
 
+    pub fn add_event(
+        &self,
+        tenant_id: &str,
+        account_id: &str,
+        kind: &str,
+        body: &str,
+    ) -> Result<(), LedgerError> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO events (tenant_id, account_id, kind, body_json, created_at) VALUES ($1, $2, $3, $4, $5)",
+                params![tenant_id, account_id, kind, body, now_ms()],
+            )
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
+        Ok(())
+    }
     pub fn gaps_for_scope(
         &self,
         tenant_id: &str,
@@ -81,5 +101,4 @@ impl Ledger {
         }
         Ok(json!({"events":items,"next":next}))
     }
-
 }
