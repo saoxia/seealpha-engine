@@ -59,18 +59,36 @@ History is limited to what the pinned native adapter and exchange APIs can genui
 
 Acceptance remains gated on offline/restart tests with pinned 0.68.0 and confirmation of safe execution-client integration; existing legacy consumers and safety gates remain untouched until native parity is demonstrated.
 
-## Deployment decision: Redis inside the existing Engine container
+## Deployment decision: PostgreSQL in the existing Engine container
 
-The Engine image installs Debian's `redis-server` and `redis-tools`; `docker/entrypoint-with-redis.sh` supervises Redis and SeeAlpha Engine in the **same container**, rather than adding a Compose service. Redis binds only `127.0.0.1:6379` and is not exposed by Docker. An internal `SEEALPHA_REDIS_URL=redis://127.0.0.1:6379` is exported for future native Nautilus cache configuration; **this does not mean the native cache has been wired yet**.
+The Docker image installs PostgreSQL 15 and its client tools instead of Redis.
+`docker/entrypoint-with-postgres.sh` runs PostgreSQL and SeeAlpha Engine under one container supervisor.
+PostgreSQL binds only to `127.0.0.1:5432`, with no published database port. The bootstrap creates
+a non-superuser `seealpha_cache` login and matching database; the password is generated on the first
+startup and kept in a mode-0600 file under the state volume, not compiled into the image.
 
-Persistence: Redis `appendonly yes`, `appendfsync everysec`, periodic snapshot settings, and data directory `/app/.local/state/redis`. Mount `/app/.local/state` on a persistent host volume to retain both existing SQLite and Redis data across container replacement, e.g.:
+The database files are stored at `/app/.local/state/postgresql`. Mount
+`/app/.local/state` as a persistent volume so that existing SQLite and PostgreSQL survive replacement:
 
 ```bash
-docker run --name seealpha-engine \
-  -v seealpha-state:/app/.local/state \
-  seealpha-engine:dev
+docker run --name seealpha-engine -v seealpha-state:/app/.local/state seealpha-engine:dev
 ```
 
-The supervisor checks for Redis PONG before starting Engine and terminates the sibling process when either stops. The Redis connection is available **only within this container**; an external native Nautilus process cannot use `127.0.0.1` to reach it. If the Nautilus native account observer remains an external, separately launched binary, it must be explicitly packaged/routed into the container before this local Redis arrangement can serve it. No Redis endpoint should be exposed on a public interface merely to work around that gap.
+The bootstrap refuses to start an existing PostgreSQL data directory without its credential file,
+or to start a cluster with a mismatched major version. An interrupted initial bootstrap requires
+manual recovery rather than destructive automatic reinitialization. Readiness is checked using
+`pg_isready` before the Engine starts. If either process terminates the supervisor stops the other.
 
-Caveats: AOF `everysec` is not synchronous per-event durability; power loss can lose the latest writes. Configure credentials, non-root operation and backup/restore policies before production approval. Do not treat Redis Cache contents as complete long-term economic settlement history. The current PR only provisions the service; it does **not** assert successful Nautilus Redis backend activation or restart-tested persistence.
+The `SEEALPHA_POSTGRES_URL` environment variable is only a **local endpoint hint** for the
+future native Nautilus cache adapter. It does not configure the native cache, install Nautilus
+into this image, or prove account events are persisted. The native account observer currently
+runs as a separate standalone Rust program; it must be co-located before using this
+container-loopback-only database. The underlying Nautilus 0.68.0 `postgres` feature
+and actual cache schema/bootstrap path still require pinned-version compile/runtime and
+restart validation.
+
+Security and durability: PostgreSQL uses WAL, but application-level asynchronous cache writes
+still require explicit flush/restart tests. Back up the PostgreSQL database and generated
+credential together; normal snapshots of an actively running database must use database-aware
+backup procedures. Production deployment should use a reviewed non-root supervisor and
+resource/memory limits. This PR does not enable live trading or modify old SQLite ledger data.
