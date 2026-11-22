@@ -1,7 +1,7 @@
 //! One autonomous reconciliation process per Binance product.
 //! Database config is desired state; data is never declared READY here.
 use seealpha_catalog::{Catalog,ControlStore,PipelineSubscription,DAY_MS,validate_subscription};
-use seealpha_market::{BinanceSource,Product,options::{OptionsSource,parse_option_symbol},identity::{self,MarketProduct}};
+use seealpha_market::{Product,options::{OptionsSource,parse_option_symbol},identity::{self,MarketProduct}};
 use std::{collections::{BTreeMap,BTreeSet},env,error::Error,path::{Path,PathBuf},process::{Child,Command,Stdio},time::{Duration,SystemTime,UNIX_EPOCH}};
 
 type Result<T> = std::result::Result<T,Box<dyn Error>>;
@@ -96,44 +96,23 @@ fn sync_collector(product:&str,desired_symbols:&BTreeSet<String>,active:&mut Opt
     Ok(())
 }
 
+/// Spot and USD-M OHLCV must come exclusively from validated TradeTicks.
+/// Never call Binance Kline REST or write exchange-authored OHLCV to Catalog.
+/// Historical Tick ZIP continuity and native live/ZIP handoff still need
+/// independent attestation before immutable Bars can be safely published.
 async fn reconcile_history(
-    catalog:&Catalog,product:Product,source:&BinanceSource,
-    symbol:&str,retain_from:i64,fetch_from:i64,precision:Option<(u32,u32)>,
+    catalog:&Catalog,product:Product,
+    symbol:&str,retain_from:i64,_fetch_from:i64,
 )->Result<()>{
-    let id=identity::bar_type(symbol,match product {
-        Product::Spot=>MarketProduct::Spot,Product::FuturesUm=>MarketProduct::FuturesUm
-    },"1d")?;
-    // A shared public Catalog retains the earliest date requested by ANY
-    // tenant, including disabled subscriptions that must not delete history.
     let instrument=identity::instrument_id(symbol,match product {
         Product::Spot=>MarketProduct::Spot,Product::FuturesUm=>MarketProduct::FuturesUm
     })?;
     let removed=catalog.prune_instrument_bars_before(&instrument,retain_from)?;
-    if removed>0{eprintln!("pipeline {} {symbol}: removed {removed} expired Bar files",product.as_str())}
-    let today=utc_today_ms()?;
-    if fetch_from>=today{return Ok(())}
-    let gaps=catalog.bar_gaps(&id,"1d",fetch_from,today,50_000)?;
-    if gaps.is_empty(){return Ok(())}
-    let (price_precision,size_precision)=match precision {
-        Some(values)=>values,
-        None=>source.instrument_precisions(product,symbol).await?,
-    };
-    let mut done=0;
-    for gap in gaps {
-        let mut day=gap.start_ms;
-        while day<gap.end_ms && done<31 {
-            let until=day.checked_add(DAY_MS).ok_or("date overflow")?;
-            let bars=source.load_history(product,symbol,"1d",day,until).await?;
-            let mapped=bars.into_iter().map(|bar|seealpha_catalog::CatalogBar{
-                open_time_ms:bar.open_time_ms,open:bar.open,high:bar.high,
-                low:bar.low,close:bar.close,volume:bar.volume
-            }).collect::<Vec<_>>();
-            catalog.append_bars(&id,"1d",&mapped,price_precision,size_precision)?;
-            done+=1;day=until;
-        }
-        if done>=31 {break}
+    if removed>0 {
+        eprintln!("pipeline {} {symbol}: removed {removed} expired Bar files",product.as_str());
     }
-    if done>0 {eprintln!("pipeline {} {symbol}: committed {done} verified daily bars",product.as_str())}
+    // Do not backfill using Kline API and do not manufacture immutable Bar
+    // coverage from unverified partial Tick files.
     Ok(())
 }
 
@@ -202,7 +181,7 @@ async fn cycle_options(
 }
 
 async fn cycle(
-    control:&ControlStore,catalog:&Catalog,product:Product,source:&BinanceSource,
+    control:&ControlStore,catalog:&Catalog,product:Product,
     active:&mut Option<Collector>,
 )->Result<()>{
     let rows=control.product_subscriptions(product.as_str())?;
@@ -215,7 +194,7 @@ async fn cycle(
     }
     for (symbol,settings) in expected {
         let Some(fetch_from)=settings.fetch_from else{continue};
-        if let Err(error)=reconcile_history(catalog,product,source,&symbol,settings.retain_from,fetch_from,settings.precision).await{
+        if let Err(error)=reconcile_history(catalog,product,&symbol,settings.retain_from,fetch_from).await{
             eprintln!("pipeline {} {symbol} history: {error}",product.as_str());
         }
     }
@@ -227,19 +206,19 @@ async fn main()->Result<()>{
     let name=env::args().nth(1).ok_or("usage: pipeline_worker <spot|futures_um|options>")?;
     let product=MarketProduct::parse(&name)?;
     let control=ControlStore::open(Path::new("pipeline-control"))?;
-    let source=if product==MarketProduct::Options {None} else {Some(BinanceSource::new()?)};
     let options=if product==MarketProduct::Options {Some(OptionsSource::new()?)} else {None};
     let mut native=None;
     loop {
         match Catalog::open_existing(&catalog_path()) {
             Ok(catalog)=>{
-                let result=match (source.as_ref(),options.as_ref()) {
-                    (Some(market),None)=>{
-                        let product=Product::parse(&name)?;
-                        cycle(&control,&catalog,product,market,&mut native).await
+                let result=match product {
+                    MarketProduct::Spot|MarketProduct::FuturesUm=>{
+                        let parsed=Product::parse(&name)?;
+                        cycle(&control,&catalog,parsed,&mut native).await
                     }
-                    (None,Some(options))=>cycle_options(&control,&catalog,options).await,
-                    _=>Err("invalid Pipeline source state".into()),
+                    MarketProduct::Options=>cycle_options(
+                        &control,&catalog,options.as_ref().ok_or("missing options source")?
+                    ).await,
                 };
                 if let Err(error)=result {
                     eprintln!("pipeline {name} cycle: {error}");
