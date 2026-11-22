@@ -113,6 +113,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Build Rust-only Engine image
         run: docker build -f docker/engine.Dockerfile -t seealpha-engine:native .
+      - name: Report Docker image size
+        run: docker image inspect seealpha-engine:native --format 'Image size: {{.Size}} bytes'
       - name: Verify native image needs no Python
         run: |
           docker run --rm --entrypoint sh seealpha-engine:native -ec '
@@ -167,6 +169,8 @@ jobs:
             sleep 1
           done
           test "$ready" = 1
+          docker exec seealpha-pg-ci runuser -u postgres -- psql \
+            -h /run/postgresql -d seealpha_cache -Atqc "SHOW shared_buffers" | grep -qx 16MB
           docker exec seealpha-pg-ci runuser -u postgres -- psql \
             -h /run/postgresql -d seealpha_cache -v ON_ERROR_STOP=1 \
             -c "CREATE TABLE ci_restart_probe (value integer NOT NULL)"
