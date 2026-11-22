@@ -5,6 +5,7 @@ use crate::{Runtime, RuntimeError, map_ledger};
 use rust_decimal::Decimal;
 use seealpha_backtest::evidence::{CarryPosition, MarkBar, SettledFunding, run_evidence_carry};
 use seealpha_market::interval_ms;
+use seealpha_market::funding::read_funding;
 use serde_json::{Value, json};
 
 fn error(message: &str) -> RuntimeError {
@@ -88,18 +89,13 @@ impl Runtime {
             .first()
             .map(|b| b.mark_time_ms.saturating_add(1))
             .ok_or_else(|| error("历史 K 线为空。"))?;
-        let events = self
-            .ledger
-            .funding_events(tenant, symbol, funding_start, end_ms, 5000)
-            .map_err(map_ledger)?;
+        let catalog = self.native_catalog()?.ok_or_else(|| error("资金费率 Catalog 不存在。"))?;
+        let events = read_funding(&catalog, symbol, funding_start, end_ms, 5000)
+            .map_err(|e| error(&e.to_string()))?;
         let mut settlement = Vec::with_capacity(events.len());
         for row in &events {
-            let time = row["funding_time_ms"]
-                .as_i64()
-                .ok_or_else(|| error("结算时间无效。"))?;
-            let rate = row["funding_rate"]
-                .as_str()
-                .ok_or_else(|| error("结算资金费率无效。"))?
+            let time = row.funding_time_ms;
+            let rate = row.funding_rate.as_str()
                 .parse::<Decimal>()
                 .map_err(|_| error("结算资金费率无效。"))?;
             let mark = row["mark_price"]
@@ -131,7 +127,7 @@ impl Runtime {
         report["end_ms"] = json!(end_ms);
         report["spot_data_source"] = json!("tenant_catalog_spot");
         report["perp_data_source"] = json!("tenant_catalog_futures_um");
-        report["funding_data_source"] = json!("tenant_settled_funding");
+        report["funding_data_source"] = json!("pipeline_binance_futures_um_funding");
         self.ledger
             .save_backtest(tenant, account, "carry", &report.to_string())
             .map_err(map_ledger)?;
@@ -226,26 +222,15 @@ impl Runtime {
             });
         }
         let first = marks.first().ok_or_else(|| error("历史数据为空。"))?;
-        let events = self
-            .ledger
-            .funding_events(
-                tenant,
-                perp_symbol,
-                first.mark_time_ms.saturating_add(1),
-                end_ms,
-                5000,
-            )
-            .map_err(map_ledger)?;
+        let catalog = self.native_catalog()?.ok_or_else(|| error("资金费率 Catalog 不存在。"))?;
+        let events = read_funding(&catalog, perp_symbol, first.mark_time_ms.saturating_add(1), end_ms, 5000)
+            .map_err(|e| error(&e.to_string()))?;
         let settlement = events
             .iter()
             .map(|row| {
                 Ok(SettledFunding {
-                    at_ms: row["funding_time_ms"]
-                        .as_i64()
-                        .ok_or_else(|| error("结算时间无效。"))?,
-                    rate: row["funding_rate"]
-                        .as_str()
-                        .ok_or_else(|| error("资金费率缺失。"))?
+                    at_ms: row.funding_time_ms,
+                    rate: row.funding_rate.as_str()
                         .parse::<Decimal>()
                         .map_err(|_| error("资金费率无效。"))?,
                     mark_price: row["mark_price"]
