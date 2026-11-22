@@ -241,7 +241,7 @@ impl Ledger {
             .ok()
             .and_then(|ms| ms.checked_mul(1_000_000))
             .ok_or_else(invalid)?;
-        if observed_ns > now_ns || now_ns - observed_ns > max_age_ns {
+        if observed_ns == 0 || observed_ns > now_ns || now_ns - observed_ns > max_age_ns {
             return Err(LedgerError::Conflict(
                 "account snapshot is stale or timestamp is in the future".into(),
             ));
@@ -326,6 +326,37 @@ mod tests {
         assert!(book.account_snapshot_for_risk(
             "research", "paper1", "production", 1, 10_000_000, 1,
         ).is_err());
+    }
+
+    #[test]
+    fn risk_snapshot_gate_reloads_the_same_state_after_sqlite_restart() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let path = std::env::temp_dir().join(format!(
+            "seealpha-account-gate-{}-{}.sqlite",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        {
+            let book = Ledger::open(&path).unwrap();
+            book.ensure_tenant("tenant1", "production", "active").unwrap();
+            book.save_account_snapshot(
+                "tenant1", "account1", "sandbox", None, "venue-10", 20,
+                "signed_exchange_account_query",
+                &json!({"balances":{"USDT":"23.0001"},"positions":{}}),
+            ).unwrap();
+        }
+        {
+            let recovered = Ledger::open(&path).unwrap();
+            let checked = recovered.account_snapshot_for_risk(
+                "tenant1", "account1", "sandbox", 1, 21_000_000, 1_000_000,
+            ).unwrap();
+            assert_eq!(checked.evidence_id, "venue-10");
+            assert_eq!(checked.state["balances"]["USDT"], "23.0001");
+            assert!(recovered.account_snapshot_for_risk(
+                "tenant1", "account1", "sandbox", 1, 21_000_001, 1_000_000,
+            ).is_err());
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
