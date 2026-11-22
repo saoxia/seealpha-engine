@@ -236,9 +236,7 @@ CREATE TABLE IF NOT EXISTS paper_sessions (
 );
 
 -- Source: engine/pipeline/catalog/src/control.rs
-CREATE TABLE IF NOT EXISTS subscriptions(tenant_id TEXT NOT NULL,account_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,role TEXT NOT NULL,state TEXT NOT NULL,progress_json TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,account_id,product,symbol,role));
 CREATE TABLE IF NOT EXISTS data_policies(tenant_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,policy_json TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,product,symbol));
-CREATE TABLE IF NOT EXISTS strategy_market_subscriptions(tenant_id TEXT NOT NULL,account_id TEXT NOT NULL,issuance_id TEXT NOT NULL,streams_json TEXT NOT NULL,lookback_bars BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,account_id,issuance_id));
 CREATE TABLE IF NOT EXISTS data_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,job_id));
 CREATE INDEX IF NOT EXISTS data_jobs_status ON data_jobs(tenant_id,status,updated_at);
 CREATE TABLE IF NOT EXISTS backtest_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,job_id));
