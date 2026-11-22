@@ -1,6 +1,5 @@
 //! Seealpha's native data foundation for the existing Python/Nautilus v2
 //! Catalog directory. No rewriting into SQLite or implicit subscriptions.
-mod cleanup;
 mod model;
 mod reader;
 mod records;
@@ -9,7 +8,6 @@ mod writer;
 use std::path::PathBuf;
 use thiserror::Error;
 
-pub use cleanup::{DeletePreview, PlannedFile};
 pub use model::{
     CatalogBar, DAY_MS, MarketProduct, NANO_PER_MS, bar_type, bar_window, instrument_id,
     interval_ms,
