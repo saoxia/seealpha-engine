@@ -446,7 +446,7 @@ impl Runtime {
 
     pub fn require_active(&self, tenant_id: &str) -> Result<Tenant, RuntimeError> {
         let tenant = self
-            .ledger
+            .state_store
             .tenant(tenant_id)
             .map_err(map_ledger)?
             .ok_or_else(|| RuntimeError::Conflict("租户不存在。".into()))?;
