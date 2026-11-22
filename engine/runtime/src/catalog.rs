@@ -1,7 +1,6 @@
-//! Single historical-data facade for the Python Engine's existing
-//! Nautilus v2 Parquet Catalog, without SQLite market-data fallback.
-//! Python used data/catalog as the source of truth; Rust no longer requires
-//! copying the entire catalog into the Engine's small control-plane book.
+//! Historical-data facade over the native Nautilus v2 Parquet Catalog.
+//! The Catalog is authoritative for market data; Runtime does not copy it
+//! into the control-plane PostgreSQL database.
 use crate::{Runtime, RuntimeError};
 use rust_decimal::Decimal;
 use seealpha_catalog::{
