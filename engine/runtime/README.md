@@ -12,3 +12,5 @@
 策略包预检现在只解析原生 Rust manifest（可以直接提交 JSON，或提交包含原生 manifest 的 ZIP），不再运行 Python host，也不再需要 `ENGINE_PYTHON`。纸面会话仅支持原生发行包和内置 Rust 示例策略。
 
 第二轮清理：删除账户快照/连接管理、实验性行情子进程监督、ClickHouse 设置与回退、候选演示回测、异步回测任务、应用事件及异常日志。保留租户隔离校验、官方历史行情任务所需的 Catalog 数据操作，以及真实数据回测所需的只读 K 线能力；不运行实盘订单。
+
+模拟订单由 `state_store/paper.rs` 事务写入数据库 `orders`、`fills`；Gateway 订单列表按租户、账户和环境直接查询数据库，已移除 Runtime 的 `StoredOrder`/`stored_orders` 与旧请求历史读取兼容接口。`order_requests` 表仍由订单意图预登记使用，不能随旧查询接口删除。
