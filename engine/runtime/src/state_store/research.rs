@@ -40,39 +40,6 @@ impl StateStore {
             .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
-    pub fn save_snapshot(
-        &self,
-        tenant_id: &str,
-        snapshot_id: &str,
-        sha256: &str,
-        body: &str,
-    ) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO research_snapshots (tenant_id, snapshot_id, sha256, body_json, created_at)
-                 VALUES ($1, $2, $3, $4, $5)",
-                params![tenant_id, snapshot_id, sha256, body, now_ms()],
-            )
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        Ok(())
-    }
-
-    pub fn snapshot(
-        &self,
-        tenant_id: &str,
-        snapshot_id: &str,
-    ) -> Result<Option<(String, String)>, LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .query_row(
-                "SELECT sha256, body_json FROM research_snapshots WHERE tenant_id=$1 AND snapshot_id=$2",
-                params![tenant_id, snapshot_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(|error| LedgerError::Database(error.to_string()))
-    }
 }
 
 #[cfg(test)]
@@ -88,11 +55,5 @@ mod tests {
             Some(r#"{"ok":true}"#),
         );
         assert!(store.latest_backtest("other", "a", "history").unwrap().is_none());
-        store.save_snapshot("t", "snap", "digest", r#"{"bars":1}"#).unwrap();
-        assert_eq!(
-            store.snapshot("t", "snap").unwrap(),
-            Some(("digest".into(), r#"{"bars":1}"#.into())),
-        );
-        assert!(store.snapshot("other", "snap").unwrap().is_none());
     }
 }
