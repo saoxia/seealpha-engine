@@ -32,7 +32,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 
 ## 旧 `src/` 接口清理（2026-11-22）
 
-- 删除不再被生产调用的 `records.rs::gaps()`、`records.rs::events()` 及可绕过专用认证入口的旧 `upsert_fill_row()`；保留 `gaps_for_scope()`、`event_page()`、`import_verified_fills()` 和 Paper Session 内部模拟成交写入。
+- 已移除 Ledger `records.rs`：租户和连接登记归 `accounts/`，历史认证成交查询归 `movements/verified_fills.rs`；通用 `gaps_for_scope()`、`event_page()` 等操作接口归 Runtime StateStore。
 - 删除 `parity.rs::positions()` 对历史 `positions` 表的读接口；Gateway `/positions` 在 Nautilus 原生持仓核验尚未接线前明确失败关闭，包含 `paper` 环境，不能把缺少证据的空仓位响应当作已核实状态。
 - **不执行 DROP 表或历史数据迁移**：既有 `positions` 和 `order_observations` 数据保留供审计及后续受控迁移。
 - `order_intents.rs` 的订单观察与恢复链路暂时保留：虽然没有生产观察写入调用方，`order_recovery_page()` 依赖历史观察、且带有禁止未知状态重发的安全约束；必须由已验收的 Nautilus 持久报告与恢复功能替代后再删。
@@ -43,8 +43,8 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 - Basket Journal 与 Portfolio Coordinator CAS 检查点：`engine/runtime/src/state_store/{basket_journal,coordinator_state}.rs`；作为 Runtime 的 Portfolio 用例状态，原有并发修订规则保持不变。
 - Paper Session 和模拟持仓：`engine/runtime/src/state_store/paper.rs`；仅用于独立模拟，不能被当作真实账户余额或 Nautilus Position Cache。
 - 上述存储继续使用相同 PostgreSQL schema 和既有表，**没有重建、复制或删除历史数据**。目前由 Runtime 在 Ledger 初始化后建立自己的数据库连接。当前不为目录整理而增设多个长期运行服务。
-- Ledger 暂时保留不可变原生订单意图及只读对账任务队列，因为其属于未完成原生执行链路的安全恢复门禁；待 Nautilus/执行领域有真实替代并经过验证后再迁出。
-- Legacy 订单、缺口、事件兼容读写暂留现有持久化入口，避免无收益的全仓库 API 重写。本阶段变更尚须通过 CI/数据库回归验证。
+- 不可变原生订单意图与只读对账任务队列已迁至 Runtime StateStore；保持同步预登记、未知订单只查询不重发的约束。
+- Legacy 订单、缺口和通用操作事件读写归 Runtime StateStore。资金经济证据仍归 Ledger。所有迁移均保留历史表，不执行自动删除。
 
 ## 安全原则
 
@@ -56,3 +56,11 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 ## Execution persistence ownership
 
 Durable order intents, GET-only recovery scheduling, order request views and stored order projections are Runtime-owned (`runtime/src/state_store/`). Ledger retains tenant registration, signed fills, settlements and economic evidence. Historical execution tables remain intact; no DROP or backfill.
+
+## Ledger 源码收敛（2026-11-22）
+
+- `src/lib.rs` 只维护 Ledger 初始化、公共类型、连接锁和保留历史表的安全测试。
+- `accounts/mod.rs` 持有租户与账户连接登记，包括 `active_tenant_ids`、`ensure_tenant`、`tenant`、`account_connections` 和 `upsert_connection`。
+- `movements/verified_fills.rs` 持有 `fills()` 读取与认证成交写入；不新增原生订单状态机。
+- 旧 `src/records.rs` 已删除，迁移不修改 SQL Schema 或现有 API 方法签名。
+- 共享 PostgreSQL Schema 暂时仍在 `Ledger::open` 初始化，Runtime 的 StateStore 依赖该初始化顺序。分离 Schema 需要独立迁移方案及部署回归，不能只移动 SQL 文件。
