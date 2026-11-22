@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS order_intents (
     client_order_id TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     intent_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
+    created_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, request_id)
 );
 CREATE INDEX IF NOT EXISTS order_intents_client
@@ -41,12 +41,12 @@ CREATE TABLE IF NOT EXISTS order_reconciliation_tasks (
     request_id TEXT NOT NULL,
     client_order_id TEXT NOT NULL,
     state TEXT NOT NULL CHECK(state IN ('pending','leased','retry','manual')),
-    attempts INTEGER NOT NULL DEFAULT 0,
-    next_due_ms INTEGER NOT NULL DEFAULT 0,
+    attempts BIGINT NOT NULL DEFAULT 0,
+    next_due_ms BIGINT NOT NULL DEFAULT 0,
     lease_owner TEXT,
-    lease_until_ms INTEGER,
+    lease_until_ms BIGINT,
     last_error_code TEXT,
-    updated_at_ms INTEGER NOT NULL,
+    updated_at_ms BIGINT NOT NULL,
     PRIMARY KEY(tenant_id,account_id,request_id),
     FOREIGN KEY(tenant_id,account_id,request_id)
         REFERENCES order_intents(tenant_id,account_id,request_id)
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS order_observations (
     environment TEXT NOT NULL,
     client_order_id TEXT NOT NULL,
     observation_id TEXT NOT NULL,
-    observed_at_ns INTEGER NOT NULL,
+    observed_at_ns BIGINT NOT NULL,
     status TEXT NOT NULL,
     evidence_json TEXT NOT NULL,
     PRIMARY KEY(tenant_id,account_id,environment,client_order_id,observation_id)
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS account_evidence_events (
     kind TEXT NOT NULL,
     evidence_id TEXT NOT NULL,
     evidence_json TEXT NOT NULL,
-    recorded_at_ms INTEGER NOT NULL,
+    recorded_at_ms BIGINT NOT NULL,
     UNIQUE(tenant_id,account_id,environment,kind,evidence_id)
 );
 CREATE INDEX IF NOT EXISTS account_evidence_events_page
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS connections (
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL,
     status TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, environment)
 );
 CREATE TABLE IF NOT EXISTS order_requests (
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS order_requests (
     account_id TEXT NOT NULL,
     request_id TEXT NOT NULL,
     body_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, request_id)
 );
 -- Immutable request intent stays in order_requests. Confirmed results,
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS order_request_views (
     account_id TEXT NOT NULL,
     request_id TEXT NOT NULL,
     body_json TEXT NOT NULL,
-    recorded_at INTEGER NOT NULL,
+    recorded_at BIGINT NOT NULL,
     FOREIGN KEY(tenant_id,account_id,request_id)
         REFERENCES order_requests(tenant_id,account_id,request_id)
 );
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS orders (
     environment TEXT NOT NULL,
     client_order_id TEXT NOT NULL,
     order_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, environment, client_order_id)
 );
 CREATE TABLE IF NOT EXISTS fills (
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS fills (
     environment TEXT NOT NULL,
     fill_id TEXT NOT NULL,
     fill_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, environment, fill_id)
 );
 CREATE TABLE IF NOT EXISTS quarantined_unverified_fills (
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS quarantined_unverified_fills (
     fill_id TEXT NOT NULL,
     fill_json TEXT NOT NULL,
     reason TEXT NOT NULL,
-    quarantined_at INTEGER NOT NULL,
+    quarantined_at BIGINT NOT NULL,
     PRIMARY KEY(tenant_id,account_id,environment,fill_id)
 );
 CREATE TABLE IF NOT EXISTS positions (
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS positions (
     environment TEXT NOT NULL,
     position_id TEXT NOT NULL,
     position_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, environment, position_id)
 );
 CREATE TABLE IF NOT EXISTS gaps (
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS gaps (
     scope TEXT NOT NULL,
     gap_key TEXT NOT NULL,
     gap_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, scope, gap_key)
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -166,14 +166,14 @@ CREATE TABLE IF NOT EXISTS events (
     account_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     body_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS paper_positions (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
     quantity TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, symbol)
 );
 CREATE TABLE IF NOT EXISTS account_settlements (
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS backtest_results (
     account_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     report_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, kind)
 );
 CREATE TABLE IF NOT EXISTS research_snapshots (
@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS research_snapshots (
     snapshot_id TEXT NOT NULL,
     sha256 TEXT NOT NULL,
     body_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
+    created_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, snapshot_id)
 );
 CREATE TABLE IF NOT EXISTS paper_sessions (
@@ -212,19 +212,19 @@ CREATE TABLE IF NOT EXISTS paper_sessions (
     fingerprint TEXT NOT NULL,
     status TEXT NOT NULL,
     report_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    updated_at BIGINT NOT NULL,
     PRIMARY KEY (tenant_id, account_id, request_id)
 );
 
 -- Source: engine/pipeline/catalog/src/control.rs
-CREATE TABLE IF NOT EXISTS subscriptions(tenant_id TEXT NOT NULL,account_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,role TEXT NOT NULL,state TEXT NOT NULL,progress_json TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,account_id,product,symbol,role));
-CREATE TABLE IF NOT EXISTS data_policies(tenant_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,policy_json TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,product,symbol));
-CREATE TABLE IF NOT EXISTS strategy_market_subscriptions(tenant_id TEXT NOT NULL,account_id TEXT NOT NULL,issuance_id TEXT NOT NULL,streams_json TEXT NOT NULL,lookback_bars INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,account_id,issuance_id));
-CREATE TABLE IF NOT EXISTS data_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,job_id));
+CREATE TABLE IF NOT EXISTS subscriptions(tenant_id TEXT NOT NULL,account_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,role TEXT NOT NULL,state TEXT NOT NULL,progress_json TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,account_id,product,symbol,role));
+CREATE TABLE IF NOT EXISTS data_policies(tenant_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,policy_json TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,product,symbol));
+CREATE TABLE IF NOT EXISTS strategy_market_subscriptions(tenant_id TEXT NOT NULL,account_id TEXT NOT NULL,issuance_id TEXT NOT NULL,streams_json TEXT NOT NULL,lookback_bars BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,account_id,issuance_id));
+CREATE TABLE IF NOT EXISTS data_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,job_id));
 CREATE INDEX IF NOT EXISTS data_jobs_status ON data_jobs(tenant_id,status,updated_at);
-CREATE TABLE IF NOT EXISTS backtest_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,job_id));
-CREATE TABLE IF NOT EXISTS clickhouse_settings(tenant_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),url TEXT NOT NULL,database_name TEXT NOT NULL,username TEXT NOT NULL,password TEXT NOT NULL,updated_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS worker_settings(singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),max_workers INTEGER NOT NULL,timeout_seconds INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS backtest_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,job_id));
+CREATE TABLE IF NOT EXISTS clickhouse_settings(tenant_id TEXT PRIMARY KEY,enabled BIGINT NOT NULL CHECK(enabled IN (0,1)),url TEXT NOT NULL,database_name TEXT NOT NULL,username TEXT NOT NULL,password TEXT NOT NULL,updated_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS worker_settings(singleton_id BIGINT PRIMARY KEY CHECK(singleton_id=1),max_workers BIGINT NOT NULL,timeout_seconds BIGINT NOT NULL);
 INSERT INTO worker_settings(singleton_id,max_workers,timeout_seconds) VALUES(1,1,3600) ON CONFLICT DO NOTHING;
 
 -- Source: engine/strategy/src/store.rs
