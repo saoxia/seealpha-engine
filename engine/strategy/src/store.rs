@@ -231,7 +231,17 @@ impl StrategyStore {
         match current {
             Some(prior) if prior != expected => return Err(conflict("indexed issuance differs")),
             Some(_) => (),
-            None => insert_index(&mut tx, record)?,
+            None => {
+                insert_index(&mut tx, record)?;
+                let actual = tx.query_one(
+                    "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+                     FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
+                    &[&l.tenant_id,&l.account_id,&l.issuance_id],
+                ).map_err(err)?;
+                let indexed: IndexedIdentity = (actual.get(0),actual.get(1),actual.get(2),
+                    actual.get(3),actual.get(4),actual.get(5),actual.get(6));
+                if indexed != expected { return Err(conflict("indexed issuance differs")); }
+            },
         }
         tx.commit().map_err(err)
     }
@@ -430,7 +440,7 @@ mod tests {
         let mut conn = db.index.lock().unwrap();
         let columns = conn.query(
             "SELECT column_name FROM information_schema.columns
-             WHERE table_schema='seealpha' AND table_name='strategy_issuances'
+             WHERE table_schema=current_schema() AND table_name='strategy_issuances'
              AND column_name IN ('archive','package_blob')", &[]
         ).unwrap();
         assert!(columns.is_empty());
