@@ -397,7 +397,7 @@ async fn task_retry(
     }
     if !state
         .runtime
-        .ledger
+        .control
         .transition_data_job(&tenant, &id, status, "queued", None)
         .map_err(|e| AppError::bad_request(e.to_string()))?
     {
@@ -617,7 +617,7 @@ async fn data_retry(
     }
     if !state
         .runtime
-        .ledger
+        .control
         .transition_data_job(&tenant, id, previous, "queued", None)
         .map_err(|e| AppError::bad_request(e.to_string()))?
     {
@@ -722,7 +722,7 @@ async fn data_inventory(
     }
     let policies = state
         .runtime
-        .ledger
+        .control
         .policies(&tenant)
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     let items = policies
