@@ -82,7 +82,18 @@ pub fn schema_for_path(path: &Path) -> String {
     "seealpha".into()
 }
 
-pub struct Connection { client: Mutex<Client>, schema: String }
+pub struct Connection { client: Mutex<Option<Client>>, schema: String }
+impl Drop for Connection {
+    fn drop(&mut self) {
+        // The blocking postgres client calls an internal runtime during Drop.
+        // Destroy it outside Tokio's async executor, just like DB queries.
+        if let Ok(mut guard) = self.client.lock() {
+            if let Some(client) = guard.take() {
+                let _ = std::thread::spawn(move || drop(client)).join();
+            }
+        }
+    }
+}
 impl Connection {
     // The synchronous postgres crate creates an internal Tokio runtime.
     // All database I/O runs off the async HTTP executor to avoid nesting runtimes.
@@ -91,7 +102,8 @@ impl Connection {
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 let mut client = self.client.lock().map_err(|_| Error::InvalidRow("postgres mutex poisoned".into()))?;
-                run(&mut client)
+                let client = client.as_mut().ok_or_else(|| Error::InvalidRow("postgres client closed".into()))?;
+                run(client)
             }).join().map_err(|_| Error::InvalidRow("postgres worker panicked".into()))?
         })
     }
@@ -111,7 +123,7 @@ impl Connection {
                 .map_err(|_| Error::InvalidRow("postgres schema worker panicked".into()))?
                 .map_err(Error::from)
         })?;
-        Ok(Self { client: Mutex::new(client), schema })
+        Ok(Self { client: Mutex::new(Some(client)), schema })
     }
 
     pub fn execute_batch(&self, sql: &str) -> Result<(), Error> {
