@@ -5,3 +5,7 @@
 mod account_events;
 mod verified_fills;
 mod settlements;
+
+mod v2;
+pub use v2::{AssetEffect, MovementInput};
+pub(crate) use v2::SCHEMA as MOVEMENTS_V2_SCHEMA;
