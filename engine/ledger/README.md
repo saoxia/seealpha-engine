@@ -60,7 +60,7 @@ Durable order intents, GET-only recovery scheduling, order request views and sto
 ## Ledger 源码收敛（2026-11-22）
 
 - `mod.rs` 是 Ledger crate 根入口，维护 Ledger 初始化、公共类型、连接锁和保留历史表的安全测试；原 `src/lib.rs` 已移除。
-- 租户与账户连接登记已经从 Ledger 迁至 `engine/runtime/src/state_store/registry.rs`，包括 `active_tenant_ids`、`ensure_tenant`、`tenant`、`account_connections` 和 `upsert_connection`。
+- 租户与账户连接登记已经从 Ledger 迁至 `engine/runtime/src/state_store/{tenants,account_registry}.rs`，包括 `active_tenant_ids`、`ensure_tenant`、`tenant`、`account_connections` 和 `upsert_connection`。
 - `movements/verified_fills.rs` 持有 `fills()` 读取与认证成交写入；不新增原生订单状态机。
 - 旧 `src/records.rs` 已删除，迁移不修改 SQL Schema 或现有 API 方法签名。
 - 共享 PostgreSQL Schema 由 Runtime 启动时调用 `seealpha_database::bootstrap_engine_schema`，然后打开 Ledger / StateStore。Ledger 仅在单元测试构建下为独立 fixture 初始化 Schema；不执行 DROP 或历史数据转换。
