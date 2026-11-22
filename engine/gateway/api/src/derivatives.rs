@@ -52,22 +52,29 @@ async fn read_funding(
         }
         state
             .runtime
-            .ledger
-            .funding_events(&tenant, symbol, start, end, 5000)
-            .map_err(|e| AppError::bad_request(e.to_string()))?
+            .funding_observations(&tenant, symbol, start, end, 5000)
+            .map_err(AppError::from)?
     } else {
         let limit = body["limit"].as_i64().unwrap_or(100);
         if !(1..=500).contains(&limit) {
             return Err(AppError::bad_request("资金费分页数量超出上限。"));
         }
-        state
-            .runtime
-            .ledger
-            .latest_funding_events(&tenant, symbol, limit)
-            .map_err(|e| AppError::bad_request(e.to_string()))?
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| AppError::bad_request("系统时间不可用。"))?
+                .as_millis() as i64;
+            let mut observations = state.runtime
+                .funding_observations(&tenant, symbol, 0, now_ms, 50_000)
+                .map_err(AppError::from)?;
+            if observations.len() > limit as usize {
+                observations.drain(..observations.len() - limit as usize);
+            }
+            observations
+        }
     };
     Ok(Json(
-        json!({"symbol":symbol,"rows":rows,"source":"local_verified_exchange_events",
+        json!({"symbol":symbol,"rows":rows,"source":"pipeline_catalog_exchange_events",
         "completeness":"not_certified","no_synthetic_funding":true}),
     ))
 }

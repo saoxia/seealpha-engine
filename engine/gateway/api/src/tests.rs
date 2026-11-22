@@ -488,18 +488,7 @@ use super::*;
             .runtime
             .ensure_tenant("42", "development", "active")
             .unwrap();
-        setup
-            .runtime
-            .ledger
-            .import_funding_events(
-                "42",
-                "ETHUSDT",
-                &[json!({
-                    "symbol":"ETHUSDT","funding_time_ms":100,
-                    "rate_type":"Regular","funding_rate":"0.0001","mark_price":"2000"
-                })],
-            )
-            .unwrap();
+        // Missing Pipeline Catalog must fail closed rather than read Ledger rates.
         let app = router(setup);
         let request = Request::builder()
             .uri("/tenants/42/data/funding")
@@ -512,8 +501,6 @@ use super::*;
             .body(Body::from(r#"{"symbol":"ETHUSDT","limit":10}"#))
             .unwrap();
         let (status, _, data) = call(&app, request).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(data["rows"].as_array().unwrap().len(), 1);
-        assert_eq!(data["no_synthetic_funding"], true);
-        assert_eq!(data["completeness"], "not_certified");
+        assert_ne!(status, StatusCode::OK);
+        assert!(data.get("rows").is_none());
     }
