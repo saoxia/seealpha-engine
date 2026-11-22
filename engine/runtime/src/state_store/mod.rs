@@ -7,8 +7,6 @@ mod research;
 mod paper;
 mod order_intents;
 mod order_reconciliation_tasks;
-mod order_requests;
-pub use order_requests::StoredOrder;
 pub use order_intents::{IntentStart, OrderRecoveryItem};
 pub use order_reconciliation_tasks::ReconciliationTask;
 pub(crate) use paper::{SessionStart, SessionWrite};
@@ -45,9 +43,6 @@ pub(super) fn now_ms() -> i64 {
 
 #[cfg(test)]
 impl StateStore {
-    fn request(&self, tenant: &str, account: &str, request: &str) -> Result<Option<serde_json::Value>, LedgerError> {
-        self.get_order_request(tenant,account,request)?.map(|s| serde_json::from_str(&s).map_err(|e| LedgerError::Database(e.to_string()))).transpose()
-    }
     fn fills(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<String>, LedgerError> {
         use seealpha_database::params;
         let conn=self.lock()?;
