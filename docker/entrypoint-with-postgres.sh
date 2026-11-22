@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 
 PG_VERSION=15
+PG_BIN_DIR=/usr/libexec/postgresql15
 PG_CLUSTER=seealpha
 PG_DATA="${SEEALPHA_POSTGRES_DATA_DIR:-/app/.local/state/postgresql}"
 PG_RUNTIME=/run/postgresql
@@ -31,7 +32,7 @@ shutdown() {
     wait "$engine_pid" 2>/dev/null || true
   fi
   if [[ -n "$postgres_pid" ]]; then
-    runuser -u postgres -- /usr/lib/postgresql/"$PG_VERSION"/bin/pg_ctl \
+    su-exec postgres "$PG_BIN_DIR/pg_ctl" \
       -D "$PG_DATA" -m fast -w stop >/dev/null 2>&1 || true
     wait "$postgres_pid" 2>/dev/null || true
   fi
@@ -46,12 +47,21 @@ if [[ ! -f "$PG_DATA/PG_VERSION" ]]; then
     exit 1
   fi
   new_database=1
-  runuser -u postgres -- /usr/lib/postgresql/"$PG_VERSION"/bin/initdb \
+  su-exec postgres "$PG_BIN_DIR/initdb" \
     -D "$PG_DATA" --auth-local=peer --auth-host=scram-sha-256 --encoding=UTF8 \
     --no-instructions >/dev/null
 fi
 if [[ "$(cat "$PG_DATA/PG_VERSION")" != "$PG_VERSION" ]]; then
   echo "PostgreSQL data version mismatch; upgrade must be explicit" >&2
+  exit 1
+fi
+# Refuse direct reuse of an unverified glibc-backed PostgreSQL data volume.
+# A matching major version alone does not prove locale/index compatibility.
+PG_PLATFORM_MARKER="$PG_DATA/.seealpha-alpine-musl"
+if [[ "$new_database" == 1 ]]; then
+  su-exec postgres touch "$PG_PLATFORM_MARKER"
+elif [[ ! -f "$PG_PLATFORM_MARKER" ]]; then
+  echo "Existing PostgreSQL cluster lacks Alpine/musl provenance; back up via the original Debian image and restore into a fresh Alpine volume." >&2
   exit 1
 fi
 
@@ -73,7 +83,7 @@ if [[ -z "$PG_PASSWORD" ]]; then
 fi
 
 # pg_ctl logs to container stderr through inherited descriptors.
-runuser -u postgres -- /usr/lib/postgresql/"$PG_VERSION"/bin/postgres \
+su-exec postgres /usr/bin/postgres15 \
   -D "$PG_DATA" -c listen_addresses=127.0.0.1 -c port=5432 \
   -c unix_socket_directories="$PG_RUNTIME" \
   -c shared_buffers=16MB -c max_connections=30 \
@@ -87,7 +97,7 @@ for _ in {1..60}; do
     echo "PostgreSQL exited during startup" >&2
     exit 1
   fi
-  if runuser -u postgres -- pg_isready -q -h "$PG_RUNTIME" -p 5432; then
+  if su-exec postgres pg_isready -q -h "$PG_RUNTIME" -p 5432; then
     ready=1
     break
   fi
@@ -99,36 +109,36 @@ if [[ "$ready" != 1 ]]; then
 fi
 
 # Create a dedicated database and a non-superuser login on first startup.
-if ! runuser -u postgres -- psql -h "$PG_RUNTIME" -d postgres -Atqc \
+if ! su-exec postgres psql -h "$PG_RUNTIME" -d postgres -Atqc \
   "SELECT 1 FROM pg_roles WHERE rolname='seealpha_cache'" | grep -qx 1; then
-  runuser -u postgres -- psql -h "$PG_RUNTIME" -d postgres -v ON_ERROR_STOP=1 -q <<SQL
+  su-exec postgres psql -h "$PG_RUNTIME" -d postgres -v ON_ERROR_STOP=1 -q <<SQL
 CREATE ROLE seealpha_cache LOGIN PASSWORD '$PG_PASSWORD';
 SQL
 fi
-if ! runuser -u postgres -- psql -h "$PG_RUNTIME" -d postgres -Atqc \
+if ! su-exec postgres psql -h "$PG_RUNTIME" -d postgres -Atqc \
   "SELECT 1 FROM pg_database WHERE datname='seealpha_cache'" | grep -qx 1; then
-  runuser -u postgres -- createdb -h "$PG_RUNTIME" -O seealpha_cache seealpha_cache
+  su-exec postgres createdb -h "$PG_RUNTIME" -O seealpha_cache seealpha_cache
 fi
 
 # Initialize the exact pinned NautilusTrader rc9 schema once, as the database
 # owner. The native Postgres cache refuses missing/incompatible schemas.
 SCHEMA_DIR=/usr/local/share/nautilus-postgres-schema
-schema_ready="$(runuser -u postgres -- psql -h "$PG_RUNTIME" -d seealpha_cache -Atqc \
+schema_ready="$(su-exec postgres psql -h "$PG_RUNTIME" -d seealpha_cache -Atqc \
   "SELECT CASE WHEN to_regclass('public.account_event') IS NOT NULL AND to_regclass('public.order_event') IS NOT NULL AND to_regclass('public.position_event') IS NOT NULL THEN 'yes' ELSE 'no' END")"
 if [[ "$schema_ready" != "yes" ]]; then
   # Existing partial schema should never be overwritten silently.
-  object_count="$(runuser -u postgres -- psql -h "$PG_RUNTIME" -d seealpha_cache -Atqc \
+  object_count="$(su-exec postgres psql -h "$PG_RUNTIME" -d seealpha_cache -Atqc \
     "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m')")"
   if [[ "$object_count" != "0" ]]; then
     echo "Incomplete Nautilus PostgreSQL schema; refusing automatic migration" >&2
     exit 1
   fi
   for sql in types.sql functions.sql partitions.sql tables.sql; do
-    runuser -u postgres -- psql -X -h "$PG_RUNTIME" -U postgres -d seealpha_cache \
+    su-exec postgres psql -X -h "$PG_RUNTIME" -U postgres -d seealpha_cache \
       -v ON_ERROR_STOP=1 -f "$SCHEMA_DIR/$sql" >/dev/null
   done
   # Schema tables created by postgres need permissions for the account cache.
-  runuser -u postgres -- psql -X -h "$PG_RUNTIME" -d seealpha_cache \
+  su-exec postgres psql -X -h "$PG_RUNTIME" -d seealpha_cache \
     -v ON_ERROR_STOP=1 -q <<SQL
 GRANT USAGE, CREATE ON SCHEMA public TO seealpha_cache;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO seealpha_cache;
