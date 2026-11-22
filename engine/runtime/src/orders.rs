@@ -55,7 +55,7 @@ impl Runtime {
         _account_revision: &str,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        let Some(intent) = self.ledger
+        let Some(intent) = self.state_store
             .registered_order_intent(tenant_id, account_id, request_id)
             .map_err(map_ledger)?
         else {
@@ -78,7 +78,7 @@ impl Runtime {
         request_id: &str,
     ) -> Result<Value, RuntimeError> {
         let Some(existing) = self
-            .ledger
+            .state_store
             .get_order_request(tenant_id, account_id, request_id)
             .map_err(map_ledger)?
         else {
@@ -132,7 +132,7 @@ impl Runtime {
             ));
         }
         stored["ledger_synced"] = json!(true);
-        self.ledger
+        self.state_store
             .append_order_request_view(tenant_id, account_id, request_id, &stored.to_string())
             .map_err(map_ledger)?;
         Ok(stored)
@@ -229,11 +229,11 @@ mod tests {
             });
             assert!(result.is_err(), "legacy {action} must be disabled");
         }
-        assert!(runtime.ledger.get_order_request(
+        assert!(runtime.state_store.get_order_request(
             "7", "11", "00000000-0000-0000-0000-000000000001",
         ).unwrap().is_none());
         assert!(runtime.ledger.fills("7", "11", "production").unwrap().is_empty());
-        assert!(runtime.ledger.order_recovery_page("7", 0, 10).unwrap().is_empty());
+        assert!(runtime.state_store.order_recovery_page("7", 0, 10).unwrap().is_empty());
 
         let mut blob = Vec::new();
         for entry in std::fs::read_dir(&config.state_dir).unwrap() {
