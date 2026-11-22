@@ -21,7 +21,7 @@ cargo run --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml --b
 
 USD-M 当前只支持显式的 **OneWay/Netting** 测试观测。已有 Hedge 双向账户必须先扩展并核对独立头寸模式映射，不能悄悄按 Netting 处理。当前不支持 Options。
 
-只读输出的 `balances` 和 `margins` 直接来自 Nautilus AccountState；没有确认来源的事件不会成为 `Ledger::save_account_snapshot` 的可信财务证据。测试网凭据只在当前进程内使用，程序不写入凭据、不连接生产环境。
+只读输出的 `balances` 和 `margins` 直接来自 Nautilus AccountState；没有确认来源的事件不会被标记为可信交易所财务证据。测试网凭据只在当前进程内使用，程序不写入凭据、不连接生产环境。
 
 ## 严格的边界与未完成的验收
 
@@ -37,28 +37,14 @@ USD-M 当前只支持显式的 **OneWay/Netting** 测试观测。已有 Hedge �
 
 `native_account_session.rs` 测试涵盖实际 Nautilus 类型与消息总线订阅、账户绑定、资金值视图、过期/错账户、重启后重放拒绝、新事件恢复和损坏游标拒绝。所有测试均不需要真实账户、不会提交订单。
 
-工作完成前保留现有 Ledger Accounts 的 CAS 和可信快照门禁；不能因为这个只读观察进程存在就删除历史账户证据。
+旧 Ledger Accounts SQLite 快照实现已从编译目标移除；历史表不会自动 DROP。生产 Runtime 尚未接通，依赖原生账户证据的路径仍必须 fail-closed。
 
-## Accounts 去重迁移边界（2026-11-22）
+## Accounts 去重后现状
 
-原生 Observer 已有 AccountState 订阅、原生余额和保证金读取、以及可选 PostgreSQL Cache。不应再新增一套资金余额计算系统。独立 JSON 输出只是未认证的测试网观察，不能直接用于生产 Runtime。
+- `NativeAccountSession` 仅在进程内保留 Nautilus 原生 `AccountState`，JSON 展示按需计算，事件订阅以具体 AccountId 为主题。
+- 旧 Ledger `account_snapshots` 代码、新库建表和无生产调用方的旧 Basket 快照 CAS 原型已移除；既有数据库的历史表不自动 DROP。
+- PostgreSQL Cache 使用 Nautilus 自身配置；独立游标只防止重启后重放旧报告，不是另一套余额账本。
+- **仍未完成生产 Runtime 的原生账户与持仓接线**：Observer 是 Testnet 只读实验节点，无法凭本地 JSON 或 `is_reported` 通过生产认证，不能下单。
+- 通用 Basket 状态检查点、不可变订单意图与真实成交/结算证据仍由 SeeAlpha 维护；这些不是重复账户余额缓存。
 
-迁移和删除旧账户快照模型的前提：
-
-1. 绑定执行节点与 tenant/account/environment，证明唯一生产者和跨进程报告可信来源。单靠 is_reported 或 JSON 标记不能构成认证。
-2. Runtime 从原生 Account/Position/Cache 读取完整一致状态，并在重启后完成交易所对账；PostgreSQL Cache 不是交易所证明。
-3. 保持 Basket 的账户版本 CAS、时效、来源和发送前原子登记约束。当前 preregister_basket_order_intent 在 SQLite 事务中读取账户 revision，不能只删除快照写入而保留此依赖。
-4. 验证断网、乱序、重复、账户隔离及 Spot、USD-M Netting/Hedge；无法保证的产品继续 fail-closed。
-5. 完成 basket.rs、basket_phase.rs、order_intents.rs 的一致迁移与回归后再移除 SQLite account_snapshots；历史表需另行制定保留/迁移方案，不直接 DROP。
-
-本批仅收紧原生账户订阅范围并增补隔离测试；并未完成 Runtime 接线或旧快照删除。
-
-## 原生类型读取接口（后续改造）
-
-`NativeAccountSession::fresh_native(now_ns, max_age_ns)` 返回当前已经通过该隔离会话校验、仍处于时效窗口内的原始 Nautilus `AccountState` 引用。重启未获新报告、主动断线或超时均返回 `None`。这为后续在同一可信进程中直接使用 Nautilus 类型提供接入点，避免将 JSON projection 当成新的权威账户模型。
-
-当前实现只保留最新原生事件，JSON 投影在读取时临时构建，不再缓存第二份 balances/margins；不会写入另一套账户数据库。该 API 本身**不认证交易所来源，不包含 Position Cache，不提供跨进程 Runtime 访问或下单权限**，不得直接替换 Basket 原子账户版本门禁。
-
-## 简化记录（2026-11-22）
-
-已删除 `NativeAccountSession` 中重复保存的 `ReportedAccountView` 状态字段，改为只缓存 Nautilus `AccountState`。`fresh_native` 直接读取原生数据；`fresh` 只为现有 CLI JSON 输出按需生成投影。`accept` 在更新游标前验证余额一致性和重复币种/保证金，仍然先持久化游标再公布最新事件。此变更不启用 Runtime 原生交易或删除 Basket 的事务版本检查。
+后续生产接线应直接消费可信 Nautilus Account / Position / Cache，并将状态验证与实际发送统一交由原生执行节点处理。禁止重新引入旧余额 JSON 快照表。
