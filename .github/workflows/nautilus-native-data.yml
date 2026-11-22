@@ -43,6 +43,7 @@ jobs:
           cargo test -p seealpha-catalog on_disk_parquet_roundtrip_supports_upsert_and_product_isolation --locked
           cargo test -p seealpha-catalog replaces_sparse_bars_and_removes_deleted_trade_second --locked
           cargo test -p seealpha-market minute_bounds_include_entire_last_trade_second --locked
+          cargo test -p seealpha-market auto_rebuilds_after_native_tick_insert_revision_and_deletion --locked
           cargo test -p seealpha-market open_bars_update_on_every_tick_even_before_close --locked
           cargo test -p seealpha-market instrument_filters_are_exact_not_inferred_from_candle_values --locked
           cargo test -p seealpha-market earlier_tenant_start_wins_and_disabled_prevents_deletion --locked

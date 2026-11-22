@@ -349,6 +349,97 @@ impl HistoricalTracker {
 #[cfg(test)]
 mod tests{
     use super::*;
+
+    #[test]
+    fn auto_rebuilds_after_native_tick_insert_revision_and_deletion(){
+        use arrow_array::{ArrayRef,Decimal128Array,RecordBatch,StringArray,
+            builder::TimestampNanosecondBuilder};
+        use arrow_schema::{DataType,Field,Schema,TimeUnit};
+        use parquet::arrow::ArrowWriter;
+        use std::sync::Arc;
+
+        let root=std::env::temp_dir().join(format!("sa-history-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()));
+        let src=root.join("native");
+        let out=root.join("derived");
+        let instrument="ETHUSDT.BINANCE";
+        let trade_dir=src.join("data/trades").join(instrument);
+        fs::create_dir_all(&trade_dir).unwrap();
+        fs::create_dir_all(&out).unwrap();
+        let base=1_735_689_600_000_i64; // UTC 2025-01-01
+        let filename="2025-01-01T00-00-00-100000000Z_2025-01-01T00-00-00-500000000Z.parquet";
+        let file=trade_dir.join(filename);
+        let write_native=|second_price:i128,second_qty:i128|{
+            let factor=10_i128.pow(16);
+            let price=Arc::new(Decimal128Array::from(vec![100*factor,second_price*factor])
+                .with_precision_and_scale(38,16).unwrap()) as ArrayRef;
+            let size=Arc::new(Decimal128Array::from(vec![factor,second_qty*factor])
+                .with_precision_and_scale(38,16).unwrap()) as ArrayRef;
+            let mut events=TimestampNanosecondBuilder::with_capacity(2).with_timezone("UTC");
+            let mut init=TimestampNanosecondBuilder::with_capacity(2).with_timezone("UTC");
+            for ns in [(base+100)*1_000_000,(base+500)*1_000_000]{
+                events.append_value(ns);
+                init.append_value(ns);
+            }
+            let fields=vec![
+                Field::new("price",DataType::Decimal128(38,16),false),
+                Field::new("size",DataType::Decimal128(38,16),false),
+                Field::new("trade_id",DataType::Utf8,false),
+                Field::new("aggressor_side",DataType::Utf8,false),
+                Field::new("ts_event",DataType::Timestamp(TimeUnit::Nanosecond,Some("UTC".into())),false),
+                Field::new("ts_init",DataType::Timestamp(TimeUnit::Nanosecond,Some("UTC".into())),false),
+            ];
+            let schema=Arc::new(Schema::new_with_metadata(fields,std::collections::HashMap::from([
+                ("type_name".into(),"TradeTick".into()),
+                ("instrument_id".into(),instrument.into()),
+                ("price_precision".into(),"2".into()),
+                ("size_precision".into(),"2".into()),
+            ])));
+            let cols:Vec<ArrayRef>=vec![
+                price,size,
+                Arc::new(StringArray::from(vec!["1","2"])),
+                Arc::new(StringArray::from(vec!["BUYER","SELLER"])),
+                Arc::new(events.finish()),Arc::new(init.finish()),
+            ];
+            let data=RecordBatch::try_new(schema,cols).unwrap();
+            let tmp=trade_dir.join("source.parquet.tmp");
+            let mut writer=ArrowWriter::try_new(File::create(&tmp).unwrap(),data.schema(),None).unwrap();
+            writer.write(&data).unwrap();
+            writer.close().unwrap();
+            fs::rename(tmp,&file).unwrap();
+        };
+        let source=Catalog::open_existing(&src).unwrap();
+        let target=Catalog::open_existing(&out).unwrap();
+        let mut tracker=HistoricalTracker::default();
+        write_native(110,2);
+        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),1);
+        let first_id=seealpha_catalog::bar_type(instrument,"1s").unwrap();
+        let minute_id=seealpha_catalog::bar_type(instrument,"1m").unwrap();
+        let read=|id:&str,interval:&str,end_ms:i64|target.read_bars(id,interval,
+            base*1_000_000,end_ms*1_000_000,100).unwrap();
+        let seconds=read(&first_id,"1s",base+1_000);
+        let minutes=read(&minute_id,"1m",base+60_000);
+        assert_eq!(seconds.len(),1);
+        assert_eq!(seconds[0].high,Decimal::from(110));
+        assert_eq!(minutes[0].volume,Decimal::from(3));
+        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),0);
+        // Same file name and time bounds, corrected underlying Tick values.
+        write_native(120,5);
+        assert_eq!(tracker.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),1);
+        assert_eq!(read(&first_id,"1s",base+1_000)[0].high,Decimal::from(120));
+        assert_eq!(read(&minute_id,"1m",base+60_000)[0].volume,Decimal::from(6));
+        // Durable checkpoint: a new worker must not repeat finished work.
+        let mut restarted=HistoricalTracker::default();
+        assert_eq!(restarted.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),0);
+        fs::remove_file(file).unwrap();
+        assert_eq!(restarted.poll(&source,&target,"ETHUSDT",MarketProduct::Spot,(2,2)).unwrap(),1);
+        assert!(read(&first_id,"1s",base+1_000).is_empty());
+        assert!(read(&minute_id,"1m",base+60_000).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn minute_bounds_include_entire_last_trade_second(){
         assert_eq!(aligned_start(61_999),60_000);

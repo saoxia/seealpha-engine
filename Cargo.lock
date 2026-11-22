@@ -1692,8 +1692,11 @@ dependencies = [
 name = "seealpha-market"
 version = "0.1.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "async-trait",
  "chrono",
+ "parquet",
  "reqwest",
  "rust_decimal",
  "seealpha-catalog",
