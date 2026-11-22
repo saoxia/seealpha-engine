@@ -2,7 +2,6 @@
 mod catalog;
 pub use catalog::CatalogBar;
 mod config;
-mod history;
 mod inspection;
 mod session;
 mod orders;
