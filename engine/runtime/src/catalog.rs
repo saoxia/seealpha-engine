@@ -180,7 +180,7 @@ impl Runtime {
         })?;
         let rows = catalog
             .read_contiguous_bars(
-                symbol, product(product_name)?, interval,
+                &market_bar_type(product_name, symbol, interval)?, interval,
                 start_ms, end_ms, limit as usize,
             )
             .map_err(error)?;
