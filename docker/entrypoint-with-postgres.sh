@@ -8,9 +8,10 @@ PG_DATA="${SEEALPHA_POSTGRES_DATA_DIR:-/app/.local/state/postgresql}"
 PG_RUNTIME=/run/postgresql
 PG_CREDENTIAL_FILE="${SEEALPHA_POSTGRES_CREDENTIAL_FILE:-/app/.local/state/.postgres-password}"
 # Never start a fresh PostgreSQL ledger while unmigrated trading evidence exists.
-legacy_book="${ENGINE_STATE:-/app/.local/state/engine}/book.sqlite"
-if [[ -f "$legacy_book" && ! -f "${ENGINE_STATE:-/app/.local/state/engine}/.postgres-cutover-complete" ]]; then
-  echo "Unmigrated SQLite Ledger detected. Run the backup-first cutover importer before starting Engine." >&2
+legacy_state_dir="${ENGINE_STATE:-/app/.local/state/engine}"
+if [[ ( -f "$legacy_state_dir/book.sqlite" || -f "$legacy_state_dir/control.sqlite" ) \
+      && ! -f "$legacy_state_dir/.postgres-cutover-complete" ]]; then
+  echo "Unmigrated SQLite state detected. Complete offline import before starting Engine." >&2
   exit 1
 fi
 new_database=0
