@@ -301,6 +301,31 @@ pub async fn scan_day(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_minutes_aggregate_only_when_window_is_complete() {
+        fn saved(minute: i64) -> SavedKline {
+            SavedKline {
+                event_ns: (minute * 60_000 + 59_999) * 1_000_000,
+                values: [
+                    Decimal::from(10), Decimal::from(12), Decimal::from(9),
+                    Decimal::from(11), Decimal::ONE,
+                ],
+            }
+        }
+        let partial = aggregate_saved_klines(
+            &[saved(0), saved(2)], "1m", "5m").unwrap();
+        assert_eq!(partial.len(), 1);
+        assert!(!partial[0].complete);
+        let full = aggregate_saved_klines(
+            &[saved(0), saved(1), saved(2), saved(3), saved(4)],
+            "1m", "5m").unwrap();
+        assert!(full[0].complete);
+        assert_eq!(full[0].values[4], Decimal::from(5));
+        let invalid = SavedKline { event_ns: 0, ..saved(0) };
+        assert!(aggregate_saved_klines(&[invalid], "1m", "1m").is_err());
+    }
+
+
     use super::*;
     use rust_decimal::Decimal;
     use seealpha_catalog::DAY_MS;
