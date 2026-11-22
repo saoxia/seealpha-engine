@@ -88,3 +88,9 @@ Native Catalog 和 Feather 根目录可通过 `PIPELINE_NATIVE_CATALOG_ROOT` 与
 SEEALPHA_DATABASE_URL='postgresql://...' cargo run --locked -p seealpha-market --bin pipeline_worker -- spot
 SEEALPHA_DATABASE_URL='postgresql://...' cargo run --locked -p seealpha-market --bin pipeline_worker -- futures_um
 ```
+
+## 运行时数据任务清理
+
+旧 Runtime `data.rs`、`data_policies` / `data_jobs` 的创建与调度 API 已从代码中移除。数据订阅统一使用 `/tenants/{tenant}/pipeline/subscriptions` 的 GET/PUT/DELETE；调用仅写入 PostgreSQL，Spot、USD-M、Options Worker 独立按配置运行，不再产生一次性数据任务 ID、状态队列或重试 API。
+
+**数据迁移边界：** 已安装数据库中的旧表不会自动 DROP（避免升级时破坏历史记录），但不再创建或访问。一次性 ZIP 归档下载/导入以及旧按日修复操作不再通过 Runtime API 执行；它们的底层代码仍保留在 Pipeline。要让这些操作自动执行，需继续在各产品 Pipeline 中接入对应的配置驱动流程。
