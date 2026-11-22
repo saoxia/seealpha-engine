@@ -75,7 +75,10 @@ fi
 # pg_ctl logs to container stderr through inherited descriptors.
 runuser -u postgres -- /usr/lib/postgresql/"$PG_VERSION"/bin/postgres \
   -D "$PG_DATA" -c listen_addresses=127.0.0.1 -c port=5432 \
-  -c unix_socket_directories="$PG_RUNTIME" &
+  -c unix_socket_directories="$PG_RUNTIME" \
+  -c shared_buffers=16MB -c max_connections=30 \
+  -c work_mem=1MB -c maintenance_work_mem=16MB \
+  -c autovacuum_work_mem=8MB &
 postgres_pid=$!
 
 ready=0

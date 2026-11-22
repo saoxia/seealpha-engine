@@ -21,3 +21,5 @@ members = [
 [profile.release]
 lto = "thin"
 codegen-units = 16
+debug = 1
+strip = "none"  # Docker splits symbols before packaging
