@@ -2,7 +2,7 @@ name: Nautilus native Binance data integration
 on:
   pull_request:
     paths:
-      - "engine/pipeline/nautilus/**"
+      - "engine/pipeline/sources/binance/nautilus/**"
       - ".github/workflows/nautilus-native-data.yml"
       - "Cargo.toml"
   workflow_dispatch:
@@ -18,8 +18,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Native Nautilus Binance integration compile
-        run: cargo check --manifest-path engine/pipeline/nautilus/Cargo.toml --all-targets
+        run: cargo check --manifest-path engine/pipeline/sources/binance/nautilus/Cargo.toml --all-targets
       - name: Native Nautilus Binance offline tests
-        run: cargo test --manifest-path engine/pipeline/nautilus/Cargo.toml
+        run: cargo test --manifest-path engine/pipeline/sources/binance/nautilus/Cargo.toml
       - name: Native Nautilus Binance clippy
-        run: cargo clippy --manifest-path engine/pipeline/nautilus/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path engine/pipeline/sources/binance/nautilus/Cargo.toml --all-targets -- -D warnings
