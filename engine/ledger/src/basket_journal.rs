@@ -1,7 +1,7 @@
 //! SQLite compare-and-swap persistence for research basket journals.
 //! The caller must validate journal state with seealpha-portfolio before writing.
 use crate::{Ledger, LedgerError};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredBasketJournal {
     pub revision: String,
@@ -17,10 +17,10 @@ impl Ledger {
         let conn = self
             .connection
             .lock()
-            .map_err(|_| LedgerError::Sqlite("ledger mutex poisoned".into()))?;
+            .map_err(|_| LedgerError::Database("ledger mutex poisoned".into()))?;
         conn.query_row(
             "SELECT revision,body_json FROM basket_journals
-             WHERE tenant_id=?1 AND account_id=?2 AND basket_id=?3",
+             WHERE tenant_id=$1 AND account_id=$2 AND basket_id=$3",
             params![tenant, account, basket_id],
             |row| {
                 Ok(StoredBasketJournal {
@@ -30,7 +30,7 @@ impl Ledger {
             },
         )
         .optional()
-        .map_err(|e| LedgerError::Sqlite(e.to_string()))
+        .map_err(|e| LedgerError::Database(e.to_string()))
     }
     /// Save only when the expected prior revision matches. No live order is sent.
     /// Retrying identical content is idempotent even if the expected revision is stale.
@@ -57,14 +57,14 @@ impl Ledger {
         let mut conn = self
             .connection
             .lock()
-            .map_err(|_| LedgerError::Sqlite("ledger mutex poisoned".into()))?;
+            .map_err(|_| LedgerError::Database("ledger mutex poisoned".into()))?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         let old: Option<StoredBasketJournal> = tx
             .query_row(
                 "SELECT revision,body_json FROM basket_journals WHERE
-             tenant_id=?1 AND account_id=?2 AND basket_id=?3",
+             tenant_id=$1 AND account_id=$2 AND basket_id=$3",
                 params![tenant, account, basket_id],
                 |r| {
                     Ok(StoredBasketJournal {
@@ -74,7 +74,7 @@ impl Ledger {
                 },
             )
             .optional()
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         let proposed = StoredBasketJournal {
             revision: revision.to_owned(),
             body_json: body_json.to_owned(),
@@ -90,20 +90,20 @@ impl Ledger {
         if old.is_none() {
             tx.execute(
                 "INSERT INTO basket_journals (tenant_id,account_id,basket_id,revision,body_json)
-                 VALUES (?1,?2,?3,?4,?5)",
+                 VALUES ($1,$2,$3,$4,$5)",
                 params![tenant, account, basket_id, revision, body_json],
             )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         } else {
             tx.execute(
-                "UPDATE basket_journals SET revision=?4,body_json=?5
-                 WHERE tenant_id=?1 AND account_id=?2 AND basket_id=?3",
+                "UPDATE basket_journals SET revision=$4,body_json=$5
+                 WHERE tenant_id=$1 AND account_id=$2 AND basket_id=$3",
                 params![tenant, account, basket_id, revision, body_json],
             )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         }
         tx.commit()
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         Ok(proposed)
     }
 }
