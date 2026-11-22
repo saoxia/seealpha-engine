@@ -18,6 +18,8 @@ struct NativeManifest {
     name: String,
     version: String,
     entry_point: String,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 /// Inspect exact artifact bytes without loading executable code. The SHA-256
@@ -33,6 +35,7 @@ pub fn inspect_native_manifest(bytes: &[u8]) -> Result<PackageMetadata, Strategy
         || manifest.name != NATIVE_EMA_CODE
         || manifest.version != "1"
         || manifest.entry_point != NATIVE_EMA_ENTRY
+        || manifest.description.as_ref().is_some_and(|d| d.len() > 512)
     {
         return Err(StrategyError::Package("Rust 策略清单未获支持。".into()));
     }
@@ -59,7 +62,7 @@ pub fn authorize_native_manifest(
 mod tests {
     use super::*;
 
-    const MANIFEST: &[u8] = br#"{"format":1,"runtime":"rust-builtin","name":"ema_crossover","version":"1","entry_point":"native:ema_crossover"}"#;
+    const MANIFEST: &[u8] = br#"{"format":1,"runtime":"rust-builtin","name":"ema_crossover","version":"1","entry_point":"native:ema_crossover","description":"EMA crossover"}"#;
 
     #[test]
     fn inspect_only_recognizes_known_builtin_and_exact_hash() {

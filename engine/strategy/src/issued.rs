@@ -1,6 +1,6 @@
 //! Issuance-bound strategy execution contract.
 //!
-//! Callers must obtain the issued record from the trusted Ledger and compare it
+//! Callers must obtain the issued record from the trusted strategy issuance store and compare it
 //! with the authenticated tenant/account. No claim made by the Python package
 //! grants authority. Rust never exposes an order or data-control operation.
 

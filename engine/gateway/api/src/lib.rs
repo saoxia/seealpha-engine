@@ -486,10 +486,15 @@ struct RunnableBody {
 struct StrategyLoadBody {
     account_id: String,
     issuance_id: String,
+    #[serde(default)]
     version: String,
+    #[serde(default)]
     code_key: String,
+    #[serde(default)]
     entry_point: String,
+    #[serde(default)]
     package_hash: String,
+    #[serde(default)]
     grant_purpose: String,
     #[serde(default)]
     parameters: Value,
