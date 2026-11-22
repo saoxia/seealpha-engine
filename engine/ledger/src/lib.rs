@@ -13,7 +13,6 @@ mod reconciliation;
 
 // Economic evidence and account registration remain in Ledger.
 mod records;
-mod parity;
 use seealpha_database::{Connection, OptionalExtension, params};
 use std::path::Path;
 use thiserror::Error;
