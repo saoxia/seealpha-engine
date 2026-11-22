@@ -3,7 +3,7 @@
 //! edits an existing Parquet object or imports uncertified partial sessions.
 use crate::{
     Catalog, CatalogError,
-    model::{CatalogBar, MarketProduct, bar_type},
+    model::{CatalogBar, parse_bar_type},
     reader::{RecordKind, candidate_files, inspect_existing_directory},
 };
 use arrow_array::builder::TimestampNanosecondBuilder;
@@ -104,8 +104,7 @@ impl Catalog {
     /// overlapping existing file aborts without changing the old catalog.
     pub fn append_bars(
         &self,
-        symbol: &str,
-        product: MarketProduct,
+        bar_identity: &str,
         interval: &str,
         bars: &[CatalogBar],
         price_precision: u32,
@@ -117,8 +116,11 @@ impl Catalog {
                 "单次写入数据量或精度超出范围。".into(),
             ));
         }
-        let kind = bar_type(symbol, product, interval)?;
-        let instrument = crate::model::instrument_id(symbol, product)?;
+        let (instrument, recorded_interval) = parse_bar_type(bar_identity)?;
+        if recorded_interval != interval {
+            return Err(CatalogError::Invalid("BarType 周期与请求不一致。".into()));
+        }
+        let kind = bar_identity;
         let dir_rel = RecordKind::Bars.directory(&kind)?;
         let directory = safe_mkdir(&self.root, &dir_rel)?;
         // The lock lives with this one native BarType writer. Readers do
@@ -134,7 +136,7 @@ impl Catalog {
         let mut expected = bars[0].open_time_ms;
         let mut events = Vec::with_capacity(bars.len());
         for bar in bars {
-            bar.validate(interval, product)?;
+            bar.validate(interval)?;
             for (value, precision) in [
                 (bar.open, price_precision),
                 (bar.high, price_precision),
@@ -189,8 +191,7 @@ impl Catalog {
                     )?
                     .1;
                     let previous = self.read_contiguous_bars(
-                        symbol,
-                        product,
+                        bar_identity,
                         interval,
                         bars[0].open_time_ms,
                         expected_end,
@@ -274,7 +275,7 @@ impl Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::MarketProduct;
+    use crate::model::bar_type;
     use rust_decimal::Decimal;
     #[test]
     fn filename_matches_python_nautilus_v2_exact_nanoseconds() {
@@ -305,23 +306,23 @@ mod tests {
         };
         let bars = [bar(0), bar(60_000)];
         catalog
-            .append_bars("ETHUSDT", MarketProduct::FuturesUm, "1m", &bars, 2, 3)
+            .append_bars("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", &bars, 2, 3)
             .unwrap();
         assert_eq!(
             catalog
-                .read_contiguous_bars("ETHUSDT", MarketProduct::FuturesUm, "1m", 0, 120_000, 100)
+                .read_contiguous_bars("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", 0, 120_000, 100)
                 .unwrap(),
             bars
         );
         assert!(
             catalog
-                .bar_gaps("ETHUSDT", MarketProduct::FuturesUm, "1m", 0, 120_000, 100)
+                .bar_gaps("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", 0, 120_000, 100)
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
             catalog
-                .bar_gaps("ETHUSDT", MarketProduct::FuturesUm, "1m", 0, 180_000, 100)
+                .bar_gaps("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", 0, 180_000, 100)
                 .unwrap(),
             vec![crate::BarGap {
                 start_ms: 120_000,
@@ -332,28 +333,27 @@ mod tests {
         // Parquet hard-link and the publication watermark transaction.
         assert!(
             catalog
-                .append_bars("ETHUSDT", MarketProduct::FuturesUm, "1m", &bars, 2, 3)
+                .append_bars("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", &bars, 2, 3)
                 .is_ok()
         );
         let mut too_precise = bars.clone();
         too_precise[0].close = Decimal::new(105001, 3);
         assert!(
             catalog
-                .append_bars("ETHUSDT", MarketProduct::Spot, "1m", &too_precise, 2, 3)
+                .append_bars("ETHUSDT.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", &too_precise, 2, 3)
                 .is_err()
         );
         let mut conflicted = bars.clone();
         conflicted[1].close = Decimal::from(106);
         assert!(
             catalog
-                .append_bars("ETHUSDT", MarketProduct::FuturesUm, "1m", &conflicted, 2, 3)
+                .append_bars("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", &conflicted, 2, 3)
                 .is_err()
         );
         assert!(
             catalog
                 .read_bars(
-                    "ETHUSDT",
-                    MarketProduct::Spot,
+                    "ETHUSDT.BINANCE-1-MINUTE-LAST-EXTERNAL",
                     "1m",
                     0,
                     120_000_000_000,
