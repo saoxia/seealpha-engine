@@ -163,9 +163,10 @@ impl Catalog {
     /// old timestamps no longer supported by TradeTick. The durable marker
     /// makes incomplete crash-time replacements unreadable until replay.
     pub fn replace_bars_window(
-        &self,id:&str,interval:&str,start_ms:i64,end_ms:i64,
+        &self,id:&str,interval:&str,window:(i64,i64),
         bars:&[CatalogBar],price_precision:u32,size_precision:u32,
     )->Result<(),CatalogError>{
+        let (start_ms,end_ms)=window;
         if start_ms<0||end_ms<=start_ms||bars.len()>MAX_WRITE
             ||price_precision>16||size_precision>16
             ||crate::bar_window(interval,start_ms)?.0!=start_ms
@@ -431,23 +432,23 @@ mod tests {
             low:Decimal::from(95),close:Decimal::from(100),volume:Decimal::ONE,
         };
         let rows=[bar(0),bar(1_000),bar(3_000)];
-        catalog.replace_bars_window(&id,"1s",0,60_000,&rows,2,2).unwrap();
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&rows,2,2).unwrap();
         let read=||catalog.read_bars(&id,"1s",0,60_000_000_000,100).unwrap();
         assert_eq!(read(),rows);
         let revised=[bar(0),bar(3_000)];
-        catalog.replace_bars_window(&id,"1s",0,60_000,&revised,2,2).unwrap();
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&revised,2,2).unwrap();
         assert_eq!(read(),revised);
         // Crash after recording the durable replacement marker: readers must
         // reject partial results until the same UTC window is replayed.
         let marker=path.join("data/bars").join(&id).join(".rebuilding");
         fs::write(&marker,"0,60000").unwrap();
         assert!(catalog.read_bars(&id,"1s",0,60_000_000_000,100).is_err());
-        catalog.replace_bars_window(&id,"1s",0,60_000,&revised,2,2).unwrap();
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&revised,2,2).unwrap();
         assert_eq!(read(),revised);
-        catalog.replace_bars_window(&id,"1s",0,60_000,&[],2,2).unwrap();
+        catalog.replace_bars_window(&id,"1s",(0,60_000),&[],2,2).unwrap();
         assert!(read().is_empty());
         let other=crate::bar_type("ETHUSDT-PERP.BINANCE","1s").unwrap();
-        catalog.replace_bars_window(&other,"1s",0,60_000,&[bar(0)],2,2).unwrap();
+        catalog.replace_bars_window(&other,"1s",(0,60_000),&[bar(0)],2,2).unwrap();
         assert_eq!(catalog.read_bars(&other,"1s",0,60_000_000_000,100).unwrap().len(),1);
         let _=fs::remove_dir_all(path);
     }

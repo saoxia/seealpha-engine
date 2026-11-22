@@ -119,9 +119,9 @@ fn rebuild_minute(source:&Catalog,target:&Catalog,instrument:&str,
     let bar_type=seealpha_catalog::bar_type(instrument,"1s")?;
     // Replace the entire minute, including removed/empty 1s buckets. No
     // synthetic zero-volume bars, no stale historical candles on revisions.
-    target.replace_bars_window(&bar_type,"1s",minute_ms,
-        minute_ms.checked_add(MINUTE_MS).ok_or("minute overflow")?,
-        &replacement,precision.0,precision.1)?;
+    target.replace_bars_window(&bar_type,"1s",(
+        minute_ms,minute_ms.checked_add(MINUTE_MS).ok_or("minute overflow")?
+    ),&replacement,precision.0,precision.1)?;
     Ok(())
 }
 fn higher_bar(target:&Catalog,instrument:&str,interval:&str,
@@ -165,7 +165,7 @@ fn rebuild_higher(target:&Catalog,instrument:&str,start_ms:i64,end_ms:i64,
             let output=higher_bar(target,instrument,interval,cursor,next)?;
             let id=seealpha_catalog::bar_type(instrument,interval)?;
             let bars=output.into_iter().collect::<Vec<_>>();
-            target.replace_bars_window(&id,interval,cursor,next,&bars,precision.0,precision.1)?;
+            target.replace_bars_window(&id,interval,(cursor,next),&bars,precision.0,precision.1)?;
             cursor=next;
         }
     }
@@ -243,7 +243,7 @@ fn recover_marked_windows(source:&Catalog,target:&Catalog,instrument:&str,
             }
             let output=higher_bar(target,instrument,interval,start_ms,end_ms)?;
             let bars=output.into_iter().collect::<Vec<_>>();
-            target.replace_bars_window(&id,interval,start_ms,end_ms,&bars,
+            target.replace_bars_window(&id,interval,(start_ms,end_ms),&bars,
                 precision.0,precision.1)?;
         }
     }
