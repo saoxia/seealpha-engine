@@ -82,7 +82,7 @@ cargo run --locked --release -p seealpha-engine
 
 上面的命令仅供后续自主验证；本次改动没有执行。
 
-状态库存储于 PostgreSQL 的 `seealpha` schema，使用 `SEEALPHA_DATABASE_URL` 连接。Docker 镜像复用内置 PostgreSQL，开发环境需要显式提供数据库 URL。历史 SQLite 文件必须先通过 `scripts/migrate_legacy_sqlite_to_postgres.py` 离线备份并导入，不能直接删除。公开行情不需要交易所密钥。研究签名密钥必须不同于 `ENGINE_TOKEN`。旧的 Python 代码可从 Git 历史恢复。
+状态库存储于 PostgreSQL 的 `seealpha` schema，使用 `SEEALPHA_DATABASE_URL` 连接。Docker 镜像复用内置 PostgreSQL，开发环境需要显式提供数据库 URL。系统不提供历史 SQLite 导入兼容流程；如果发现旧 SQLite 文件，Docker 会拒绝启动，避免静默覆盖潜在的订单证据。公开行情不需要交易所密钥。研究签名密钥必须不同于 `ENGINE_TOKEN`。旧的 Python 代码可从 Git 历史恢复。
 
 迁移历史与功能限制参见 `docs/RUST_CUTOVER_AUDIT_20261121.md`，该文档包含历史状态记录，不代表当前功能验收结论。
 

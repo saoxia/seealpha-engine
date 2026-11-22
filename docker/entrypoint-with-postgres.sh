@@ -8,11 +8,11 @@ PG_CLUSTER=seealpha
 PG_DATA="${SEEALPHA_POSTGRES_DATA_DIR:-/app/.local/state/postgresql}"
 PG_RUNTIME=/run/postgresql
 PG_CREDENTIAL_FILE="${SEEALPHA_POSTGRES_CREDENTIAL_FILE:-/app/.local/state/.postgres-password}"
-# Never start a fresh PostgreSQL ledger while unmigrated trading evidence exists.
+# There is no SQLite importer. Refuse any old SQLite files rather than
+# silently starting with fresh state when order evidence might exist.
 legacy_state_dir="${ENGINE_STATE:-/app/.local/state/engine}"
-if [[ ( -f "$legacy_state_dir/book.sqlite" || -f "$legacy_state_dir/control.sqlite" ) \
-      && ! -f "$legacy_state_dir/.postgres-cutover-complete" ]]; then
-  echo "Unmigrated SQLite state detected. Complete offline import before starting Engine." >&2
+if [[ -f "$legacy_state_dir/book.sqlite" || -f "$legacy_state_dir/control.sqlite" ]]; then
+  echo "Legacy SQLite state is unsupported; refusing to replace potential order evidence." >&2
   exit 1
 fi
 new_database=0

@@ -1,4 +1,4 @@
-//! Strategy issuance, preview and paper sessions.
+//! Strategy issuance and read-only target preview.
 use super::*;
 
 pub(super) async fn inspect_strategy(
@@ -77,7 +77,7 @@ pub(super) async fn strategy_preview(
     Ok(Json(
         state
             .runtime
-            .run_paper_preview(PaperRequest {
+            .preview_strategies(PreviewRequest {
                 tenant_id,
                 account_id,
                 snapshot,
@@ -88,63 +88,3 @@ pub(super) async fn strategy_preview(
     ))
 }
 
-pub(super) async fn paper_session(
-    State(state): State<AppState>,
-    Path((tenant_id, account_id)): Path<(String, String)>,
-    Json(body): Json<PaperBody>,
-) -> Result<Json<Value>, AppError> {
-    check_symbol(&body.symbol).map_err(|error| AppError::bad_request(error.to_string()))?;
-    let tenant = state
-        .runtime
-        .require_active(&tenant_id)
-        .map_err(AppError::from)?;
-    if body.native_sample && !body.use_sample {
-        return Err(AppError::bad_request("native_sample 只能与 use_sample 一起使用。"));
-    }
-    if body.use_sample && !body.native_sample {
-        return Err(AppError::bad_request("Python 示例策略已退役；请显式设置 native_sample=true。"));
-    }
-    let strategies = if body.use_sample {
-        if tenant.purpose == "production" {
-            return Err(AppError::forbidden("正式租户不能使用示例策略。"));
-        }
-        vec![StrategyInput {
-            member_id: "ema_crossover".into(),
-            package: PackageBody::NativeEma,
-            parameters: if body.parameters.is_null() {
-                json!({})
-            } else {
-                body.parameters
-            },
-        }]
-    } else {
-        state
-            .runtime
-            .stored_strategies(&tenant_id, &account_id)
-            .map_err(AppError::from)?
-    };
-    let product =
-        Product::parse(&body.product).map_err(|error| AppError::bad_request(error.to_string()))?;
-    let snapshot = state
-        .market
-        .load(&LoadQuery {
-            product,
-            symbol: body.symbol,
-            interval: body.interval,
-            limit: body.limit,
-        })
-        .await
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    Ok(Json(
-        state
-            .runtime
-            .run_paper(PaperRequest {
-                tenant_id,
-                account_id,
-                snapshot,
-                strategies,
-                request_id: body.request_id,
-            })
-            .map_err(AppError::from)?,
-    ))
-}

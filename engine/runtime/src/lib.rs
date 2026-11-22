@@ -1,4 +1,4 @@
-//! Cross-domain runtime orchestration for data, strategies, paper sessions and order recovery.
+//! Cross-domain runtime orchestration for data, strategy previews and order recovery.
 mod catalog;
 pub use catalog::CatalogBar;
 mod config;
@@ -11,7 +11,7 @@ pub use orders::OrderCommand;
 pub use state_store::OrderRecoveryItem;
 
 pub use config::{AuthMode, Config, ensure_state_dir};
-pub use session::{PackageBody, PaperRequest, StrategyInput};
+pub use session::{PreviewRequest, StrategyInput};
 
 use seealpha_ledger::{Ledger, LedgerError};
 pub use state_store::Tenant;
@@ -156,11 +156,14 @@ impl Runtime {
             "live" => Err(RuntimeError::Conflict(
                 "Rust 实盘交易尚未通过集成验收，当前禁止交易。".into(),
             )),
-            "backtest" | "paper" => Ok(json!({
+            "backtest" => Ok(json!({
                 "tenant_id": tenant.tenant_id,
                 "action": action,
                 "status": "runnable",
             })),
+            "paper" => Err(RuntimeError::Conflict(
+                "自定义 Paper 会话已退役；模拟执行须使用独立的 Nautilus 原生后端。".into(),
+            )),
             _ => Err(RuntimeError::Conflict("未知的租户操作。".into())),
         }
     }
@@ -320,7 +323,7 @@ impl Runtime {
                 })?;
                 Ok(StrategyInput {
                     member_id: load.issuance_id,
-                    package: PackageBody::Archive(load.archive),
+                    archive: load.archive,
                     parameters,
                 })
             })

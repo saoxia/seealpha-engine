@@ -58,7 +58,7 @@
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/events` | `Query / path` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers/note` | `WorkerNote` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers` | `WorkerBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/strategy-preview` | `PreviewBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/strategy-preview` | `PreviewBody` | 只读策略目标/汇总 | **已路由（只读）** | 不再模拟 Paper Fill 或修改仓位；成员目标缺失时 net_target 为 null |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/backtests` | `BacktestBody` | 回测报告 | **已路由（差异）** | Rust 原生语义和历史证据与 Python/Nautilus 不完全等价；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/backtests/latest` | `Query / path` | 最新持久结果 / 404 | **已路由（差异）** | Rust 原生语义和历史证据与 Python/Nautilus 不完全等价；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/generic-portfolio-backtests` | `GenericPortfolioBacktestBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
@@ -149,7 +149,7 @@
 
 ## Rust 新增而非 Python 基线的入口
 
-- `POST /tenants/{tenant_id}/accounts/{account_id}/paper/sessions`
+- `POST /tenants/{tenant_id}/accounts/{account_id}/paper/sessions`（已主动退役，路由不存在）
 - `POST /tenants/{tenant_id}/data/catalog/bars`
 - `POST /tenants/{tenant_id}/accounts/{account_id}/candidate-backtests`
 - `DELETE /tenants/{tenant_id}/accounts/{account_id}/candidate-backtests`

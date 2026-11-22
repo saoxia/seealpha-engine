@@ -1,12 +1,10 @@
 //! Native SeeAlpha Engine process.
 //!
 //! `seealpha-engine` serves HTTP v2. `seealpha-engine smoke` reads public
-//! Binance market data and runs the built-in Rust EMA on a paper book.
+//! public Binance market data and validates its read-only bar pipeline.
 use seealpha_http::{AppState, serve};
-use seealpha_market::{BinanceSource, LoadQuery, Product};
-use seealpha_runtime::{
-    Config, PackageBody, PaperRequest, Runtime, StrategyInput, ensure_state_dir,
-};
+use seealpha_market::{BinanceSource, LoadQuery, Product, run_pipeline};
+use seealpha_runtime::{Config, Runtime, ensure_state_dir};
 use serde_json::json;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -98,29 +96,15 @@ async fn run_smoke(state: AppState) -> Result<(), std::io::Error> {
         })
         .await
         .map_err(io_error)?;
-    let report = state
-        .runtime
-        .run_paper(PaperRequest {
-            tenant_id: tenant,
-            account_id: "paper".into(),
-            snapshot,
-            strategies: vec![StrategyInput {
-                member_id: "ema_crossover".into(),
-                package: PackageBody::NativeEma,
-                parameters: json!({}),
-            }],
-            request_id: None,
-        })
-        .map_err(io_error)?;
-    if report["exchange_orders"] != 0
-        || report["venue"] != "paper"
-        || report["kline_count"].as_u64().unwrap_or(0) == 0
-    {
-        return Err(std::io::Error::other(
-            "paper smoke did not keep the exchange path closed",
-        ));
+    let pipeline = run_pipeline(&snapshot).map_err(io_error)?;
+    if pipeline.klines.is_empty() {
+        return Err(std::io::Error::other("smoke data contains no closed bars"));
     }
-    println!("{report}");
+    println!("{}", json!({
+        "mode": "read_only_market_smoke",
+        "kline_count": pipeline.klines.len(),
+        "exchange_orders": 0,
+    }));
     Ok(())
 }
 

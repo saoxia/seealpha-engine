@@ -86,8 +86,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
-      - name: Validate one-time migration script syntax
-        run: python3 -m py_compile scripts/migrate_legacy_sqlite_to_postgres.py
       # Run compilation first so pre-existing workspace formatting debt does not
       # prevent us from observing type/borrow-checker failures in the PR.
       - name: Compile check

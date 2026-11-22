@@ -241,8 +241,8 @@ use super::*;
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(rows["positions"].as_array().unwrap().len(), 0);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(rows["detail"].as_str().unwrap_or("").contains("Nautilus"));
     }
 
     #[tokio::test]
@@ -325,3 +325,20 @@ use super::*;
         assert!(data.get("rows").is_none());
     }
 
+
+
+    #[tokio::test]
+    async fn retired_paper_session_is_not_routable() {
+        let app = router(state());
+        let (status, _, _) = call(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/tenants/42/accounts/a/paper/sessions")
+                .header("authorization", "Bearer ci-engine-token-0123456789abcdef0123456789abcdef")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        ).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
