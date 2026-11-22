@@ -137,7 +137,7 @@ impl Ledger {
             ],
         )
         .map_err(sql)?;
-        let id = tx.last_insert_rowid();
+        let id = tx.last_insert_rowid().map_err(sql)?;
         tx.commit().map_err(sql)?;
         Ok(id)
     }
