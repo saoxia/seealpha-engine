@@ -25,42 +25,6 @@ impl Ledger {
             .map_err(|error| LedgerError::Sqlite(error.to_string()))
     }
 
-    /// Legacy request insert, now immutable. Once a request identity has been
-    /// stored, use a separate reconciliation record; do not rewrite UNKNOWN.
-    pub fn save_order_request(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        request_id: &str,
-        body: &str,
-    ) -> Result<(), LedgerError> {
-        if tenant_id.is_empty()
-            || account_id.is_empty()
-            || request_id.is_empty()
-            || serde_json::from_str::<serde_json::Value>(body).is_err()
-        {
-            return Err(LedgerError::Conflict("invalid order request".into()));
-        }
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO order_requests
-             (tenant_id,account_id,request_id,body_json,updated_at) VALUES(?1,?2,?3,?4,?5)",
-                params![tenant_id, account_id, request_id, body, now_ms()],
-            )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
-        let original: String=connection.query_row(
-            "SELECT body_json FROM order_requests WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
-            params![tenant_id,account_id,request_id],|r|r.get(0),
-        ).map_err(|e|LedgerError::Sqlite(e.to_string()))?;
-        if original != body {
-            return Err(LedgerError::Conflict(
-                "request is immutable; reconcile instead of replay".into(),
-            ));
-        }
-        Ok(())
-    }
-
     /// Append a durable API projection without changing the immutable pre-send
     /// UNKNOWN request. Only the original request identity may be observed.
     /// This view is not an execution/fill authorization.
@@ -137,51 +101,6 @@ impl Ledger {
                 params![tenant_id, account_id, request_id, body, now_ms()],
             )
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        Ok(())
-    }
-
-    /// Preserve the first order row as historical evidence. Updated venue
-    /// statuses belong in append_order_observation(), never a blind UPSERT.
-    pub fn upsert_order_row(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        environment: &str,
-        client_order_id: &str,
-        order_json: &str,
-    ) -> Result<(), LedgerError> {
-        if serde_json::from_str::<serde_json::Value>(order_json).is_err() {
-            return Err(LedgerError::Conflict("invalid order JSON".into()));
-        }
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO orders
-             (tenant_id,account_id,environment,client_order_id,order_json,updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6)",
-                params![
-                    tenant_id,
-                    account_id,
-                    environment,
-                    client_order_id,
-                    order_json,
-                    now_ms()
-                ],
-            )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
-        let previous: String = connection
-            .query_row(
-                "SELECT order_json FROM orders WHERE tenant_id=?1 AND account_id=?2
-             AND environment=?3 AND client_order_id=?4",
-                params![tenant_id, account_id, environment, client_order_id],
-                |r| r.get(0),
-            )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
-        if previous != order_json {
-            return Err(LedgerError::Conflict(
-                "order evidence is immutable; append an observation".into(),
-            ));
-        }
         Ok(())
     }
 
@@ -460,75 +379,6 @@ fn now_ms() -> i64 {
 mod safety_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn legacy_mutable_writers_now_preserve_first_evidence() {
-        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
-        db.save_order_request("t", "a", "r", r#"{"status":"UNKNOWN"}"#)
-            .unwrap();
-        db.save_order_request("t", "a", "r", r#"{"status":"UNKNOWN"}"#)
-            .unwrap();
-        assert!(
-            db.save_order_request("t", "a", "r", r#"{"status":"FILLED"}"#)
-                .is_err()
-        );
-        assert_eq!(
-            db.request("t", "a", "r").unwrap().unwrap()["status"],
-            "UNKNOWN"
-        );
-        db.upsert_order_row("t", "a", "production", "cl", r#"{"status":"NEW"}"#)
-            .unwrap();
-        assert!(
-            db.upsert_order_row("t", "a", "production", "cl", r#"{"status":"FILLED"}"#)
-                .is_err()
-        );
-        assert_eq!(db.orders("t", "a", "production").unwrap().len(), 1);
-        assert!(
-            db.upsert_fill_row("t", "a", "production", "not-a-trade", "{}")
-                .is_err()
-        );
-        db.upsert_fill_row("t", "a", "paper", "f", r#"{"quantity":"1"}"#)
-            .unwrap();
-        assert!(
-            db.upsert_fill_row("t", "a", "paper", "f", r#"{"quantity":"2"}"#)
-                .is_err()
-        );
-        assert_eq!(db.fills("t", "a", "paper").unwrap().len(), 1);
-    }
-
-    #[test]
-    fn request_replay_reads_appended_result_without_mutating_pre_send_unknown() {
-        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
-        let base = serde_json::json!({
-            "fingerprint":"f".repeat(64),
-            "action":"submit","symbol":"ETHUSDT-PERP",
-            "environment":"production","product":"futures_um",
-            "order_list":null,"algo_order":false,
-            "response":{"request_id":"r","client_order_id":"c","status":"unknown"},
-            "ledger_synced":false
-        });
-        db.save_order_request("t", "a", "r", &base.to_string())
-            .unwrap();
-        let mut observed = base.clone();
-        observed["response"]["status"] = serde_json::json!("completed");
-        db.append_order_request_view("t", "a", "r", &observed.to_string())
-            .unwrap();
-        assert_eq!(
-            db.get_order_request("t", "a", "r").unwrap().unwrap(),
-            observed.to_string()
-        );
-        assert!(
-            db.save_order_request("t", "a", "r", &observed.to_string())
-                .is_err()
-        );
-        let mut wrong = observed.clone();
-        wrong["fingerprint"] = serde_json::json!("0".repeat(64));
-        assert!(
-            db.append_order_request_view("t", "a", "r", &wrong.to_string())
-                .is_err()
-        );
-        assert!(db.get_order_request("t", "other", "r").unwrap().is_none());
-    }
 
     #[test]
     fn restart_retains_unknown_intent_without_new_send_permission() {
