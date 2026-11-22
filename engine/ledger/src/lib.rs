@@ -11,7 +11,6 @@ mod allocations;
 #[path = "../reconciliation/mod.rs"]
 mod reconciliation;
 pub use accounts::AccountSnapshot;
-pub use movements::{AssetEffect, MovementInput};
 
 // Existing execution, portfolio and compatibility APIs remain unchanged.
 // They are not subdomains of Ledger/Funds and are not migrated in this PR.
@@ -312,9 +311,6 @@ impl Ledger {
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(SCHEMA)
-            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        connection
-            .execute_batch(movements::MOVEMENTS_V2_SCHEMA)
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         Ok(Self {
             connection: std::sync::Mutex::new(connection),
