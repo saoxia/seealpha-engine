@@ -192,8 +192,8 @@ fn resume_queued_research_jobs(state: &AppState) -> Result<(), std::io::Error> {
         }
         let jobs = state
             .runtime
-            .ledger
-            .data_jobs(&tenant)
+            .control
+            .backtest_jobs(&tenant)
             .map_err(std::io::Error::other)?;
         for job in jobs {
             if job["action"] == "backtest" && job["status"] == "queued" {
