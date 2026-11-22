@@ -1,4 +1,4 @@
-//! Paper session orchestration: feed snapshot, pipeline, strategy host, ledger.
+//! Cross-domain runtime orchestration for data, strategies, paper sessions and order recovery.
 mod accounts;
 mod catalog;
 mod clickhouse;
