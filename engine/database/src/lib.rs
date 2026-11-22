@@ -87,10 +87,10 @@ impl Drop for Connection {
     fn drop(&mut self) {
         // The blocking postgres client calls an internal runtime during Drop.
         // Destroy it outside Tokio's async executor, just like DB queries.
-        if let Ok(mut guard) = self.client.lock() {
-            if let Some(client) = guard.take() {
-                let _ = std::thread::spawn(move || drop(client)).join();
-            }
+        if let Ok(mut guard) = self.client.lock()
+            && let Some(client) = guard.take()
+        {
+            let _ = std::thread::spawn(move || drop(client)).join();
         }
     }
 }
