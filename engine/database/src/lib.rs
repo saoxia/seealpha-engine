@@ -59,6 +59,12 @@ impl Row {
 }
 
 pub fn schema_for_path(path: &Path) -> String {
+    if path.to_str() == Some(":memory:") {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        return format!("seealpha_fixture_memory_{}_{}",
+            std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+    }
     // Application stores share one schema, while standalone fixtures are isolated.
     match path.file_name().and_then(|n| n.to_str()) {
         Some("postgres-state" | "control-state" | "strategies") => "seealpha".into(),
