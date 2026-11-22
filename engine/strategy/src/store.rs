@@ -78,7 +78,7 @@ fn insert_index(tx: &mut Transaction<'_>, record: &StoredRecord) -> Result<(), S
         "INSERT INTO strategy_issuances
          (tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
           parameters_json,entry_point,package_hash,zip_sha256)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING",
         &[&l.tenant_id,&l.account_id,&l.issuance_id,&l.code_key,&l.version,
                 &l.grant_purpose,&l.parameters_json,&l.entry_point,&l.package_hash,&record.zip_sha256]
     ).map_err(err)?;
@@ -157,7 +157,7 @@ impl StrategyStore {
         let _guard = self.lock.lock().map_err(err)?;
         let mut conn = self.index.lock().map_err(err)?;
         let mut tx = conn.transaction().map_err(err)?;
-        tx.execute("DELETE FROM strategy_issuances", &[]).map_err(err)?;
+        // Never erase other Engine instances' metadata in a shared database.
         for tenant in fs::read_dir(&self.root).map_err(err)? {
             let tenant = tenant.map_err(err)?;
             if !tenant.file_type().map_err(err)?.is_dir() { continue; }
@@ -175,6 +175,19 @@ impl StrategyStore {
                     { return Err(conflict("issuance scope mismatch on startup")); }
                     self.check_artifact(&item.path(), &record)?;
                     insert_index(&mut tx, &record)?;
+                    let l = &record.load;
+                    let prior = tx.query_one(
+                        "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+                         FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
+                        &[&l.tenant_id,&l.account_id,&l.issuance_id],
+                    ).map_err(err)?;
+                    let identity: IndexedIdentity = (prior.get(0),prior.get(1),prior.get(2),
+                        prior.get(3),prior.get(4),prior.get(5),prior.get(6));
+                    if identity != (l.code_key.clone(),l.version.clone(),l.grant_purpose.clone(),
+                        l.parameters_json.clone(),l.entry_point.clone(),l.package_hash.clone(),
+                        record.zip_sha256.clone()) {
+                        return Err(conflict("indexed issuance differs from verified disk record"));
+                    }
                 }
             }
         }
