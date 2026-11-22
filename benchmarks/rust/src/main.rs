@@ -16,7 +16,6 @@ fn main() {
         "net" => net(n),
         "aggregate" => aggregate(n),
         "klines" => klines(n),
-        "sqlite" => sqlite(n),
         "backtest" => backtest(n),
         other => {
             eprintln!("unknown workload {other}");
@@ -127,48 +126,6 @@ fn backtest(n: usize) -> (f64, serde_json::Value, u64) {
     .expect("backtest");
     let elapsed = started.elapsed().as_secs_f64();
     (elapsed, json!(report.bar_count), peak_rss_kib())
-}
-
-fn sqlite(n: usize) -> (f64, serde_json::Value, u64) {
-    let path = std::env::temp_dir().join(format!("seealpha-bench-{}.sqlite", std::process::id()));
-    let connection = rusqlite::Connection::open(&path).expect("sqlite");
-    connection.execute_batch("PRAGMA journal_mode=WAL;").ok();
-    connection
-        .execute_batch(
-            "CREATE TABLE order_requests (
-                tenant_id TEXT, account_id TEXT, request_id TEXT, body_json TEXT, updated_at INTEGER,
-                PRIMARY KEY (tenant_id, account_id, request_id))",
-        )
-        .expect("schema");
-    connection
-        .execute(
-            "INSERT INTO order_requests VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                "1",
-                "a",
-                "req",
-                r#"{"fingerprint":"abc","response":{"status":"completed"}}"#,
-                1
-            ],
-        )
-        .expect("insert");
-    let started = Instant::now();
-    let mut hits = 0;
-    for _ in 0..n {
-        let body: String = connection
-            .query_row(
-                "SELECT body_json FROM order_requests WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
-                rusqlite::params!["1", "a", "req"],
-                |row| row.get(0),
-            )
-            .expect("read");
-        if body.contains("\"fingerprint\":\"abc\"") {
-            hits += 1;
-        }
-    }
-    let elapsed = started.elapsed().as_secs_f64();
-    let _ = std::fs::remove_file(&path);
-    (elapsed, json!(hits), peak_rss_kib())
 }
 
 fn peak_rss_kib() -> u64 {
