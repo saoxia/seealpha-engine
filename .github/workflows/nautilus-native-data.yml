@@ -32,6 +32,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
+      - name: Diagnose generated lockfile for new Arrow test fixtures
+        run: |
+          cargo metadata --format-version 1 --no-deps > /dev/null
+          git diff -- Cargo.lock
       - name: Compile production Rust workspace after legacy OMS removal
         run: cargo check --workspace --all-targets --locked
       - name: Test Pipeline subscription, retention and precision
