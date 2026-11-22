@@ -17,6 +17,7 @@ pub mod option_stream;
 #[path = "../../../binance_option/options.rs"]
 pub mod options;
 mod pipeline;
+pub mod tick_bars;
 mod repair;
 #[path = "../../../binance_spot/repair.rs"]
 pub mod spot_repair;

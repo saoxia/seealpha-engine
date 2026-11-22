@@ -1,7 +1,8 @@
 # SeeAlpha Catalog / NautilusTrader v2 RC9 interoperability gate
 
-This crate reads existing Nautilus v2 Arrow/Parquet files without moving,
-rewriting, repairing, or deleting source history.
+This crate reads Nautilus v2 Arrow/Parquet files without modifying them during reads.
+The explicit Bar write API can update previously published Bar values through
+per-file atomic replacement; it never edits Parquet rows in place.
 
 ## APIs
 
@@ -13,8 +14,9 @@ rewriting, repairing, or deleting source history.
   non-finite values fail closed.
 - Catalog::bar_gaps: reports missing aligned Bar windows without fabricating
   bars or starting collector work.
-- Catalog::append_bars: immutable Bar publisher by normalized BarType, with
-  declared price/size precision and generic storage-integrity validation.
+- Catalog::append_bars: insert-or-update Bar publisher by normalized BarType;
+  an incoming Bar replaces an existing UTC bucket and preserves untouched rows,
+  subject to declared price/size precision and storage-integrity validation.
   Exchange symbol formats, option expiry and product-specific zero-price policy
   belong to Source, not Catalog.
 - Catalog::append_record_batches: writes **non-Bar native events**, including
@@ -25,10 +27,14 @@ rewriting, repairing, or deleting source history.
   matching schema, explicit decimals, and duplicate TradeTick IDs are checked.
 
 Writers acquire the per-directory .writer.lock (Rust-side flock), write
-temporary Parquet under the same Catalog root, sync files, publish by
-hard_link (create-if-absent) and sync the destination directory. Exactly
-matching logical retries succeed. Overlapping history is refused. Python
-code and old Parquet are never rewritten.
+temporary Parquet under the same Catalog root, and fsync before publication.
+New Bar windows use hard_link (create-if-absent). Existing Bar windows use
+atomic file replacement at the ORIGINAL file path, without creating overlapping
+time ranges or erasing neighboring rows. Readers of Bars acquire a shared
+lock during scans; exactly matching logical retries succeed. Multi-file
+updates are per-file atomic, not a single cross-file transaction. Rust readers
+and writers cannot synchronize a separate Python Nautilus writer unless
+it participates in the same lock.
 
 ## Local isolated test commands
 
@@ -70,9 +76,10 @@ not proof of upstream model equivalence.
    close-minus-1ms. Raw native Bar records with other event-time conventions
    can be inspected using read_records(RecordKind::Bars,...), not coerced
    into the strict CatalogBar.
-4. **Durability**: atomic publication requires same-filesystem hard links.
-   External writers not cooperating in this lock can still race by creating
-   overlapping files with distinct names.
+4. **Durability**: new files require same-filesystem hard links; updated files
+   use atomic rename at the original path. A crash during a multi-file write
+   can leave a subset of valid updates; the next idempotent retry completes them.
+   External writers not cooperating in this lock can still race.
 5. **Gate**: the migration audit records paused CI in
    .github/workflows-paused/. Execute Cargo fmt, clippy, tests, Python
    parity and workspace CI in a provisioned environment, record the actual

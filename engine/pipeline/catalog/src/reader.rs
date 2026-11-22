@@ -17,9 +17,10 @@ use chrono::NaiveDateTime;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
+use fs2::FileExt;
 use std::collections::BTreeSet;
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
 };
 
@@ -464,6 +465,24 @@ impl Catalog {
     /// [start_ns,end_ns), as in the Python HistoricalMarketData adapter.
     /// No filling gaps and no source downloads. An empty existing path yields [].
     pub fn read_bars(
+        &self,
+        bar_identity: &str,
+        interval: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<CatalogBar>, CatalogError> {
+        let dir = self.root.join(RecordKind::Bars.directory(bar_identity)?);
+        if !inspect_existing_directory(&dir)? {
+            return Ok(Vec::new());
+        }
+        let lease=OpenOptions::new().create(true).truncate(false).read(true).write(true)
+            .open(dir.join(".writer.lock"))?;
+        FileExt::lock_shared(&lease)?;
+        self.read_bars_unlocked(bar_identity,interval,start_ns,end_ns,limit)
+    }
+    /// Caller must hold the writer lock; used only for an atomic Bar rewrite.
+    pub(crate) fn read_bars_unlocked(
         &self,
         bar_identity: &str,
         interval: &str,

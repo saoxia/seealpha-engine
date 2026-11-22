@@ -29,6 +29,10 @@ use nautilus_model::{
 };
 use nautilus_persistence::config::{DataCatalogConfig, RotationConfig, StreamingConfig};
 
+// One shared Tick aggregation engine is compiled by both the Engine and the native node.
+#[path = "../../market/src/tick_bars.rs"]
+mod tick_bars;
+
 // Product-specific Binance identifiers live outside the shared native runtime.
 #[path = "../../../binance_spot/native.rs"]
 mod binance_spot;
@@ -87,6 +91,7 @@ struct TradeSubscriber {
     instrument_ids: Vec<InstrumentId>,
     client_id: ClientId,
     observed: u64,
+    bars: std::collections::HashMap<InstrumentId,tick_bars::TickBars>,
 }
 
 impl std::fmt::Debug for TradeSubscriber {
@@ -108,6 +113,7 @@ impl TradeSubscriber {
             instrument_ids: ids,
             client_id: client,
             observed: 0,
+            bars: std::collections::HashMap::new(),
         }
     }
 }
@@ -135,7 +141,18 @@ impl DataActor for TradeSubscriber {
         Ok(())
     }
 
-    fn on_trade(&mut self, _tick: &TradeTick) -> Result<()> {
+    fn on_trade(&mut self, tick: &TradeTick) -> Result<()> {
+        let price=tick.price.to_string().parse::<rust_decimal::Decimal>()?;
+        let size=tick.size.to_string().parse::<rust_decimal::Decimal>()?;
+        let sample=tick_bars::MarketTick {
+            id:tick.trade_id.to_string(),ts_ns:tick.ts_event.as_u64(),price,size,
+        };
+        let bars=self.bars.entry(tick.instrument_id).or_default();
+        let updates=bars.on_tick(&sample).map_err(anyhow::Error::msg)?;
+        // Unfinished snapshots exist immediately for consumers of this
+        // actor's shared bar engine. Persisting them to a queryable hot store
+        // is a separate concern from immutable native TradeTick Parquet.
+        if updates.is_empty(){return Ok(())}
         self.observed += 1;
         if self.observed.is_multiple_of(10_000) {
             log::info!("Nautilus trades observed: {}", self.observed);
