@@ -1,6 +1,6 @@
 //! Transactional compare-and-swap for portfolio coordinator recovery records.
 use crate::{Ledger, LedgerError};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredCoordinatorState {
@@ -18,10 +18,10 @@ impl Ledger {
         let conn = self
             .connection
             .lock()
-            .map_err(|_| LedgerError::Sqlite("poisoned ledger".into()))?;
+            .map_err(|_| LedgerError::Database("poisoned ledger".into()))?;
         conn.query_row(
             "SELECT revision,body_json FROM portfolio_coordinator_states
-                        WHERE tenant_id=?1 AND account_id=?2 AND instrument=?3",
+                        WHERE tenant_id=$1 AND account_id=$2 AND instrument=$3",
             params![tenant, account, instrument],
             |row| {
                 Ok(StoredCoordinatorState {
@@ -31,7 +31,7 @@ impl Ledger {
             },
         )
         .optional()
-        .map_err(|e| LedgerError::Sqlite(e.to_string()))
+        .map_err(|e| LedgerError::Database(e.to_string()))
     }
     pub fn save_coordinator_state(
         &self,
@@ -54,14 +54,14 @@ impl Ledger {
         let mut conn = self
             .connection
             .lock()
-            .map_err(|_| LedgerError::Sqlite("poisoned ledger".into()))?;
+            .map_err(|_| LedgerError::Database("poisoned ledger".into()))?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         let current: Option<StoredCoordinatorState> = tx
             .query_row(
                 "SELECT revision,body_json FROM portfolio_coordinator_states
-             WHERE tenant_id=?1 AND account_id=?2 AND instrument=?3",
+             WHERE tenant_id=$1 AND account_id=$2 AND instrument=$3",
                 params![tenant, account, instrument],
                 |row| {
                     Ok(StoredCoordinatorState {
@@ -71,7 +71,7 @@ impl Ledger {
                 },
             )
             .optional()
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         let next = StoredCoordinatorState {
             revision: revision.into(),
             json: json.into(),
@@ -87,20 +87,20 @@ impl Ledger {
         if current.is_none() {
             tx.execute(
                 "INSERT INTO portfolio_coordinator_states
-                (tenant_id,account_id,instrument,revision,body_json) VALUES (?1,?2,?3,?4,?5)",
+                (tenant_id,account_id,instrument,revision,body_json) VALUES ($1,$2,$3,$4,$5)",
                 params![tenant, account, instrument, revision, json],
             )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         } else {
             tx.execute(
-                "UPDATE portfolio_coordinator_states SET revision=?4,body_json=?5
-                WHERE tenant_id=?1 AND account_id=?2 AND instrument=?3",
+                "UPDATE portfolio_coordinator_states SET revision=$4,body_json=$5
+                WHERE tenant_id=$1 AND account_id=$2 AND instrument=$3",
                 params![tenant, account, instrument, revision, json],
             )
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         }
         tx.commit()
-            .map_err(|e| LedgerError::Sqlite(e.to_string()))?;
+            .map_err(|e| LedgerError::Database(e.to_string()))?;
         Ok(next)
     }
 }
