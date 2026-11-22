@@ -543,15 +543,12 @@ use super::*;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(disabled["enabled"], false);
         assert_eq!(disabled["password_configured"], true);
-        assert!(runtime.optional_clickhouse_config("42").is_none());
+        assert_eq!(runtime.control.clickhouse_settings("42").unwrap().unwrap()["enabled"], false);
 
         let (status, _, enabled) = call(&app, request("PUT", r#"{"enabled":true}"#)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(enabled["enabled"], true);
-        assert_eq!(
-            runtime.optional_clickhouse_config("42").unwrap().password,
-            "secret-do-not-echo"
-        );
+        assert_eq!(runtime.control.clickhouse_settings("42").unwrap().unwrap()["password"], "secret-do-not-echo");
         let (status, _, read) = call(&app, request("GET", "")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(!read.to_string().contains("secret-do-not-echo"));
