@@ -115,16 +115,27 @@ pub struct NativeOrderLinkSubscription {
 }
 
 impl NativeOrderLinkSubscription {
-    pub fn attach(
-        binding: OwnedNativeBinding,
+    /// Install exactly one native order-event subscription per isolated
+    /// Nautilus node. Resolve immutable bindings by client order ID from the
+    /// caller's registered-order catalog; do not duplicate the OMS order book.
+    /// Unknown orders are ignored rather than adopted into SeeAlpha state.
+    pub fn attach_resolver(
+        resolve_binding: impl Fn(&str) -> Option<OwnedNativeBinding> + 'static,
         on_event: impl Fn(NativeOrderObservation) + 'static,
         on_error: impl Fn(String) + 'static,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(binding.valid(), "invalid native order binding");
-        // The typed bus delivers OrderEventAny, rather than individual fill
-        // variants. Filter every event by the immutable client identity.
+    ) -> Self {
+        // Native ExecutionEngine emits all order state transitions on the
+        // strategy-scoped events.order.<strategy_id> typed topic.
         let topic = "events.order.*".to_owned();
         let handler = TypedHandler::from(move |event: &OrderEventAny| {
+            let client_id = event.client_order_id().to_string();
+            let Some(binding) = resolve_binding(&client_id) else {
+                return;
+            };
+            if binding.client_order_id != client_id {
+                on_error("native order resolver returned conflicting client ID".into());
+                return;
+            }
             match observe_native_order_event(event, &binding) {
                 Ok(Some(observation)) => on_event(observation),
                 Ok(None) => {}
@@ -132,7 +143,24 @@ impl NativeOrderLinkSubscription {
             }
         });
         msgbus::subscribe_order_events(topic.clone().into(), handler.clone(), None);
-        Ok(Self { handler, topic })
+        Self { handler, topic }
+    }
+
+    /// Convenience helper for a single pre-registered order. Production
+    /// adapters should prefer `attach_resolver` to avoid O(orders) subscribers.
+    pub fn attach(
+        binding: OwnedNativeBinding,
+        on_event: impl Fn(NativeOrderObservation) + 'static,
+        on_error: impl Fn(String) + 'static,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(binding.valid(), "invalid native order binding");
+        Ok(Self::attach_resolver(
+            move |client_id| {
+                (client_id == binding.client_order_id).then(|| binding.clone())
+            },
+            on_event,
+            on_error,
+        ))
     }
 }
 
