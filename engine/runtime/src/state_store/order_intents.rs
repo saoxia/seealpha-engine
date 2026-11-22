@@ -4,7 +4,9 @@ use super::{StateStore, now_ms};
 use seealpha_ledger::LedgerError;
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntentStart {
@@ -331,39 +333,12 @@ impl StateStore {
                 }
             }
         }
-        // A historical Python request with the same identity cannot be
-        // replaced or retroactively certified as a pre-send registration.
-        let occupied: bool = tx.query_row(
-            "SELECT 1 FROM order_requests WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
-            params![tenant, account, request_id], |_| Ok(()),
-        ).optional().map_err(sql)?.is_some();
-        if occupied {
-            return Err(conflict(
-                "legacy request exists; reconcile manually before any send",
-            ));
-        }
         tx.execute(
             "INSERT INTO order_intents
              (tenant_id,account_id,request_id,environment,client_order_id,fingerprint,intent_json,created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
             params![tenant,account,request_id,environment,client_order_id,fingerprint,body,now_ms()],
         ).map_err(sql)?;
-        let compatible = json!({
-            "status": "UNKNOWN", "reconcile_required": true, "environment": environment,
-            "client_order_id": client_order_id, "fingerprint": fingerprint, "intent": intent,
-        });
-        tx.execute(
-            "INSERT INTO order_requests(tenant_id,account_id,request_id,body_json,updated_at)
-             VALUES($1,$2,$3,$4,$5)",
-            params![
-                tenant,
-                account,
-                request_id,
-                compatible.to_string(),
-                now_ms()
-            ],
-        )
-        .map_err(sql)?;
         tx.commit().map_err(sql)?;
         Ok(IntentStart::Fresh)
     }

@@ -241,8 +241,8 @@ use super::*;
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(rows["positions"].as_array().unwrap().len(), 0);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(rows["detail"].as_str().unwrap_or("").contains("Nautilus"));
     }
 
     #[tokio::test]

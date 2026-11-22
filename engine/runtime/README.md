@@ -8,7 +8,7 @@ Runtime 负责租户检查、已授权策略包的只读预览、Catalog 访问�
 - 不再提供 POST /tenants/{tenant_id}/accounts/{account_id}/paper/sessions；旧 Paper smoke 改为只读市场数据验证。
 - 保留 strategy-preview，但其输出仅包含已下发策略的信号和目标仓位；不读取/写入模拟仓位，也不会生成 Paper Fill。成员未发布目标时不把缺失目标当作零。
 - 自定义历史 Backtest 仍属于独立的 backtest crate，本次没有修改或移除。
-- 历史 PostgreSQL paper_positions、paper_sessions 数据不 DROP；共享 orders 和 fills 保持原样。数据库表的归档/迁移另行处理。
+- 新建 PostgreSQL Schema 不再创建 paper_positions、paper_sessions，也清理无调用方的旧兼容表；共享 orders/fills、订单意图和真实成交证据表继续保留。不会在启动时自动 DROP 现有表。
 
 ## 安全边界
 

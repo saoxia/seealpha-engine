@@ -1,57 +1,40 @@
-# PostgreSQL-only SeeAlpha state cutover
+# PostgreSQL-only SeeAlpha runtime state
 
-The Engine uses PostgreSQL for its own Ledger, Control, and Strategy metadata.
-NautilusTrader's PostgreSQL tables stay in the `public` schema; the SeeAlpha
-state tables are in the `seealpha` schema. Parquet/Catalog files and immutable
-strategy artifacts remain filesystem-backed.
+SeeAlpha stores its Ledger, Control and Strategy business state in the \`seealpha\`
+PostgreSQL schema. NautilusTrader's native Cache schema stays separate in \`public\`.
+Market Parquet/Catalog and signed strategy artifacts are not stored in these tables.
 
 ## Configuration
 
-Set `SEEALPHA_DATABASE_URL=postgresql://user:password@host:5432/database`.
-The single-container Docker entrypoint exports this automatically for its
-private loopback PostgreSQL instance. A raw Engine binary requires the variable
-and an already running PostgreSQL server. No SQLite fallback is supported.
+Set \`SEEALPHA_DATABASE_URL=postgresql://user:password@host:5432/database\`.
+The single-container Docker entrypoint configures its own isolated loopback database.
+A standalone Engine requires an existing PostgreSQL server. There is no SQLite fallback.
 
-Startup initializes 29 tables in the `seealpha` schema. A shared PostgreSQL
-cluster has separate tables for the Nautilus native Cache and SeeAlpha business
-state; do not merge or manually rename those tables.
+Runtime bootstraps the actively used tables from
+\`docker/seealpha-postgres-schema.sql\`. The current schema creates 11 tables:
+tenants, order_intents, order_observations, orders, fills,
+quarantined_unverified_fills, account_evidence_events, account_event_allocations,
+account_settlements, pipeline_subscriptions, and strategy_issuances.
+Immutable order intentions, pending reconciliation and authenticated economic
+evidence must not be bypassed or replaced by synthetic fills.
 
-## Existing installations (offline one-time import)
+## Retired compatibility state
 
-1. Stop **all** Engine writers and take a backup of the complete persistent
-   state volume, including legacy `-wal` files.
-2. Start PostgreSQL in maintenance mode **without starting Engine**. Initialize
-   `docker/seealpha-postgres-schema.sql` as the database owner:
-   `psql -v ON_ERROR_STOP=1 -d "$SEEALPHA_DATABASE_URL" -f docker/seealpha-postgres-schema.sql`.
-3. Run from an operator environment with Python 3 and `psql`:
-   `python3 scripts/migrate_legacy_sqlite_to_postgres.py --state /path/to/old/ENGINE_STATE --backup-dir /safe/audit/seealpha-cutover-YYYYMMDD`.
-   The destination backup directory must not already exist.
-4. The importer snapshots SQLite with its committed WAL, checks integrity,
-   imports current tables in a PostgreSQL transaction, validates row counts,
-   and writes `.postgres-cutover-complete` into the old Engine state directory.
-   It does **not** delete SQLite originals or alter Nautilus tables. The strategy
-   index rebuilds from validated immutable issuance files on Engine startup.
-5. Verify tenant and account scopes, pending order recovery, recorded fills,
-   and external exchange reconciliation. Only then restart the new Engine and
-   independently archive/remove legacy SQLite files after audit sign-off.
+The old SQLite-to-PostgreSQL importer and unused legacy/Paper tables have been
+removed from the **new schema**. No legacy data import is part of startup.
+The Docker entrypoint refuses to start if old SQLite state files are present,
+rather than silently replacing potentially important order evidence.
 
-If `book.sqlite` exists without the cutover marker, the Docker entrypoint
-refuses to start the new Engine: silently creating an empty ledger would
-discard order idempotency and outstanding reconciliation information.
-
-Do not treat row-count equality alone as evidence of correct trading balances.
-The old database and snapshots are audit evidence until venue reconciliation
-and explicit operational acceptance.
+The bootstrap is create-only: it does not execute destructive \`DROP TABLE\`
+operations against a database that was initialized by an older release.
+Fresh deployments do not create retired tables; any already-existing,
+unreferenced tables need a separately authorized operational cleanup.
 
 ## CI / required checks
 
-- `cargo check --workspace --all-targets --locked`
-- `cargo test --workspace --locked --no-fail-fast` using an isolated PostgreSQL
-  database (test fixtures use isolated PostgreSQL schemas)
-- `cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings`
-- `cargo build --workspace --locked --release`
-- Docker cold-start and restart smoke, plus a test with a legacy book that must
-  refuse startup before migration.
-
-Before merge, commit the regenerated `Cargo.lock` and verify the lockfile,
-compiled binaries and Docker container no longer rely on `rusqlite`.
+- \`cargo check --workspace --all-targets --locked\`
+- \`cargo test --workspace --locked --no-fail-fast\` with an isolated PostgreSQL database
+- \`cargo fmt --all --check\` (existing formatting debt is advisory in CI)
+- \`cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings\`
+- \`cargo build --workspace --locked --release\`
+- Docker cold-start and restart smoke tests
