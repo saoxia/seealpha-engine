@@ -58,6 +58,9 @@ pub struct NativeAccountSession {
     checkpoint_path: PathBuf,
     last: Option<RecoveryCursor>,
     current: Option<ReportedAccountView>,
+    // Preserve the exact native event for future in-process Cache consumers.
+    // JSON projection is observational only, never a replacement account model.
+    current_native: Option<AccountState>,
 }
 
 impl NativeAccountSession {
@@ -89,6 +92,7 @@ impl NativeAccountSession {
             checkpoint_path: checkpoint_path.into(),
             last,
             current: None,
+            current_native: None,
         })
     }
 
@@ -96,6 +100,7 @@ impl NativeAccountSession {
     /// current in-memory view. A later full reported state must bootstrap it.
     pub fn mark_disconnected(&mut self) {
         self.current = None;
+        self.current_native = None;
     }
 
     /// Only expose an already observed view while it is within the caller's
@@ -110,6 +115,14 @@ impl NativeAccountSession {
             return None;
         }
         Some(view)
+    }
+
+    /// Read the original Nautilus account event, without rebuilding a second
+    /// balance model. Restart/disconnect and freshness are enforced identically
+    /// to the legacy read-only JSON projection. This is NOT venue authentication.
+    pub fn fresh_native(&self, now_ns: u64, max_age_ns: u64) -> Option<&AccountState> {
+        self.fresh(now_ns, max_age_ns)?;
+        self.current_native.as_ref()
     }
 
     /// Observe an event routed through the isolated Nautilus native node.
@@ -193,6 +206,7 @@ impl NativeAccountSession {
             balances,
             margins,
         });
+        self.current_native = Some(event.clone());
         self.last = Some(next_cursor);
         Ok(true)
     }
@@ -313,22 +327,28 @@ mod tests {
             assert!(session.fresh(1_000_000_000, 1).is_none());
             assert!(session.accept(&first, 1_001_000_000, 5_000_000).unwrap());
             let view = session.fresh(1_001_000_000, 5_000_000).unwrap();
+            let native = session.fresh_native(1_001_000_000, 5_000_000).unwrap();
+            assert_eq!(native.event_id, first.event_id);
+            assert_eq!(native.account_id, first.account_id);
             assert_eq!(view.balances["USD"].total.parse::<rust_decimal::Decimal>().unwrap(),
                 rust_decimal::Decimal::from(100));
             session.mark_disconnected();
             assert!(session.fresh(1_001_000_000, 5_000_000).is_none());
+            assert!(session.fresh_native(1_001_000_000, 5_000_000).is_none());
         }
         {
             let mut recovered = NativeAccountSession::open(
                 "BINANCE-SPOT-001", AccountType::Cash, &checkpoint,
             ).unwrap();
             assert!(recovered.fresh(1_001_000_000, 5_000_000).is_none());
+            assert!(recovered.fresh_native(1_001_000_000, 5_000_000).is_none());
             assert!(!recovered.accept(&first, 1_001_000_000, 5_000_000).unwrap());
             assert!(recovered.fresh(1_001_000_000, 5_000_000).is_none());
             let next = event("BINANCE-SPOT-001", 1_002_000_000, true);
             assert!(recovered.accept(&next, 1_002_000_000, 5_000_000).unwrap());
             assert!(recovered.fresh(1_002_000_000, 5_000_000).is_some());
             assert!(recovered.fresh(1_008_000_000, 5_000_000).is_none());
+            assert!(recovered.fresh_native(1_008_000_000, 5_000_000).is_none());
         }
         fs::remove_dir_all(root).unwrap();
     }
