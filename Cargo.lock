@@ -1505,15 +1505,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "seealpha-binance-account-events-pipeline"
-version = "0.1.0"
-dependencies = [
- "rust_decimal",
- "seealpha-ledger",
- "serde_json",
-]
-
-[[package]]
 name = "seealpha-ledger"
 version = "0.1.0"
 dependencies = [
