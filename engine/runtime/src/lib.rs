@@ -12,7 +12,6 @@ mod jobs;
 mod session;
 mod sources;
 mod orders;
-#[allow(dead_code)] // Native send remains disabled pending reviewed cutover.
 mod native_handoff;
 mod research;
 mod state_store;
