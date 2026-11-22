@@ -9,7 +9,7 @@
 | 实时 | `native.rs` + `../shared/nautilus/` | `futures_um` 独立 Nautilus LiveNode；`@aggTrade`，Instrument 为 `BTCUSDT-PERP.BINANCE` 类 | 启动先取最多 1,000 条近期成交用于重叠；不足以证明无缺口 |
 | REST 快照 | `agg_trades.rs` + `../shared/market/` | `GET /fapi/v1/aggTrades` 的 `a/p/q/f/l/T/m` 聚合成交；与 WS/ZIP 保持同类 ID | 只代表有限近期快照，不能证明完整历史 |
 | REST 历史 K 线 | `../shared/market/` | `GET /fapi/v1/klines`，按交易所时钟确认收盘，精确区间校验后写入 Catalog | 验证单个请求窗口；不等同于持续实盘 READY |
-| 官方历史成交 | `../shared/archive/` + `../shared/nautilus/src/bin/import_archive.rs` | Binance `futures/um/daily/aggTrades` ZIP，校验 SHA-256，验证数据与 Instrument 精度，原生 TradeTick Parquet | 成功导入不等于与 WS/REST 无缝衔接 |
+| 官方历史成交 | `../binance/archive/` + `../shared/nautilus/src/bin/import_archive.rs` | Binance `futures/um/daily/aggTrades` ZIP，校验 SHA-256，验证数据与 Instrument 精度，原生 TradeTick Parquet | 成功导入不等于与 WS/REST 无缝衔接 |
 | 资金费率 | `funding.rs` | `GET /fapi/v1/fundingRate`，解析已结算的公共 Funding；解析 `markPriceUpdate` 的预估资金费率 | 预估费率不等于真实结算；公开记录不等于账户付款 |
 | 历史读取 | `../../catalog/` | Parquet、派生 K 线缓存、范围查询/缺口检查 | 需要单独维护不同产品、来源和记录粒度的身份 |
 

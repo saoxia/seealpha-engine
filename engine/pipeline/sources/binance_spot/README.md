@@ -7,7 +7,7 @@
 | 原生实时成交 | `native.rs`；NautilusTrader 以 `spot` 启动独立只读进程，订阅原始 `@trade`，合约如 `BTCUSDT.BINANCE` |
 | REST 历史 K 线 | `../shared/market/` 访问 Spot `/api/v3/klines`；只有收盘的 K 线参与历史对照 |
 | 近期 REST 成交 | `/api/v3/trades` 原始成交；不得与 USD-M 的 `aggTrades` 互换 |
-| 官方历史 | `../shared/archive/` 下载校验 `spot/daily/trades` ZIP，再由 `../shared/nautilus/src/bin/import_archive.rs` 导入原生 TradeTick Catalog |
+| 官方历史 | `../binance/archive/` 下载校验 `spot/daily/trades` ZIP，再由 `../shared/nautilus/src/bin/import_archive.rs` 导入原生 TradeTick Catalog |
 | 历史自维护 | `repair.rs` 固定 Spot 产品，复用 `../shared/market/src/repair.rs` 的分层扫描与 ZIP 触发规则 |
 
 ## 按日修复任务

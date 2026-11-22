@@ -95,7 +95,7 @@ export ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT=/data/nautilus-catalog
 
 ## 原生 NautilusTrader Rust 节点的初步代码
 
-参见 [engine/pipeline/sources/shared/nautilus/README.md](../nautilus/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。已接入现有 Runtime Source Supervisor 的管理员显式实验路径，但仍不在默认 Docker 中部署；已移除旧通用采集与模拟 Catalog 转换器。仍须进行真实 Binance 数据、Instrument 精度、Catalog parity 与数据缺口验收，才能正式开放 READY。
+参见 [engine/pipeline/sources/shared/nautilus/README.md](../../shared/nautilus/README.md)。该模块使用上游 `nautilus-binance` + `nautilus-live` + `nautilus-persistence` 构建纯只读节点，而不是再写 Spot/USD-M WS/REST SDK。已接入现有 Runtime Source Supervisor 的管理员显式实验路径，但仍不在默认 Docker 中部署；已移除旧通用采集与模拟 Catalog 转换器。仍须进行真实 Binance 数据、Instrument 精度、Catalog parity 与数据缺口验收，才能正式开放 READY。
 
 ## 待完成，不能误认作已实现
 

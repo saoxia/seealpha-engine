@@ -5,7 +5,7 @@ exclude = ["engine/pipeline/sources/shared/nautilus"]
 members = [
     "engine/pipeline/catalog/integrity",
     "engine/pipeline/catalog",
-    "engine/pipeline/sources/shared/archive",
+    "engine/pipeline/sources/binance/archive",
     "engine/pipeline/sources/shared/market",
     "engine/portfolio",
     "engine/ledger",

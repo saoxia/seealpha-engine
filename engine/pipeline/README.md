@@ -8,7 +8,7 @@ Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `c
 | `sources/binance_futures_um/` | USD-M Futures 产品身份、聚合成交 REST 对齐与 Funding 数据 | 由共享 Nautilus 进程以 `futures_um` 模式运行；尚未支持 COIN-M |
 | `sources/binance_option/` | EAPI 期权 REST、合约及公开流消息解析、行权数据 | 期权实时 WebSocket 客户端**尚未接通**，只有解析能力 |
 | `sources/shared/nautilus/` | Spot / USD-M 共用的独立 Rust NautilusTrader LiveNode 和原生历史 ZIP 导入程序 | 编译为同一二进制，但按产品启动独立进程；实验性，未通过 READY |
-| `sources/shared/archive/` | 跨 Spot / USD-M 的 Binance 官方历史 ZIP 获取、来源校验与 Manifest | 现有 `seealpha-binance-market-data-source` crate |
+| `sources/binance/archive/` | 跨 Spot / USD-M 的 Binance 官方历史 ZIP 获取、来源校验与 Manifest | 现有 `seealpha-binance-market-data-source` crate |
 | `sources/shared/market/` | 当前共用的公共市场模型、REST 客户端、K 线和时间校验工具；USD-M 近期成交解析由 binance_futures_um/agg_trades.rs 承担 | 现有 `seealpha-market` crate，公共 API 不变 |
 | `catalog/` | Parquet/SQLite 历史存储、读取、修复和派生缓存 | 当前兼容实现 |
 | `catalog/integrity/` | 原 `seealpha-quality` 的数据校验、缺口与 READY 规则 | 保留现有功能；以后再按职责整理 |

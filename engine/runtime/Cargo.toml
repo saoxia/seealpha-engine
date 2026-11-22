@@ -8,7 +8,7 @@ license = "Apache-2.0"
 [dependencies]
 seealpha-ledger = { path = "../ledger" }
 seealpha-catalog = { path = "../pipeline/catalog" }
-seealpha-binance-market-data-source = { path = "../pipeline/sources/shared/archive" }
+seealpha-binance-market-data-source = { path = "../pipeline/sources/binance/archive" }
 seealpha-market = { path = "../pipeline/sources/shared/market" }
 seealpha-portfolio = { path = "../portfolio" }
 seealpha-backtest = { path = "../backtest" }
