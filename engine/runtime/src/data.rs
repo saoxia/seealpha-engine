@@ -685,22 +685,14 @@ impl Runtime {
                 .history(symbol, begin, end)
                 .await
                 .map_err(|e| RuntimeError::Conflict(format!("结算资金费读取失败：{e}")))?;
-            let rows = events
-                .iter()
-                .map(|record| {
-                    json!({
-                        "symbol":record.symbol,"funding_time_ms":record.funding_time_ms,
-                        "funding_rate":record.funding_rate,"mark_price":record.mark_price,
-                        "rate_type":record.rate_type
-                    })
-                })
-                .collect::<Vec<_>>();
-            self.ledger
-                .import_funding_events(tenant_id, symbol, &rows)
-                .map_err(map_ledger)?;
+            let catalog = self.native_catalog()?.ok_or_else(|| {
+                RuntimeError::Conflict("原生 Catalog 尚不存在，不能持久化资金费率。".into())
+            })?;
+            let written = seealpha_market::funding::persist_funding(&catalog, symbol, &events)
+                .map_err(|e| RuntimeError::Conflict(e.to_string()))?;
             return Ok(
                 json!({"action":"backfill","data_kind":"funding","symbol":symbol,
-                "start_ms":begin,"end_ms":end,"observations":rows.len(),
+                "start_ms":begin,"end_ms":end,"observations":events.len(),"persisted":written,
                 "completeness":"event_pages_only","exchange_orders":0}),
             );
         }
