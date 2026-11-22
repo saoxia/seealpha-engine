@@ -6,7 +6,6 @@ mod portfolio;
 pub use portfolio::{NativePortfolioEvent, NativePortfolioResult, NativePortfolioState};
 mod catalog;
 pub use catalog::CatalogBar;
-mod native_calculation;
 mod config;
 mod data;
 mod evidence;
@@ -68,8 +67,6 @@ pub struct Runtime {
     pub project: PathBuf,
     pub python: PathBuf,
     pub host: PathBuf,
-    // Shared state root for derived Catalog/rollup caches (not a raw source journal).
-    source_state_dir: PathBuf,
     inflight: AtomicUsize,
     source_processes: Mutex<HashMap<String, Child>>,
 }
@@ -140,10 +137,6 @@ impl Runtime {
             project: config.project.clone(),
             python: config.python.clone(),
             host: config.host_script(),
-            source_state_dir: book
-                .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| config.state_dir.clone()),
             inflight: AtomicUsize::new(0),
             source_processes: Mutex::new(HashMap::new()),
         })
