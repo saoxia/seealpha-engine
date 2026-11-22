@@ -182,6 +182,7 @@ impl Catalog {
         let last=bars.last().ok_or_else(||CatalogError::Invalid("empty batch".into()))?
             .event_ns(interval)?;
         let overlapping=candidate_files(&self.root,&rel,first,last.saturating_add(1))?;
+        let idempotent_path=overlapping.first().cloned();
         let mut incoming=bars.iter().cloned()
             .map(|bar|(bar.open_time_ms,bar)).collect::<BTreeMap<_,_>>();
         let mut revisions:Vec<(PathBuf,Vec<CatalogBar>,bool)>=Vec::new();
@@ -249,7 +250,7 @@ impl Catalog {
             revisions.push((directory.join(file_name(first,last)?),pending,false));
         }
         if revisions.is_empty() {
-            return Ok(directory.join(file_name(first,last)?));
+            return Ok(idempotent_path.unwrap_or(directory.join(file_name(first,last)?)));
         }
         let staging=safe_mkdir(&self.root,Path::new(".staging"))?;
         let stamp=std::time::SystemTime::now()
