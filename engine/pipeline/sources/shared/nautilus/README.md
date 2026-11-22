@@ -1,6 +1,6 @@
 # 当前执行架构（2026-11-22 目录切换）
 
-旧 `engine/connection/binance` / `seealpha-venue` 以及未被其他 crate 使用的 `engine/connection/binance-wire` 均已从仓库和 Cargo workspace 移除；Spot / USD-M 原生执行方向仅保留此独立 NautilusTrader 0.68.0 工厂。**注意这只是源代码依赖切换，不表示功能完全迁移：** Runtime 的 `execute_order` 仍只有 Ledger 原生意图登记、不连接原生下单命令；原生执行事件只支持 Ledger 未验证隔离表，尚无实际原生执行事件生产者。旧账户签名查询、历史订单/成交及结算查询接口已经显式 fail-closed，不能再提供私有数据，旧订单无法从原网络查询恢复。Options 没有被 Spot/USD-M 原生执行工厂取代。
+旧 `engine/connection/binance` / `seealpha-venue` 以及未被其他 crate 使用的 `engine/connection/binance-wire` 均已从仓库和 Cargo workspace 移除；Spot / USD-M 原生执行方向仅保留此独立 NautilusTrader 0.68.0 工厂。**注意这只是源代码依赖切换，不表示功能完全迁移：** Runtime 的 `execute_order` 仍只有 Ledger 原生意图登记、不连接原生下单命令；原生执行事件采用 Nautilus 原生 Streaming/Catalog 记录类型的离线配置契约，尚无实际原生执行事件生产者或已验收的持久化运行链路。旧账户签名查询、历史订单/成交及结算查询接口已经显式 fail-closed，不能再提供私有数据，旧订单无法从原网络查询恢复。Options 没有被 Spot/USD-M 原生执行工厂取代。
 
 **不得启用实盘交易。** 删除目录的请求不等于安全生产验收，也不等于原生账户、成交取证已实现。本次按用户要求未运行 Cargo 编译和测试。下文关于旧目录尚在或不得删除的历史迁移描述是过去阶段的记录，以本节当前状态为准。
 
@@ -142,8 +142,10 @@ Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/or
 
 回归测试覆盖已登记账户凭据与原生订单同时存在时：无可信订单观察、无成交、未完成任务保持重试。原生 Nautilus `FillReport` / `OrderStatusReport` 的事件来源认证、同租户账户映射、官方成交记录对照仍须单独完成；**不能**将普通 ACK 或未验证报告作为 `signed_exchange_user_trades` 写入。此增量未触发真实网络发送。
 
-## Nautilus 原生执行事件隔离暂存（2026-11-22）
+## 原生订单事件记录交由 Nautilus（2026-11-22 第一批去重）
 
-Ledger 新增 `native_order_event_quarantine` 表及 `quarantine_native_order_event`，接收**未核实的原生事件元数据**，仅限已存在 `execution_backend=nautilus_binance_native` 的不可变 Spot/USD-M `NEW` 意图。入库前在同一 SQLite IMMEDIATE 事务校验租户、账户、环境、请求号、客户订单号、产品、合约；同一事件 ID 内容一致时去重，内容冲突则拒绝。支持 `OrderSubmitted`、`OrderAccepted`、`OrderRejected`、`OrderCanceled`、`OrderExpired`、`OrderFilled`、`OrderFillVoided`、`OrderStatusReport`、`FillReport` 的事件**类型标记**。
+原 Ledger native_events.rs 仅在测试中写入未认证的事件元数据，没有任何生产 Nautilus 事件订阅器调用，因此第一批去重移除此模块及其写入 API，新建 Ledger 数据库不再创建 native_order_event_quarantine。已有 SQLite 中该表的数据**不会 DROP、清空或重写**；如有历史记录，应先独立归档、审计后再考虑数据库迁移。
 
-**严格区分暂存与认证：** 此接口不接收/保存可冒充已认证成交的 JSON 负载、不将事件作为 `signed_exchange_user_trades`，也不操作 `fills`、`order_observations`、资产或仓位。它还没有由 Nautilus 原生事件订阅器调用；只是构建了后续事件接入所需的独立、幂等、重启持久化 Ledger 存储。接下来必须验证 rc9 原生节点的运行/重连、可信事件生产者身份、FillReport 的实际成交 ID / 手续费与交易所核账一致性，才可能开放可信执行报告入账。旧只读取证适配器当前仍需保留。
+执行事件持久化应使用 Nautilus 原生 StreamingConfig.record_types 与 Feather/Parquet Catalog，类型清单统一定义在 native_execution::native_execution_record_types（包括订单生命周期、OrderFilled/FillReport、PositionStatusReport 与 AccountState）。离线 tests/native_execution_node.rs 使用此清单验证固定版本的编译契约和配置可用性；**尚未启动带 Streaming 的执行节点、未验证实际写盘及重启恢复**，此前 rc9 的 Streaming LiveNode 销毁异常尚需解决。
+
+SeeAlpha Ledger 仍保留可信签名成交、结算和不可变下单前意图的必要独立证据。Nautilus 的 OrderFilled / FillReport 不自动成为交易所认证成交，也不能直接绕过 verified_fills 的核验路径。后续接线需要核验租户/账户绑定、真实 Trade ID、重复事件、Catalog 完整性、持久化中断及重启，且在此之前 **Runtime 实盘发送仍关闭**。具体重叠能力矩阵见 [Ledger/Nautilus 边界审计](../../../../../docs/architecture/LEDGER_NAUTILUS_OVERLAP_20261122.md)。
