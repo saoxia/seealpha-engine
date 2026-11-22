@@ -21,6 +21,28 @@ fn now_ms() -> i64 {
 }
 
 impl Ledger {
+    pub fn fills(
+        &self,
+        tenant_id: &str,
+        account_id: &str,
+        environment: &str,
+    ) -> Result<Vec<String>, LedgerError> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 ORDER BY fill_id",
+            )
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
+        let rows = statement
+            .query_map(params![tenant_id, account_id, environment], |row| {
+                row.get(0)
+            })
+            .map_err(|error| LedgerError::Database(error.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| LedgerError::Database(error.to_string()))
+    }
+
+
     /// Move previously auto-generated empty 'fill-{client_order_id}' rows into
     /// a non-destructive quarantine. Historical raw evidence remains available
     /// for audit, but the trading fill table no longer claims a real execution.
