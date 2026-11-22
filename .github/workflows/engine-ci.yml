@@ -127,6 +127,16 @@ jobs:
           path: debug-output/symbols/*.debug
           if-no-files-found: error
           retention-days: 14
+      - name: Verify Alpine and PostgreSQL 15 runtime
+        run: |
+          docker run --rm --entrypoint sh seealpha-engine:native -ec '
+            grep -q "Alpine Linux" /etc/os-release
+            postgres15 --version | grep -q " 15\."
+            test -x /usr/libexec/postgresql15/initdb
+            test -x /usr/libexec/postgresql15/pg_ctl
+            command -v su-exec
+            command -v bash
+          '
       - name: Report Docker image size
         run: docker image inspect seealpha-engine:native --format 'Image size: {{.Size}} bytes'
       - name: Verify native image needs no Python
@@ -176,7 +186,7 @@ jobs:
           trap 'docker logs seealpha-pg-ci || true; docker rm -f seealpha-pg-ci || true; docker volume rm "$volume" || true' EXIT
           ready=0
           for i in $(seq 1 60); do
-            if docker exec seealpha-pg-ci runuser -u postgres -- psql \
+            if docker exec seealpha-pg-ci su-exec postgres psql \
               -h /run/postgresql -d seealpha_cache -Atqc \
               "SELECT CASE WHEN to_regclass('public.account_event') IS NOT NULL AND to_regclass('public.order_event') IS NOT NULL THEN 1 ELSE 0 END" 2>/dev/null | grep -qx 1; then
               ready=1
@@ -185,18 +195,18 @@ jobs:
             sleep 1
           done
           test "$ready" = 1
-          docker exec seealpha-pg-ci runuser -u postgres -- psql \
+          docker exec seealpha-pg-ci su-exec postgres psql \
             -h /run/postgresql -d seealpha_cache -Atqc "SHOW shared_buffers" | grep -qx 16MB
-          docker exec seealpha-pg-ci runuser -u postgres -- psql \
+          docker exec seealpha-pg-ci su-exec postgres psql \
             -h /run/postgresql -d seealpha_cache -v ON_ERROR_STOP=1 \
             -c "CREATE TABLE ci_restart_probe (value integer NOT NULL)"
-          docker exec seealpha-pg-ci runuser -u postgres -- psql \
+          docker exec seealpha-pg-ci su-exec postgres psql \
             -h /run/postgresql -d seealpha_cache -v ON_ERROR_STOP=1 \
             -c "INSERT INTO ci_restart_probe VALUES (42)"
           docker restart seealpha-pg-ci
           ready=0
           for i in $(seq 1 60); do
-            if docker exec seealpha-pg-ci runuser -u postgres -- psql \
+            if docker exec seealpha-pg-ci su-exec postgres psql \
               -h /run/postgresql -d seealpha_cache -Atqc \
               "SELECT value FROM ci_restart_probe" 2>/dev/null | grep -qx 42; then
               ready=1
