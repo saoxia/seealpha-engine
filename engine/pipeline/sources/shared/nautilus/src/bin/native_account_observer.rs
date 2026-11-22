@@ -11,7 +11,7 @@ use std::{
 };
 use fs2::FileExt;
 #[cfg(unix)]
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use tokio::{io::AsyncWriteExt, net::UnixListener, task::LocalSet};
 
