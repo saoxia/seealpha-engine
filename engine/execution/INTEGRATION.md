@@ -98,16 +98,16 @@ Required verification on an environment with a Rust toolchain:
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test -p seealpha-portfolio --locked
+cargo test -p seealpha-execution --locked
 cargo test --workspace --locked
 python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```
 
 ## TargetHolding migration slice (2026-11-21)
 
-The native `seealpha-portfolio` crate now exposes `TargetHolding::new` and
+The native `seealpha-execution` crate now exposes `TargetHolding::new` and
 `TargetHolding::signed_quantity`, mirroring the legacy
-`engine/portfolio/targets.py` contract for absolute signed quantity or bounded
+`engine/execution/targets.py` contract for absolute signed quantity or bounded
 weight-based quantity. A target must specify exactly one of `quantity` and
 `weight`; weight must be between -1 and 1 (inclusive), and the allocation
 must be strictly positive even when an absolute quantity is supplied. Rust
@@ -123,7 +123,7 @@ have not been executed in the GitHub editing environment. Before cutover run:
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test -p seealpha-portfolio --locked
+cargo test -p seealpha-execution --locked
 cargo test --workspace --locked
 python3 -m unittest discover -s tests -t . -p '*_test.py' -v
 ```

@@ -1573,7 +1573,7 @@ name = "seealpha-backtest"
 version = "0.1.0"
 dependencies = [
  "rust_decimal",
- "seealpha-portfolio",
+ "seealpha-execution",
  "serde",
  "serde_json",
  "thiserror",
@@ -1704,7 +1704,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "seealpha-portfolio"
+name = "seealpha-execution"
 version = "0.1.0"
 dependencies = [
  "rust_decimal",
@@ -1726,7 +1726,7 @@ dependencies = [
  "seealpha-database",
  "seealpha-ledger",
  "seealpha-market",
- "seealpha-portfolio",
+ "seealpha-execution",
  "seealpha-strategy",
  "serde",
  "serde_json",

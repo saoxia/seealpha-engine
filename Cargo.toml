@@ -6,7 +6,7 @@ members = [
     "engine/pipeline/catalog",
     "engine/pipeline/sources/binance/archive",
     "engine/pipeline/sources/shared/market",
-    "engine/portfolio",
+    "engine/execution",
     "engine/ledger",
     "engine/database",
     "engine/strategy",
