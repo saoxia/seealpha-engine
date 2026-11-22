@@ -132,6 +132,45 @@ fn external_fill_after_virtual_cancel_freezes_without_phantom_allocation() {
 }
 
 #[test]
+fn partially_attributable_venue_fill_freezes_without_committing_phantom_member_fills() {
+    let mut coordinator = Coordinator::new(d(1), d(10)).unwrap();
+    coordinator.register("buyer").unwrap();
+    coordinator
+        .accept_order(virtual_order("original", "buyer", Side::Buy, 2), None)
+        .unwrap();
+    coordinator.reconcile(Some(bar(10)), d(0), "venue-request").unwrap();
+
+    // A strategy changes its virtual orders while the external request is in
+    // flight. Only one unit can now be attributed to a two-unit venue fill.
+    coordinator.cancel("original").unwrap();
+    coordinator
+        .accept_order(virtual_order("remaining", "buyer", Side::Buy, 1), None)
+        .unwrap();
+    let before_position = coordinator.member_position("buyer");
+    let before_order = coordinator.virtual_order("remaining").unwrap().clone();
+
+    assert_eq!(
+        coordinator.apply_venue_fill(
+            "venue-request", "exec-1", d(2), d(100), Some(bar(11))
+        ),
+        Err(CoordinatorError::Evidence)
+    );
+    assert!(coordinator.frozen);
+    assert_eq!(coordinator.member_position("buyer"), before_position);
+    assert_eq!(coordinator.virtual_order("remaining"), Some(&before_order));
+    assert_eq!(coordinator.flight.as_ref().unwrap().filled, Decimal::ZERO);
+
+    // The frozen state, original in-flight identity, and unaffected member
+    // book must survive restart until independent account reconciliation.
+    let stored = encode_coordinator("tenant:account:ETHUSDT", &coordinator).unwrap();
+    let (restored, _) = decode_coordinator("tenant:account:ETHUSDT", &stored.json).unwrap();
+    assert!(restored.frozen);
+    assert_eq!(restored.member_position("buyer"), before_position);
+    assert_eq!(restored.virtual_order("remaining"), Some(&before_order));
+    assert_eq!(restored.flight.as_ref().unwrap().filled, Decimal::ZERO);
+}
+
+#[test]
 fn cancel_rejection_keeps_original_order_in_flight_and_frozen() {
     let mut c = Coordinator::new(d(1), d(10)).unwrap();
     c.register("buyer").unwrap();
