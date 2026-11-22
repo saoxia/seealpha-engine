@@ -1,0 +1,12 @@
+[package]
+name = "seealpha-clickhouse"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
+rust_decimal = "1"
+serde_json = "1"
+thiserror = "2"
