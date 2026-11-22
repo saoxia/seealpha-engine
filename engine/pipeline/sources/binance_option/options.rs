@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+/// Binance Options historical market-data persistence is limited to OHLCV Bars.
+pub const HISTORICAL_DATA_KIND: &str = "bars";
 const KLINES: &str = "https://eapi.binance.com/eapi/v1/klines";
 const EXCHANGE_INFO: &str = "https://eapi.binance.com/eapi/v1/exchangeInfo";
 
@@ -305,6 +307,8 @@ impl OptionsSource {
         }
         Ok(items)
     }
+    /// Historical Klines only. Do not fetch trades, book depth, exercises or
+    /// live mark/Greeks snapshots as a historical substitute.
     /// Strict [start,end) history. Binance may legitimately have no trades:
     /// a missing bar is not silently filled or declared complete.
     pub async fn history(
@@ -369,6 +373,12 @@ impl OptionsSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn option_history_persists_only_bar_data() {
+        assert_eq!(HISTORICAL_DATA_KIND, "bars");
+        assert!(KLINES.ends_with("/eapi/v1/klines"));
+    }
+
     #[test]
     fn options_kline_supports_official_tuple_and_legacy_object_shapes() {
         let tuple = json!([[0, "50", "60", "40", "55", "4", 59999, "0", 1, "0", "0", "0"]]);

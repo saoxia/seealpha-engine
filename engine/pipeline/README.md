@@ -6,7 +6,7 @@ Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `c
 | --- | --- | --- |
 | `sources/binance_spot/` | Spot 产品身份、Instrument ID、分层历史修复入口 | 由共享 Nautilus 进程以 `spot` 模式运行；独立于 USD-M 进程 |
 | `sources/binance_futures_um/` | USD-M Futures 产品身份、聚合成交 REST 对齐与 Funding 数据 | 由共享 Nautilus 进程以 `futures_um` 模式运行；尚未支持 COIN-M |
-| `sources/binance_option/` | EAPI 期权 REST、合约及公开流消息解析、行权数据 | 期权实时 WebSocket 客户端**尚未接通**，只有解析能力 |
+| `sources/binance_option/` | EAPI 期权历史 K 线采集/Bar 落盘、合约识别及保留的实时消息解析 | 历史只允许 `bars`；实时 WebSocket **尚未接通** |
 | `sources/shared/nautilus/` | Spot / USD-M 共用的独立 Rust NautilusTrader LiveNode 和原生历史 ZIP 导入程序 | 编译为同一二进制，但按产品启动独立进程；实验性，未通过 READY |
 | `sources/binance/archive/` | 跨 Spot / USD-M 的 Binance 官方历史 ZIP 获取、来源校验与 Manifest | 现有 `seealpha-binance-market-data-source` crate |
 | `sources/shared/market/` | 当前共用的公共市场模型、REST 客户端、K 线和时间校验工具；USD-M 近期成交解析由 binance_futures_um/agg_trades.rs 承担 | 现有 `seealpha-market` crate，公共 API 不变 |
@@ -35,3 +35,7 @@ Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、�
 ### Spot 历史数据自维护
 
 `sources/binance_spot/repair.rs` 与 USD-M 复用 `sources/shared/market/src/repair.rs` 的分层比较逻辑。Data Job 动作 `repair_spot_day` 使用独立的 `spot` 产品和官方 `spot/daily/trades`（原始成交）归档；只有定位到分钟缺失或 OHLCV 差异后才发起 ZIP 下载与 Nautilus 导入。导入与实时写入互斥，导入后 K 线重算尚待完成。
+
+### Options 历史数据约束
+
+期权历史 `backfill` 只调用 `OptionsSource::history()` 的 `/eapi/v1/klines`，通过现有 Catalog 写入 Bars；拒绝 `exercise`、`trades`、`depth`、`mark` 等其他历史行情类型。公开行权记录不再通过行情任务写入；合约发现与账户结算证据独立处理。
