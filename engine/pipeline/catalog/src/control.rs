@@ -8,7 +8,7 @@ pub enum ControlError {
     #[error("控制状态库不可用：{0}")] Database(String),
     #[error("{0}")] Conflict(String),
 }
-fn sqlite(e:seealpha_database::Error)->ControlError{ControlError::Database(e.to_string())}
+fn db_error(e:seealpha_database::Error)->ControlError{ControlError::Database(e.to_string())}
 fn now_ms()->i64{SystemTime::now().duration_since(UNIX_EPOCH).ok().and_then(|d|i64::try_from(d.as_millis()).ok()).unwrap_or(0)}
 fn parse(s:&str)->Result<Value,ControlError>{serde_json::from_str(s).map_err(|_|ControlError::Conflict("控制记录 JSON 损坏".into()))}
 pub struct ControlStore { conn:Mutex<Connection> }
@@ -16,8 +16,8 @@ const SCHEMA: &str = include_str!("../../../../docker/seealpha-postgres-schema.s
 impl ControlStore {
     /// Current control state only: no legacy book import or migration tracking.
     pub fn open(path: &Path) -> Result<Self, ControlError> {
-        let connection = Connection::open(path).map_err(sqlite)?;
-        connection.execute_batch(SCHEMA).map_err(sqlite)?;
+        let connection = Connection::open(path).map_err(db_error)?;
+        connection.execute_batch(SCHEMA).map_err(db_error)?;
         Ok(Self { conn: Mutex::new(connection) })
     }
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, ControlError> {
@@ -46,7 +46,7 @@ impl ControlStore {
              DO UPDATE SET state=excluded.state,progress_json=excluded.progress_json,
              updated_at=excluded.updated_at",
             params![tenant_id,account_id,product,symbol,role,state,progress.to_string(),stamp],
-        ).map_err(sqlite)?;
+        ).map_err(db_error)?;
         Ok(
             json!({"tenant_id":tenant_id,"account_id":account_id,"product":product,
             "symbol":symbol,"role":role,"state":state}),
@@ -64,7 +64,7 @@ impl ControlStore {
                 "SELECT product,symbol,role,state,progress_json,updated_at FROM subscriptions
              WHERE tenant_id=$1 AND account_id=$2 ORDER BY product,symbol,role",
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let rows = stmt
             .query_map(params![tenant_id, account_id], |r| {
                 Ok((
@@ -76,10 +76,10 @@ impl ControlStore {
                     r.get::<_, i64>(5)?,
                 ))
             })
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let mut out = Vec::new();
         for row in rows {
-            let (product, symbol, role, state, progress, updated_at) = row.map_err(sqlite)?;
+            let (product, symbol, role, state, progress, updated_at) = row.map_err(db_error)?;
             out.push(
                 json!({"tenant_id":tenant_id,"account_id":account_id,"product":product,
                 "symbol":symbol,"role":role,"state":state,"progress":parse(&progress)?,
@@ -95,12 +95,12 @@ impl ControlStore {
         let mut conn = self.lock()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         tx.execute(
             "DELETE FROM data_policies WHERE tenant_id=$1",
             params![tenant_id],
         )
-        .map_err(sqlite)?;
+        .map_err(db_error)?;
         for policy in policies {
             let product = policy["product"].as_str().unwrap_or("");
             let symbol = policy["symbol"].as_str().unwrap_or("");
@@ -109,9 +109,9 @@ impl ControlStore {
                  VALUES($1,$2,$3,$4,$5)",
                 params![tenant_id, product, symbol, policy.to_string(), now_ms()],
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         }
-        tx.commit().map_err(sqlite)
+        tx.commit().map_err(db_error)
     }
 
     pub fn policies(&self, tenant_id: &str) -> Result<Vec<Value>, ControlError> {
@@ -120,11 +120,11 @@ impl ControlStore {
             .prepare(
                 "SELECT policy_json FROM data_policies WHERE tenant_id=$1 ORDER BY product,symbol",
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let rows = q
             .query_map(params![tenant_id], |r| r.get::<_, String>(0))
-            .map_err(sqlite)?;
-        rows.map(|r| parse(&r.map_err(sqlite)?)).collect()
+            .map_err(db_error)?;
+        rows.map(|r| parse(&r.map_err(db_error)?)).collect()
     }
 
     pub fn queue_data_job(
@@ -142,7 +142,7 @@ impl ControlStore {
             "INSERT INTO data_jobs(tenant_id,job_id,operation,payload_json,status,created_at,updated_at)
              VALUES($1,$2,$3,$4,'queued',$5,$5) ON CONFLICT DO NOTHING",
             params![tenant_id,job_id,operation,&payload_text,now],
-        ).map_err(sqlite)?;
+        ).map_err(db_error)?;
         let stored = conn
             .query_row(
                 "SELECT operation,payload_json,status,result_json,created_at,updated_at
@@ -159,7 +159,7 @@ impl ControlStore {
                     ))
                 },
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         if inserted == 0 && (stored.0 != operation || stored.1 != payload_text) {
             return Err(ControlError::Conflict("任务编号已用于其他请求。".into()));
         }
@@ -189,7 +189,7 @@ impl ControlStore {
                 },
             )
             .optional()
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         row.map(
             |(operation, payload, status, result, created_at, updated_at)| {
                 Ok(
@@ -206,11 +206,11 @@ impl ControlStore {
         let conn = self.lock()?;
         let mut stmt=conn.prepare(
             "SELECT job_id FROM data_jobs WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 200"
-        ).map_err(sqlite)?;
+        ).map_err(db_error)?;
         let rows = stmt
             .query_map(params![tenant_id], |r| r.get::<_, String>(0))
-            .map_err(sqlite)?;
-        let ids = rows.collect::<Result<Vec<_>, _>>().map_err(sqlite)?;
+            .map_err(db_error)?;
+        let ids = rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?;
         drop(stmt);
         drop(conn);
         ids.iter()
@@ -244,7 +244,7 @@ impl ControlStore {
                     from
                 ],
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         Ok(n == 1)
     }
 
@@ -263,7 +263,7 @@ impl ControlStore {
             "INSERT INTO backtest_jobs(tenant_id,job_id,operation,payload_json,status,created_at,updated_at)
              VALUES($1,$2,$3,$4,'queued',$5,$5) ON CONFLICT DO NOTHING",
             params![tenant_id,job_id,operation,&payload_text,now],
-        ).map_err(sqlite)?;
+        ).map_err(db_error)?;
         let stored = conn
             .query_row(
                 "SELECT operation,payload_json,status,result_json,created_at,updated_at
@@ -280,7 +280,7 @@ impl ControlStore {
                     ))
                 },
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         if inserted == 0 && (stored.0 != operation || stored.1 != payload_text) {
             return Err(ControlError::Conflict("任务编号已用于其他请求。".into()));
         }
@@ -310,7 +310,7 @@ impl ControlStore {
                 },
             )
             .optional()
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         row.map(
             |(operation, payload, status, result, created_at, updated_at)| {
                 Ok(
@@ -327,11 +327,11 @@ impl ControlStore {
         let conn = self.lock()?;
         let mut stmt=conn.prepare(
             "SELECT job_id FROM backtest_jobs WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 200"
-        ).map_err(sqlite)?;
+        ).map_err(db_error)?;
         let rows = stmt
             .query_map(params![tenant_id], |r| r.get::<_, String>(0))
-            .map_err(sqlite)?;
-        let ids = rows.collect::<Result<Vec<_>, _>>().map_err(sqlite)?;
+            .map_err(db_error)?;
+        let ids = rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?;
         drop(stmt);
         drop(conn);
         ids.iter()
@@ -365,7 +365,7 @@ impl ControlStore {
                     from
                 ],
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         Ok(n == 1)
     }
 
@@ -382,7 +382,7 @@ impl ControlStore {
                 "user":r.get::<_,String>(3)?,
                 "password":r.get::<_,String>(4)?
             })),
-        ).optional().map_err(sqlite)
+        ).optional().map_err(db_error)
     }
 
     pub fn save_clickhouse_settings(
@@ -397,7 +397,7 @@ impl ControlStore {
              url=excluded.url,database_name=excluded.database_name,
              username=excluded.username,password=excluded.password,updated_at=excluded.updated_at",
             params![tenant,i64::from(enabled),url,database,user,password,now_ms()],
-        ).map_err(sqlite)?;
+        ).map_err(db_error)?;
         Ok(())
     }
 
@@ -408,7 +408,7 @@ impl ControlStore {
                 "SELECT max_workers,timeout_seconds FROM worker_settings WHERE singleton_id=1", &[],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         Ok(json!({"max_workers":workers,"timeout_seconds":timeout}))
     }
 
@@ -421,7 +421,7 @@ impl ControlStore {
             "UPDATE worker_settings SET max_workers=$1,timeout_seconds=$2 WHERE singleton_id=1",
             params![workers, timeout],
         )
-        .map_err(sqlite)?;
+        .map_err(db_error)?;
         Ok(json!({"max_workers":workers,"timeout_seconds":timeout}))
     }
 }
@@ -431,7 +431,7 @@ impl ControlStore {
         let conn = self.lock()?;
         let mut total=0;
         for table in ["data_jobs", "backtest_jobs"] {
-            total+=conn.execute(&format!("UPDATE {table} SET status='interrupted', result_json='{{\"detail\":\"引擎重启后任务状态未核实，禁止自动重试。\"}}', updated_at=$1 WHERE status='running'"),params![now_ms()]).map_err(sqlite)?;
+            total+=conn.execute(&format!("UPDATE {table} SET status='interrupted', result_json='{{\"detail\":\"引擎重启后任务状态未核实，禁止自动重试。\"}}', updated_at=$1 WHERE status='running'"),params![now_ms()]).map_err(db_error)?;
         }
         Ok(total)
     }
@@ -461,7 +461,7 @@ impl ControlStore {
                 now_ms()
             ],
         )
-        .map_err(sqlite)?;
+        .map_err(db_error)?;
         Ok(json!({"tenant_id":tenant_id,"account_id":account_id,
             "issuance_id":issuance_id,"streams":streams,"lookback_bars":lookback}))
     }
@@ -478,7 +478,7 @@ impl ControlStore {
              WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
             params![tenant_id, account_id, issuance_id],
         )
-        .map_err(sqlite)?;
+        .map_err(db_error)?;
         Ok(())
     }
 
@@ -487,7 +487,7 @@ impl ControlStore {
         let mut stmt=conn.prepare(
             "SELECT account_id,issuance_id,streams_json,lookback_bars FROM strategy_market_subscriptions
              WHERE tenant_id=$1 ORDER BY account_id,issuance_id"
-        ).map_err(sqlite)?;
+        ).map_err(db_error)?;
         let rows = stmt
             .query_map(params![tenant_id], |r| {
                 Ok((
@@ -497,10 +497,10 @@ impl ControlStore {
                     r.get::<_, i64>(3)?,
                 ))
             })
-            .map_err(sqlite)?;
+            .map_err(db_error)?;
         let mut result = Vec::new();
         for row in rows {
-            let (account, issuance, streams, lookback) = row.map_err(sqlite)?;
+            let (account, issuance, streams, lookback) = row.map_err(db_error)?;
             result.push(
                 json!({"tenant_id":tenant_id,"account_id":account,"issuance_id":issuance,
                 "streams":parse(&streams)?,"lookback_bars":lookback}),
