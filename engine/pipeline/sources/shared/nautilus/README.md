@@ -165,8 +165,9 @@ native typed event observation with the **post-event Nautilus OrderCore**
 (`filled_qty`) and a durably registered SeeAlpha Coordinator. Neither the
 observer nor its projection maintains an independent venue order-status map.
 The upstream `binance_account::attach_native_virtual_attribution` reuses the
-single typed native order subscription and calls an injected CAS commit before
-releasing virtual member fills.
+single typed native order subscription and passes the read snapshot's exact revision into an injected CAS commit before
+releasing virtual member fills. A stale revision or failed commit publishes no fills;
+the Binance account subscription includes explicit regression coverage for this gate.
 
 - `OrderAccepted` is never a fill. `OrderFillVoided` freezes attribution
   pending native account/order reconciliation; it does not reverse Ledger cash.
