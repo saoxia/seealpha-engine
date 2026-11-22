@@ -60,8 +60,11 @@ impl Catalog {
             let existing = self.read_records(&RecordKind::FundingRate, &identity,
                 first, last.saturating_add(1), 5000)?;
             let identical = existing.len() == rows.len() && existing.iter().zip(rows).all(|(value,row)| {
-                value["funding_rate"].as_str() == Some(row.funding_rate.to_string().as_str())
-                    && value["mark_price"].as_str() == Some(row.mark_price.to_string().as_str())
+                let parsed_decimal = |field: &str| {
+                    value[field].as_str().and_then(|v| v.parse::<Decimal>().ok())
+                };
+                parsed_decimal("funding_rate") == Some(row.funding_rate)
+                    && parsed_decimal("mark_price") == Some(row.mark_price)
                     && value["rate_type"].as_str() == Some(row.rate_type.as_str())
                     && value["ts_event"].as_str() == Some((row.funding_time_ms * NANO_PER_MS).to_string().as_str())
             });
