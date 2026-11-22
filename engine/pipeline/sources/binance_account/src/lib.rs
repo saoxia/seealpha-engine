@@ -69,6 +69,28 @@ impl NativeOrderLinkSubscription {
     }
 }
 
+/// Persist an immutable virtual allocation projection before publishing any
+/// fills. A CAS failure leaves downstream consumers untouched.
+pub fn persist_virtual_attribution(
+    client_order_id: &str,
+    expected_revision: &str,
+    projection: seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution,
+    commit: impl FnOnce(
+        &str,
+        &str,
+        &seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution,
+    ) -> anyhow::Result<()>,
+    publish: impl FnOnce(Vec<seealpha_execution::coordinator::VirtualFill>),
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !client_order_id.is_empty() && !expected_revision.trim().is_empty(),
+        "missing native virtual attribution CAS identity"
+    );
+    commit(client_order_id, expected_revision, &projection)?;
+    publish(projection.fills);
+    Ok(())
+}
+
 /// Link the existing Nautilus event subscription to SeeAlpha virtual orders.
 ///
 /// A caller supplies an already committed Coordinator and Nautilus's latest
@@ -131,16 +153,15 @@ pub fn attach_native_virtual_attribution(
             &coordinator, &event, &native_order, &bound, None,
         ) {
             Ok(projected) => {
-                // An unsuccessful CAS releases no attributed fills.
-                if expected_revision.trim().is_empty() {
-                    errors_for_events("native attribution CAS revision is missing".into());
-                    return;
-                }
-                if let Err(e) = commit(client_id, &expected_revision, &projected) {
+                if let Err(e) = persist_virtual_attribution(
+                    client_id,
+                    &expected_revision,
+                    projected,
+                    &commit,
+                    &publish,
+                ) {
                     errors_for_events(format!("native attribution CAS failed: {e}"));
-                    return;
                 }
-                publish(projected.fills);
             }
             Err(e) => errors_for_events(format!("native attribution rejected: {e}")),
         }
@@ -161,6 +182,51 @@ impl Drop for NativeOrderLinkSubscription {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_cas_never_publishes_virtual_fills() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use rust_decimal::Decimal;
+        let published = Rc::new(Cell::new(false));
+        let projection = seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution {
+            coordinator: seealpha_execution::coordinator::Coordinator::new(
+                Decimal::ONE, Decimal::from(10)
+            ).unwrap(),
+            fills: vec![],
+        };
+        let seen = Rc::clone(&published);
+        assert!(persist_virtual_attribution(
+            "order-1", "revision-1", projection,
+            |client, expected, _| {
+                assert_eq!(client, "order-1");
+                assert_eq!(expected, "revision-1");
+                anyhow::bail!("CAS rejected")
+            },
+            move |_| seen.set(true),
+        ).is_err());
+        assert!(!published.get());
+    }
+
+    #[test]
+    fn successful_cas_releases_virtual_projection_once() {
+        use rust_decimal::Decimal;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let published = Rc::new(Cell::new(0usize));
+        let projection = seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution {
+            coordinator: seealpha_execution::coordinator::Coordinator::new(
+                Decimal::ONE, Decimal::from(10)
+            ).unwrap(),
+            fills: vec![],
+        };
+        let seen = Rc::clone(&published);
+        persist_virtual_attribution(
+            "order-1", "revision-1", projection,
+            |_, _, _| Ok(()),
+            move |_| seen.set(seen.get() + 1),
+        ).unwrap();
+        assert_eq!(published.get(), 1);
+    }
     #[test]
     fn empty_identity_fails_before_subscribing_to_nautilus() {
         let binding = OwnedNativeBinding {
