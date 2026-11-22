@@ -3,10 +3,10 @@
 //! A failure never advances a source fingerprint checkpoint.
 use crate::{identity::{self,MarketProduct},tick_bars::INTERVALS};
 use rust_decimal::Decimal;
-use seealpha_catalog::{bar_window,Catalog,CatalogBar,NANO_PER_MS,RecordKind};
+use seealpha_catalog::{bar_window,Catalog,CatalogBar,CatalogError,NANO_PER_MS,RecordKind};
 use serde_json::Value;
-use std::{collections::{BTreeMap,BTreeSet},fs::File,hash::{Hash,Hasher},
-    io::Read,path::Path};
+use std::{collections::{BTreeMap,BTreeSet},fs::{self,File,OpenOptions},hash::Hasher,
+    io::{Read,Write},path::{Path,PathBuf}};
 
 type Result<T>=std::result::Result<T,Box<dyn std::error::Error>>;
 const MINUTE_MS:i64=60_000;
@@ -27,6 +27,7 @@ struct Revision{
 pub struct HistoricalTracker{
     completed:BTreeMap<String,u64>,
     pending:BTreeMap<String,Revision>,
+    loaded:BTreeSet<String>,
 }
 fn file_fingerprint(path:&Path)->Result<u64>{
     let meta=path.symlink_metadata()?;
@@ -63,10 +64,27 @@ fn read_ticks(source:&Catalog,instrument:&str,start_ms:i64,end_ms:i64)->Result<V
 }
 fn seconds_for_minute(source:&Catalog,instrument:&str,minute_ms:i64)->Result<Vec<CatalogBar>>{
     let after=minute_ms.checked_add(MINUTE_MS).ok_or("minute overflow")?;
-    let records=read_ticks(source,instrument,minute_ms,after)?;
+    let mut records=match read_ticks(source,instrument,minute_ms,after){
+        Ok(rows)=>rows,
+        Err(error) if error.downcast_ref::<CatalogError>()
+            .is_some_and(|e|matches!(e,CatalogError::Limit(_)))=>{
+            // At exceptionally busy seconds a minute exceeds MAX_TICKS.
+            // Page by actual event-time second, never truncate the input.
+            let mut collected=Vec::new();
+            let mut second=minute_ms;
+            while second<after{
+                collected.extend(read_ticks(source,instrument,second,second+1_000)?);
+                second+=1_000;
+            }
+            collected
+        }
+        Err(error)=>return Err(error),
+    };
+    // Native event timestamps may tie. The original event ordering is
+    // authoritative; do not rearrange OHLC open/close within one nanosecond.
     let mut seconds:BTreeMap<i64,CatalogBar>=BTreeMap::new();
     let mut last_ns=None;
-    for record in records{
+    for record in records.drain(..){
         let time=ns(&record)?;
         if last_ns.is_some_and(|prior|time<prior){return Err("out-of-order historical ticks".into())}
         last_ns=Some(time);
@@ -170,12 +188,58 @@ fn aligned_start(ms:i64)->i64{ms.div_euclid(MINUTE_MS)*MINUTE_MS}
 fn aligned_end(ms:i64)->Result<i64>{
     aligned_start(ms).checked_add(MINUTE_MS).ok_or_else(||"Tick end overflow".into())
 }
+fn checkpoint_path(root:&Path,instrument:&str)->Result<PathBuf>{
+    let directory=root.join(".history-tick-revisions");
+    match directory.symlink_metadata(){
+        Ok(meta) if meta.is_dir()&&!meta.file_type().is_symlink()=>{},
+        Ok(_)=>return Err("untrusted history revision directory".into()),
+        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{
+            fs::create_dir(&directory)?;
+        }
+        Err(error)=>return Err(error.into()),
+    }
+    Ok(directory.join(format!("{instrument}.json")))
+}
+fn read_checkpoint(root:&Path,instrument:&str)->Result<BTreeMap<String,u64>>{
+    let path=checkpoint_path(root,instrument)?;
+    let raw=match fs::read_to_string(path){
+        Ok(raw)=>raw,
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(BTreeMap::new()),
+        Err(e)=>return Err(e.into()),
+    };
+    let state:BTreeMap<String,u64>=serde_json::from_str(&raw)?;
+    if state.keys().any(|key|!key.starts_with(&format!("{instrument}/"))){
+        return Err("historical revision checkpoint identity mismatch".into());
+    }
+    Ok(state)
+}
+fn write_checkpoint(root:&Path,instrument:&str,state:&BTreeMap<String,u64>)->Result<()>{
+    let path=checkpoint_path(root,instrument)?;
+    let parent=path.parent().ok_or("missing revision checkpoint parent")?;
+    let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+    let tmp=parent.join(format!(".{}.{}.{stamp}.tmp",instrument,std::process::id()));
+    let result=(|| ->Result<()> {
+        let mut file=OpenOptions::new().create_new(true).write(true).open(&tmp)?;
+        let content=serde_json::to_vec(state)?;
+        file.write_all(&content)?;
+        file.sync_all()?;
+        fs::rename(&tmp,&path)?;
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    let _=fs::remove_file(tmp);
+    result
+}
 impl HistoricalTracker {
     /// A single bounded Pipeline poll; native persisted TradeTicks are the
     /// sole input. Only fingerprints committed after all derivative writes.
     pub fn poll(&mut self,source:&Catalog,target:&Catalog,symbol:&str,
         product:MarketProduct,precision:(u32,u32))->Result<usize>{
         let instrument=identity::instrument_id(symbol,product)?;
+        if self.loaded.insert(instrument.clone()){
+            // Checkpoints are only written after every dependent Bar succeeds.
+            self.completed.extend(read_checkpoint(target.root(),&instrument)?);
+        }
         let inventory=source.inventory(&RecordKind::Trades,&instrument)?;
         let directory=source.root().join("data/trades").join(&instrument);
         let mut names=BTreeSet::new();
@@ -208,6 +272,14 @@ impl HistoricalTracker {
                 let Some(revision)=self.pending.get(&key).cloned() else {break};
                 if revision.cursor_ms>=revision.end_ms{
                     rebuild_higher(target,&instrument,revision.start_ms,revision.end_ms,precision)?;
+                    // Persist revision state before declaring this source
+                    // done, to avoid full replays after a process restart.
+                    let mut next=self.completed.clone();
+                    next.insert(key.clone(),revision.fingerprint);
+                    let by_instrument=next.into_iter()
+                        .filter(|(k,_)|k.starts_with(&format!("{instrument}/")))
+                        .collect::<BTreeMap<_,_>>();
+                    write_checkpoint(target.root(),&instrument,&by_instrument)?;
                     self.completed.insert(key.clone(),revision.fingerprint);
                     self.pending.remove(&key);
                     break;
