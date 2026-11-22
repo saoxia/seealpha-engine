@@ -616,6 +616,45 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn native_event_quarantine_is_retired_without_destroying_existing_data() {
+        // New databases must not recreate the unused self-written event store.
+        let fresh = Ledger::open(Path::new(":memory:")).unwrap();
+        let fresh_conn = fresh.lock().unwrap();
+        let count: i64 = fresh_conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='native_order_event_quarantine'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+        drop(fresh_conn);
+
+        // Existing historical SQLite rows are not dropped or rewritten by open.
+        let path = std::env::temp_dir().join(format!(
+            "seealpha-retired-native-events-{}-{}.sqlite",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE native_order_event_quarantine (event_id TEXT PRIMARY KEY, event_json TEXT NOT NULL);
+                 INSERT INTO native_order_event_quarantine VALUES ('old-1', '{\"evidence_status\":\"unverified_native_event\"}');",
+            ).unwrap();
+        }
+        let reopened = Ledger::open(&path).unwrap();
+        let conn = reopened.lock().unwrap();
+        let original: String = conn.query_row(
+            "SELECT event_json FROM native_order_event_quarantine WHERE event_id='old-1'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(original, r#"{"evidence_status":"unverified_native_event"}"#);
+        drop(conn);
+        drop(reopened);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn unknown_session_is_not_applied_twice() {
         let path = std::env::temp_dir().join(format!(
             "seealpha-ledger-{}-{}.sqlite",
