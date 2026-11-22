@@ -96,7 +96,7 @@ fn read_index_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StrategyLoad> {
 
 /// Accept ZIP transport with a root manifest.json. Reject unsafe paths,
 /// symlinks, encryption, duplicate names and decompression bombs.
-type ExtractedFiles = Vec<(PathBuf, Vec<u8>)>;
+pub type ExtractedFiles = Vec<(PathBuf, Vec<u8>)>;
 pub fn unpack_native_zip(bytes: &[u8]) -> Result<(Vec<u8>, ExtractedFiles), StoreError> {
     if bytes.is_empty() || bytes.len() > MAX_ZIP { return Err(conflict("ZIP too large")); }
     let mut zip = ZipArchive::new(std::io::Cursor::new(bytes)).map_err(err)?;
