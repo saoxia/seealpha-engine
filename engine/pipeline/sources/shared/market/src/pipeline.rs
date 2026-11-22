@@ -4,17 +4,13 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub fn interval_ms(interval: &str) -> Result<i64, MarketError> {
-    Ok(match interval {
-        "1m" => 60_000,
-        "3m" => 180_000,
-        "5m" => 300_000,
-        "15m" => 900_000,
-        "30m" => 1_800_000,
-        "1h" => 3_600_000,
-        "4h" => 14_400_000,
-        "1d" => 86_400_000,
-        _ => return Err(MarketError::Interval),
-    })
+    // Source chooses supported Binance REST periods; Catalog owns UTC durations.
+    if !matches!(interval, "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d") {
+        return Err(MarketError::Interval);
+    }
+    seealpha_catalog::interval_ms(interval)
+        .map_err(|_| MarketError::Interval)?
+        .ok_or(MarketError::Interval)
 }
 
 pub fn parse_binance_klines(value: &Value, interval_ms: i64) -> Result<Vec<Bar>, MarketError> {
