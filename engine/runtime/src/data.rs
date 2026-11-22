@@ -836,9 +836,9 @@ impl Runtime {
         // must independently verify trusted account-issued strategy identity.
         let purpose = self.require_active(tenant_id)?.purpose;
         let issued = self
-            .ledger
+            .strategy_store
             .strategies(tenant_id, account_id)
-            .map_err(map_state)?;
+            .map_err(crate::map_store)?;
         if !issued
             .iter()
             .any(|item| item.issuance_id == issuance_id && item.grant_purpose == purpose)

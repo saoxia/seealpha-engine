@@ -15,6 +15,19 @@ impl Runtime {
         if !parameters.is_object() {
             return Err(RuntimeError::Unprocessable("策略包参数必须为对象。".into()));
         }
+        if bytes.starts_with(&[0x50,0x4b,0x03,0x04]) {
+            let (manifest, _) = seealpha_strategy::store::unpack_native_zip(bytes)
+                .map_err(crate::map_store)?;
+            let metadata = seealpha_strategy::native_manifest::inspect_native_manifest(&manifest)
+                .map_err(map_strategy)?;
+            let prepared = seealpha_strategy::native_ema::run_native_ema(parameters, "ETHUSDT", &[])
+                .map_err(map_strategy)?;
+            return Ok(json!({
+                "metadata": {"name": metadata.name,"version": metadata.version,
+                             "entry_point": metadata.entry_point,"package_hash": metadata.digest},
+                "parameters": prepared.prepared,
+            }));
+        }
         let metadata = inspect_archive(bytes).map_err(map_strategy)?;
         let file = write_archive(bytes)?;
         self.track_start();

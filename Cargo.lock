@@ -1564,6 +1564,7 @@ dependencies = [
 name = "seealpha-strategy"
 version = "0.1.0"
 dependencies = [
+ "rusqlite",
  "rust_decimal",
  "serde",
  "serde_json",

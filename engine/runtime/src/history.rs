@@ -111,10 +111,8 @@ impl Runtime {
         }
         // Load the immutable issuance and its archive from the trusted Ledger.
         // Never authorize a historical session from caller-supplied strategy metadata.
-        let strategies = self
-            .ledger
-            .strategies(tenant, account)
-            .map_err(map_ledger)?;
+        let strategies = self.strategy_store.strategies(tenant, account)
+            .map_err(crate::map_store)?;
         if strategies.is_empty() {
             return Err(invalid("该账户没有已下发的策略。"));
         }

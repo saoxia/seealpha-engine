@@ -147,9 +147,8 @@ impl Runtime {
                         // The archived artifact is a native JSON manifest, not a
                         // Python ZIP. Require identical bytes and parameters from
                         // trusted account issuance before strategy execution.
-                        let load = self.ledger
-                            .strategies(&request.tenant_id, &request.account_id)
-                            .map_err(map_ledger)?
+                        let load = self.strategy_store.strategies(&request.tenant_id, &request.account_id)
+                            .map_err(crate::map_store)?
                             .into_iter()
                             .find(|record| record.issuance_id == strategy.member_id)
                             .ok_or_else(|| RuntimeError::Conflict(

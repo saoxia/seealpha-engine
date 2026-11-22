@@ -27,7 +27,8 @@ pub use orders::OrderCommand;
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
 
-use seealpha_ledger::{Ledger, LedgerError, StrategyLoad, Tenant};
+use seealpha_ledger::{Ledger, LedgerError, Tenant};
+use seealpha_strategy::store::{StrategyLoad, StrategyStore, StoreError};
 use seealpha_catalog::{ControlStore, ControlError};
 use seealpha_strategy::{self, native_manifest::inspect_native_manifest};
 use serde_json::{Value, json};
@@ -66,6 +67,7 @@ pub struct StrategySubmission<'a> {
 
 pub struct Runtime {
     pub ledger: Ledger,
+    pub strategy_store: StrategyStore,
     pub control: ControlStore,
     pub project: PathBuf,
     pub python: PathBuf,
@@ -109,6 +111,7 @@ impl Runtime {
                 .map_err(|_| RuntimeError::BadRequest("状态目录不可用。".into()))?;
         }
         let ledger = Ledger::open(book).map_err(map_ledger)?;
+        let strategy_store = StrategyStore::open(&book.with_file_name("strategies")).map_err(map_store)?;
         // Interrupted writer tasks are never blindly retried after a process crash.
         let control = ControlStore::open(&book.with_file_name("control.sqlite")).map_err(map_control)?;
         control.restore_interrupted_data_jobs().map_err(map_control)?;
@@ -138,6 +141,7 @@ impl Runtime {
         }
         Ok(Self {
             ledger,
+            strategy_store,
             control,
             project: config.project.clone(),
             python: config.python.clone(),
@@ -268,9 +272,6 @@ impl Runtime {
             parameters,
             archive,
         } = *submission;
-        if !matches!(grant_purpose, "production" | "development") {
-            return Err(RuntimeError::Conflict("下发用途无效。".into()));
-        }
         let tenant = self
             .ledger
             .tenant(tenant_id)
@@ -279,6 +280,7 @@ impl Runtime {
         if tenant.status != "active" {
             return Err(RuntimeError::Conflict("已归档的租户不能加载策略。".into()));
         }
+        let grant_purpose = if grant_purpose.is_empty() { tenant.purpose.as_str() } else { grant_purpose };
         if tenant.purpose != grant_purpose {
             return Err(RuntimeError::Conflict(if tenant.purpose == "production" {
                 "正式租户只能加载正式授权。".into()
@@ -288,7 +290,6 @@ impl Runtime {
         }
         if account_id.is_empty()
             || issuance_id.is_empty()
-            || version.is_empty()
             || account_id.len() > 40
             || issuance_id.len() > 64
             || version.len() > 40
@@ -299,8 +300,18 @@ impl Runtime {
         }
         // Only a known compiled-in Rust strategy may be admitted. Arbitrary
         // uploaded Python archives are not executable in the native runtime.
+        let is_zip = archive.starts_with(&[0x50, 0x4b, 0x03, 0x04]);
+        let native_bytes = if is_zip {
+            seealpha_strategy::store::unpack_native_zip(archive).map_err(map_store)?.0
+        } else { archive.to_vec() };
+        let archive = native_bytes.as_slice();
         let metadata = inspect_native_manifest(archive).map_err(map_strategy)?;
-        if metadata.digest != package_hash
+        let code_key = if code_key.is_empty() { metadata.name.as_str() } else { code_key };
+        let version = if version.is_empty() { metadata.version.as_str() } else { version };
+        let entry_point = if entry_point.is_empty() { metadata.entry_point.as_str() } else { entry_point };
+        let package_hash = if package_hash.is_empty() { metadata.digest.as_str() } else { package_hash };
+        if version.len() > 40
+            || metadata.digest != package_hash
             || metadata.name != code_key
             || metadata.version != version
             || metadata.entry_point != entry_point
@@ -334,7 +345,11 @@ impl Runtime {
             package_hash: package_hash.to_string(),
             archive: archive.to_vec(),
         };
-        self.ledger.upsert_strategy(&load).map_err(map_ledger)?;
+        if is_zip {
+            self.strategy_store.insert_zip(&load, submission.archive).map_err(map_store)?;
+        } else {
+            self.strategy_store.insert(&load).map_err(map_store)?;
+        }
         Ok(json!({
             "tenant_id": tenant_id,
             "account_id": account_id,
@@ -351,9 +366,9 @@ impl Runtime {
         account_id: Option<&str>,
     ) -> Result<Value, RuntimeError> {
         let loads = if let Some(account_id) = account_id {
-            self.ledger
-                .strategies(tenant_id, account_id)
-                .map_err(map_ledger)?
+            self.strategy_store
+                .list(tenant_id, account_id)
+                .map_err(map_store)?
         } else {
             Vec::new()
         };
@@ -380,9 +395,9 @@ impl Runtime {
         account_id: &str,
     ) -> Result<Vec<StrategyInput>, RuntimeError> {
         let loads = self
-            .ledger
+            .strategy_store
             .strategies(tenant_id, account_id)
-            .map_err(map_ledger)?;
+            .map_err(map_store)?;
         if loads.is_empty() {
             return Err(RuntimeError::Conflict(
                 "该租户账户没有已下发的策略。".into(),
@@ -444,6 +459,10 @@ pub fn map_ledger(error: LedgerError) -> RuntimeError {
         LedgerError::Conflict(message) => RuntimeError::Conflict(message),
         LedgerError::Sqlite(detail) => RuntimeError::BadRequest(format!("状态库不可用。{detail}")),
     }
+}
+
+pub(crate) fn map_store(error: StoreError) -> RuntimeError {
+    RuntimeError::Conflict(error.to_string())
 }
 
 pub(crate) fn map_strategy(error: seealpha_strategy::StrategyError) -> RuntimeError {
