@@ -229,6 +229,7 @@ pub(crate) fn load_native_intent_trace(
     let observation = store.latest_order_observation(
         tenant, account, environment, client,
     )?;
+    let observation_present = observation.is_some();
     Ok(json!({
         "tenant_id": tenant,
         "account_id": account,
@@ -237,7 +238,7 @@ pub(crate) fn load_native_intent_trace(
         "client_order_id": client,
         "intent": intent,
         "latest_order_observation": observation,
-        "observation_present": observation.is_some(),
+        "observation_present": observation_present,
         // A status report is not a verified fill, funding transaction or
         // complete account reconciliation. These flags are deliberately false.
         "fill_verified_by_trace": false,
