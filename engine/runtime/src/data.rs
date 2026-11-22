@@ -295,10 +295,7 @@ impl Runtime {
                 .queue_data_job(tenant_id, &id, action, &normalized)
                 .map_err(map_state);
         }
-        let product = payload
-            .get("product")
-            .and_then(Value::as_str)
-            .unwrap_or("futures_um");
+        let product = field(payload, "product")?;
         let symbol = field(payload, "symbol")?;
         let kind = payload
             .get("data_kind")
@@ -341,11 +338,7 @@ impl Runtime {
         }
         // Deterministic identity lets a client retry without duplicating work.
         let mut normalized = payload.clone();
-        // Legacy callers omit product for the default USD-M market.
         if let Some(object) = normalized.as_object_mut() {
-            object
-                .entry("product".to_string())
-                .or_insert(json!("futures_um"));
             object.entry("interval".to_string()).or_insert(json!("1m"));
         }
         let id = hash_job(tenant_id, &normalized);
@@ -397,10 +390,8 @@ impl Runtime {
         } else if original["action"] == "backfill" {
             self.backfill_job(tenant_id, &original["payload"]).await
         } else {
-            // A legacy publish_catalog job may still exist in the durable
-            // queue. Never reinterpret retired job types as public backfills.
             Err(RuntimeError::Conflict(
-                "已停用的旧式 Catalog 发布任务；拒绝执行，请使用 Nautilus 原生数据导入任务。".into(),
+                "未知数据任务类型，拒绝执行。".into(),
             ))
         };
         let (status, body) = match result {
@@ -781,7 +772,7 @@ impl Runtime {
         )
     }
 
-    // Preserve the explicit legacy subscription envelope until v2 parity cutover.
+    // Subscriptions are read-side records; they do not start collectors.
     #[allow(clippy::too_many_arguments)]
     pub fn note_market_subscription(
         &self,
