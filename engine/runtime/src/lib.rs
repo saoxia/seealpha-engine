@@ -2,7 +2,6 @@
 mod catalog;
 pub use catalog::CatalogBar;
 mod config;
-mod data;
 mod evidence;
 mod history;
 mod inspection;
@@ -82,9 +81,7 @@ impl Runtime {
         let ledger = Ledger::open(book).map_err(map_ledger)?;
         let state_store = state_store::StateStore::open(book).map_err(map_ledger)?;
         let strategy_store = StrategyStore::open(&book.with_file_name("strategies")).map_err(map_store)?;
-        // Interrupted writer tasks are never blindly retried after a process crash.
         let control = ControlStore::open(&book.with_file_name("control-state")).map_err(map_control)?;
-        control.restore_interrupted_data_jobs().map_err(map_control)?;
         // A previous Rust version invented empty fills for NEW order
         // acknowledgements. Preserve those rows in an audit quarantine,
         // never treat them as real exchange-executed trades.

@@ -20,9 +20,18 @@ new_database=0
 postgres_pid=""
 engine_pid=""
 observer_pid=""
+pipeline_spot_pid=""
+pipeline_um_pid=""
+pipeline_options_pid=""
 
 shutdown() {
   trap - TERM INT EXIT
+  for worker in "$pipeline_spot_pid" "$pipeline_um_pid" "$pipeline_options_pid"; do
+    if [[ -n "$worker" ]]; then
+      kill -TERM "$worker" 2>/dev/null || true
+      wait "$worker" 2>/dev/null || true
+    fi
+  done
   if [[ -n "$observer_pid" ]]; then
     kill -TERM "$observer_pid" 2>/dev/null || true
     wait "$observer_pid" 2>/dev/null || true
@@ -181,18 +190,43 @@ elif [[ "${SEEALPHA_NATIVE_ACCOUNT_OBSERVER:-0}" != "0" ]]; then
   exit 1
 fi
 
+# Product-local autonomous market data loops (no Engine data-job dispatcher).
+# They are inactive until a tenant defines a subscription via the config API.
+if [[ "${SEEALPHA_PIPELINE_ENABLED:-1}" == "1" ]]; then
+  # Pipeline writes into the same Catalog root that Runtime reads.
+  catalog_root="${ENGINE_CATALOG_DIR:-/app/data/catalog}"
+  if [[ "$catalog_root" != /* ]]; then catalog_root="/app/$catalog_root"; fi
+  mkdir -p "$catalog_root"
+  if [[ -L "$catalog_root" ]]; then
+    echo "Pipeline Catalog root cannot be a symlink" >&2
+    exit 1
+  fi
+  # Ensure a mounted/persistent Catalog root is provisioned by the operator.
+  # Missing Catalog only causes a retry; the process never reports READY.
+  seealpha-pipeline spot &
+  pipeline_spot_pid=$!
+  seealpha-pipeline futures_um &
+  pipeline_um_pid=$!
+  seealpha-pipeline options &
+  pipeline_options_pid=$!
+elif [[ "${SEEALPHA_PIPELINE_ENABLED:-1}" != "0" ]]; then
+  echo "SEEALPHA_PIPELINE_ENABLED must be 0 or 1" >&2
+  exit 1
+fi
+
 "$@" &
 engine_pid=$!
 set +e
-if [[ -n "$observer_pid" ]]; then
-  wait -n -p finished_pid "$engine_pid" "$postgres_pid" "$observer_pid"
-else
-  wait -n -p finished_pid "$engine_pid" "$postgres_pid"
-fi
+processes=("$engine_pid" "$postgres_pid")
+if [[ -n "$observer_pid" ]]; then processes+=("$observer_pid"); fi
+if [[ -n "$pipeline_spot_pid" ]]; then processes+=("$pipeline_spot_pid"); fi
+if [[ -n "$pipeline_um_pid" ]]; then processes+=("$pipeline_um_pid"); fi
+if [[ -n "$pipeline_options_pid" ]]; then processes+=("$pipeline_options_pid"); fi
+wait -n -p finished_pid "${processes[@]}"
 status=$?
 set -e
 if [[ "${finished_pid:-}" != "$engine_pid" && "$status" -eq 0 ]]; then
-  echo "PostgreSQL or account observer unexpectedly stopped" >&2
+  echo "PostgreSQL or a managed service unexpectedly stopped" >&2
   status=1
 fi
 exit "$status"

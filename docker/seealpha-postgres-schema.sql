@@ -202,10 +202,15 @@ CREATE TABLE IF NOT EXISTS paper_sessions (
     PRIMARY KEY (tenant_id, account_id, request_id)
 );
 
--- Source: engine/pipeline/catalog/src/control.rs
-CREATE TABLE IF NOT EXISTS data_policies(tenant_id TEXT NOT NULL,product TEXT NOT NULL,symbol TEXT NOT NULL,policy_json TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,product,symbol));
-CREATE TABLE IF NOT EXISTS data_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,job_id));
-CREATE INDEX IF NOT EXISTS data_jobs_status ON data_jobs(tenant_id,status,updated_at);
+-- Pipeline desired state. One row per tenant/product/instrument.
+CREATE TABLE IF NOT EXISTS pipeline_subscriptions (
+ tenant_id TEXT NOT NULL, product TEXT NOT NULL CHECK(product IN ('spot','futures_um','options')),
+ symbol TEXT NOT NULL, history_start TEXT NOT NULL,
+ realtime_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+ enabled BOOLEAN NOT NULL DEFAULT TRUE,
+ price_precision INTEGER, size_precision INTEGER, updated_at BIGINT NOT NULL,
+ PRIMARY KEY(tenant_id,product,symbol)
+);
 
 -- Source: engine/strategy/src/store.rs
 CREATE TABLE IF NOT EXISTS strategy_issuances (

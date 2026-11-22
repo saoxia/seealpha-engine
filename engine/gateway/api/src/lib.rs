@@ -2,6 +2,7 @@
 //! Live exchange routes refuse before any credential is stored.
 mod derivatives;
 mod parity;
+mod pipeline_subscriptions;
 pub mod research;
 mod research_v1;
 #[path = "routes/system.rs"]
@@ -48,7 +49,6 @@ pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         .route("/health", get(health))
         .route("/tenants/{tenant_id}/runnable", post(runnable))
-        .route("/tenants/{tenant_id}/jobs", get(jobs))
         .route(
             "/tenants/{tenant_id}/strategy-packages/inspect",
             post(inspect_strategy),
@@ -110,6 +110,7 @@ pub fn router(state: AppState) -> Router {
             get(latest_protected),
         )
         .merge(parity::routes())
+        .merge(pipeline_subscriptions::routes())
         .merge(derivatives::routes())
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
