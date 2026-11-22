@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS strategy_market_subscriptions(tenant_id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS data_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,job_id));
 CREATE INDEX IF NOT EXISTS data_jobs_status ON data_jobs(tenant_id,status,updated_at);
 CREATE TABLE IF NOT EXISTS backtest_jobs(tenant_id TEXT NOT NULL,job_id TEXT NOT NULL,operation TEXT NOT NULL,payload_json TEXT NOT NULL,status TEXT NOT NULL,result_json TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,job_id));
+CREATE TABLE IF NOT EXISTS clickhouse_settings(tenant_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),url TEXT NOT NULL,database_name TEXT NOT NULL,username TEXT NOT NULL,password TEXT NOT NULL,updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS worker_settings(singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),max_workers INTEGER NOT NULL,timeout_seconds INTEGER NOT NULL);
 INSERT OR IGNORE INTO worker_settings(singleton_id,max_workers,timeout_seconds) VALUES(1,1,3600);
 "#;
@@ -377,6 +378,38 @@ impl ControlStore {
             )
             .map_err(sqlite)?;
         Ok(n == 1)
+    }
+
+    /// Internal credentials; never expose this Value through an HTTP response.
+    pub fn clickhouse_settings(&self, tenant: &str) -> Result<Option<Value>, ControlError> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT enabled,url,database_name,username,password FROM clickhouse_settings WHERE tenant_id=?1",
+            params![tenant],
+            |r| Ok(json!({
+                "enabled":r.get::<_,i64>(0)? == 1,
+                "url":r.get::<_,String>(1)?,
+                "database":r.get::<_,String>(2)?,
+                "user":r.get::<_,String>(3)?,
+                "password":r.get::<_,String>(4)?
+            })),
+        ).optional().map_err(sqlite)
+    }
+
+    pub fn save_clickhouse_settings(
+        &self, tenant: &str, enabled: bool, url: &str, database: &str,
+        user: &str, password: &str,
+    ) -> Result<(), ControlError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO clickhouse_settings(tenant_id,enabled,url,database_name,username,password,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(tenant_id) DO UPDATE SET enabled=excluded.enabled,
+             url=excluded.url,database_name=excluded.database_name,
+             username=excluded.username,password=excluded.password,updated_at=excluded.updated_at",
+            params![tenant,i64::from(enabled),url,database,user,password,now_ms()],
+        ).map_err(sqlite)?;
+        Ok(())
     }
 
     pub fn worker_settings(&self) -> Result<Value, ControlError> {
