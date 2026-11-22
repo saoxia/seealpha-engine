@@ -53,6 +53,12 @@ impl Runtime {
                 now_ns, max_age_ns,
             )
             .map_err(map_ledger)?;
+        // The Accounts gate validated freshness and overflow. Preserve the
+        // observation timestamp for portfolio evidence reconciliation.
+        let ts_ns = u64::try_from(snapshot.observed_at_ms)
+            .ok()
+            .and_then(|ts| ts.checked_mul(1_000_000))
+            .ok_or_else(|| RuntimeError::Conflict("账户快照时间无效。".into()))?;
         let reported = snapshot.state["positions"]
             .as_object()
             .ok_or_else(|| RuntimeError::Conflict("账户持仓证据缺失。".into()))?;
