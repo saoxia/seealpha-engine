@@ -22,6 +22,9 @@ bars, prices, funding rates, or target publications.
   `cumulative` input means **cumulative quantity for the particular working
   venue order**, not last-fill quantity. It is not an ACK. Callers authenticate
   its order, execution identity, freshness, and account before passing it in.
+- A rejected venue fill must never commit even a partial virtual allocation;
+  only the freeze reason may change, and the original in-flight order identity
+  remains unresolved for independent native order/account reconciliation.
 - Partial fills keep `flight` in place. Completed request IDs are retained
   across snapshots and cannot be reused for later intents. Unattributable
   venue quantity, conflicting event IDs, an unknown order, and cancellation
