@@ -187,3 +187,20 @@ mod tests {
         assert_ne!(hash("t", "id"), hash("other", "id"));
     }
 }
+
+impl Runtime {
+    /// Only queued backtests may be cancelled; completed and running tasks
+    /// cannot be retroactively marked as cancelled.
+    pub fn cancel_backtest_job(&self, tenant: &str, id: &str) -> Result<Value, RuntimeError> {
+        self.require_active(tenant)?;
+        if self.control.transition_backtest_job(tenant, id, "queued", "cancelled", None)
+            .map_err(map_control)? {
+            return self.control.backtest_job(tenant, id).map_err(map_control)?
+                .ok_or_else(|| RuntimeError::NotFound("回测任务不存在。".into()));
+        }
+        let current = self.control.backtest_job(tenant, id).map_err(map_control)?
+            .ok_or_else(|| RuntimeError::NotFound("回测任务不存在。".into()))?;
+        if current["status"] == "cancelled" { return Ok(current); }
+        Err(RuntimeError::Conflict("回测任务已领取或结束，不能取消。".into()))
+    }
+}

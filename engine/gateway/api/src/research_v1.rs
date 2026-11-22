@@ -417,8 +417,10 @@ fn scoped_job(
     }
     let job = state
         .runtime
-        .data_job(&grant.tenant_id, backtest_id)
-        .map_err(|_| AppError::not_found("Research backtest not found"))?;
+        .control
+        .backtest_job(&grant.tenant_id, backtest_id)
+        .map_err(|_| AppError::not_found("Research backtest not found"))?
+        .ok_or_else(|| AppError::not_found("Research backtest not found"))?;
     let marker = &job["payload"]["_research"];
     if job["action"] != "backtest" || marker["task_id"] != grant.task_id {
         return Err(AppError::not_found("Research backtest not found"));
@@ -442,7 +444,7 @@ fn cancel_job(state: &AppState, grant: &Grant, id: &str) -> Result<Value, AppErr
     let _ = scoped_job(state, grant, id, "backtests:cancel")?;
     let cancelled = state
         .runtime
-        .cancel_data_job(&grant.tenant_id, id)
+        .cancel_backtest_job(&grant.tenant_id, id)
         .map_err(AppError::from)?;
     Ok(public_job(&cancelled, false))
 }
@@ -824,8 +826,8 @@ mod tests {
         let id = queued["id"].as_str().unwrap();
         assert!(
             st.runtime
-                .ledger
-                .transition_data_job("42", id, "queued", "running", None,)
+                .control
+                .transition_backtest_job("42", id, "queued", "running", None,)
                 .unwrap()
         );
         let app = router(st);
