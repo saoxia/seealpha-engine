@@ -47,7 +47,7 @@ Nautilus 节点仍是只读实验性采集器。REST/WS/ZIP 数据连续性、�
 
 Docker 单容器启动两个 `seealpha-pipeline` Worker（可设置 `SEEALPHA_PIPELINE_ENABLED=0` 关闭），分别处理 `spot` 和 `futures_um`。Worker 每 30 秒读取一次 `pipeline_subscriptions`；API **只写配置**，不排队下载，也不控制实时进程。
 
-每个租户使用相同配置格式：`product`、`symbol`、`history_start`（UTC YYYY-MM-DD）、`realtime_enabled`、`enabled`，以及历史 Bar 落盘需要的 `price_precision`、`size_precision`（两者都可暂不填写，但没有已核实精度时**不会**尝试下载写入 K 线）。
+每个租户使用相同配置格式：`product`、`symbol`、`history_start`（UTC YYYY-MM-DD）、`realtime_enabled`、`enabled`，以及可选的 `price_precision`、`size_precision`。默认由 Pipeline 从 Binance `exchangeInfo` 的 PRICE_FILTER / LOT_SIZE 读取精度；两项显式填写时必须来自经过核实的 Instrument 元数据。
 
 ```http
 PUT /tenants/demo/pipeline/subscriptions/spot/ETHUSDT
@@ -58,13 +58,11 @@ Content-Type: application/json
   "symbol":"ETHUSDT",
   "history_start":"2025-01-01",
   "realtime_enabled":true,
-  "enabled":true,
-  "price_precision":2,
-  "size_precision":5
+  "enabled":true
 }
 ```
 
-**注意**：上述精度仅为请求格式示例，并非对 ETHUSDT Instrument 精度的权威声明。使用前必须核对交易所 Instrument 元数据。
+**精度**：不填时由 Pipeline 向 Binance 官方 exchangeInfo 查询；无法取得有效元数据时拒绝发布 Bar，绝不猜测精度。
 
 `GET /tenants/demo/pipeline/subscriptions?product=spot` 查看配置；
 `DELETE /tenants/demo/pipeline/subscriptions/spot/ETHUSDT` 仅禁用订阅，保留数据。
