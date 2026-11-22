@@ -3,8 +3,118 @@
 //! decision policy lives in the market-data pipeline.
 use crate::{Bar, BinanceSource, Product};
 use seealpha_catalog::{
-    AggregatedKline, MarketProduct, bar_window, read_aggregated_catalog_klines,
+    Catalog, CatalogError, MarketProduct, NANO_PER_MS, bar_window,
 };
+/// Original saved Nautilus bar, with its exact close timestamp in nanoseconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedKline {
+    pub event_ns: i64,
+    pub values: [rust_decimal::Decimal; 5],
+}
+
+/// Complete or partial OHLCV bucket built from the saved source bars.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AggregatedKline {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub values: [rust_decimal::Decimal; 5],
+    pub complete: bool,
+}
+
+/// Replaces the legacy Python `local_klines` bucketing and completeness logic.
+/// No data is written. Duplicate/out-of-order rows cannot be marked complete.
+pub fn aggregate_saved_klines(
+    saved: &[SavedKline],
+    source_interval: &str,
+    target_interval: &str,
+) -> Result<Vec<AggregatedKline>, CatalogError> {
+    use std::collections::BTreeMap;
+
+    if saved.len() > 50_000 {
+        return Err(CatalogError::Limit("本地 K 线聚合记录超出上限。".into()));
+    }
+    // Validate interval names even for empty saved catalogs.
+    seealpha_catalog::interval_ms(source_interval)?;
+    seealpha_catalog::interval_ms(target_interval)?;
+    let mut buckets = BTreeMap::<i64, AggregatedKline>::new();
+    for bar in saved {
+        let (opening, closing) =
+            bar_window(source_interval, bar.event_ns.div_euclid(NANO_PER_MS))?;
+        let expected_event = closing
+            .checked_sub(1)
+            .and_then(|ms| ms.checked_mul(NANO_PER_MS))
+            .ok_or_else(|| CatalogError::Invalid("本地 K 线纳秒时间溢出。".into()))?;
+        if bar.event_ns != expected_event {
+            return Err(CatalogError::Invalid("已保存 K 线时间边界无效。".into()));
+        }
+        let (left, right) = bar_window(target_interval, opening)?;
+        if let Some(bucket) = buckets.get_mut(&left) {
+            bucket.complete &= opening == bucket.end_ms;
+            bucket.values[1] = bucket.values[1].max(bar.values[1]);
+            bucket.values[2] = bucket.values[2].min(bar.values[2]);
+            bucket.values[3] = bar.values[3];
+            bucket.values[4] = bucket.values[4]
+                .checked_add(bar.values[4])
+                .ok_or_else(|| CatalogError::Invalid("本地 K 线成交量溢出。".into()))?;
+            bucket.end_ms = closing;
+        } else {
+            buckets.insert(
+                left,
+                AggregatedKline {
+                    start_ms: left,
+                    end_ms: closing,
+                    values: bar.values,
+                    complete: opening == left && closing <= right,
+                },
+            );
+        }
+    }
+    for (left, bucket) in &mut buckets {
+        bucket.complete &= bucket.end_ms == bar_window(target_interval, *left)?.1;
+    }
+    Ok(buckets.into_values().collect())
+}
+
+/// Read the Nautilus v2 Catalog directly in Rust before aggregating repair evidence.
+/// Prefer the saved target interval; fall back to saved minutes only when no
+/// target bars exist. Neither missing source data nor partial windows are filled.
+pub fn read_aggregated_catalog_klines(
+    catalog_root: &std::path::Path,
+    symbol: &str,
+    product: MarketProduct,
+    target_interval: &str,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<AggregatedKline>, CatalogError> {
+    if start_ms < 0 || end_ms <= start_ms {
+        return Err(CatalogError::Invalid("本地 K 线读取区间无效。".into()));
+    }
+    let start_ns = start_ms
+        .checked_mul(NANO_PER_MS)
+        .ok_or_else(|| CatalogError::Invalid("本地 K 线起点溢出。".into()))?;
+    let end_ns = end_ms
+        .checked_mul(NANO_PER_MS)
+        .ok_or_else(|| CatalogError::Invalid("本地 K 线终点溢出。".into()))?;
+    let catalog = Catalog::open_existing(catalog_root)?;
+    let mut source = target_interval;
+    let mut bars = catalog.read_bars(symbol, product, source, start_ns, end_ns, 50_000)?;
+    if bars.is_empty() && target_interval != "1m" {
+        source = "1m";
+        bars = catalog.read_bars(symbol, product, source, start_ns, end_ns, 50_000)?;
+    }
+    let saved = bars
+        .iter()
+        .map(|bar| {
+            Ok(SavedKline {
+                event_ns: bar.event_ns(source)?,
+                values: [bar.open, bar.high, bar.low, bar.close, bar.volume],
+            })
+        })
+        .collect::<Result<Vec<_>, CatalogError>>()?;
+    aggregate_saved_klines(&saved, source, target_interval)
+}
+
+
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
