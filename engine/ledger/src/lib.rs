@@ -1,5 +1,4 @@
 //! SQLite runtime book for tenants, strategy packages, trading evidence, and paper orders.
-mod legacy;
 mod native_issuance;
 pub use native_issuance::NativeStrategyLoad;
 mod order_intents;
@@ -10,7 +9,6 @@ mod records;
 pub use order_reconciliation_tasks::ReconciliationTask;
 mod account_events;
 mod account_snapshots;
-mod tenant_transfer;
 pub use account_snapshots::AccountSnapshot;
 pub use order_intents::{BasketAdmission, IntentStart, OrderRecoveryItem};
 mod basket_journal;
@@ -203,18 +201,6 @@ CREATE TABLE IF NOT EXISTS gaps (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, scope, gap_key)
 );
--- Historical Python v1 compatibility only. Active subscriptions are in Pipeline control.sqlite.
-CREATE TABLE IF NOT EXISTS subscriptions (
-    tenant_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    product TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    role TEXT NOT NULL,
-    state TEXT NOT NULL,
-    progress_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (tenant_id, account_id, product, symbol, role)
-);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id TEXT NOT NULL,
@@ -365,14 +351,16 @@ impl Ledger {
             std::fs::create_dir_all(parent)
                 .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         }
-        let mut connection =
+        let connection =
             Connection::open(path).map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         connection
             .execute_batch(
                 "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;",
             )
             .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
-        legacy::initialize(&mut connection)?;
+        connection
+            .execute_batch(SCHEMA)
+            .map_err(|error| LedgerError::Sqlite(error.to_string()))?;
         Ok(Self {
             connection: std::sync::Mutex::new(connection),
         })

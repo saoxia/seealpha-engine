@@ -1,7 +1,7 @@
 //! Public derivatives read-side routes. No private credentials and no
-//! order submission. Historical funding evidence is returned from the local
-//! tenant book, never estimated from ticker or mark-price projections.
-use crate::{AppError, AppState, parse_time_ms};
+//! order submission. Historical funding evidence is returned from Pipeline
+//! Catalog, never estimated from ticker or mark-price projections.
+use crate::{AppError, AppState};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -21,10 +21,6 @@ pub(crate) fn routes() -> Router<AppState> {
             "/tenants/{tenant_id}/venue/options/klines",
             post(option_klines),
         )
-        .route(
-            "/tenants/{tenant_id}/venue/catalog",
-            post(legacy_options_catalog),
-        )
 }
 async fn read_funding(
     State(state): State<AppState>,
@@ -40,12 +36,8 @@ async fn read_funding(
         .ok_or_else(|| AppError::bad_request("资金费合约无效。"))?;
     seealpha_market::check_symbol(symbol).map_err(|_| AppError::bad_request("合约无效。"))?;
     let rows = if let (Some(start), Some(end)) = (
-        body["start_ms"]
-            .as_i64()
-            .or_else(|| body["start"].as_str().and_then(parse_time_ms)),
-        body["end_ms"]
-            .as_i64()
-            .or_else(|| body["end"].as_str().and_then(parse_time_ms)),
+        body["start_ms"].as_i64(),
+        body["end_ms"].as_i64(),
     ) {
         if start < 0 || end <= start || end - start > 365 * 86_400_000 {
             return Err(AppError::bad_request("资金费查询时间范围无效。"));
@@ -95,18 +87,6 @@ async fn option_contracts(
         "product":"options","scope":"public_exchange_contracts",
         "exchange_orders":0})))
 }
-async fn legacy_options_catalog(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    if body["product"].as_str() != Some("options") {
-        return Err(AppError::conflict(
-            "非期权交易产品的 Rust 公共合约目录仍在迁移。",
-        ));
-    }
-    option_contracts(State(state), Path(tenant)).await
-}
 async fn option_klines(
     State(state): State<AppState>,
     Path(tenant): Path<String>,
@@ -121,13 +101,9 @@ async fn option_klines(
         .ok_or_else(|| AppError::bad_request("期权合约无效。"))?;
     parse_option_symbol(symbol).map_err(|_| AppError::bad_request("期权合约无效。"))?;
     let interval = body["interval"].as_str().unwrap_or("1m");
-    let start = body["start_ms"]
-        .as_i64()
-        .or_else(|| body["start"].as_str().and_then(parse_time_ms))
+    let start = body["start_ms"].as_i64()
         .ok_or_else(|| AppError::bad_request("开始时间无效。"))?;
-    let end = body["end_ms"]
-        .as_i64()
-        .or_else(|| body["end"].as_str().and_then(parse_time_ms))
+    let end = body["end_ms"].as_i64()
         .ok_or_else(|| AppError::bad_request("结束时间无效。"))?;
     let source = OptionsSource::new().map_err(|e| AppError::bad_request(e.to_string()))?;
     let bars = source

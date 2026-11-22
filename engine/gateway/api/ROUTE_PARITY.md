@@ -25,9 +25,7 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 | GET | `/health` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | PUT | `/tenants/{tenant_id}` | `TenantBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/runnable` | `RunnableBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| GET | `/tenants/{tenant_id}/export` | `Query / path` | 导出 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/drop` | `无体或对象` | 删除租户状态 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/import` | `ImportBody` | 导入状态 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/market/strategy-subscriptions` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/workers/{worker_id}` | `Query / path` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/workers/{worker_id}/stop` | `无体或对象` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
@@ -80,7 +78,6 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 
 | Method | Path | Python 请求 | Python 成功响应 | Rust 状态 | 核心差异 / 失败语义 |
 |---|---|---|---|---|---|
-| POST | `/tenants/{tenant_id}/venue/catalog` | `PublicRequest` | 行情/账户公开或签名查询 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/venue/spot/klines` | `SpotKlinesRequest` | 行情/账户公开或签名查询 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/venue/spot/trades` | `SpotTradesRequest` | 行情/账户公开或签名查询 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/venue/tickers` | `PublicRequest` | 行情/账户公开或签名查询 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |

@@ -1,7 +1,7 @@
 //! Explicit opt-in native Binance source supervisor, one child per product.
 //! Only read-only public market data; it NEVER marks a producer READY until
 //! native REST handover, clock and Catalog validation are complete.
-use crate::{Runtime, RuntimeError};
+use crate::{Runtime, RuntimeError, map_ledger};
 use seealpha_binance_market_data_source::{Product, parse_manifest};
 use serde_json::{Value, json};
 use std::fs;
@@ -224,7 +224,7 @@ impl Runtime {
         let symbols = self
             .control
             .policies(tenant)
-            .map_err(|e| RuntimeError::Conflict(e.to_string()))?
+            .map_err(crate::map_control)?
             .into_iter()
             .filter(|policy| policy["product"] == product)
             .map(|policy| {

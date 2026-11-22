@@ -1,6 +1,6 @@
 //! HTTP v2 compatibility endpoints migrated from the Python Engine.
 //! No handler in this module can start a live collector or issue an order.
-use crate::{AppError, AppState, parse_time_ms};
+use crate::{AppError, AppState};
 use axum::http::StatusCode;
 use axum::{
     Json, Router,
@@ -14,8 +14,6 @@ use std::sync::{Arc, OnceLock};
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
-        .route("/tenants/{tenant_id}/export",get(export_tenant))
-        .route("/tenants/{tenant_id}/import",post(import_tenant))
         .route("/tenants/{tenant_id}/jobs",post(submit_job))
         .route("/tenants/{tenant_id}/jobs/{identity}",get(task))
         .route("/tenants/{tenant_id}/jobs/{identity}/result",get(task_result))
@@ -55,52 +53,6 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/data/catalog/events",post(native_events))
         .route("/tenants/{tenant_id}/data/catalog/inventory",post(native_inventory))
         .route("/tenants/{tenant_id}/data/catalog/bars",get(catalog_bars))
-}
-
-// Legacy Python v1 tenant backup is intentionally lossless-or-error:
-// Ledger rejects exports containing Rust-only evidence that v1 cannot encode.
-async fn export_tenant(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    state
-        .runtime
-        .require_active(&tenant)
-        .map_err(AppError::from)?;
-    let value = state
-        .runtime
-        .ledger
-        .export_tenant(&tenant)
-        .map_err(|error| AppError::conflict(error.to_string()))?;
-    Ok(Json(value))
-}
-
-#[derive(Deserialize)]
-struct TenantImportBody {
-    purpose: String,
-    payload: Value,
-}
-
-// Import is create-only and transactional. Existing tenant evidence is never
-// replaced, and the legacy envelope is validated by Ledger before insertion.
-async fn import_tenant(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-    Json(body): Json<TenantImportBody>,
-) -> Result<Json<Value>, AppError> {
-    if !matches!(body.purpose.as_str(), "production" | "development") {
-        return Err(AppError::unprocessable("租户用途无效。"));
-    }
-    let result = state
-        .runtime
-        .ledger
-        .import_tenant_new(&tenant, &body.purpose, &body.payload)
-        .map_err(|error| AppError::conflict(error.to_string()))?;
-    Ok(Json(json!({
-        "tenant_id": result.tenant_id,
-        "purpose": result.purpose,
-        "status": result.status,
-    })))
 }
 
 #[derive(Deserialize)]
@@ -303,17 +255,7 @@ async fn submit_job(
     let params = body
         .get("parameters")
         .ok_or_else(|| AppError::bad_request("任务参数无效。"))?;
-    let mut params = params.clone();
-    if let Some(obj) = params.as_object_mut() {
-        for (source, target) in [("start", "start_ms"), ("end", "end_ms")] {
-            if !obj.contains_key(target)
-                && let Some(value) = obj.get(source).and_then(Value::as_str)
-                && let Some(milliseconds) = parse_time_ms(value)
-            {
-                obj.insert(target.to_string(), json!(milliseconds));
-            }
-        }
-    }
+    let params = params.clone();
     let job = if kind == "backtest" {
         let queued = state
             .runtime
@@ -397,7 +339,7 @@ async fn task_retry(
     }
     if !state
         .runtime
-        .control
+        .ledger
         .transition_data_job(&tenant, &id, status, "queued", None)
         .map_err(|e| AppError::bad_request(e.to_string()))?
     {
@@ -529,20 +471,7 @@ async fn data_start(
     let payload = body
         .get("payload")
         .ok_or_else(|| AppError::bad_request("行情任务参数无效。"))?;
-    let mut normalized = payload.clone();
-    if let Some(object) = normalized.as_object_mut() {
-        // Accept the old API's UTC ISO window while retaining exact
-        // millisecond bounds in the native job journal.
-        for (legacy, native) in [("start", "start_ms"), ("end", "end_ms")] {
-            if !object.contains_key(native)
-                && let Some(value) = payload.get(legacy).and_then(Value::as_str)
-            {
-                let ms = parse_time_ms(value)
-                    .ok_or_else(|| AppError::bad_request("行情任务时间无效。"))?;
-                object.insert(native.to_string(), json!(ms));
-            }
-        }
-    }
+    let normalized = payload.clone();
     let job = state
         .runtime
         .queue_data_job(&tenant, &normalized)
@@ -617,7 +546,7 @@ async fn data_retry(
     }
     if !state
         .runtime
-        .control
+        .ledger
         .transition_data_job(&tenant, id, previous, "queued", None)
         .map_err(|e| AppError::bad_request(e.to_string()))?
     {
@@ -676,14 +605,10 @@ fn data_query_range(body: &Value) -> Result<(&str, &str, &str, i64, i64, i64), A
     }
     let step = seealpha_market::interval_ms(interval)
         .map_err(|_| AppError::bad_request("历史 K 线周期无效。"))?;
-    let stamp = |key: &str, native: &str| -> Result<i64, AppError> {
-        body[native]
-            .as_i64()
-            .or_else(|| body[key].as_str().and_then(parse_time_ms))
-            .ok_or_else(|| AppError::bad_request("历史数据时间无效。"))
-    };
-    let start = stamp("start", "start_ms")?;
-    let end = stamp("end", "end_ms")?;
+    let start = body["start_ms"].as_i64()
+        .ok_or_else(|| AppError::bad_request("历史数据开始时间无效。"))?;
+    let end = body["end_ms"].as_i64()
+        .ok_or_else(|| AppError::bad_request("历史数据结束时间无效。"))?;
     let count = end
         .checked_sub(start)
         .filter(|d| *d > 0 && *d <= step * 5000)
@@ -693,7 +618,7 @@ fn data_query_range(body: &Value) -> Result<(&str, &str, &str, i64, i64, i64), A
     }
     Ok((product, symbol, interval, start, end, step))
 }
-fn catalog_bar_json(bar: &seealpha_runtime::CatalogBar) -> Value {
+fn catalog_bar_json(bar: &seealpha_ledger::CatalogBar) -> Value {
     json!({"open_time_ms":bar.open_time_ms,"open":bar.open,
         "high":bar.high,"low":bar.low,"close":bar.close,"volume":bar.volume,
         "is_closed":true})
@@ -722,7 +647,7 @@ async fn data_inventory(
     }
     let policies = state
         .runtime
-        .control
+        .ledger
         .policies(&tenant)
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     let items = policies
@@ -774,8 +699,8 @@ async fn data_coverage(
         "start_ms":start,"end_ms":end,"expected_bars":expected,
         "present_bars":rows.len(),"missing_count":gaps.len(),
         "missing_open_times_ms":gaps,"complete":gaps.is_empty(),
-        "quality":"unverified","backend":"nautilus_v2_parquet",
-        "message":"仅验证本地 Parquet K 线连续性，不等于交易所归档或 Tick 完整性。"}),
+        "quality":"unverified","backend":"native_sqlite",
+        "message":"仅验证本地 SQLite K 线连续性，不等于交易所归档或 Tick 完整性。"}),
     ))
 }
 async fn data_prepare_plan(

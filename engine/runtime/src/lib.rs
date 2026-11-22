@@ -109,7 +109,7 @@ impl Runtime {
         }
         let ledger = Ledger::open(book).map_err(map_ledger)?;
         // Interrupted writer tasks are never blindly retried after a process crash.
-        let control = ControlStore::open(&book.with_file_name("control.sqlite"), book).map_err(map_control)?;
+        let control = ControlStore::open(&book.with_file_name("control.sqlite")).map_err(map_control)?;
         control.restore_interrupted_data_jobs().map_err(map_control)?;
         // A previous Rust version invented empty fills for NEW order
         // acknowledgements. Preserve those rows in an audit quarantine,
