@@ -375,7 +375,7 @@ async fn storage(
         .map_err(AppError::from)?;
     Ok(Json(
         json!({"available":true,"backend":"sqlite","scope":"engine_native",
-        "journal":"book.sqlite","raw_catalog_bridge":"not_implemented"}),
+        "journal":"postgresql","raw_catalog_bridge":"not_implemented"}),
     ))
 }
 async fn data_sync(
