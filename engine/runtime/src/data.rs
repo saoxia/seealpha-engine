@@ -13,6 +13,8 @@ use seealpha_market::{BinanceSource, Product, check_symbol, interval_ms};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::path::PathBuf;
+use std::fs;
 
 fn map_state<E: std::fmt::Display>(error:E)->RuntimeError { RuntimeError::Conflict(error.to_string()) }
 fn bad(message: &str) -> RuntimeError {
@@ -118,6 +120,39 @@ fn hash_job(tenant_id: &str, payload: &Value) -> String {
     out
 }
 
+/// Only existing, real tenant/product directories may receive a native
+/// Nautilus data stream. A symlink to another tenant is not acceptable even
+/// when its canonical target happens to live under the administrator root.
+fn native_tenant_product_root(
+    base: &str,
+    tenant: &str,
+    product: &str,
+) -> Result<PathBuf, RuntimeError> {
+    if tenant.is_empty() || tenant.len() > 64 || !tenant.bytes().all(|x| x.is_ascii_alphanumeric())
+    {
+        return Err(bad("无效的源租户目录名称。"));
+    }
+    let root = PathBuf::from(base)
+        .canonicalize()
+        .map_err(|_| bad("原生 Nautilus 数据根目录尚未创建。"))?;
+    if !root.is_dir() {
+        return Err(bad("原生 Nautilus 数据根目录不是现有目录。"));
+    }
+    let tenant_path = root.join(tenant);
+    let product_path = tenant_path.join(product);
+    for path in [&tenant_path, &product_path] {
+        let metadata =
+            std::fs::symlink_metadata(path).map_err(|_| bad("必须提前创建租户与产品数据目录。"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(bad("禁止使用符号链接作为租户产品数据目录。"));
+        }
+    }
+    product_path
+        .canonicalize()
+        .map_err(|_| bad("源产品目录无效。"))
+}
+
+
 impl Runtime {
     pub fn sync_data_policies(
         &self,
@@ -133,26 +168,6 @@ impl Runtime {
             let key = valid_policy(policy)?;
             if !names.insert(key) {
                 return Err(bad("行情配置包含重复交易对。"));
-            }
-        }
-        let previous = self.control.policies(tenant_id).map_err(map_state)?;
-        if previous.as_slice() != policies {
-            let mut processes = self
-                .source_processes
-                .lock()
-                .map_err(|_| RuntimeError::Conflict("数据源状态锁不可用。".into()))?;
-            for product in ["spot", "futures_um"] {
-                let key = format!("{tenant_id}:{product}");
-                if let Some(child) = processes.get_mut(&key)
-                    && child
-                        .try_wait()
-                        .map_err(|_| RuntimeError::Conflict("数据源状态未知。".into()))?
-                        .is_none()
-                {
-                    return Err(RuntimeError::Conflict(
-                        "原生数据源正在运行，请先停止后再修改持久化采集配置。".into(),
-                    ));
-                }
             }
         }
         // The control-plane journal is independent from collector journals.
@@ -543,7 +558,7 @@ impl Runtime {
             .canonicalize()
             .map_err(|_| bad("历史归档根目录不可用。"))?;
         let tenant_root =
-            crate::sources::native_tenant_product_root(&root.to_string_lossy(), tenant, product)?
+            native_tenant_product_root(&root.to_string_lossy(), tenant, product)?
                 .parent()
                 .ok_or_else(|| bad("租户归档路径无效。"))?
                 .to_path_buf();
@@ -569,25 +584,6 @@ impl Runtime {
         let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
             .map_err(|_| bad("未配置原生 Nautilus Catalog 根目录。"))?;
         let catalog = crate::sources::native_tenant_product_root(&catalog_base, tenant, product)?;
-        // The existing source supervisor is authoritative for its children.
-        // Do not write historical files while the native live writer is active.
-        {
-            let mut processes = self
-                .source_processes
-                .lock()
-                .map_err(|_| bad("行情进程管理锁不可用。"))?;
-            if let Some(child) = processes.get_mut(&format!("{tenant}:{product}"))
-                && child
-                    .try_wait()
-                    .map_err(|_| bad("行情数据源进程状态不明。"))?
-                    .is_none()
-            {
-                return Err(RuntimeError::Conflict(
-                    "原生实时数据源尚在运行，禁止并发导入相同 Catalog。".into(),
-                ));
-            }
-        }
-
         let executable = std::env::var("ENGINE_NATIVE_NAUTILUS_IMPORT_BIN")
             .map_err(|_| bad("未安装并配置已验证的 Nautilus 历史导入程序。"))?;
         if executable.is_empty() {
@@ -877,19 +873,6 @@ impl Runtime {
         })).await;
         let fetch = match fetch {
             Ok(fetch) => fetch,
-            Err(zip_error) if product == "futures_um" => {
-                // Only attempt external USD-M raw trades when the official ZIP
-                // cannot be acquired. Do not change the verified ZIP importer.
-                // A successful read is evidence, NOT a Catalog import or READY.
-                if let Some(evidence) = self.clickhouse_um_repair_fallback(
-                    tenant, symbol, start, end, &response, &zip_error,
-                ).await {
-                    return Ok(evidence);
-                }
-                // The optional data source must never replace the original
-                // ZIP error with a connectivity/configuration failure.
-                return Err(zip_error);
-            }
             Err(error) => return Err(error),
         };
         response["archive_fetch_job_id"] = fetch["id"].clone();
@@ -908,77 +891,11 @@ impl Runtime {
         }))?;
         response["archive_import_job_id"] = import["id"].clone();
 
-        let key = format!("{tenant}:{product}");
-        let active_writer = {
-            let mut processes = self.source_processes.lock()
-                .map_err(|_| repair_error("实时节点状态锁不可用。"))?;
-            if let Some(child) = processes.get_mut(&key) {
-                child.try_wait().map_err(|_| repair_error("实时节点状态未知。"))?.is_none()
-            } else {
-                false
-            }
-        };
-        if active_writer {
-            response["result"] = json!("archive_downloaded_import_deferred_live_writer");
-            response["needs_recalculation"] = json!(true);
-            return Ok(response);
-        }
-
         let import = self.execute_or_reuse_repair_child(tenant, import).await?;
         response["archive_import_job_id"] = import["id"].clone();
         response["result"] = json!("archive_imported_recalculation_pending");
         response["needs_recalculation"] = json!(true);
         Ok(response)
-    }
-
-    /// Best-effort, read-only USD-M fallback probe after a ZIP acquisition failure.
-    /// None means disabled, invalid/unreachable, unsupported symbol, or no data.
-    /// The caller retains the original ZIP failure in every such case.
-    /// A positive probe is evidence only and does not import or mark READY.
-    async fn clickhouse_um_repair_fallback(
-        &self,
-        tenant: &str,
-        symbol: &str,
-        start_ms: i64,
-        end_ms: i64,
-        response: &Value,
-        zip_error: &RuntimeError,
-    ) -> Option<Value> {
-        use seealpha_market::clickhouse::{ClickHouseConnection, um_storage_symbol};
-        let config = self.optional_clickhouse_config(tenant)?;
-        let connection = ClickHouseConnection::new(config).ok()?;
-
-        // Probe only the first suspect minute; never equate a bounded page
-        // with complete historical coverage.
-        let minute = response["missing_minutes"].as_array()
-            .and_then(|items| items.first())
-            .or_else(|| response["conflicting_minutes"].as_array().and_then(|items| items.first()))
-            .and_then(Value::as_i64)?;
-        if minute < start_ms || minute >= end_ms {
-            return None;
-        }
-        let stop = minute.saturating_add(60_000).min(end_ms);
-        let storage_symbol = um_storage_symbol(symbol).ok()?;
-        let rows = connection.read_um_trades(&storage_symbol, minute, stop, None, 10_000)
-            .await.ok()?;
-        if rows.is_empty() {
-            return None;
-        }
-
-        let mut result = response.clone();
-        result["result"] = json!("clickhouse_fallback_evidence_only");
-        result["source"] = json!("clickhouse");
-        result["zip_error"] = json!(zip_error.to_string());
-        result["fallback_minute_ms"] = json!(minute);
-        result["fallback_rows"] = json!(rows.len());
-        result["clickhouse_symbol"] = json!(storage_symbol);
-        result["data_kind"] = json!("raw_trades");
-        result["catalog_import_compatible"] = json!(false);
-        result["fallback_page_may_be_truncated"] = json!(rows.len() == 10_000);
-        result["catalog_committed"] = json!(false);
-        result["coverage_complete"] = json!(false);
-        result["needs_recalculation"] = json!(true);
-        Some(result)
     }
 
     /// The nested executor is boxed so a repair job can reuse the existing

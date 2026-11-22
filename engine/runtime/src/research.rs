@@ -1,18 +1,6 @@
 //! Historical/backtest use cases.
 use crate::{Runtime, RuntimeError, map_ledger};
 use serde_json::json;
-use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
-
-fn cancel_set() -> &'static Mutex<HashSet<String>> {
-    static CANCELLED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    CANCELLED.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-fn cancel_key(tenant_id: &str, account_id: &str, name: &str) -> String {
-    format!("{tenant_id}:{account_id}:{name}")
-}
-
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
     pub fn run_account_backtest(
@@ -85,38 +73,7 @@ impl Runtime {
         Ok(body)
     }
 
-    pub fn run_candidate_backtest(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        name: &str,
-        ending: rust_decimal::Decimal,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        self.require_development(tenant_id)?;
-        if self.cancelled(tenant_id, account_id, name) {
-            return Err(RuntimeError::Conflict("候选回测已取消。".into()));
-        }
-        let body = seealpha_backtest::matching::candidate_report(name, ending);
-        self.state_store
-            .save_backtest(tenant_id, account_id, "candidate", &body.to_string())
-            .map_err(map_ledger)?;
-        Ok(body)
-    }
 
-    pub fn cancel_candidate(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        name: &str,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        self.require_development(tenant_id)?;
-        self.remember_cancel(tenant_id, account_id, name);
-        let body = json!({"kind":"candidate","name":name,"status":"cancelled","exchange_orders":0,"venue":"backtest"});
-        self.state_store
-            .save_backtest(tenant_id, account_id, "candidate", &body.to_string())
-            .map_err(map_ledger)?;
-        Ok(body)
-    }
 
     pub fn latest_kind(
         &self,
@@ -146,18 +103,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn cancelled(&self, tenant_id: &str, account_id: &str, name: &str) -> bool {
-        cancel_set()
-            .lock()
-            .map(|guard| guard.contains(&cancel_key(tenant_id, account_id, name)))
-            .unwrap_or(false)
-    }
 
-    fn remember_cancel(&self, tenant_id: &str, account_id: &str, name: &str) {
-        if let Ok(mut guard) = cancel_set().lock() {
-            guard.insert(cancel_key(tenant_id, account_id, name));
-        }
-    }
 
     pub fn latest_history_backtest(
         &self,

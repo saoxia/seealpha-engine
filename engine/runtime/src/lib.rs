@@ -1,16 +1,12 @@
 //! Cross-domain runtime orchestration for data, strategies, paper sessions and order recovery.
-mod accounts;
 mod catalog;
-mod clickhouse;
 pub use catalog::CatalogBar;
 mod config;
 mod data;
 mod evidence;
 mod history;
 mod inspection;
-mod jobs;
 mod session;
-mod sources;
 mod orders;
 mod native_handoff;
 mod research;
@@ -27,10 +23,7 @@ use seealpha_strategy::store::{StrategyLoad, StrategyStore, StoreError};
 use seealpha_catalog::{ControlStore, ControlError};
 use seealpha_strategy::{self, native_manifest::inspect_native_manifest};
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Child;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
@@ -67,7 +60,6 @@ pub struct Runtime {
     pub control: ControlStore,
     pub project: PathBuf,
     inflight: AtomicUsize,
-    source_processes: Mutex<HashMap<String, Child>>,
 }
 
 impl Runtime {
@@ -124,7 +116,6 @@ impl Runtime {
             control,
             project: config.project.clone(),
             inflight: AtomicUsize::new(0),
-            source_processes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -200,20 +191,6 @@ impl Runtime {
             .map_err(map_ledger)
     }
 
-    /// Runtime-owned persisted API gaps and operational events.
-    pub fn gaps_for_scope(&self, tenant: &str, account: &str, scope: Option<&str>) -> Result<Vec<Value>, RuntimeError> {
-        self.state_store.gaps_for_scope(tenant, account, scope).map_err(map_ledger)
-    }
-    pub fn put_gap(&self, tenant: &str, account: &str, scope: &str, key: &str, body: &str) -> Result<(), RuntimeError> {
-        self.state_store.put_gap(tenant, account, scope, key, body).map_err(map_ledger)
-    }
-    pub fn add_event(&self, tenant: &str, account: &str, kind: &str, body: &str) -> Result<(), RuntimeError> {
-        self.state_store.add_event(tenant, account, kind, body).map_err(map_ledger)
-    }
-    pub fn event_page(&self, tenant: &str, account: &str, after: i64, limit: i64) -> Result<Value, RuntimeError> {
-        self.state_store.event_page(tenant, account, after, limit).map_err(map_ledger)
-    }
-
     /// Read persisted order projections owned by Runtime execution.
     pub fn stored_orders(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<StoredOrder>, RuntimeError> {
         self.state_store.orders(tenant, account, env).map_err(map_ledger)
@@ -232,21 +209,6 @@ impl Runtime {
         self.state_store
             .ensure_tenant(tenant_id, purpose, status)
             .map_err(map_ledger)
-    }
-
-    /// Application registration lookup; not certified exchange connectivity.
-    pub fn account_connections(
-        &self, tenant_id: &str, account_id: &str,
-    ) -> Result<Vec<Value>, RuntimeError> {
-        self.state_store.account_connections(tenant_id, account_id).map_err(map_ledger)
-    }
-
-    /// Persist account registration metadata without credentials.
-    pub fn upsert_connection(
-        &self, tenant_id: &str, account_id: &str,
-        environment: &str, status: &str,
-    ) -> Result<(), RuntimeError> {
-        self.state_store.upsert_connection(tenant_id, account_id, environment, status).map_err(map_ledger)
     }
 
     pub fn active_tenant_ids(&self) -> Result<Vec<String>, RuntimeError> {
@@ -453,19 +415,6 @@ impl Runtime {
 
     pub(crate) fn track_end(&self) {
         self.inflight.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-impl Drop for Runtime {
-    fn drop(&mut self) {
-        // A running Rust Engine must never orphan its child producer processes
-        // on normal shutdown. Crash recovery stays fail-closed via writer.lock.
-        if let Ok(mut sources) = self.source_processes.lock() {
-            for (_, mut child) in sources.drain() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-        }
     }
 }
 
