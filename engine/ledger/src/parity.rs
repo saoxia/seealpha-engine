@@ -12,27 +12,6 @@ fn parse(text: &str) -> Result<Value, LedgerError> {
 }
 
 impl Ledger {
-    pub fn positions(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        environment: &str,
-    ) -> Result<Vec<Value>, LedgerError> {
-        let conn = self.lock()?;
-        let mut query = conn
-            .prepare(
-                "SELECT position_json FROM positions WHERE tenant_id=$1 AND account_id=$2
-             AND environment=$3 ORDER BY position_id",
-            )
-            .map_err(db_error)?;
-        let rows = query
-            .query_map(params![tenant_id, account_id, environment], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(db_error)?;
-        rows.map(|row| parse(&row.map_err(db_error)?)).collect()
-    }
-
     pub fn request(
         &self,
         tenant_id: &str,
