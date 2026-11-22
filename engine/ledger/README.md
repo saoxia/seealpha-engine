@@ -8,8 +8,8 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 | --- | --- | --- |
 | NautilusTrader | Account / AccountState / Position / Cache / 原生 PostgreSQL Cache | 账户与持仓的唯一运行时权威来源；真实交易前须完成原生执行报告与交易所对账 |
 | `movements/` | 有认证来源的成交、费用、资金费和结算 | 不依据 ACK、余额差值或公共费率推断资金事实 |
-| `allocations/` | 策略内部归属（目前仅定义边界） | 不将内部成交冒充交易所成交 |
-| `reconciliation/` | 资金与归属核验边界 | Nautilus 基础订单/持仓对账之外的证据完整性检查 |
+| `allocations/` | 可信经济事件的策略归属（基础实现） | 不将内部成交冒充交易所成交 |
+| `reconciliation/` | 经济事件归属核验 | 不替代 Nautilus 原生订单/持仓对账或交易所余额校验 |
 | `src/order_intents.rs` | 不可变发送前委托意图和未知状态恢复 | 单次预登记、重复请求只核验、不重复发送 |
 | `runtime/src/state_store/` | Basket/Coordinator/Paper/Research 业务状态 | 由 Runtime 持久化，不归 Ledger Funds |
 
