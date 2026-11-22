@@ -168,7 +168,6 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 - `POST /tenants/{tenant_id}/data/catalog/events`
 - `POST /tenants/{tenant_id}/data/catalog/inventory`
 - `GET /tenants/{tenant_id}/data/catalog/bars`
-- `POST /tenants/{tenant_id}/data/options/exercises`
 - `POST /tenants/{tenant_id}/venue/options/contracts`
 - `POST /tenants/{tenant_id}/venue/options/klines`
 - `POST /research/mcp`
