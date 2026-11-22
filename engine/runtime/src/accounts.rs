@@ -50,7 +50,7 @@ fn read_native_account(tenant: &str, account: &str) -> Result<Value, RuntimeErro
     if !meta.file_type().is_socket() || meta.permissions().mode() & 0o077 != 0 {
         return Err(unavailable());
     }
-    let mut stream = UnixStream::connect(&path).map_err(|_| unavailable())?;
+    let stream = UnixStream::connect(&path).map_err(|_| unavailable())?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(|_| unavailable())?;
     stream.set_write_timeout(Some(Duration::from_secs(2))).map_err(|_| unavailable())?;
     let mut response = Vec::new();
