@@ -4,9 +4,12 @@ The Engine receives self-describing strategy ZIP packages over the existing API.
 
 The API transport remains Base64 in JSON as `archive`. `account_id` and `issuance_id` are required trusted issuance scope. The metadata fields `version`, `code_key`, `entry_point`, and `package_hash` are derived from the verified Manifest when omitted and checked if present. Tenant purpose must be authenticated; the ZIP itself does not confer authorization.
 
-The strategy store uses only the local filesystem, never a strategy SQLite database. New ZIPs are extracted into immutable directories:
+Strategy packages are stored as immutable filesystem directories; **metadata is indexed in a separate `strategies/index.sqlite` database**, not in the trading Ledger. SQLite holds tenant/account/issuance, name, version, purpose, parameters, entry point, manifest hash and ZIP hash, but **no ZIP or executable BLOB**. The list API queries SQLite only; Runtime loads and revalidates files for execution. The index is rebuilt from validated issuance directories at startup so an interrupted publish or missing index can be recovered.
+
+New ZIPs are extracted into immutable directories:
 
 ```text
+<ENGINE_STATE>/strategies/index.sqlite
 <ENGINE_STATE>/strategies/<tenant_id>/<account_id>/<issuance_id>/
   manifest.json
   package.zip
