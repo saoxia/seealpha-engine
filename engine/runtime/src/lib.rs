@@ -21,6 +21,7 @@ mod orders;
 #[allow(dead_code)] // Native send remains disabled pending reviewed cutover.
 mod native_handoff;
 mod research;
+mod state_store;
 pub use orders::OrderCommand;
 
 pub use config::{AuthMode, Config, ensure_state_dir};
@@ -66,6 +67,7 @@ pub struct StrategySubmission<'a> {
 
 pub struct Runtime {
     pub ledger: Ledger,
+    state_store: state_store::StateStore,
     pub strategy_store: StrategyStore,
     pub control: ControlStore,
     pub project: PathBuf,
@@ -87,6 +89,7 @@ impl Runtime {
                 .map_err(|_| RuntimeError::BadRequest("状态目录不可用。".into()))?;
         }
         let ledger = Ledger::open(book).map_err(map_ledger)?;
+        let state_store = state_store::StateStore::open(book).map_err(map_ledger)?;
         let strategy_store = StrategyStore::open(&book.with_file_name("strategies")).map_err(map_store)?;
         // Interrupted writer tasks are never blindly retried after a process crash.
         let control = ControlStore::open(&book.with_file_name("control-state")).map_err(map_control)?;
@@ -117,6 +120,7 @@ impl Runtime {
         }
         Ok(Self {
             ledger,
+            state_store,
             strategy_store,
             control,
             project: config.project.clone(),
