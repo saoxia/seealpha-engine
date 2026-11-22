@@ -7,6 +7,11 @@ on:
       - "engine/execution/**"
       - "engine/runtime/**"
       - "engine/gateway/api/**"
+      - "engine/pipeline/catalog/**"
+      - "engine/pipeline/sources/shared/market/**"
+      - "docker/seealpha-postgres-schema.sql"
+      - "docker/engine.Dockerfile"
+      - "docker/entrypoint-with-postgres.sh"
       - "engine/pipeline/sources/binance_spot/**"
       - "engine/pipeline/sources/binance_futures_um/native.rs"
       - ".github/workflows/nautilus-native-data.yml"
@@ -29,6 +34,14 @@ jobs:
           components: rustfmt, clippy
       - name: Compile production Rust workspace after legacy OMS removal
         run: cargo check --workspace --all-targets --locked
+      - name: Test Pipeline subscription, retention and precision
+        run: |
+          cargo test -p seealpha-catalog strict_utc_dates_and_schema --locked
+          cargo test -p seealpha-catalog removes_complete_old_day_without_touching_current_day --locked
+          cargo test -p seealpha-market instrument_filters_are_exact_not_inferred_from_candle_values --locked
+          cargo test -p seealpha-market earlier_tenant_start_wins_and_disabled_prevents_deletion --locked
+      - name: Check Pipeline lint
+        run: cargo clippy -p seealpha-catalog -p seealpha-market -p seealpha-http --all-targets --locked -- -D warnings
       - name: Run pure Execution and Backtest regressions
         run: cargo test -p seealpha-execution -p seealpha-backtest --locked
       - name: Check Execution/Backtest lint
