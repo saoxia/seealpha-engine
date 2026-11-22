@@ -824,8 +824,8 @@ mod tests {
         let id = queued["id"].as_str().unwrap();
         assert!(
             st.runtime
-                .ledger
-                .transition_data_job("42", id, "queued", "running", None,)
+                .control
+                .transition_backtest_job("42", id, "queued", "running", None,)
                 .unwrap()
         );
         let app = router(st);
