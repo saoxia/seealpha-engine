@@ -20,6 +20,9 @@ pub struct VirtualAttribution {
     pub fills: Vec<VirtualFill>,
 }
 
+// Tests cover only the pure fail-closed guard without a running exchange.
+// Native Core snapshot and out-of-order replay acceptance need dedicated
+// pinned-0.68.0 integration tests before live use.
 fn fail_closed(mut coordinator: Coordinator, reason: &str) -> VirtualAttribution {
     coordinator.freeze(reason);
     VirtualAttribution { coordinator, fills: Vec::new() }
@@ -74,9 +77,9 @@ pub fn project_native_order_observation(
             }
             Ok(fail_closed(coordinator, "Nautilus fill correction requires native reconciliation"))
         }
-        NativeOrderObservation::Filled(fill) => project_native_fill(
-            coordinator, fill, native_order, binding, bar,
-        ),
+        NativeOrderObservation::Filled(fill) => {
+            project_native_fill(coordinator, fill, native_order, binding, bar)
+        },
     }
 }
 
@@ -115,5 +118,24 @@ fn project_native_fill(
     ) {
         Ok(fills) => Ok(VirtualAttribution { coordinator, fills }),
         Err(_) => Ok(fail_closed(coordinator, "unattributable native fill")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_mismatch_freezes_without_mutating_virtual_members() {
+        let mut prior = Coordinator::new(Decimal::ONE, Decimal::from(10)).unwrap();
+        prior.register("alpha").unwrap();
+        let result = fail_closed(prior, "native order cache identity mismatch");
+        assert!(result.coordinator.frozen);
+        assert!(result.fills.is_empty());
+        assert_eq!(result.coordinator.member_position("alpha"), Some(Decimal::ZERO));
+        assert_eq!(
+            result.coordinator.freeze_reason.as_deref(),
+            Some("native order cache identity mismatch"),
+        );
     }
 }
