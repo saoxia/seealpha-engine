@@ -132,7 +132,7 @@ Runtime archive_import 任务只接受 archive_job_id，对应同租户、已完
 
 ## Ledger Basket Journal 去 Venue 化（2026-11-22）
 
-Runtime 已删除仅用于旧 Venue 离线发送模拟的 `engine/runtime/src/order_journal.rs` 以及 `dispatch_reserved_basket_leg_fixture`。篮子订单阶段仍通过现有 `Runtime::preregister_reserved_basket_leg` 和 `Ledger::preregister_basket_order_intent` 进行同一事务内的账户快照版本、篮子版本及不可变意图预登记。离线回归测试现在直接核验首次登记、SQLite 重启后仅对账、旧账户快照拒绝以及注册成功仍无成交；不再模拟旧 REST 写请求。
+历史说明更新：旧 Venue 离线发送模拟和未接入生产的 Basket 账户快照 CAS 原型现已移除。通用订单意图仍使用 Ledger 原子预登记、重复请求仅对账且不产生伪造成交；账户余额与持仓由 Nautilus 原生状态管理。Runtime 生产账户接线尚未验收，不允许由这个测试网节点授权真实发单。
 
 这删除了一项实际的 `seealpha-venue` Runtime 依赖，但账户与订单/成交的签名只读证据链仍在旧连接器中，不能据此删除 `engine/connection/binance`。接下来需要完成 Nautilus 原生认证执行报告/账户同步与 Ledger 原子验证，清除剩余只读依赖后再删除该目录。当前不开放原生真实下单。
 
