@@ -86,22 +86,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
-      - name: Resolve PostgreSQL dependencies without updating pinned packages
-        run: cargo metadata --format-version 1 > /dev/null
-      - name: Export lockfile chunks for one-time sync
-        run: |
-          python3 - <<'PY'
-          import base64
-          from pathlib import Path
-          content = base64.b64encode(Path("Cargo.lock").read_bytes()).decode()
-          for i in range(0, len(content), 3000):
-              print("LOCKCHUNK:" + content[i:i+3000])
-          PY
-      - name: Preserve regenerated lockfile for review
-        uses: actions/upload-artifact@v4
-        with:
-          name: postgresql-cargo-lock
-          path: Cargo.lock
+      - name: Validate one-time migration script syntax
+        run: python3 -m py_compile scripts/migrate_legacy_sqlite_to_postgres.py
       # Run compilation first so pre-existing workspace formatting debt does not
       # prevent us from observing type/borrow-checker failures in the PR.
       - name: Compile check
@@ -125,8 +111,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Resolve PostgreSQL dependencies for image validation
-        run: cargo metadata --format-version 1 > /dev/null
       - name: Build Rust-only Engine image
         run: docker build -f docker/engine.Dockerfile -t seealpha-engine:native .
       - name: Verify native image needs no Python
