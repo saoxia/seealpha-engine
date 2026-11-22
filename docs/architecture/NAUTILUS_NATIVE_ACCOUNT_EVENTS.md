@@ -58,3 +58,19 @@ Proceed **native-first and native-only for supported account events**: use pinne
 History is limited to what the pinned native adapter and exchange APIs can genuinely retrieve; a restored account snapshot is not a reconstructed economic ledger. For any missing funding-income, deposit, withdrawal, transfer, or option-exercise history, record the verified capability gap and leave it unimplemented unless explicitly prioritized. Do not synthesize transactions from balance differences.
 
 Acceptance remains gated on offline/restart tests with pinned 0.68.0 and confirmation of safe execution-client integration; existing legacy consumers and safety gates remain untouched until native parity is demonstrated.
+
+## Deployment decision: Redis inside the existing Engine container
+
+The Engine image installs Debian's `redis-server` and `redis-tools`; `docker/entrypoint-with-redis.sh` supervises Redis and SeeAlpha Engine in the **same container**, rather than adding a Compose service. Redis binds only `127.0.0.1:6379` and is not exposed by Docker. An internal `SEEALPHA_REDIS_URL=redis://127.0.0.1:6379` is exported for future native Nautilus cache configuration; **this does not mean the native cache has been wired yet**.
+
+Persistence: Redis `appendonly yes`, `appendfsync everysec`, periodic snapshot settings, and data directory `/app/.local/state/redis`. Mount `/app/.local/state` on a persistent host volume to retain both existing SQLite and Redis data across container replacement, e.g.:
+
+```bash
+docker run --name seealpha-engine \
+  -v seealpha-state:/app/.local/state \
+  seealpha-engine:dev
+```
+
+The supervisor checks for Redis PONG before starting Engine and terminates the sibling process when either stops. The Redis connection is available **only within this container**; an external native Nautilus process cannot use `127.0.0.1` to reach it. If the Nautilus native account observer remains an external, separately launched binary, it must be explicitly packaged/routed into the container before this local Redis arrangement can serve it. No Redis endpoint should be exposed on a public interface merely to work around that gap.
+
+Caveats: AOF `everysec` is not synchronous per-event durability; power loss can lose the latest writes. Configure credentials, non-root operation and backup/restore policies before production approval. Do not treat Redis Cache contents as complete long-term economic settlement history. The current PR only provisions the service; it does **not** assert successful Nautilus Redis backend activation or restart-tested persistence.
