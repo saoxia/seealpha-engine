@@ -13,6 +13,7 @@ nautilus-common = "=0.68.0"
 nautilus-live = { version = "=0.68.0", features = ["streaming"] }
 nautilus-model = { version = "=0.68.0", features = ["high-precision"] }
 nautilus-persistence = "=0.68.0"
+nautilus-infrastructure = { version = "=0.68.0", default-features = false, features = ["postgres"] }
 anyhow = "1"
 log = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

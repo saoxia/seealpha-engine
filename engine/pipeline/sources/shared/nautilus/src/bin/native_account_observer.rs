@@ -17,7 +17,8 @@ use nautilus_binance::{
     config::{BinanceExecutionClientConfig, BinanceInstrumentProviderConfig},
     factories::BinanceExecutionClientFactory,
 };
-use nautilus_common::enums::Environment;
+use nautilus_common::{cache::CacheConfig, enums::Environment};
+use nautilus_infrastructure::sql::cache::PostgresCacheConfig;
 use nautilus_live::{
     config::{LiveExecutionEngineConfig, LiveRiskEngineConfig},
     node::LiveNode,
@@ -29,6 +30,36 @@ use nautilus_model::{
 use seealpha_nautilus_binance_data::native_account_session::{
     NativeAccountSession, NativeAccountSubscription,
 };
+
+/// An explicitly enabled native PostgreSQL Cache. The password is read from a
+/// mounted local file and never accepted in command-line arguments or logs.
+fn postgres_cache_from_env() -> Result<Option<PostgresCacheConfig>> {
+    match std::env::var("SEEALPHA_ENABLE_POSTGRES_CACHE") {
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Ok(value) if value == "0" => return Ok(None),
+        Ok(value) if value == "1" => {}
+        _ => anyhow::bail!("SEEALPHA_ENABLE_POSTGRES_CACHE must be 0 or 1"),
+    }
+    let password_file = std::env::var("SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE")
+        .context("PostgreSQL cache enabled without password file")?;
+    let password_file = Path::new(&password_file);
+    let meta = fs::symlink_metadata(password_file)
+        .context("PostgreSQL cache password file unavailable")?;
+    ensure!(meta.is_file() && !meta.file_type().is_symlink(),
+        "PostgreSQL credential must be a regular file");
+    let password = fs::read_to_string(password_file)
+        .context("cannot read PostgreSQL cache password")?;
+    ensure!(!password.is_empty() && password.len() <= 512
+        && password.bytes().all(|b| b.is_ascii_alphanumeric()),
+        "invalid PostgreSQL cache password");
+    Ok(Some(PostgresCacheConfig {
+        host: Some("127.0.0.1".to_owned()),
+        port: Some(5432),
+        username: Some("seealpha_cache".to_owned()),
+        password: Some(password),
+        database: Some("seealpha_cache".to_owned()),
+    }))
+}
 
 fn now_ns() -> u64 {
     SystemTime::now()
@@ -98,7 +129,8 @@ async fn main() -> Result<()> {
     };
     exec.validate().context("native Binance execution account config invalid")?;
 
-    let mut node = LiveNode::builder(
+    let pg_cache = postgres_cache_from_env()?;
+    let mut builder = LiveNode::builder(
         TraderId::from("SEEALPHA-ACCT-OBSERVER-001"), Environment::Live,
     )?
     .with_name("SEEALPHA-READONLY-ACCOUNT-TESTNET".to_owned())
@@ -111,8 +143,17 @@ async fn main() -> Result<()> {
     .add_exec_client(None, Box::new(BinanceExecutionClientFactory::new()), Box::new(exec))?
     .with_reconciliation(true)
     .with_timeout_connection(30)
-    .with_delay_post_stop_secs(2)
-    .build()?;
+    .with_delay_post_stop_secs(2);
+    if let Some(postgres) = pg_cache {
+        // Keep saved events on restart; never clear persisted state at startup.
+        builder = builder.with_cache_config(CacheConfig {
+            persist_account_events: true,
+            flush_on_start: false,
+            ..Default::default()
+        })
+        .with_cache_database_factory(Box::new(postgres));
+    }
+    let mut node = builder.build()?;
 
     // Typed event-bus subscription; account and type checked again per event.
     // No Ledger::save_account_snapshot call is possible from this binary.
@@ -120,6 +161,9 @@ async fn main() -> Result<()> {
         Rc::clone(&session), now_ns, 60_000_000_000,
     );
     let result = node.run().await;
+    // Release the native Postgres cache and drain queued writes before exit.
+    // LiveNode::run() alone does not guarantee cache adapter disposal.
+    node.dispose();
     session.borrow_mut().mark_disconnected();
     result?;
     Ok(())

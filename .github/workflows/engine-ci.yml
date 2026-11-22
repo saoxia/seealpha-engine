@@ -128,3 +128,44 @@ jobs:
           jq -e '.contract_version == "2"' /tmp/engine-health.json
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/health)" = 401
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef' http://127.0.0.1:18766/tenants/99/jobs)" = 403
+
+      - name: Local PostgreSQL schema and restart smoke (no exchange credentials)
+        run: |
+          set -euo pipefail
+          volume=seealpha-pg-ci-state
+          docker volume create "$volume"
+          docker run -d --name seealpha-pg-ci -v "$volume:/app/.local/state" \
+            -e ENGINE_AUTH_MODE=token \
+            -e ENGINE_TOKEN=ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef \
+            -e ENGINE_TENANT_ID=42 -e ENGINE_TENANT_PURPOSE=development \
+            seealpha-engine:native
+          trap 'docker logs seealpha-pg-ci || true; docker rm -f seealpha-pg-ci || true; docker volume rm "$volume" || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if docker exec seealpha-pg-ci runuser -u postgres -- psql \
+              -h /run/postgresql -d seealpha_cache -Atqc \
+              "SELECT CASE WHEN to_regclass('public.account_event') IS NOT NULL AND to_regclass('public.order_event') IS NOT NULL THEN 1 ELSE 0 END" 2>/dev/null | grep -qx 1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          docker exec seealpha-pg-ci runuser -u postgres -- psql \
+            -h /run/postgresql -d seealpha_cache -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE ci_restart_probe (value integer NOT NULL)"
+          docker exec seealpha-pg-ci runuser -u postgres -- psql \
+            -h /run/postgresql -d seealpha_cache -v ON_ERROR_STOP=1 \
+            -c "INSERT INTO ci_restart_probe VALUES (42)"
+          docker restart seealpha-pg-ci
+          ready=0
+          for i in $(seq 1 60); do
+            if docker exec seealpha-pg-ci runuser -u postgres -- psql \
+              -h /run/postgresql -d seealpha_cache -Atqc \
+              "SELECT value FROM ci_restart_probe" 2>/dev/null | grep -qx 42; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
