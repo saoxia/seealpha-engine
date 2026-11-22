@@ -22,7 +22,7 @@ use nautilus_model::{
 };
 use nautilus_persistence::config::{DataCatalogConfig, RotationConfig, StreamingConfig};
 use seealpha_nautilus_binance_data::native_execution::{
-    resolve_native_target, OrderCapability, PositionMode,
+    native_execution_record_types, resolve_native_target, OrderCapability, PositionMode,
 };
 
 #[tokio::test]
@@ -86,19 +86,13 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
     streaming.data_types = Some(vec![NautilusDataType::TradeTick]);
     // Order ACK, rejection and fill are separate native event families.
     // OrderFilled alone is not sufficient to mark the SeeAlpha Ledger synced.
-    streaming.record_types = Some(vec![
-        NautilusRecordType::AccountState,
-        NautilusRecordType::OrderSubmitted,
-        NautilusRecordType::OrderAccepted,
-        NautilusRecordType::OrderRejected,
-        NautilusRecordType::OrderCanceled,
-        NautilusRecordType::OrderExpired,
-        NautilusRecordType::OrderFilled,
-        NautilusRecordType::OrderFillVoided,
-        NautilusRecordType::OrderStatusReport,
-        NautilusRecordType::FillReport,
-        NautilusRecordType::PositionStatusReport,
-    ]);
+    streaming.record_types = Some(native_execution_record_types());
+    // The pinned Nautilus model must expose both the account and execution
+    // record families; a mere order acknowledgment is never a verified fill.
+    let selected = streaming.record_types.as_ref().unwrap();
+    assert!(selected.contains(&NautilusRecordType::OrderFilled));
+    assert!(selected.contains(&NautilusRecordType::FillReport));
+    assert!(selected.contains(&NautilusRecordType::AccountState));
     streaming.promotion_interval_ms = None;
     streaming.promote_on_close = true;
     streaming.validate().expect("native event Catalog configuration");

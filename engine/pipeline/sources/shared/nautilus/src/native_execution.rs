@@ -3,7 +3,11 @@
 //! Runtime must commit the immutable intent before any future native submission.
 use anyhow::{Result, bail, ensure};
 use nautilus_binance::common::enums::BinanceProductType;
-use nautilus_model::{enums::OmsType, identifiers::{AccountId, InstrumentId}};
+use nautilus_model::{
+    data::NautilusRecordType,
+    enums::OmsType,
+    identifiers::{AccountId, InstrumentId},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeProduct {
@@ -35,6 +39,26 @@ pub struct NativeExecutionTarget {
     pub oms: OmsType,
     pub account: AccountId,
     pub instrument: InstrumentId,
+}
+
+/// Nautilus-native execution records to retain in its own Streaming/Catalog
+/// writer. The SeeAlpha Ledger must not duplicate the raw event stream.
+/// This is a record selection only: it neither starts a node nor authenticates
+/// a report or grants permission to submit an order.
+pub fn native_execution_record_types() -> Vec<NautilusRecordType> {
+    vec![
+        NautilusRecordType::AccountState,
+        NautilusRecordType::OrderSubmitted,
+        NautilusRecordType::OrderAccepted,
+        NautilusRecordType::OrderRejected,
+        NautilusRecordType::OrderCanceled,
+        NautilusRecordType::OrderExpired,
+        NautilusRecordType::OrderFilled,
+        NautilusRecordType::OrderFillVoided,
+        NautilusRecordType::OrderStatusReport,
+        NautilusRecordType::FillReport,
+        NautilusRecordType::PositionStatusReport,
+    ]
 }
 
 /// Reject unsupported market-specific behaviors rather than silently
