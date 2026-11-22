@@ -26,69 +26,6 @@ impl ControlStore {
 }
 
 impl ControlStore {
-    #[allow(clippy::too_many_arguments)]
-    pub fn record_subscription(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        product: &str,
-        symbol: &str,
-        role: &str,
-        state: &str,
-        progress: &Value,
-    ) -> Result<Value, ControlError> {
-        let conn = self.lock()?;
-        let stamp = now_ms();
-        conn.execute(
-            "INSERT INTO subscriptions(tenant_id,account_id,product,symbol,role,state,progress_json,updated_at)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-             ON CONFLICT(tenant_id,account_id,product,symbol,role)
-             DO UPDATE SET state=excluded.state,progress_json=excluded.progress_json,
-             updated_at=excluded.updated_at",
-            params![tenant_id,account_id,product,symbol,role,state,progress.to_string(),stamp],
-        ).map_err(db_error)?;
-        Ok(
-            json!({"tenant_id":tenant_id,"account_id":account_id,"product":product,
-            "symbol":symbol,"role":role,"state":state}),
-        )
-    }
-
-    pub fn subscriptions(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-    ) -> Result<Vec<Value>, ControlError> {
-        let conn = self.lock()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT product,symbol,role,state,progress_json,updated_at FROM subscriptions
-             WHERE tenant_id=$1 AND account_id=$2 ORDER BY product,symbol,role",
-            )
-            .map_err(db_error)?;
-        let rows = stmt
-            .query_map(params![tenant_id, account_id], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, i64>(5)?,
-                ))
-            })
-            .map_err(db_error)?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (product, symbol, role, state, progress, updated_at) = row.map_err(db_error)?;
-            out.push(
-                json!({"tenant_id":tenant_id,"account_id":account_id,"product":product,
-                "symbol":symbol,"role":role,"state":state,"progress":parse(&progress)?,
-                "updated_at":updated_at}),
-            );
-        }
-        Ok(out)
-    }
-
     /// Atomic replacement of the tenant's declared producer policies.
     /// Existing readers and order state are untouched.
     pub fn replace_policies(&self, tenant_id: &str, policies: &[Value]) -> Result<(), ControlError> {
@@ -436,78 +373,7 @@ impl ControlStore {
         Ok(total)
     }
 
-    pub fn set_strategy_reader(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        issuance_id: &str,
-        streams: &Value,
-        lookback: i64,
-    ) -> Result<Value, ControlError> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO strategy_market_subscriptions
-             (tenant_id,account_id,issuance_id,streams_json,lookback_bars,updated_at)
-             VALUES($1,$2,$3,$4,$5,$6)
-             ON CONFLICT(tenant_id,account_id,issuance_id)
-             DO UPDATE SET streams_json=excluded.streams_json,
-               lookback_bars=excluded.lookback_bars,updated_at=excluded.updated_at",
-            params![
-                tenant_id,
-                account_id,
-                issuance_id,
-                streams.to_string(),
-                lookback,
-                now_ms()
-            ],
-        )
-        .map_err(db_error)?;
-        Ok(json!({"tenant_id":tenant_id,"account_id":account_id,
-            "issuance_id":issuance_id,"streams":streams,"lookback_bars":lookback}))
-    }
 
-    pub fn remove_strategy_reader(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        issuance_id: &str,
-    ) -> Result<(), ControlError> {
-        let conn = self.lock()?;
-        conn.execute(
-            "DELETE FROM strategy_market_subscriptions
-             WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
-            params![tenant_id, account_id, issuance_id],
-        )
-        .map_err(db_error)?;
-        Ok(())
-    }
-
-    pub fn strategy_readers(&self, tenant_id: &str) -> Result<Vec<Value>, ControlError> {
-        let conn = self.lock()?;
-        let mut stmt=conn.prepare(
-            "SELECT account_id,issuance_id,streams_json,lookback_bars FROM strategy_market_subscriptions
-             WHERE tenant_id=$1 ORDER BY account_id,issuance_id"
-        ).map_err(db_error)?;
-        let rows = stmt
-            .query_map(params![tenant_id], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                ))
-            })
-            .map_err(db_error)?;
-        let mut result = Vec::new();
-        for row in rows {
-            let (account, issuance, streams, lookback) = row.map_err(db_error)?;
-            result.push(
-                json!({"tenant_id":tenant_id,"account_id":account,"issuance_id":issuance,
-                "streams":parse(&streams)?,"lookback_bars":lookback}),
-            );
-        }
-        Ok(result)
-    }
 }
 
 #[cfg(test)]
