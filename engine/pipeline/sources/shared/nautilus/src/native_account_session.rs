@@ -205,7 +205,9 @@ impl NativeAccountSubscription {
         let received = Rc::clone(&session);
         let handler = TypedHandler::from(move |event: &AccountState| {
             let now = now_ns();
-            match received.borrow_mut().accept(event, now, max_age_ns) {
+            // Release the mutable borrow before accessing the accepted view.
+            let result = received.borrow_mut().accept(event, now, max_age_ns);
+            match result {
                 Ok(true) => {
                     let current = received.borrow();
                     if let Some(view) = current.fresh(now, max_age_ns) {
