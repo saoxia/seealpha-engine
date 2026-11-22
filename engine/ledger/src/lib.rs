@@ -1,4 +1,4 @@
-//! PostgreSQL runtime book for tenants, trading evidence, and paper orders.
+//! PostgreSQL evidence book for tenants and verified trading facts.
 // Native Nautilus owns account/position state; this crate only persists
 // SeeAlpha-specific movement evidence, attribution and reconciliation data.
 // Keep src/lib.rs as the Rust crate root.
@@ -19,7 +19,7 @@ mod records;
 pub use order_reconciliation_tasks::ReconciliationTask;
 pub use order_intents::{IntentStart, OrderRecoveryItem};
 mod parity;
-use seealpha_database::{Connection, OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{Connection, OptionalExtension, params};
 use std::path::Path;
 use thiserror::Error;
 
