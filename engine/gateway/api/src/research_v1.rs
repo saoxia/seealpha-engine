@@ -524,7 +524,6 @@ mod tests {
             research_signing_key: Some("research-signing-key-0123456789abcdef".into()),
             research_mcp_enabled: true,
             venue_base: None,
-            python: "python3".into(),
         };
         let runtime = Arc::new(crate::Runtime::open(&config).unwrap());
         runtime
