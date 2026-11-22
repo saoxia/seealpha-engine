@@ -1,4 +1,4 @@
-//! Health, tenant registration and worker management.
+//! Health and data worker configuration.
 use super::*;
 
 pub(super) async fn health(State(state): State<AppState>) -> Json<Value> {
@@ -7,27 +7,6 @@ pub(super) async fn health(State(state): State<AppState>) -> Json<Value> {
         "workers": state.runtime.inflight(),
         "contract_version": CONTRACT_VERSION,
     }))
-}
-
-pub(super) async fn ensure_tenant(
-    State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
-    Json(body): Json<TenantBody>,
-) -> Result<Json<Value>, AppError> {
-    if let Some(purpose) = &state.config.tenant_purpose
-        && body.purpose != *purpose
-    {
-        return Err(AppError::forbidden("Engine 租户类型不匹配。"));
-    }
-    let tenant = state
-        .runtime
-        .ensure_tenant(&tenant_id, &body.purpose, &body.status)
-        .map_err(AppError::from)?;
-    Ok(Json(json!({
-        "tenant_id": tenant.tenant_id,
-        "purpose": tenant.purpose,
-        "status": tenant.status,
-    })))
 }
 
 pub(super) async fn runnable(
@@ -96,28 +75,3 @@ pub(super) async fn update_worker_settings(
     ))
 }
 
-fn require_clickhouse_admin(state: &AppState, tenant: &str) -> Result<(), AppError> {
-    if state.config.auth_mode != AuthMode::Token
-        || state.config.tenant_id.as_deref() != Some(tenant)
-    {
-        return Err(AppError::forbidden("ClickHouse 凭据管理仅允许 Token 认证且固定租户的引擎。"));
-    }
-    Ok(())
-}
-
-pub(super) async fn clickhouse_settings(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    require_clickhouse_admin(&state, &tenant)?;
-    Ok(Json(state.runtime.clickhouse_settings(&tenant).map_err(AppError::from)?))
-}
-
-pub(super) async fn update_clickhouse_settings(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    require_clickhouse_admin(&state, &tenant)?;
-    Ok(Json(state.runtime.update_clickhouse_settings(&tenant, &body).map_err(AppError::from)?))
-}

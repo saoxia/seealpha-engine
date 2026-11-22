@@ -1,9 +1,8 @@
-//! Runtime-owned tenant and account connection registration metadata.
-//! Trading balances and positions are authoritative only in Nautilus.
-use super::{StateStore, now_ms};
+//! Minimal trusted tenant scope for strategy and order safety checks.
+use super::StateStore;
 use seealpha_ledger::LedgerError;
 
-/// Local registration metadata synchronized from Platform, not user ownership or authorization.
+/// Trusted local tenant scope, not an exchange account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tenant {
     pub tenant_id: String,
@@ -77,6 +76,7 @@ impl StateStore {
             .optional()
             .map_err(|error| LedgerError::Database(error.to_string()))
     }
+}
 
 #[cfg(test)]
 mod tests {
@@ -88,6 +88,6 @@ mod tests {
         let tenant = store.ensure_tenant("t", "development", "active").unwrap();
         assert_eq!(tenant.tenant_id, "t");
         assert_eq!(tenant.purpose, "development");
-        assert_eq!(store.tenant("other").unwrap().is_none(), true);
+        assert!(store.tenant("other").unwrap().is_none());
     }
 }

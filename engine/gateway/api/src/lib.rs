@@ -10,23 +10,17 @@ mod system_routes;
 mod strategy_routes;
 #[path = "routes/orders.rs"]
 mod order_routes;
-#[path = "routes/market_data.rs"]
-mod market_data_routes;
 #[path = "routes/backtests.rs"]
 mod backtest_routes;
-#[path = "routes/accounts.rs"]
-mod account_routes;
 use system_routes::*;
 use strategy_routes::*;
 use order_routes::*;
-use market_data_routes::*;
 use backtest_routes::*;
-use account_routes::*;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use seealpha_market::{LoadQuery, MarketSnapshot, Product, PublicSource, check_symbol};
@@ -53,7 +47,6 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         .route("/health", get(health))
-        .route("/tenants/{tenant_id}", put(ensure_tenant))
         .route("/tenants/{tenant_id}/runnable", post(runnable))
         .route("/tenants/{tenant_id}/jobs", get(jobs))
         .route(
@@ -97,33 +90,8 @@ pub fn router(state: AppState) -> Router {
             get(list_fills),
         )
         .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/gaps",
-            get(list_gaps).post(put_gap),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/events",
-            get(list_events),
-        )
-        .route("/tenants/{tenant_id}/data/catalog/bars", post(import_bars))
-        .route(
-            "/tenants/{tenant_id}/data/clickhouse/config",
-            get(clickhouse_settings).put(update_clickhouse_settings),
-        )
-        .route(
             "/tenants/{tenant_id}/accounts/{account_id}/backtests",
             post(run_backtest),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/connections",
-            post(register_connection).delete(forget_connection),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/health",
-            get(account_health),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/snapshots",
-            post(account_snapshot),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/backtests/latest",
@@ -145,14 +113,6 @@ pub fn router(state: AppState) -> Router {
             "/tenants/{tenant_id}/accounts/{account_id}/protected-option-backtests/latest",
             get(latest_protected),
         )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/candidate-backtests",
-            post(run_candidate).delete(cancel_candidate),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/candidate-backtests/latest",
-            get(latest_candidate),
-        )
         .merge(parity::routes())
         .merge(derivatives::routes())
         .fallback(not_found);
@@ -171,39 +131,7 @@ pub async fn serve(state: AppState) -> Result<(), std::io::Error> {
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
     // Restart only tasks that were durably QUEUED and never started.
     // A RUNNING task recovered as INTERRUPTED must be explicitly reviewed/retried.
-    resume_queued_research_jobs(&state)?;
     axum::serve(listener, router(state)).await
-}
-
-fn resume_queued_research_jobs(state: &AppState) -> Result<(), std::io::Error> {
-    let tenants = state
-        .runtime
-        .active_tenant_ids()
-        .map_err(std::io::Error::other)?;
-    for tenant in tenants {
-        if state
-            .config
-            .tenant_id
-            .as_deref()
-            .is_some_and(|id| id != tenant)
-        {
-            continue;
-        }
-        let jobs = state
-            .runtime
-            .control
-            .backtest_jobs(&tenant)
-            .map_err(std::io::Error::other)?;
-        for job in jobs {
-            if job["action"] == "backtest" && job["status"] == "queued" {
-                let id = job["id"].as_str().ok_or_else(|| {
-                    std::io::Error::other("queued research task has no durable identity")
-                })?;
-                parity::spawn_backtest(state.runtime.clone(), tenant.clone(), id.to_owned());
-            }
-        }
-    }
-    Ok(())
 }
 
 async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -466,13 +394,6 @@ impl IntoResponse for AppError {
 }
 
 #[derive(Deserialize)]
-struct TenantBody {
-    purpose: String,
-    #[serde(default = "default_status")]
-    status: String,
-}
-
-#[derive(Deserialize)]
 struct RunnableBody {
     action: String,
 }
@@ -546,9 +467,6 @@ struct PreviewBar {
     volume: String,
 }
 
-fn default_status() -> String {
-    "active".into()
-}
 fn default_interval() -> String {
     "1m".into()
 }

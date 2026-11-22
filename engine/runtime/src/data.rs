@@ -14,7 +14,6 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::fs;
 
 fn map_state<E: std::fmt::Display>(error:E)->RuntimeError { RuntimeError::Conflict(error.to_string()) }
 fn bad(message: &str) -> RuntimeError {
@@ -583,7 +582,7 @@ impl Runtime {
 
         let catalog_base = std::env::var("ENGINE_NATIVE_NAUTILUS_CATALOG_ROOT")
             .map_err(|_| bad("未配置原生 Nautilus Catalog 根目录。"))?;
-        let catalog = crate::sources::native_tenant_product_root(&catalog_base, tenant, product)?;
+        let catalog = native_tenant_product_root(&catalog_base, tenant, product)?;
         let executable = std::env::var("ENGINE_NATIVE_NAUTILUS_IMPORT_BIN")
             .map_err(|_| bad("未安装并配置已验证的 Nautilus 历史导入程序。"))?;
         if executable.is_empty() {
