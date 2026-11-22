@@ -57,10 +57,7 @@ pub struct NativeAccountSession {
     account_type: AccountType,
     checkpoint_path: PathBuf,
     last: Option<RecoveryCursor>,
-    current: Option<ReportedAccountView>,
-    // Preserve the exact native event for future in-process Cache consumers.
-    // JSON projection is observational only, never a replacement account model.
-    current_native: Option<AccountState>,
+    current: Option<AccountState>,
 }
 
 impl NativeAccountSession {
@@ -92,7 +89,6 @@ impl NativeAccountSession {
             checkpoint_path: checkpoint_path.into(),
             last,
             current: None,
-            current_native: None,
         })
     }
 
@@ -100,29 +96,25 @@ impl NativeAccountSession {
     /// current in-memory view. A later full reported state must bootstrap it.
     pub fn mark_disconnected(&mut self) {
         self.current = None;
-        self.current_native = None;
     }
 
-    /// Only expose an already observed view while it is within the caller's
-    /// absolute wall-clock freshness limit.
-    pub fn fresh(&self, now_ns: u64, max_age_ns: u64) -> Option<&ReportedAccountView> {
-        let view = self.current.as_ref()?;
-        if now_ns == 0
-            || max_age_ns == 0
-            || view.observed_at_ns > now_ns
-            || now_ns - view.observed_at_ns > max_age_ns
+    /// Return the original Nautilus report while fresh; no second account cache.
+    pub fn fresh_native(&self, now_ns: u64, max_age_ns: u64) -> Option<&AccountState> {
+        let event = self.current.as_ref()?;
+        let observed = event.ts_event.as_u64();
+        if now_ns == 0 || max_age_ns == 0
+            || observed > now_ns || now_ns - observed > max_age_ns
         {
             return None;
         }
-        Some(view)
+        Some(event)
     }
 
-    /// Read the original Nautilus account event, without rebuilding a second
-    /// balance model. Restart/disconnect and freshness are enforced identically
-    /// to the legacy read-only JSON projection. This is NOT venue authentication.
-    pub fn fresh_native(&self, now_ns: u64, max_age_ns: u64) -> Option<&AccountState> {
-        self.fresh(now_ns, max_age_ns)?;
-        self.current_native.as_ref()
+    /// Construct a JSON-compatible read-only presentation on demand.
+    /// This is not stored as another account state.
+    pub fn fresh(&self, now_ns: u64, max_age_ns: u64) -> Option<ReportedAccountView> {
+        let event = self.fresh_native(now_ns, max_age_ns)?;
+        project_view(event).ok()
     }
 
     /// Observe an event routed through the isolated Nautilus native node.
@@ -149,47 +141,8 @@ impl NativeAccountSession {
             );
         }
 
-        // Reuse Nautilus' own balance and margin amounts; do not infer assets
-        // from order acks or changes between two account-state observations.
-        let mut balances = BTreeMap::new();
-        for b in &event.balances {
-            ensure!(
-                b.total.currency == b.currency
-                    && b.locked.currency == b.currency
-                    && b.free.currency == b.currency
-                    && b.locked.checked_add(b.free) == Some(b.total),
-                "account balance values inconsistent"
-            );
-            let currency = b.currency.to_string();
-            ensure!(
-                balances.insert(currency, BalanceView {
-                    total: b.total.as_decimal().to_string(),
-                    locked: b.locked.as_decimal().to_string(),
-                    free: b.free.as_decimal().to_string(),
-                }).is_none(),
-                "duplicated currency in account report"
-            );
-        }
-        let mut margins = Vec::with_capacity(event.margins.len());
-        let mut margin_keys = std::collections::HashSet::new();
-        for m in &event.margins {
-            ensure!(
-                m.initial.currency == m.currency && m.maintenance.currency == m.currency,
-                "native account margin currency mismatch"
-            );
-            let instrument_id = m.instrument_id.map(|id| id.to_string());
-            let currency = m.currency.to_string();
-            ensure!(
-                margin_keys.insert((instrument_id.clone(), currency.clone())),
-                "duplicate native account margin"
-            );
-            margins.push(MarginView {
-                instrument_id,
-                currency,
-                initial: m.initial.as_decimal().to_string(),
-                maintenance: m.maintenance.as_decimal().to_string(),
-            });
-        }
+        // Validate before publishing the native event to readers.
+        project_view(event)?;
 
         let next_cursor = RecoveryCursor {
             account_id: candidate.account_id.clone(),
@@ -199,17 +152,64 @@ impl NativeAccountSession {
         persist_cursor(&self.checkpoint_path, &next_cursor)?;
         // Publishing state after durable cursor update prevents returning
         // an unrecorded view to callers. Error remains fail-closed.
-        self.current = Some(ReportedAccountView {
-            account_id: candidate.account_id,
-            event_id: candidate.event_id,
-            observed_at_ns: candidate.observed_at_ns,
-            balances,
-            margins,
-        });
-        self.current_native = Some(event.clone());
+        self.current = Some(event.clone());
         self.last = Some(next_cursor);
         Ok(true)
     }
+}
+
+/// Convert a native event only for the observer's external JSON output.
+fn project_view(event: &AccountState) -> Result<ReportedAccountView> {
+    // Reuse Nautilus' own balance and margin amounts; do not infer assets
+    // from order acks or changes between two account-state observations.
+    let mut balances = BTreeMap::new();
+    for b in &event.balances {
+        ensure!(
+            b.total.currency == b.currency
+                && b.locked.currency == b.currency
+                && b.free.currency == b.currency
+                && b.locked.checked_add(b.free) == Some(b.total),
+            "account balance values inconsistent"
+        );
+        let currency = b.currency.to_string();
+        ensure!(
+            balances.insert(currency, BalanceView {
+                total: b.total.as_decimal().to_string(),
+                locked: b.locked.as_decimal().to_string(),
+                free: b.free.as_decimal().to_string(),
+            }).is_none(),
+            "duplicated currency in account report"
+        );
+    }
+    let mut margins = Vec::with_capacity(event.margins.len());
+    let mut margin_keys = std::collections::HashSet::new();
+    for m in &event.margins {
+        ensure!(
+            m.initial.currency == m.currency && m.maintenance.currency == m.currency,
+            "native account margin currency mismatch"
+        );
+        let instrument_id = m.instrument_id.map(|id| id.to_string());
+        let currency = m.currency.to_string();
+        ensure!(
+            margin_keys.insert((instrument_id.clone(), currency.clone())),
+            "duplicate native account margin"
+        );
+        margins.push(MarginView {
+            instrument_id,
+            currency,
+            initial: m.initial.as_decimal().to_string(),
+            maintenance: m.maintenance.as_decimal().to_string(),
+        });
+    }
+
+
+    Ok(ReportedAccountView {
+        account_id: event.account_id.to_string(),
+        event_id: event.event_id.to_string(),
+        observed_at_ns: event.ts_event.as_u64(),
+        balances,
+        margins,
+    })
 }
 
 fn persist_cursor(path: &Path, cursor: &RecoveryCursor) -> Result<()> {
