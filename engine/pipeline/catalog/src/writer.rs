@@ -121,7 +121,7 @@ impl Catalog {
             return Err(CatalogError::Invalid("BarType 周期与请求不一致。".into()));
         }
         let kind = bar_identity;
-        let dir_rel = RecordKind::Bars.directory(&kind)?;
+        let dir_rel = RecordKind::Bars.directory(kind)?;
         let directory = safe_mkdir(&self.root, &dir_rel)?;
         // The lock lives with this one native BarType writer. Readers do
         // not acquire this lock because files become visible atomically.
@@ -242,7 +242,7 @@ impl Catalog {
             columns.push(Arc::new(events_builder.finish()));
             columns.push(Arc::new(init_builder.finish()));
             let data = RecordBatch::try_new(
-                schema(&kind, &instrument, price_precision, size_precision),
+                schema(kind, &instrument, price_precision, size_precision),
                 columns,
             )
             .map_err(|e| CatalogError::Arrow(e.to_string()))?;
@@ -275,7 +275,6 @@ impl Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::bar_type;
     use rust_decimal::Decimal;
     #[test]
     fn filename_matches_python_nautilus_v2_exact_nanoseconds() {
