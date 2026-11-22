@@ -1,5 +1,7 @@
 # ClickHouse USD-M historical trade connection
 
+数据表的完整 DDL、字段语义、交易对映射、去重限制和历史修复边界详见 [SCHEMA.md](SCHEMA.md)。
+
 This is a **read-only** connection to the user's existing `binance_trade` table.
 No migrations, source ingestion, automatic Catalog writes or live collector changes.
 
