@@ -2,7 +2,7 @@
 use crate::{Catalog,CatalogError,RecordKind,NANO_PER_MS};
 use crate::reader::{candidate_files,filename_bounds,inspect_existing_directory};
 use fs2::FileExt;
-use std::{fs::{self,OpenOptions},path::Path};
+use std::fs::{self,OpenOptions};
 
 impl Catalog {
     /// Remove only files strictly before the requested UTC-day cutoff.

@@ -2,6 +2,7 @@
 //! Live exchange routes refuse before any credential is stored.
 mod derivatives;
 mod parity;
+mod pipeline_subscriptions;
 pub mod research;
 mod research_v1;
 #[path = "routes/system.rs"]
@@ -110,6 +111,7 @@ pub fn router(state: AppState) -> Router {
             get(latest_protected),
         )
         .merge(parity::routes())
+        .merge(pipeline_subscriptions::routes())
         .merge(derivatives::routes())
         .fallback(not_found);
     if state.config.research_signing_key.is_some() {
