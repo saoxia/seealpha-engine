@@ -198,6 +198,71 @@ pub(crate) fn stage_target_adjustment(
     register_native_envelope(store, &intent, &envelope).map(Some)
 }
 
+
+/// Read-only audit/recovery trace. This joins SeeAlpha's immutable target
+/// attribution with the native client-order identity and any *already stored*
+/// exchange observation. It neither queries an exchange nor accepts new
+/// observations; in particular, an ACK is never promoted to a verified fill.
+pub(crate) fn load_native_intent_trace(
+    store: &StateStore,
+    tenant: &str,
+    account: &str,
+    environment: &str,
+    request_id: &str,
+) -> Result<serde_json::Value, LedgerError> {
+    if !valid_id(tenant, 128) || !valid_id(account, 128)
+        || !valid_id(request_id, 128)
+        || !matches!(environment, "sandbox" | "production")
+    {
+        return Err(LedgerError::Conflict("invalid native intent trace scope".into()));
+    }
+    let intent = store.registered_order_intent(tenant, account, request_id)?
+        .ok_or_else(|| LedgerError::Conflict("native order intent not found".into()))?;
+    let client = intent["client_order_id"].as_str()
+        .ok_or_else(|| LedgerError::Conflict("missing client order identity".into()))?;
+    if intent["execution_backend"] != "nautilus_binance_native"
+        || intent["environment"] != environment
+        || !valid_id(client, 128)
+    {
+        return Err(LedgerError::Conflict("native intent scope or backend mismatch".into()));
+    }
+    let observation = store.latest_order_observation(
+        tenant, account, environment, client,
+    )?;
+    Ok(json!({
+        "tenant_id": tenant,
+        "account_id": account,
+        "environment": environment,
+        "request_id": request_id,
+        "client_order_id": client,
+        "intent": intent,
+        "latest_order_observation": observation,
+        "observation_present": observation.is_some(),
+        // A status report is not a verified fill, funding transaction or
+        // complete account reconciliation. These flags are deliberately false.
+        "fill_verified_by_trace": false,
+        "account_reconciled_by_trace": false,
+        "send_authorized": false,
+    }))
+}
+
+impl crate::Runtime {
+    /// Recovery inspection only. Does not send, retry or invent fills.
+    pub fn native_execution_trace(
+        &self,
+        tenant: &str,
+        account: &str,
+        environment: &str,
+        request_id: &str,
+    ) -> Result<serde_json::Value, crate::RuntimeError> {
+        use crate::map_ledger;
+        self.require_active(tenant)?;
+        load_native_intent_trace(
+            &self.state_store, tenant, account, environment, request_id,
+        ).map_err(map_ledger)
+    }
+}
+
 fn valid_id(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
@@ -543,6 +608,43 @@ mod tests {
         let changed = TargetIntent { position: rust_decimal::Decimal::ZERO, ..request };
         assert!(stage_target_adjustment(&store, &changed).is_err());
         assert!(store.fills("tenant1", "account1", "sandbox").unwrap().is_empty());
+    }
+
+    #[test]
+    fn trace_joins_registered_target_identity_without_fabricating_execution() {
+        use seealpha_execution::MemberTarget;
+        let store = ledger();
+        let targets = [MemberTarget {
+            member_id: "alpha".into(),
+            signed_quantity: rust_decimal::Decimal::from(2),
+            risk_exit: false,
+        }];
+        let input = TargetIntent {
+            tenant: "tenant1", account: "account1", environment: "sandbox",
+            request_id: "trace-request", client_order_id: "native-trace-1",
+            product: "spot", symbol: "BTCUSDT", position_mode: "spot",
+            price: rust_decimal::Decimal::from(2000), targets: &targets,
+            position: rust_decimal::Decimal::ZERO,
+            increment: rust_decimal::Decimal::ONE,
+            max_abs_target: rust_decimal::Decimal::from(10),
+            position_reconciled: true, orders_reconciled: true,
+        };
+        stage_target_adjustment(&store, &input).unwrap();
+        let trace = load_native_intent_trace(
+            &store, "tenant1", "account1", "sandbox", "trace-request",
+        ).unwrap();
+        assert_eq!(trace["intent"]["origin"], "target_netting");
+        assert_eq!(trace["intent"]["target_publications"][0][0], "alpha");
+        assert_eq!(trace["client_order_id"], "native-trace-1");
+        assert_eq!(trace["observation_present"], false);
+        assert_eq!(trace["fill_verified_by_trace"], false);
+        assert_eq!(trace["send_authorized"], false);
+        assert!(load_native_intent_trace(
+            &store, "tenant1", "account1", "production", "trace-request",
+        ).is_err());
+        assert!(load_native_intent_trace(
+            &store, "tenant1", "other", "sandbox", "trace-request",
+        ).is_err());
     }
 
     #[test]
