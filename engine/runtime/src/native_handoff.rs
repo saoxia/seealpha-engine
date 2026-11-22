@@ -93,6 +93,7 @@ fn register_native_envelope(
 /// order or grant permission to send. The caller must be an internal Nautilus
 /// adapter which has independently reconciled account positions and open orders.
 #[allow(dead_code)] // Not attached to live Nautilus until trusted cache bridge exists.
+#[derive(Clone, Copy)]
 pub(crate) struct TargetIntent<'a> {
     pub tenant: &'a str,
     pub account: &'a str,
