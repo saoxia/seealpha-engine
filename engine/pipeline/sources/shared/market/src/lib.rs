@@ -4,7 +4,6 @@
 //! closed klines, aggregates trades into OHLCV bars, and computes decimal
 //! features. Neither path starts a collector as a side effect of a read.
 mod binance;
-pub mod identity;
 #[path = "../../../binance_futures_um/agg_trades.rs"]
 mod futures_agg_trades;
 #[path = "../../../binance_futures_um/repair.rs"]
@@ -22,6 +21,8 @@ mod repair;
 pub mod spot_repair;
 
 pub use binance::BinanceSource;
+/// Read-only external historical raw trade source for future repair orchestration.
+pub use seealpha_clickhouse as clickhouse;
 pub use pipeline::{
     aggregate_trades, bar_features, interval_ms, parse_binance_klines, validate_bars,
 };

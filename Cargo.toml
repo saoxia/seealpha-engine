@@ -10,6 +10,7 @@ members = [
     "engine/ledger",
     "engine/strategy",
     "engine/connection/binance-options",
+    "engine/connection/clickhouse",
     "engine/backtest",
     "engine/runtime",
     "engine/gateway/api",
