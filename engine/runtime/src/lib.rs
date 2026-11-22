@@ -206,7 +206,6 @@ impl Runtime {
 
     /// Read persisted order projections owned by Runtime execution.
     pub fn stored_orders(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<state_store::StoredOrder>, RuntimeError> {
-        self.require_active(tenant)?;
         self.state_store.orders(tenant, account, env).map_err(map_ledger)
     }
 
