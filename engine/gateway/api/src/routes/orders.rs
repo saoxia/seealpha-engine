@@ -13,7 +13,7 @@ pub(super) async fn list_orders(
         .orders(&tenant_id, &account_id, &environment)
         .map_err(|error| match error {
             seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
-            seealpha_ledger::LedgerError::Sqlite(detail) => {
+            seealpha_ledger::LedgerError::Database(detail) => {
                 AppError::bad_request(format!("状态库不可用。{detail}"))
             }
         })?;
@@ -121,7 +121,7 @@ pub(super) async fn list_fills(
         .fills(&tenant_id, &account_id, &environment)
         .map_err(|error| match error {
             seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
-            seealpha_ledger::LedgerError::Sqlite(detail) => AppError::bad_request(detail),
+            seealpha_ledger::LedgerError::Database(detail) => AppError::bad_request(detail),
         })?;
     let items = fills
         .into_iter()
