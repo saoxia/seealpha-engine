@@ -130,7 +130,7 @@ impl Runtime {
         report["spot_data_source"] = json!("tenant_catalog_spot");
         report["perp_data_source"] = json!("tenant_catalog_futures_um");
         report["funding_data_source"] = json!("pipeline_catalog_settled_funding");
-        self.ledger
+        self.state_store
             .save_backtest(tenant, account, "carry", &report.to_string())
             .map_err(map_ledger)?;
         Ok(report)
@@ -272,7 +272,7 @@ impl Runtime {
         report["end_ms"] = json!(end_ms);
         report["option_multiplier_source"] = json!("explicit_input_not_exchange_verified");
         report["exercise_settlement"] = json!("not_modeled");
-        self.ledger
+        self.state_store
             .save_backtest(tenant, account, "protected_option", &report.to_string())
             .map_err(map_ledger)?;
         Ok(report)

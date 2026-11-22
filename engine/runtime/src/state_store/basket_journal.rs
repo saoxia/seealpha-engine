@@ -1,13 +1,13 @@
-//! SQLite compare-and-swap persistence for research basket journals.
+//! PostgreSQL compare-and-swap persistence for research basket journals.
 //! The caller must validate journal state with seealpha-portfolio before writing.
-use crate::{Ledger, LedgerError};
+use super::{StateStore, LedgerError};
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredBasketJournal {
     pub revision: String,
     pub body_json: String,
 }
-impl Ledger {
+impl StateStore {
     pub fn load_basket_journal(
         &self,
         tenant: &str,
@@ -112,7 +112,7 @@ mod tests {
     use super::*;
     #[test]
     fn stale_revision_is_rejected() {
-        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let db = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         let a = "a".repeat(64);
         let b = "b".repeat(64);
         db.save_basket_journal("t", "a", "basket", "{}", &a, None)

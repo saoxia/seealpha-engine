@@ -1,4 +1,4 @@
-use crate::{Ledger, LedgerError};
+use crate::{Ledger, LedgerError, now_ms};
 use seealpha_database::{OptionalExtension, params};
 
 impl Ledger {
@@ -104,51 +104,6 @@ impl Ledger {
         Ok(())
     }
 
-    /// Legacy raw fill writer is restricted to isolated paper simulation.
-    /// Exchange fills MUST use import_verified_fills() with real trade IDs.
-    pub fn upsert_fill_row(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        environment: &str,
-        fill_id: &str,
-        fill_json: &str,
-    ) -> Result<(), LedgerError> {
-        if environment != "paper" || serde_json::from_str::<serde_json::Value>(fill_json).is_err() {
-            return Err(LedgerError::Conflict(
-                "live fills require verified exchange trade evidence".into(),
-            ));
-        }
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO fills
-             (tenant_id,account_id,environment,fill_id,fill_json,updated_at)
-             VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
-                params![
-                    tenant_id,
-                    account_id,
-                    environment,
-                    fill_id,
-                    fill_json,
-                    now_ms()
-                ],
-            )
-            .map_err(|e| LedgerError::Database(e.to_string()))?;
-        let original: String = connection
-            .query_row(
-                "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2
-             AND environment=$3 AND fill_id=$4",
-                params![tenant_id, account_id, environment, fill_id],
-                |r| r.get(0),
-            )
-            .map_err(|e| LedgerError::Database(e.to_string()))?;
-        if original != fill_json {
-            return Err(LedgerError::Conflict("fill evidence is immutable".into()));
-        }
-        Ok(())
-    }
-
     pub fn fills(
         &self,
         tenant_id: &str,
@@ -189,20 +144,6 @@ impl Ledger {
             )
             .map_err(|error| LedgerError::Database(error.to_string()))?;
         Ok(())
-    }
-
-    pub fn gaps(&self, tenant_id: &str, account_id: &str) -> Result<Vec<String>, LedgerError> {
-        let connection = self.lock()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT gap_json FROM gaps WHERE tenant_id=$1 AND account_id=$2 ORDER BY gap_key",
-            )
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        let rows = statement
-            .query_map(params![tenant_id, account_id], |row| row.get(0))
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
     /// Read the persisted account connection registrations without credentials.
@@ -274,127 +215,13 @@ impl Ledger {
         Ok(())
     }
 
-    pub fn events(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-    ) -> Result<Vec<(String, String)>, LedgerError> {
-        let connection = self.lock()?;
-        let mut statement = connection
-            .prepare("SELECT kind, body_json FROM events WHERE tenant_id=$1 AND account_id=$2 ORDER BY id")
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        let rows = statement
-            .query_map(params![tenant_id, account_id], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| LedgerError::Database(error.to_string()))
-    }
 
-    pub fn save_backtest(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        kind: &str,
-        report: &str,
-    ) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO backtest_results (tenant_id, account_id, kind, report_json, updated_at)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT(tenant_id, account_id, kind) DO UPDATE SET
-                   report_json=excluded.report_json, updated_at=excluded.updated_at",
-                params![tenant_id, account_id, kind, report, now_ms()],
-            )
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        Ok(())
-    }
-
-    pub fn latest_backtest(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        kind: &str,
-    ) -> Result<Option<String>, LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .query_row(
-                "SELECT report_json FROM backtest_results WHERE tenant_id=$1 AND account_id=$2 AND kind=$3",
-                params![tenant_id, account_id, kind],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| LedgerError::Database(error.to_string()))
-    }
-
-    pub fn save_snapshot(
-        &self,
-        tenant_id: &str,
-        snapshot_id: &str,
-        sha256: &str,
-        body: &str,
-    ) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO research_snapshots (tenant_id, snapshot_id, sha256, body_json, created_at)
-                 VALUES ($1, $2, $3, $4, $5)",
-                params![tenant_id, snapshot_id, sha256, body, now_ms()],
-            )
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        Ok(())
-    }
-
-    pub fn snapshot(
-        &self,
-        tenant_id: &str,
-        snapshot_id: &str,
-    ) -> Result<Option<(String, String)>, LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .query_row(
-                "SELECT sha256, body_json FROM research_snapshots WHERE tenant_id=$1 AND snapshot_id=$2",
-                params![tenant_id, snapshot_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(|error| LedgerError::Database(error.to_string()))
-    }
-}
-
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis())
-            .unwrap_or(0),
-    )
-    .unwrap_or(0)
 }
 
 #[cfg(test)]
 mod safety_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn paper_fill_writer_rejects_live_and_conflicting_evidence() {
-        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
-        assert!(
-            db.upsert_fill_row("t", "a", "production", "not-a-trade", "{}")
-                .is_err()
-        );
-        db.upsert_fill_row("t", "a", "paper", "f", r#"{"quantity":"1"}"#)
-            .unwrap();
-        assert!(
-            db.upsert_fill_row("t", "a", "paper", "f", r#"{"quantity":"2"}"#)
-                .is_err()
-        );
-        assert_eq!(db.fills("t", "a", "paper").unwrap().len(), 1);
-    }
 
     #[test]
     fn restart_retains_unknown_intent_without_new_send_permission() {

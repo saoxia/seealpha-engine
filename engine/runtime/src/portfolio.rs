@@ -83,7 +83,7 @@ impl Runtime {
         self.require_active(tenant)?;
         let key = scope(tenant, account, instrument)?;
         let Some(row) = self
-            .ledger
+            .state_store
             .load_coordinator_state(tenant, account, instrument)
             .map_err(map_ledger)?
         else {
@@ -113,7 +113,7 @@ impl Runtime {
         let key = scope(tenant, account, instrument)?;
         let encoded = encode_coordinator(&key, coordinator)
             .map_err(|e| RuntimeError::Conflict(e.to_string()))?;
-        self.ledger
+        self.state_store
             .save_coordinator_state(
                 tenant,
                 account,

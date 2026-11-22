@@ -176,10 +176,12 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(
-            book.upsert_fill_row("t", "a", "production", "fill-B", "{}")
-                .is_err()
-        );
+        // Unsigned or fabricated fill input cannot enter the verified table.
+        assert!(book.import_verified_fills(
+            "t", "a", "production", "9",
+            &[json!({"trade_id":"fill-B","venue_order_id":"9",
+                "quantity":"1","price":"100","source":"order_ack"})],
+        ).is_err());
         assert_eq!(book.quarantine_synthetic_fills().unwrap(), 1);
         assert!(book.fills("t", "a", "production").unwrap().is_empty());
         assert_eq!(book.quarantined_fill_count("t", "a").unwrap(), 1);

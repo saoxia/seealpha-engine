@@ -1,5 +1,5 @@
 //! Transactional compare-and-swap for portfolio coordinator recovery records.
-use crate::{Ledger, LedgerError};
+use super::{StateStore, LedgerError};
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,7 +8,7 @@ pub struct StoredCoordinatorState {
     pub json: String,
 }
 
-impl Ledger {
+impl StateStore {
     pub fn load_coordinator_state(
         &self,
         tenant: &str,
@@ -109,7 +109,7 @@ mod tests {
     use super::*;
     #[test]
     fn cas_rejects_stale_update() {
-        let ledger = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        let ledger = StateStore::open(std::path::Path::new(":memory:")).unwrap();
         let a = "a".repeat(64);
         let b = "b".repeat(64);
         ledger

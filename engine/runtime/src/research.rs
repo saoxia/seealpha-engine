@@ -37,7 +37,7 @@ impl Runtime {
         let report = seealpha_backtest::run_backtest(bars, targets, starting, risk_limit)
             .map_err(|error| RuntimeError::Conflict(error.to_string()))?;
         let body = seealpha_backtest::report_json(symbol, quote, &report);
-        self.ledger
+        self.state_store
             .save_backtest(tenant_id, account_id, "history", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
@@ -50,7 +50,7 @@ impl Runtime {
     ) -> Result<serde_json::Value, RuntimeError> {
         let digest = hex_encode(Sha256::digest(body.as_bytes()));
         let snapshot_id = digest[..16].to_string();
-        self.ledger
+        self.state_store
             .save_snapshot(tenant_id, &snapshot_id, &digest, body)
             .map_err(map_ledger)?;
         Ok(json!({ "snapshot_id": snapshot_id, "sha256": digest }))
@@ -62,7 +62,7 @@ impl Runtime {
         snapshot_id: &str,
     ) -> Result<serde_json::Value, RuntimeError> {
         match self
-            .ledger
+            .state_store
             .snapshot(tenant_id, snapshot_id)
             .map_err(map_ledger)?
         {
@@ -93,7 +93,7 @@ impl Runtime {
             max_gross,
         )
         .map_err(|error| RuntimeError::Conflict(error.to_owned()))?;
-        self.ledger
+        self.state_store
             .save_backtest(tenant_id, account_id, "carry", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
@@ -116,7 +116,7 @@ impl Runtime {
             max_gross,
         )
         .map_err(|error| RuntimeError::Conflict(error.to_owned()))?;
-        self.ledger
+        self.state_store
             .save_backtest(tenant_id, account_id, "protected_option", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
@@ -134,7 +134,7 @@ impl Runtime {
         self.require_development(tenant_id)?;
         let body = seealpha_backtest::matching::run_carry(bars, spot_qty, perp_qty, cash)
             .map_err(|error| RuntimeError::Conflict(error.to_owned()))?;
-        self.ledger
+        self.state_store
             .save_backtest(tenant_id, account_id, "carry", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
@@ -158,7 +158,7 @@ impl Runtime {
         let body = seealpha_backtest::matching::run_protected_option(
             final_spot, strike, premium, multiplier, perp_qty, perp_entry, perp_exit, cash,
         );
-        self.ledger
+        self.state_store
             .save_backtest(tenant_id, account_id, "protected_option", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
@@ -176,7 +176,7 @@ impl Runtime {
             return Err(RuntimeError::Conflict("候选回测已取消。".into()));
         }
         let body = seealpha_backtest::matching::candidate_report(name, ending);
-        self.ledger
+        self.state_store
             .save_backtest(tenant_id, account_id, "candidate", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
@@ -191,7 +191,7 @@ impl Runtime {
         self.require_development(tenant_id)?;
         self.remember_cancel(tenant_id, account_id, name);
         let body = json!({"kind":"candidate","name":name,"status":"cancelled","exchange_orders":0,"venue":"backtest"});
-        self.ledger
+        self.state_store
             .save_backtest(tenant_id, account_id, "candidate", &body.to_string())
             .map_err(map_ledger)?;
         Ok(body)
@@ -205,7 +205,7 @@ impl Runtime {
         missing: &str,
     ) -> Result<serde_json::Value, RuntimeError> {
         match self
-            .ledger
+            .state_store
             .latest_backtest(tenant_id, account_id, kind)
             .map_err(map_ledger)?
         {
@@ -244,7 +244,7 @@ impl Runtime {
         account_id: &str,
     ) -> Result<serde_json::Value, RuntimeError> {
         match self
-            .ledger
+            .state_store
             .latest_backtest(tenant_id, account_id, "history")
             .map_err(map_ledger)?
         {
