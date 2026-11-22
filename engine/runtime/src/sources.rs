@@ -114,7 +114,7 @@ impl Runtime {
             .map_err(|_| bad("未配置 Nautilus Feather 管理根目录。"))?;
         let catalog = native_tenant_product_root(&catalog_base, tenant, product)?;
         let feather = native_tenant_product_root(&feather_base, tenant, product)?;
-        let current = self.ledger.policies(tenant).map_err(map_ledger)?;
+        let current = self.control.policies(tenant).map_err(crate::map_control)?;
         let manifest = manifest_bytes(&current, source)?;
         let symbols = enabled_native_symbols(&manifest, source)?;
         let key = format!("{tenant}:{product}");

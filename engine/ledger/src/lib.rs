@@ -203,6 +203,7 @@ CREATE TABLE IF NOT EXISTS gaps (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, account_id, scope, gap_key)
 );
+-- Historical Python v1 compatibility only. Active subscriptions are in Pipeline control.sqlite.
 CREATE TABLE IF NOT EXISTS subscriptions (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -289,41 +290,6 @@ CREATE TABLE IF NOT EXISTS research_snapshots (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (tenant_id, snapshot_id)
 );
-CREATE TABLE IF NOT EXISTS data_policies (
-    tenant_id TEXT NOT NULL,
-    product TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    policy_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY(tenant_id,product,symbol)
-);
-CREATE TABLE IF NOT EXISTS strategy_market_subscriptions (
-    tenant_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    issuance_id TEXT NOT NULL,
-    streams_json TEXT NOT NULL,
-    lookback_bars INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY(tenant_id,account_id,issuance_id)
-);
-CREATE TABLE IF NOT EXISTS data_jobs (
-    tenant_id TEXT NOT NULL,
-    job_id TEXT NOT NULL,
-    operation TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    status TEXT NOT NULL,
-    result_json TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY(tenant_id,job_id)
-);
-CREATE INDEX IF NOT EXISTS data_jobs_status ON data_jobs(tenant_id,status,updated_at);
-CREATE TABLE IF NOT EXISTS worker_settings (
-    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
-    max_workers INTEGER NOT NULL,
-    timeout_seconds INTEGER NOT NULL
-);
-INSERT OR IGNORE INTO worker_settings(singleton_id,max_workers,timeout_seconds) VALUES(1,1,3600);
 CREATE TABLE IF NOT EXISTS paper_sessions (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,

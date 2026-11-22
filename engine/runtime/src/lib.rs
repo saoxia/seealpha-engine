@@ -27,6 +27,7 @@ pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
 
 use seealpha_ledger::{Ledger, LedgerError, StrategyLoad, Tenant};
+use seealpha_catalog::{ControlStore, ControlError};
 use seealpha_strategy::{self, native_manifest::inspect_native_manifest};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -64,6 +65,7 @@ pub struct StrategySubmission<'a> {
 
 pub struct Runtime {
     pub ledger: Ledger,
+    pub control: ControlStore,
     pub project: PathBuf,
     pub python: PathBuf,
     pub host: PathBuf,
@@ -107,7 +109,8 @@ impl Runtime {
         }
         let ledger = Ledger::open(book).map_err(map_ledger)?;
         // Interrupted writer tasks are never blindly retried after a process crash.
-        ledger.restore_interrupted_data_jobs().map_err(map_ledger)?;
+        let control = ControlStore::open(&book.with_file_name("control.sqlite"), book).map_err(map_control)?;
+        control.restore_interrupted_data_jobs().map_err(map_control)?;
         // A previous Rust version invented empty fills for NEW order
         // acknowledgements. Preserve those rows in an audit quarantine,
         // never treat them as real exchange-executed trades.
@@ -134,6 +137,7 @@ impl Runtime {
         }
         Ok(Self {
             ledger,
+            control,
             project: config.project.clone(),
             python: config.python.clone(),
             host: config.host_script(),
@@ -466,4 +470,11 @@ pub(crate) fn write_archive(bytes: &[u8]) -> Result<PathBuf, RuntimeError> {
     std::fs::write(&path, bytes)
         .map_err(|_| RuntimeError::BadRequest("策略包无法写入。".into()))?;
     Ok(path)
+}
+
+pub fn map_control(error: ControlError) -> RuntimeError {
+    match error {
+        ControlError::Conflict(message) => RuntimeError::Conflict(message),
+        ControlError::Sqlite(detail) => RuntimeError::BadRequest(format!("控制状态库不可用。{detail}")),
+    }
 }

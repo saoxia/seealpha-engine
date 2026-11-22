@@ -66,7 +66,7 @@ pub(super) async fn worker_settings(
     Ok(Json(
         state
             .runtime
-            .ledger
+            .control
             .worker_settings()
             .map_err(|e| AppError::bad_request(e.to_string()))?,
     ))
@@ -90,7 +90,7 @@ pub(super) async fn update_worker_settings(
     Ok(Json(
         state
             .runtime
-            .ledger
+            .control
             .update_worker_settings(workers, timeout)
             .map_err(|e| AppError::bad_request(e.to_string()))?,
     ))

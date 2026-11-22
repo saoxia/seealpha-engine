@@ -1,7 +1,7 @@
 //! Native durable asynchronous backtest tasks. A task is registered before
 //! a strategy host is started; cancelled or interrupted tasks are never
 //! executed blindly. The task queue never has exchange credentials.
-use crate::{Runtime, RuntimeError, map_ledger};
+use crate::{Runtime, RuntimeError, map_control};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -89,26 +89,26 @@ impl Runtime {
             obj.entry("interval".to_string()).or_insert(json!("1m"));
         }
         let result = self
-            .ledger
-            .queue_data_job(tenant, &id, "backtest", &params)
-            .map_err(map_ledger)?;
+            .control
+            .queue_backtest_job(tenant, &id, "backtest", &params)
+            .map_err(map_control)?;
         Ok(result)
     }
 
     pub fn execute_backtest_job(&self, tenant: &str, id: &str) -> Result<Value, RuntimeError> {
         self.require_active(tenant)?;
         let stored = self
-            .ledger
-            .data_job(tenant, id)
-            .map_err(map_ledger)?
+            .control
+            .backtest_job(tenant, id)
+            .map_err(map_control)?
             .ok_or_else(|| RuntimeError::NotFound("回测任务不存在。".into()))?;
         if stored["action"] != "backtest" {
             return Err(fail("任务类型不匹配。"));
         }
         if !self
-            .ledger
-            .transition_data_job(tenant, id, "queued", "running", None)
-            .map_err(map_ledger)?
+            .control
+            .transition_backtest_job(tenant, id, "queued", "running", None)
+            .map_err(map_control)?
         {
             return Err(fail("任务已运行、取消或需要人工核验。"));
         }
@@ -117,12 +117,12 @@ impl Runtime {
             Ok(report) => ("completed", report),
             Err(error) => ("failed", json!({"detail":error.to_string()})),
         };
-        self.ledger
-            .transition_data_job(tenant, id, "running", status, Some(&result))
-            .map_err(map_ledger)?;
-        self.ledger
-            .data_job(tenant, id)
-            .map_err(map_ledger)?
+        self.control
+            .transition_backtest_job(tenant, id, "running", status, Some(&result))
+            .map_err(map_control)?;
+        self.control
+            .backtest_job(tenant, id)
+            .map_err(map_control)?
             .ok_or_else(|| fail("回测任务状态不存在。"))
     }
 
@@ -147,7 +147,7 @@ impl Runtime {
         let symbol = if let Some(symbol) = params["symbol"].as_str() {
             symbol.to_string()
         } else {
-            let policies = self.ledger.policies(tenant).map_err(map_ledger)?;
+            let policies = self.control.policies(tenant).map_err(map_control)?;
             let mut candidates = policies
                 .iter()
                 .filter(|p| p["product"] == product)
