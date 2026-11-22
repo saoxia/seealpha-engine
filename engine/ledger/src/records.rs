@@ -381,6 +381,22 @@ mod safety_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn paper_fill_writer_rejects_live_and_conflicting_evidence() {
+        let db = Ledger::open(std::path::Path::new(":memory:")).unwrap();
+        assert!(
+            db.upsert_fill_row("t", "a", "production", "not-a-trade", "{}")
+                .is_err()
+        );
+        db.upsert_fill_row("t", "a", "paper", "f", r#"{"quantity":"1"}"#)
+            .unwrap();
+        assert!(
+            db.upsert_fill_row("t", "a", "paper", "f", r#"{"quantity":"2"}"#)
+                .is_err()
+        );
+        assert_eq!(db.fills("t", "a", "paper").unwrap().len(), 1);
+    }
+
+    #[test]
     fn restart_retains_unknown_intent_without_new_send_permission() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
