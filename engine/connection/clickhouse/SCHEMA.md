@@ -67,7 +67,7 @@ DDL 没有指定数据库名；实际数据库由 `SEEALPHA_CLICKHOUSE_DATABASE`
 ## 和 SeeAlpha 历史修复的关系
 
 1. 当前 Binance USD-M 主流程仍然是分层 K 线检查、官方 `futures/um/daily/aggTrades` ZIP 下载、校验、Nautilus Catalog 导入。
-2. **只有官方 ZIP 获取失败**时，USD-M 修复任务才会尝试 ClickHouse 备用查询；当前仅查询第一个异常分钟（至多 10,000 行），不自动导入，也不宣称完成补齐。
+2. **只有官方 ZIP 获取失败**时，USD-M 修复任务才会尝试 ClickHouse 备用查询；当前仅查询第一个异常分钟（至多 10,000 行），不自动导入，也不宣称完成补齐。ClickHouse 是可选依赖：未设置连接 URL、配置无效、网络不可达、查询报错、交易对不受支持或结果为空，均跳过备用查询并保留原来的 ZIP 失败原因。启动服务不需要 ClickHouse 在线。
 3. `binance_trade` 当前按 **USD-M 原始逐笔成交**理解；它与 ZIP 的 `aggTrades` 聚合成交格式不同。即使 `trade_id` 看起来类似，也不可直接交由 `aggTrades` 导入器写入同一个 Catalog。
 4. 当前不对 Spot 启用 ClickHouse 回退。未来如要使用这张表作为自动补齐来源，需要另行核实采集口径、原始 ID、覆盖度、去重及 Nautilus Instrument 的价格/数量精度，并建立明确的数据契约。
 5. 此连接器只读；不负责创建/迁移表，不在查询时隐式启动采集器，也不改变交易安全门禁。
