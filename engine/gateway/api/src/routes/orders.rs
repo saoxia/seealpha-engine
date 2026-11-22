@@ -135,7 +135,6 @@ pub(super) async fn list_gaps(
         .map_err(AppError::from)?;
     let gaps = state
         .runtime
-        .ledger
         .gaps_for_scope(
             &tenant_id,
             &account_id,
@@ -155,12 +154,10 @@ pub(super) async fn put_gap(
     let gap = body.get("gap").cloned().unwrap_or(json!({}));
     state
         .runtime
-        .ledger
         .put_gap(&tenant_id, &account_id, scope, gap_key, &gap.to_string())
         .map_err(|error| AppError::bad_request(error.to_string()))?;
     state
         .runtime
-        .ledger
         .add_event(&tenant_id, &account_id, "gap", &gap.to_string())
         .ok();
     Ok(Json(gap))
@@ -186,7 +183,6 @@ pub(super) async fn list_events(
     Ok(Json(
         state
             .runtime
-            .ledger
             .event_page(&tenant_id, &account_id, after, limit)
             .map_err(|error| AppError::bad_request(error.to_string()))?,
     ))
