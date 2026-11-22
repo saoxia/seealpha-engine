@@ -16,3 +16,5 @@
 模拟订单由 `state_store/paper.rs` 事务写入数据库 `orders`、`fills`；Gateway 订单列表按租户、账户和环境直接查询数据库，已移除 Runtime 的 `StoredOrder`/`stored_orders` 与旧请求历史读取兼容接口。`order_requests` 表仍由订单意图预登记使用，不能随旧查询接口删除。
 
 对账调度精简：删除未接入实际 Worker 的 `state_store/order_reconciliation_tasks.rs`（入队、任务租约、重试状态机）。待恢复订单仍通过 `order_intents.rs` 中的 `order_recovery_page()` 按租户分页直接查询 PostgreSQL；保持订单意图预登记、未知结果禁止重复发送、真实成交必须认证等安全约束。现有 `order_reconciliation_tasks` 数据表暂不删除，以避免破坏性迁移。
+
+历史证据回测精简：移除 Runtime 中的 `evidence.rs`（现货/永续资金费证据与期权保护历史回测），相关按日期提交的 Carry / Protected 请求现在明确拒绝，不以模拟数据替代；普通历史策略回测和模拟窗口仍保留。底层 `seealpha-backtest::evidence` 暂不在本次清理范围。
