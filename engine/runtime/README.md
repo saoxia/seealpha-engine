@@ -20,3 +20,5 @@
 历史证据回测精简：移除 Runtime 中的 `evidence.rs`（现货/永续资金费证据与期权保护历史回测），相关按日期提交的 Carry / Protected 请求现在明确拒绝，不以模拟数据替代；普通历史策略回测和模拟窗口仍保留。底层 `seealpha-backtest::evidence` 暂不在本次清理范围。
 
 历史策略回放精简：删除 `src/history.rs` 中仅服务旧接口的 Catalog→已下发策略→自定义回测编排；指定日期而未提供 `bars` 的回测请求现在明确拒绝，不自动编造输入。保留显式传入 `bars`/`targets` 的回测及 Catalog、Strategy、Backtest 领域能力。历史结果表不作迁移。
+
+进一步精简：删除旧模拟研究封装 `runtime/src/research.rs`、`state_store/research.rs` 及对应 Legacy Backtest HTTP 路由，底层 Backtest 算法和数据库历史表不删除。修复 `strategy-preview`：只读读取 Paper 持仓并调用同一策略计算，不登记会话、不修改持仓、不写订单/成交。正式 `paper/sessions` 保留事务、幂等和订单/成交持久化，独立写入真实的模拟成交 JSON（与订单 JSON 分开）。
