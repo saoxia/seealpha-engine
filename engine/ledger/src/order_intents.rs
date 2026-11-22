@@ -1,7 +1,7 @@
 //! Durable pre-send intent gate and append-only authoritative order observations.
 //! This module cannot send an order. A repeated/unknown intent is NEVER a send permit.
 use crate::{Ledger, LedgerError, now_ms};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use seealpha_database::{OptionalExtension, TransactionBehavior, params};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 
@@ -14,8 +14,8 @@ pub enum IntentStart {
     ReconcileOnly,
 }
 
-fn sql(error: rusqlite::Error) -> LedgerError {
-    LedgerError::Sqlite(error.to_string())
+fn sql(error: seealpha_database::Error) -> LedgerError {
+    LedgerError::Database(error.to_string())
 }
 fn conflict(message: &str) -> LedgerError {
     LedgerError::Conflict(message.into())
@@ -117,7 +117,7 @@ impl Ledger {
         let raw: Option<(String, String, String)> = conn
             .query_row(
                 "SELECT environment,client_order_id,intent_json FROM order_intents
-             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+             WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
                 params![tenant, account, request],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -163,9 +163,9 @@ impl Ledger {
                        AND oo.client_order_id=oi.client_order_id
                      ORDER BY oo.observed_at_ns DESC,oo.observation_id DESC LIMIT 1)
              FROM order_intents oi
-             WHERE oi.tenant_id=?1
+             WHERE oi.tenant_id=$1
              ORDER BY oi.created_at,oi.account_id,oi.request_id
-             LIMIT ?2 OFFSET ?3",
+             LIMIT $2 OFFSET $3",
             )
             .map_err(sql)?;
         let rows = statement
@@ -272,7 +272,7 @@ impl Ledger {
             .map_err(sql)?;
         let tenant_active: bool = tx
             .query_row(
-                "SELECT status FROM tenants WHERE tenant_id=?1",
+                "SELECT status FROM tenants WHERE tenant_id=$1",
                 params![tenant],
                 |row| row.get::<_, String>(0),
             )
@@ -287,7 +287,7 @@ impl Ledger {
         let previous: Option<(String, String, String, String)> = tx
             .query_row(
                 "SELECT environment,client_order_id,fingerprint,intent_json FROM order_intents
-             WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+             WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
                 params![tenant, account, request_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
@@ -311,7 +311,7 @@ impl Ledger {
             let mut stmt = tx
                 .prepare(
                     "SELECT intent_json FROM order_intents
-                 WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND client_order_id=?4",
+                 WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 AND client_order_id=$4",
                 )
                 .map_err(sql)?;
             let rows = stmt
@@ -333,7 +333,7 @@ impl Ledger {
         // A historical Python request with the same identity cannot be
         // replaced or retroactively certified as a pre-send registration.
         let occupied: bool = tx.query_row(
-            "SELECT 1 FROM order_requests WHERE tenant_id=?1 AND account_id=?2 AND request_id=?3",
+            "SELECT 1 FROM order_requests WHERE tenant_id=$1 AND account_id=$2 AND request_id=$3",
             params![tenant, account, request_id], |_| Ok(()),
         ).optional().map_err(sql)?.is_some();
         if occupied {
@@ -344,7 +344,7 @@ impl Ledger {
         tx.execute(
             "INSERT INTO order_intents
              (tenant_id,account_id,request_id,environment,client_order_id,fingerprint,intent_json,created_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
             params![tenant,account,request_id,environment,client_order_id,fingerprint,body,now_ms()],
         ).map_err(sql)?;
         let compatible = json!({
@@ -353,7 +353,7 @@ impl Ledger {
         });
         tx.execute(
             "INSERT INTO order_requests(tenant_id,account_id,request_id,body_json,updated_at)
-             VALUES(?1,?2,?3,?4,?5)",
+             VALUES($1,$2,$3,$4,$5)",
             params![
                 tenant,
                 account,
@@ -422,8 +422,8 @@ impl Ledger {
         let intended_quantity: Option<Decimal> = {
             let mut stmt = tx
                 .prepare(
-                    "SELECT intent_json FROM order_intents WHERE tenant_id=?1 AND account_id=?2
-                 AND environment=?3 AND client_order_id=?4",
+                    "SELECT intent_json FROM order_intents WHERE tenant_id=$1 AND account_id=$2
+                 AND environment=$3 AND client_order_id=$4",
                 )
                 .map_err(sql)?;
             let rows = stmt
@@ -455,8 +455,8 @@ impl Ledger {
             .ok_or_else(|| conflict("authoritative order observation has no prior NEW intent"))?;
         let prior: Option<String> = tx
             .query_row(
-                "SELECT evidence_json FROM order_observations WHERE tenant_id=?1 AND account_id=?2
-             AND environment=?3 AND client_order_id=?4 AND observation_id=?5",
+                "SELECT evidence_json FROM order_observations WHERE tenant_id=$1 AND account_id=$2
+             AND environment=$3 AND client_order_id=$4 AND observation_id=$5",
                 params![
                     tenant,
                     account,
@@ -477,7 +477,7 @@ impl Ledger {
         let latest: Option<(String, i64, String)> = tx
             .query_row(
                 "SELECT status,observed_at_ns,evidence_json FROM order_observations
-             WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND client_order_id=?4
+             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 AND client_order_id=$4
              ORDER BY observed_at_ns DESC,observation_id DESC LIMIT 1",
                 params![tenant, account, environment, client_order_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -550,8 +550,8 @@ impl Ledger {
                 }
                 let raw: Option<String> = tx
                     .query_row(
-                        "SELECT fill_json FROM fills WHERE tenant_id=?1 AND account_id=?2
-                     AND environment=?3 AND fill_id=?4",
+                        "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2
+                     AND environment=$3 AND fill_id=$4",
                         params![tenant, account, environment, id],
                         |row| row.get(0),
                     )
@@ -591,7 +591,7 @@ impl Ledger {
         tx.execute(
             "INSERT INTO order_observations
              (tenant_id,account_id,environment,client_order_id,observation_id,observed_at_ns,status,evidence_json)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
             params![tenant,account,environment,client_order_id,observation_id,observed_at,status,body],
         ).map_err(sql)?;
         tx.commit().map_err(sql)
@@ -608,7 +608,7 @@ impl Ledger {
         let body: Option<String> = conn
             .query_row(
                 "SELECT evidence_json FROM order_observations
-             WHERE tenant_id=?1 AND account_id=?2 AND environment=?3 AND client_order_id=?4
+             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 AND client_order_id=$4
              ORDER BY observed_at_ns DESC,observation_id DESC LIMIT 1",
                 params![tenant, account, environment, client_id],
                 |r| r.get(0),
