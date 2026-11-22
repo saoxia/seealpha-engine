@@ -20,13 +20,16 @@ use nautilus_binance::{
 use nautilus_common::{
     actor::{DataActor, DataActorConfig, DataActorCore},
     enums::Environment,
+    msgbus::{self, switchboard::get_bars_topic},
     nautilus_actor,
 };
 use nautilus_live::node::LiveNode;
 use nautilus_model::{
-    data::{NautilusDataType, TradeTick},
+    data::{Bar, BarType, NautilusDataType, TradeTick},
     identifiers::{ActorId, ClientId, InstrumentId, TraderId},
+    types::{Price, Quantity},
 };
+use nautilus_core::UnixNanos;
 use nautilus_persistence::config::{DataCatalogConfig, RotationConfig, StreamingConfig};
 
 // One shared Tick aggregation engine is compiled by both the Engine and the native node.
@@ -84,6 +87,64 @@ fn instrument_ids(product: Product, symbols: &str) -> Result<Vec<InstrumentId>> 
         ids.push(id);
     }
     Ok(ids)
+}
+
+/// Convert the Tick-derived snapshot into a native Nautilus Bar so subscribers
+/// receive an update on every valid Tick, including while its interval is open.
+/// For open bars ts_event is the observed Tick time, never a future close time.
+fn native_bar(
+    instrument: InstrumentId,
+    snapshot: &tick_bars::TickBar,
+    tick: &TradeTick,
+) -> Result<Bar> {
+    let period = match snapshot.interval.as_str() {
+        "1s" => "1-SECOND",
+        "1m" => "1-MINUTE",
+        "3m" => "3-MINUTE",
+        "5m" => "5-MINUTE",
+        "15m" => "15-MINUTE",
+        "30m" => "30-MINUTE",
+        "1h" => "1-HOUR",
+        "2h" => "2-HOUR",
+        "4h" => "4-HOUR",
+        "6h" => "6-HOUR",
+        "8h" => "8-HOUR",
+        "12h" => "12-HOUR",
+        "1d" => "1-DAY",
+        "3d" => "3-DAY",
+        "1w" => "1-WEEK",
+        "1M" => "1-MONTH",
+        _ => bail!("unsupported Tick-derived Bar interval: {}", snapshot.interval),
+    };
+    let identity = format!("{instrument}-{period}-LAST-INTERNAL");
+    let bar_type = BarType::from(identity.as_str());
+    let price = |value: rust_decimal::Decimal| -> Result<Price> {
+        format!("{:.*}", tick.price.precision as usize, value)
+            .parse::<Price>().map_err(anyhow::Error::msg)
+    };
+    let volume = format!(
+        "{:.*}", tick.size.precision as usize, snapshot.volume
+    ).parse::<Quantity>().map_err(anyhow::Error::msg)?;
+    let time = if snapshot.closed {
+        // Final events use the actual prior period boundary, never time
+        // from the triggering tick in the following period.
+        u64::try_from(snapshot.close_time_ms)?
+            .checked_add(1).and_then(|v|v.checked_mul(1_000_000))
+            .and_then(|v|v.checked_sub(1))
+            .ok_or_else(||anyhow::anyhow!("Bar close timestamp overflow"))?
+    } else {
+        tick.ts_event.as_u64()
+    };
+    Ok(Bar {
+        bar_type,
+        open: price(snapshot.open)?,
+        high: price(snapshot.high)?,
+        low: price(snapshot.low)?,
+        close: price(snapshot.close)?,
+        volume,
+        ts_event: UnixNanos::new(time),
+        ts_init: tick.ts_init,
+    })
 }
 
 struct TradeSubscriber {
@@ -149,10 +210,16 @@ impl DataActor for TradeSubscriber {
         };
         let bars=self.bars.entry(tick.instrument_id).or_default();
         let updates=bars.on_tick(&sample).map_err(anyhow::Error::msg)?;
-        // Unfinished snapshots exist immediately for consumers of this
-        // actor's shared bar engine. Persisting them to a queryable hot store
-        // is a separate concern from immutable native TradeTick Parquet.
-        if updates.is_empty(){return Ok(())}
+        if updates.is_empty() { return Ok(()); }
+        // Deliver every revision on Nautilus' native typed Bar topic.
+        // Subscribers get the current, still-open OHLCV immediately instead
+        // of waiting for the next minute/day close. The LiveNode persists
+        // raw TradeTicks only; partial Bar events must not be mistaken for
+        // immutable historical coverage.
+        for update in &updates {
+            let bar = native_bar(tick.instrument_id, update, tick)?;
+            msgbus::publish_bar(get_bars_topic(bar.bar_type), &bar);
+        }
         self.observed += 1;
         if self.observed.is_multiple_of(10_000) {
             log::info!("Nautilus trades observed: {}", self.observed);
@@ -294,6 +361,54 @@ mod tests {
                 .expect("rc9 factory must build native client without connecting");
             assert_eq!(client.oms_type(), expected_oms);
         }
+    }
+
+    fn stub_tick_for_intrabar_tests() -> TradeTick {
+        use nautilus_model::{enums::AggressorSide, identifiers::TradeId};
+        TradeTick::new(
+            InstrumentId::from("ETHUSDT.BINANCE"),
+            "100.00".parse().unwrap(),
+            "1.000".parse().unwrap(),
+            AggressorSide::Buy,
+            TradeId::from("1"),
+            UnixNanos::new(1_000_000_000),
+            UnixNanos::new(1_000_000_100),
+        )
+    }
+
+    #[test]
+    fn each_binance_interval_produces_native_unclosed_bar() {
+        let tick=stub_tick_for_intrabar_tests();
+        for &interval in tick_bars::INTERVALS {
+            let snapshot=tick_bars::TickBar {
+                interval:interval.into(),
+                open_time_ms:0,close_time_ms:999,
+                open:"100".parse().unwrap(),
+                high:"105".parse().unwrap(),
+                low:"99".parse().unwrap(),
+                close:"102".parse().unwrap(),
+                volume:"3".parse().unwrap(),
+                closed:false,
+            };
+            let bar=native_bar(tick.instrument_id,&snapshot,&tick).unwrap();
+            assert_eq!(bar.ts_event,tick.ts_event, "{interval} must not pretend to be closed");
+            assert_eq!(bar.open.to_string().parse::<rust_decimal::Decimal>().unwrap(),snapshot.open);
+            assert_eq!(bar.close.to_string().parse::<rust_decimal::Decimal>().unwrap(),snapshot.close);
+            assert!(bar.bar_type.to_string().ends_with("-LAST-INTERNAL"));
+        }
+    }
+
+    #[test]
+    fn closing_bar_uses_period_end_not_future_tick_time() {
+        let tick=stub_tick_for_intrabar_tests();
+        let snapshot=tick_bars::TickBar {
+            interval:"1s".into(),open_time_ms:1_000,close_time_ms:1_999,
+            open:"100".parse().unwrap(),high:"101".parse().unwrap(),
+            low:"99".parse().unwrap(),close:"100".parse().unwrap(),
+            volume:"3".parse().unwrap(),closed:true,
+        };
+        let bar=native_bar(tick.instrument_id,&snapshot,&tick).unwrap();
+        assert_eq!(bar.ts_event.as_u64(),2_000_000_000-1);
     }
 
     #[test]
