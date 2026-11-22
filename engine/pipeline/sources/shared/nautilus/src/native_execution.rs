@@ -144,6 +144,76 @@ pub fn resolve_native_target(
     })
 }
 
+
+/// Minimal order identity projection from a Nautilus native event.
+///
+/// Keep Nautilus OrderFilled as the execution model and event-store record.
+/// This view is only for SeeAlpha's virtual-order association and audits.
+/// It is NOT a certified exchange trade, a fill-ledger posting, or a
+/// replacement for Nautilus OrderCore/ExecutionEngine state.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NativeFillLink {
+    pub account_id: String,
+    pub instrument_id: String,
+    pub client_order_id: String,
+    pub venue_order_id: String,
+    pub trade_id: String,
+    pub event_id: String,
+    pub event_ts_ns: u64,
+    pub last_quantity: String,
+    pub last_price: String,
+    pub position_id: Option<String>,
+    pub reconciliation: bool,
+}
+
+/// Use Nautilus' typed fill and exact decimal display representations.
+/// The downstream account-scoped consumer must establish trusted provenance
+/// and handle repeated trade IDs / restatements before allocating economics.
+pub fn link_native_fill(
+    event: &nautilus_model::events::order::filled::OrderFilled,
+) -> NativeFillLink {
+    NativeFillLink {
+        account_id: event.account_id.to_string(),
+        instrument_id: event.instrument_id.to_string(),
+        client_order_id: event.client_order_id.to_string(),
+        venue_order_id: event.venue_order_id.to_string(),
+        trade_id: event.trade_id.to_string(),
+        event_id: event.event_id.to_string(),
+        event_ts_ns: event.ts_event.as_u64(),
+        last_quantity: event.last_qty.to_string(),
+        last_price: event.last_px.to_string(),
+        position_id: event.position_id.map(|id| id.to_string()),
+        reconciliation: event.reconciliation,
+    }
+}
+
+/// An accepted order is NOT a fill. Preserve native identities for linking,
+/// but never infer executed quantity or strategy accounting from an ACK.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NativeAcceptLink {
+    pub account_id: String,
+    pub instrument_id: String,
+    pub client_order_id: String,
+    pub venue_order_id: String,
+    pub event_id: String,
+    pub event_ts_ns: u64,
+    pub reconciliation: bool,
+}
+
+pub fn link_native_accept(
+    event: &nautilus_model::events::order::accepted::OrderAccepted,
+) -> NativeAcceptLink {
+    NativeAcceptLink {
+        account_id: event.account_id.to_string(),
+        instrument_id: event.instrument_id.to_string(),
+        client_order_id: event.client_order_id.to_string(),
+        venue_order_id: event.venue_order_id.to_string(),
+        event_id: event.event_id.to_string(),
+        event_ts_ns: event.ts_event.as_u64(),
+        reconciliation: event.reconciliation,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
