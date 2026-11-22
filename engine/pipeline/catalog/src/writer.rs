@@ -307,7 +307,7 @@ mod tests {
         );
     }
     #[test]
-    fn on_disk_parquet_roundtrip_is_append_only_and_does_not_leak_across_products() {
+    fn on_disk_parquet_roundtrip_supports_upsert_and_product_isolation() {
         let path = std::env::temp_dir().join(format!(
             "sa-catalog-{}-{}",
             std::process::id(),
@@ -351,8 +351,7 @@ mod tests {
                 end_ms: 180_000
             }]
         );
-        // A verified identical retry is safe after a crash between a
-        // Parquet hard-link and the publication watermark transaction.
+        // Exact repeated publication must be safe and idempotent.
         assert!(
             catalog
                 .append_bars("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", &bars, 2, 3)
@@ -382,6 +381,23 @@ mod tests {
             ).unwrap(),
             vec![bars[0].clone(),revised],
         );
+        // The first partial snapshot of the next minute creates a new
+        // Parquet file; later Tick revisions must replace only that minute.
+        let mut next = bar(120_000);
+        catalog.append_bars(
+            "ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m",
+            &[next.clone()], 2, 3,
+        ).unwrap();
+        next.close=Decimal::from(108);
+        next.volume=Decimal::from(3);
+        catalog.append_bars(
+            "ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m",
+            &[next.clone()], 2, 3,
+        ).unwrap();
+        assert_eq!(catalog.read_contiguous_bars(
+            "ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL","1m",
+            0,180_000,100,
+        ).unwrap(),vec![bars[0].clone(),revised,next]);
         assert!(
             catalog
                 .read_bars(
