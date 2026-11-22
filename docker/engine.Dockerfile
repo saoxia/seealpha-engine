@@ -1,6 +1,8 @@
 # Build from the repository root:
 #   docker build -f docker/engine.Dockerfile -t seealpha-engine:dev .
 FROM rust:1.100-slim-bookworm AS build
+RUN apt-get update && apt-get install -y --no-install-recommends binutils \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY docker/seealpha-postgres-schema.sql ./docker/seealpha-postgres-schema.sql
@@ -12,8 +14,23 @@ RUN cargo build --locked --release -p seealpha-engine -p seealpha-binance-market
 RUN cargo build --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml \
     --release --bin native_account_observer
 
+# Separate debug information from runtime executables; preserve GNU debuglinks.
+RUN mkdir -p /src/debug-symbols && \
+    for bin in /src/target/release/seealpha-engine \
+               /src/target/release/binance-trade-archive-fetch \
+               /src/engine/pipeline/sources/shared/nautilus/target/release/native_account_observer; do \
+        name="$(basename "$bin")"; \
+        objcopy --only-keep-debug "$bin" "/src/debug-symbols/$name.debug" && \
+        strip --strip-all "$bin" && \
+        objcopy --add-gnu-debuglink="/src/debug-symbols/$name.debug" "$bin"; \
+    done
+
+# Export independently; not present in the default runtime image.
+FROM scratch AS debug-symbols
+COPY --from=build /src/debug-symbols/ /symbols/
+
 # Default deployment: a Rust runtime without Python interpreter, host, or strategy packages.
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime
 RUN mkdir -p /etc/postgresql-common \
     && printf 'create_main_cluster = false\\n' > /etc/postgresql-common/createcluster.conf \
     && apt-get update \
