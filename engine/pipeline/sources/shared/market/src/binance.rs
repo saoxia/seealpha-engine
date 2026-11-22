@@ -135,7 +135,7 @@ impl PublicSource for BinanceSource {
         };
         let trade_url = match query.product {
             Product::Spot => "https://data-api.binance.vision/api/v3/trades",
-            Product::FuturesUm => "https://fapi.binance.com/fapi/v1/trades",
+            Product::FuturesUm => crate::futures_agg_trades::AGG_TRADES_URL,
         };
         let depth_url = match query.product {
             Product::Spot => "https://data-api.binance.vision/api/v3/depth",
@@ -168,7 +168,12 @@ impl PublicSource for BinanceSource {
             symbol,
             interval,
             klines: parse_binance_klines(&klines_json, step)?,
-            trades: parse_trades(&trades_json)?,
+            trades: match query.product {
+                Product::Spot => parse_trades(&trades_json)?,
+                Product::FuturesUm => {
+                    crate::futures_agg_trades::parse_recent_agg_trades(&trades_json)?
+                }
+            },
             depth: parse_depth(&depth_json)?,
         })
     }

@@ -4,6 +4,8 @@
 //! closed klines, aggregates trades into OHLCV bars, and computes decimal
 //! features. Neither path starts a collector as a side effect of a read.
 mod binance;
+#[path = "../../../binance_futures/agg_trades.rs"]
+mod futures_agg_trades;
 pub mod clock;
 #[path = "../../../binance_option/exercise.rs"]
 pub mod exercise;
@@ -90,6 +92,9 @@ pub struct Bar {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Product-scoped trade observation: Spot raw trade ID; USD-M aggregate trade ID.
+/// Never merge these different identity domains, or infer full coverage from
+/// the bounded REST snapshot.
 pub struct PublicTrade {
     pub id: i64,
     pub timestamp_ms: i64,
