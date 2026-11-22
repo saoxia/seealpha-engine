@@ -17,7 +17,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 
 2026-11-22 起不再编译 `accounts/account_snapshots.rs`，也不再为新数据库建立 `account_snapshots` 表。原生账户模块位于 `engine/pipeline/sources/shared/nautilus/`。删除了无生产调用方的 Ledger 快照 Basket 对账、旧版本 CAS 预登记实验接口，保留通用 Basket Checkpoint 和通用不可变订单意图记录。
 
-**这不是生产 Runtime 的原生账户接线验收。** 当前独立 Nautilus Observer 为测试网只读；Runtime 尚未消费可信原生 Account/Position 数据，故需要实时账户证据的 HTTP 操作继续拒绝，不能凭旧 SQLite 快照放行订单。不得将用户提交的 JSON、`is_reported` 或原生缓存存在视为交易所认证的持仓完整性证明。
+**当前只完成测试网只读 Runtime 接线**：独立 Nautilus Observer 可通过私有 Unix Socket 提供已筛选的 AccountState 余额/保证金观察，Runtime 校验账户范围、环境和 60 秒时效。它不是交易所完整认证流水或 Position Cache；生产账户请求与测试网实时持仓查询仍 fail-closed，不能凭旧 SQLite 快照放行订单。不得将用户提交的 JSON、`is_reported` 或原生缓存存在视为交易所认证的持仓完整性证明。
 
 升级已有数据库不会自动删除历史 `account_snapshots` 表及数据；待明确历史保留和备份策略后由独立迁移处理。
 
