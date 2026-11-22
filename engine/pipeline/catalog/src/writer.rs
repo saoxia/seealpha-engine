@@ -1,10 +1,9 @@
-//! Atomic, append-only Nautilus v2 Bar Parquet publisher.
-//! The Python Pipeline owns historical repair decisions; this writer never
-//! edits an existing Parquet object or imports uncertified partial sessions.
+//! Transaction-locked Bar Parquet publisher supporting updates to existing Bars.
+//! Parquet objects are rewritten atomically; the Bar identity is not immutable.
 use crate::{
     Catalog, CatalogError,
     model::{CatalogBar, parse_bar_type},
-    reader::{RecordKind, candidate_files, inspect_existing_directory},
+    reader::{RecordKind, candidate_files, filename_bounds, inspect_existing_directory},
 };
 use arrow_array::builder::TimestampNanosecondBuilder;
 use arrow_array::{ArrayRef, Decimal128Array, RecordBatch};
@@ -14,7 +13,7 @@ use fs2::FileExt;
 use parquet::{arrow::ArrowWriter, basic::Compression, file::properties::WriterProperties};
 use rust_decimal::Decimal;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     sync::Arc,
@@ -99,9 +98,9 @@ fn schema(
     ))
 }
 impl Catalog {
-    /// Publish one already validated, contiguous Bar batch. A concurrent
-    /// writer must use the same product lock. A filename collision or
-    /// overlapping existing file aborts without changing the old catalog.
+    /// Insert or update a validated Bar batch. If a timestamp already exists,
+    /// the incoming Bar replaces it and untouched rows remain intact.
+    /// The writer lock serializes other writers and guarded Catalog readers.
     pub fn append_bars(
         &self,
         bar_identity: &str,
@@ -164,50 +163,67 @@ impl Catalog {
         let last = *events
             .last()
             .ok_or_else(|| CatalogError::Invalid("缺少历史数据。".into()))?;
-        // Include all files that overlap even one millisecond of the new batch.
         let overlapping = candidate_files(&self.root, &dir_rel, first, last.saturating_add(1))?;
-        if !overlapping.is_empty() {
-            // The publisher may crash after the atomic link but before its
-            // SQLite publication watermark commits. An *exact* immutable
-            // recheck is a safe idempotent retry, not a new Parquet overwrite.
-            if overlapping.len() == 1 {
-                let existing_file = File::open(&overlapping[0])?;
-                let reader =
-                    parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
-                        existing_file,
-                    )
-                    .map_err(|e| CatalogError::Parquet(e.to_string()))?;
-                let metadata = reader.schema().metadata();
-                if metadata.get("price_precision").map(String::as_str)
-                    == Some(price_precision.to_string().as_str())
-                    && metadata.get("size_precision").map(String::as_str)
-                        == Some(size_precision.to_string().as_str())
+        let (published, replaced) = if overlapping.is_empty() {
+            (bars.to_vec(), Vec::<PathBuf>::new())
+        } else {
+            // We cannot mutate Parquet rows in place. Read every original
+            // affected file, merge by UTC bucket, then publish a replacement.
+            // Readers use a shared lock so they never observe duplicate rows
+            // during the replacement transaction.
+            let mut first_old = first;
+            let mut last_old = last;
+            for path in &overlapping {
+                let name = path.file_name().and_then(|n| n.to_str())
+                    .ok_or_else(|| CatalogError::Invalid("invalid Parquet name".into()))?;
+                let (a, b) = filename_bounds(name)?;
+                first_old = first_old.min(a);
+                last_old = last_old.max(b);
+                let metadata = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+                    File::open(path)?
+                ).map_err(|e| CatalogError::Parquet(e.to_string()))?;
+                let meta = metadata.schema().metadata();
+                if meta.get("price_precision").map(String::as_str) != Some(price_precision.to_string().as_str())
+                    || meta.get("size_precision").map(String::as_str) != Some(size_precision.to_string().as_str())
                 {
-                    let expected_end = crate::model::bar_window(
-                        interval,
-                        bars.last()
-                            .ok_or_else(|| CatalogError::Invalid("空批次。".into()))?
-                            .open_time_ms,
-                    )?
-                    .1;
-                    let previous = self.read_contiguous_bars(
-                        bar_identity,
-                        interval,
-                        bars[0].open_time_ms,
-                        expected_end,
-                        bars.len(),
-                    );
-                    if previous.as_ref().is_ok_and(|rows| rows.as_slice() == bars) {
-                        return Ok(overlapping[0].clone());
-                    }
+                    return Err(CatalogError::Conflict(
+                        "existing Bar precision differs from requested Instrument precision".into(),
+                    ));
                 }
             }
-            return Err(CatalogError::Conflict(
-                "已有 Parquet 文件与新历史时间范围重叠或数据/精度不一致；拒绝覆盖。".into(),
-            ));
+            let existing = self.read_bars_unlocked(
+                bar_identity, interval, first_old, last_old.saturating_add(1), MAX_WRITE
+            )?;
+            let mut merged = BTreeMap::new();
+            for bar in existing {
+                merged.insert(bar.open_time_ms, bar);
+            }
+            for bar in bars {
+                merged.insert(bar.open_time_ms, bar.clone());
+            }
+            if merged.len() > MAX_WRITE {
+                return Err(CatalogError::Limit("merged Bar batch exceeds writer bound".into()));
+            }
+            (merged.into_values().collect::<Vec<_>>(), overlapping)
+        };
+        // Preserve all adjacent old rows; do not replace a historical range
+        // with only the current Tick's partial Bar.
+        let mut expected = published[0].open_time_ms;
+        let mut published_events = Vec::with_capacity(published.len());
+        for bar in &published {
+            bar.validate(interval)?;
+            if bar.open_time_ms != expected {
+                return Err(CatalogError::Conflict(
+                    "overlapping file merge contains a gap; publish smaller intervals".into(),
+                ));
+            }
+            published_events.push(bar.event_ns(interval)?);
+            expected = crate::bar_window(interval,expected)?.1;
         }
-        let name = file_name(first, last)?;
-        let destination = directory.join(&name);
+        let destination = directory.join(file_name(
+            *published_events.first().ok_or_else(|| CatalogError::Invalid("no Bar rows".into()))?,
+            *published_events.last().ok_or_else(|| CatalogError::Invalid("no Bar rows".into()))?,
+        )?);
         let staging = safe_mkdir(&self.root, Path::new(".staging"))?;
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -217,7 +233,7 @@ impl Catalog {
         let write = (|| -> Result<(), CatalogError> {
             let mut columns = Vec::with_capacity(7);
             for column in 0..5 {
-                let data = bars
+                let data = published
                     .iter()
                     .map(|bar| {
                         decimal(match column {
@@ -232,10 +248,10 @@ impl Catalog {
                 columns.push(array(data)?);
             }
             let mut events_builder =
-                TimestampNanosecondBuilder::with_capacity(events.len()).with_timezone("UTC");
+                TimestampNanosecondBuilder::with_capacity(published_events.len()).with_timezone("UTC");
             let mut init_builder =
-                TimestampNanosecondBuilder::with_capacity(events.len()).with_timezone("UTC");
-            for stamp in &events {
+                TimestampNanosecondBuilder::with_capacity(published_events.len()).with_timezone("UTC");
+            for stamp in &published_events {
                 events_builder.append_value(*stamp);
                 init_builder.append_value(*stamp);
             }
@@ -260,9 +276,18 @@ impl Catalog {
                 .close()
                 .map_err(|e| CatalogError::Parquet(e.to_string()))?;
             File::open(&tmp)?.sync_all()?;
-            // Hard-link is create-if-absent: unlike rename() on Unix it
-            // NEVER replaces a historical artifact or races an old writer.
-            fs::hard_link(&tmp, &destination)?;
+            if replaced.is_empty() {
+                fs::hard_link(&tmp, &destination)?;
+            } else {
+                // Atomic replacement for an existing timestamp range.
+                // Reader shared locks prevent observation of intermediate files.
+                fs::rename(&tmp, &destination)?;
+                for path in &replaced {
+                    if *path != destination {
+                        fs::remove_file(path)?;
+                    }
+                }
+            }
             File::open(&directory)?.sync_all()?;
             Ok(())
         })();
@@ -342,12 +367,22 @@ mod tests {
                 .append_bars("ETHUSDT.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", &too_precise, 2, 3)
                 .is_err()
         );
-        let mut conflicted = bars.clone();
-        conflicted[1].close = Decimal::from(106);
-        assert!(
-            catalog
-                .append_bars("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL", "1m", &conflicted, 2, 3)
-                .is_err()
+        // Existing OHLCV is mutable. Updating one incomplete candle does
+        // not erase the adjacent historical candle from the same Parquet file.
+        let mut revised = bars[1].clone();
+        revised.close = Decimal::from(106);
+        revised.high = Decimal::from(111);
+        revised.volume = Decimal::from(2);
+        catalog.append_bars(
+            "ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL","1m",
+            &[revised.clone()],2,3,
+        ).unwrap();
+        assert_eq!(
+            catalog.read_contiguous_bars(
+                "ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL","1m",
+                0,120_000,100,
+            ).unwrap(),
+            vec![bars[0].clone(),revised],
         );
         assert!(
             catalog
