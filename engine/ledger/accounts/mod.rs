@@ -1,6 +1,14 @@
 //! Accounts — tenant-scoped registration view, not an exchange balance cache.
 //! Trading balances and positions are authoritative only in Nautilus.
-use crate::{Ledger, LedgerError, Tenant, now_ms};
+use crate::{Ledger, LedgerError, now_ms};
+
+/// Local registration metadata synchronized from Platform, not user ownership or authorization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tenant {
+    pub tenant_id: String,
+    pub purpose: String,
+    pub status: String,
+}
 use seealpha_database::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
