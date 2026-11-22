@@ -53,6 +53,13 @@ async fn main() -> Result<()> {
         _ => anyhow::bail!("only spot or futures_um testnet is supported"),
     };
     let account_id = &args[2];
+    // Validate before composing any on-disk lock or cursor filename.
+    ensure!(
+        !account_id.is_empty()
+            && account_id.len() <= 128
+            && account_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+        "invalid native account ID"
+    );
     let root = Path::new(&args[3]);
     ensure!(root.is_dir(), "state directory must exist");
     ensure!(!root.symlink_metadata()?.file_type().is_symlink(), "symlink state directory forbidden");
