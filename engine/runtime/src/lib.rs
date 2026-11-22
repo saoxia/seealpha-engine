@@ -28,7 +28,8 @@ pub use state_store::{OrderRecoveryItem, ReconciliationTask, StoredOrder};
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
 
-use seealpha_ledger::{Ledger, LedgerError, Tenant};
+use seealpha_ledger::{Ledger, LedgerError};
+pub use state_store::Tenant;
 use seealpha_strategy::store::{StrategyLoad, StrategyStore, StoreError};
 use seealpha_catalog::{ControlStore, ControlError};
 use seealpha_strategy::{self, native_manifest::inspect_native_manifest};
@@ -89,6 +90,12 @@ impl Runtime {
             ensure_state_dir(parent)
                 .map_err(|_| RuntimeError::BadRequest("状态目录不可用。".into()))?;
         }
+        // Bootstrap shared tables before either application or economic store opens.
+        let schema_connection = seealpha_database::Connection::open(book)
+            .map_err(|e| RuntimeError::BadRequest(format!("状态库不可用。{e}")))?;
+        seealpha_database::bootstrap_engine_schema(&schema_connection)
+            .map_err(|e| RuntimeError::BadRequest(format!("状态库不可用。{e}")))?;
+        drop(schema_connection);
         let ledger = Ledger::open(book).map_err(map_ledger)?;
         let state_store = state_store::StateStore::open(book).map_err(map_ledger)?;
         let strategy_store = StrategyStore::open(&book.with_file_name("strategies")).map_err(map_store)?;
@@ -103,7 +110,7 @@ impl Runtime {
         // evidence, pending orders MUST remain unresolved; no submit/retry.
         // Query at most one page per tenant on startup; the paginated API
         // below exposes the entire durable queue without loading it at boot.
-        for tenant in ledger.active_tenant_ids().map_err(map_ledger)? {
+        for tenant in state_store.active_tenant_ids().map_err(map_ledger)? {
             let page = state_store
                 .order_recovery_page(&tenant, 0, 500)
                 .map_err(map_ledger)?;
@@ -233,9 +240,28 @@ impl Runtime {
         purpose: &str,
         status: &str,
     ) -> Result<Tenant, RuntimeError> {
-        self.ledger
+        self.state_store
             .ensure_tenant(tenant_id, purpose, status)
             .map_err(map_ledger)
+    }
+
+    /// Application registration lookup; not certified exchange connectivity.
+    pub fn account_connections(
+        &self, tenant_id: &str, account_id: &str,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        self.state_store.account_connections(tenant_id, account_id).map_err(map_ledger)
+    }
+
+    /// Persist account registration metadata without credentials.
+    pub fn upsert_connection(
+        &self, tenant_id: &str, account_id: &str,
+        environment: &str, status: &str,
+    ) -> Result<(), RuntimeError> {
+        self.state_store.upsert_connection(tenant_id, account_id, environment, status).map_err(map_ledger)
+    }
+
+    pub fn active_tenant_ids(&self) -> Result<Vec<String>, RuntimeError> {
+        self.state_store.active_tenant_ids().map_err(map_ledger)
     }
 
     pub fn runnable(&self, tenant_id: &str, action: &str) -> Result<Value, RuntimeError> {
@@ -273,7 +299,7 @@ impl Runtime {
             archive,
         } = *submission;
         let tenant = self
-            .ledger
+            .state_store
             .tenant(tenant_id)
             .map_err(map_ledger)?
             .ok_or_else(|| RuntimeError::Conflict("租户不存在。".into()))?;
