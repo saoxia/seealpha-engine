@@ -93,6 +93,24 @@ impl ControlStore {
               updated_at=$4 WHERE tenant_id=$1 AND product=$2 AND symbol=$3",
               params![tenant,product,symbol,now_ms()]).map_err(db_error)?==1)
     }
+    /// Disabled configuration retains its data; no deletion without an explicit cutoff.
+    pub fn product_subscriptions(&self,product:&str)->Result<Vec<(String,PipelineSubscription)>,ControlError>{
+        if !matches!(product,"spot"|"futures_um"){
+            return Err(ControlError::Conflict("invalid product".into()));
+        }
+        let conn=self.lock()?;
+        let mut q=conn.prepare("SELECT tenant_id,product,symbol,history_start,realtime_enabled,enabled,
+          price_precision,size_precision FROM pipeline_subscriptions
+          WHERE product=$1 ORDER BY tenant_id,symbol").map_err(db_error)?;
+        q.query_map(params![product],|r|{
+            let price:Option<i32>=r.get(6)?;let size:Option<i32>=r.get(7)?;
+            Ok((r.get(0)?,PipelineSubscription{
+                product:r.get(1)?,symbol:r.get(2)?,history_start:r.get(3)?,
+                realtime_enabled:r.get(4)?,enabled:r.get(5)?,
+                price_precision:price.map(|v|v as u32),size_precision:size.map(|v|v as u32)
+            }))
+        }).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
+    }
     pub fn enabled_subscriptions(&self,product:&str)->Result<Vec<(String,PipelineSubscription)>,ControlError>{
         if !matches!(product,"spot"|"futures_um") {
             return Err(ControlError::Conflict("invalid product".into()));
