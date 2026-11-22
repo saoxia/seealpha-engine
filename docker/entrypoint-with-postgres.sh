@@ -51,7 +51,7 @@ if [[ ! -f "$PG_CREDENTIAL_FILE" ]]; then
     echo "Existing PostgreSQL cluster has no credential file; refusing to rotate credentials" >&2
     exit 1
   fi
-  od -An -N32 -tx1 /dev/urandom | tr -d ' \\n' > "$PG_CREDENTIAL_FILE"
+  od -An -N32 -tx1 /dev/urandom | tr -d '[:space:]' > "$PG_CREDENTIAL_FILE"
 fi
 chmod 0600 "$PG_CREDENTIAL_FILE"
 PG_PASSWORD="$(cat "$PG_CREDENTIAL_FILE")"
