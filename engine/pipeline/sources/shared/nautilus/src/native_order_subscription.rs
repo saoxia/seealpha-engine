@@ -86,6 +86,16 @@ pub fn observe_native_order_event(
             if voided.client_order_id.to_string() != binding.client_order_id {
                 return Ok(None);
             }
+            // A void/correction is just as sensitive to cross-account ID
+            // collisions as a fill. Never freeze another account's order.
+            anyhow::ensure!(
+                event.account_id().is_some_and(|id| id.to_string() == binding.account_id)
+                    && event.instrument_id().to_string() == binding.instrument_id
+                    && binding.venue_order_id.as_deref().is_none_or(|id| {
+                        event.venue_order_id().is_some_and(|actual| actual.to_string() == id)
+                    }),
+                "native fill void identity mismatch"
+            );
             // Without a verified correction replay, the only safe action is
             // to suspend downstream fill attribution, not subtract cash.
             Ok(Some(NativeOrderObservation::FillVoided {
