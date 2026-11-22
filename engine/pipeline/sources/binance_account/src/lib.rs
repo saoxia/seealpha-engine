@@ -69,8 +69,9 @@ impl NativeOrderLinkSubscription {
     }
 }
 
-/// Persist an immutable virtual allocation projection before publishing any
-/// fills. A CAS failure leaves downstream consumers untouched.
+/// Commit virtual allocation against the exact state revision before release.
+/// The caller's transaction must atomically record trade/event idempotency,
+/// the prior and next cumulative quantity and per-member allocations.
 pub fn persist_virtual_attribution(
     client_order_id: &str,
     expected_revision: &str,
@@ -80,30 +81,31 @@ pub fn persist_virtual_attribution(
         &str,
         &seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution,
     ) -> anyhow::Result<()>,
-    publish: impl FnOnce(Vec<seealpha_execution::coordinator::VirtualFill>),
+    publish: impl FnOnce(
+        Vec<seealpha_nautilus_binance_data::native_virtual_attribution::VirtualFill>,
+    ),
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        !client_order_id.is_empty() && !expected_revision.trim().is_empty(),
-        "missing native virtual attribution CAS identity"
+        !client_order_id.is_empty() && !expected_revision.trim().is_empty()
+            && projection.client_order_id == client_order_id,
+        "invalid virtual attribution CAS identity"
     );
     commit(client_order_id, expected_revision, &projection)?;
     publish(projection.fills);
     Ok(())
 }
 
-/// Link the existing Nautilus event subscription to SeeAlpha virtual orders.
-///
-/// A caller supplies an already committed Coordinator and Nautilus's latest
-/// OrderCore for the registered client order. The callback must CAS-persist the
-/// result against the snapshot's exact revision before any virtual fills are
-/// released; this API never submits orders.
+/// Attach a pure, stateless SeeAlpha attribution reader to the single native
+/// Nautilus order event subscription. No alternative Coordinator or Flight.
+/// The immutable claims and committed previous cumulative are loaded on demand.
+/// A rejected event MUST trigger quarantine and native account reconciliation
+/// through the supplied error handler; it must never cause a replacement order.
 pub fn attach_native_virtual_attribution(
     resolve_binding: impl Fn(&str) -> Option<OwnedNativeBinding> + 'static,
-    // The snapshot revision is mandatory: the commit must use exactly
-    // this version as its CAS expectation, never a later re-read revision.
     resolve_snapshot: impl Fn(&str) -> Option<(
         String,
-        seealpha_execution::coordinator::Coordinator,
+        rust_decimal::Decimal,
+        Vec<seealpha_nautilus_binance_data::native_virtual_attribution::MemberClaim>,
         nautilus_model::orders::OrderCore,
     )> + 'static,
     commit: impl Fn(
@@ -111,7 +113,9 @@ pub fn attach_native_virtual_attribution(
         &str,
         &seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution,
     ) -> anyhow::Result<()> + 'static,
-    publish: impl Fn(Vec<seealpha_execution::coordinator::VirtualFill>) + 'static,
+    publish: impl Fn(
+        Vec<seealpha_nautilus_binance_data::native_virtual_attribution::VirtualFill>,
+    ) + 'static,
     on_error: impl Fn(String) + 'static,
 ) -> NativeOrderLinkSubscription {
     use std::rc::Rc;
@@ -119,7 +123,6 @@ pub fn attach_native_virtual_attribution(
         native_execution::NativeOrderBinding,
         native_virtual_attribution::project_native_order_observation,
     };
-    // All handlers execute on the same thread-local Nautilus message bus.
     let resolver = Rc::new(resolve_binding);
     let errors = Rc::new(on_error);
     let resolver_for_events = Rc::clone(&resolver);
@@ -130,17 +133,23 @@ pub fn attach_native_virtual_attribution(
             NativeOrderObservation::Filled(x) => &x.client_order_id,
             NativeOrderObservation::FillVoided { client_order_id } => client_order_id,
         };
-        // Native identity was already checked. An ACK cannot advance
-        // virtual attribution and must not consume a persistence CAS.
         if matches!(&event, NativeOrderObservation::Accepted(_)) {
+            return;
+        }
+        if matches!(&event, NativeOrderObservation::FillVoided { .. }) {
+            errors_for_events(format!(
+                "native fill correction requires quarantine and reconciliation: {client_id}"
+            ));
             return;
         }
         let Some(binding) = resolver_for_events(client_id) else {
             errors_for_events("native attribution binding disappeared".into());
             return;
         };
-        let Some((expected_revision, coordinator, native_order)) = resolve_snapshot(client_id) else {
-            errors_for_events("Nautilus order or committed coordinator unavailable".into());
+        let Some((expected_revision, previous_cumulative, claims, native_order)) =
+            resolve_snapshot(client_id)
+        else {
+            errors_for_events("Nautilus OrderCore or committed attribution unavailable".into());
             return;
         };
         let bound = NativeOrderBinding {
@@ -150,19 +159,16 @@ pub fn attach_native_virtual_attribution(
             venue_order_id: binding.venue_order_id.as_deref(),
         };
         match project_native_order_observation(
-            &coordinator, &event, &native_order, &bound, None,
+            &event, &native_order, &bound, previous_cumulative, &claims,
         ) {
-            Ok(projected) => {
+            Ok(Some(projected)) => {
                 if let Err(e) = persist_virtual_attribution(
-                    client_id,
-                    &expected_revision,
-                    projected,
-                    &commit,
-                    &publish,
+                    client_id, &expected_revision, projected, &commit, &publish,
                 ) {
                     errors_for_events(format!("native attribution CAS failed: {e}"));
                 }
             }
+            Ok(None) => {}
             Err(e) => errors_for_events(format!("native attribution rejected: {e}")),
         }
     };
@@ -182,21 +188,25 @@ impl Drop for NativeOrderLinkSubscription {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture() -> seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution {
+        use seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution;
+        VirtualAttribution {
+            event_id: "event-1".into(),
+            trade_id: "trade-1".into(),
+            client_order_id: "order-1".into(),
+            prior_cumulative: rust_decimal::Decimal::ZERO,
+            cumulative: rust_decimal::Decimal::ONE,
+            fills: vec![],
+        }
+    }
+
     #[test]
     fn failed_cas_never_publishes_virtual_fills() {
-        use std::cell::Cell;
-        use std::rc::Rc;
-        use rust_decimal::Decimal;
+        use std::{cell::Cell, rc::Rc};
         let published = Rc::new(Cell::new(false));
-        let projection = seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution {
-            coordinator: seealpha_execution::coordinator::Coordinator::new(
-                Decimal::ONE, Decimal::from(10)
-            ).unwrap(),
-            fills: vec![],
-        };
         let seen = Rc::clone(&published);
         assert!(persist_virtual_attribution(
-            "order-1", "revision-1", projection,
+            "order-1", "revision-1", fixture(),
             |client, expected, _| {
                 assert_eq!(client, "order-1");
                 assert_eq!(expected, "revision-1");
@@ -209,23 +219,19 @@ mod tests {
 
     #[test]
     fn successful_cas_releases_virtual_projection_once() {
-        use rust_decimal::Decimal;
-        use std::cell::Cell;
-        use std::rc::Rc;
+        use std::{cell::Cell, rc::Rc};
         let published = Rc::new(Cell::new(0usize));
-        let projection = seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution {
-            coordinator: seealpha_execution::coordinator::Coordinator::new(
-                Decimal::ONE, Decimal::from(10)
-            ).unwrap(),
-            fills: vec![],
-        };
         let seen = Rc::clone(&published);
         persist_virtual_attribution(
-            "order-1", "revision-1", projection,
+            "order-1", "revision-1", fixture(),
             |_, _, _| Ok(()),
             move |_| seen.set(seen.get() + 1),
         ).unwrap();
         assert_eq!(published.get(), 1);
+        assert!(persist_virtual_attribution(
+            "wrong-order", "revision-1", fixture(),
+            |_, _, _| Ok(()), |_| {},
+        ).is_err());
     }
     #[test]
     fn empty_identity_fails_before_subscribing_to_nautilus() {
