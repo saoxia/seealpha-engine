@@ -157,7 +157,6 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 - `POST /tenants/{tenant_id}/accounts/{account_id}/candidate-backtests`
 - `DELETE /tenants/{tenant_id}/accounts/{account_id}/candidate-backtests`
 - `GET /tenants/{tenant_id}/accounts/{account_id}/candidate-backtests/latest`
-- `POST /tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/fills/sync`
 - `POST /tenants/{tenant_id}/data/control/source/{product}/start`
 - `POST /tenants/{tenant_id}/data/control/source/{product}/stop`
 - `GET /tenants/{tenant_id}/data/control/source/{product}`
