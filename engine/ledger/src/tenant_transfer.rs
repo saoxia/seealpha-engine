@@ -142,9 +142,6 @@ impl Ledger {
             "account_settlements",
             "backtest_results",
             "research_snapshots",
-            "data_policies",
-            "strategy_market_subscriptions",
-            "data_jobs",
             "paper_sessions",
         ] {
             let present: bool = conn
@@ -164,7 +161,7 @@ impl Ledger {
         }
         // Older SQLite databases may retain retired market-data tables.
         // Never silently omit their rows from a Python v1 export.
-        for table in ["catalog_bars", "option_exercise_observations", "funding_observations"] {
+        for table in ["catalog_bars", "option_exercise_observations", "funding_observations", "data_policies", "strategy_market_subscriptions", "data_jobs"] {
             let exists: bool = conn.query_row(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
                 params![table], |_| Ok(()),

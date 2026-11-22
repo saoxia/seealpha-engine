@@ -5,6 +5,7 @@ mod reader;
 mod records;
 mod writer;
 mod funding;
+mod control;
 
 use std::path::PathBuf;
 use thiserror::Error;
@@ -15,6 +16,7 @@ pub use model::{
 };
 pub use reader::{BarGap, RecordKind};
 pub use funding::CatalogFunding;
+pub use control::{ControlStore, ControlError};
 
 #[derive(Debug, Error)]
 pub enum CatalogError {

@@ -2,7 +2,7 @@
 //! User/strategy subscriptions are declarations, never collector lifecycle calls.
 //! Historical jobs use only public Binance klines and commit atomically to
 //! the Rust catalog after the complete requested interval is validated.
-use crate::{Runtime, RuntimeError, map_ledger};
+use crate::{Runtime, RuntimeError};
 use seealpha_binance_market_data_source::archive_fetch::ArchiveSpec;
 use crate::catalog::CatalogBar;
 use seealpha_catalog::{DAY_MS, CatalogFunding};
@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
+fn map_state<E: std::fmt::Display>(error:E)->RuntimeError { RuntimeError::Conflict(error.to_string()) }
 fn bad(message: &str) -> RuntimeError {
     RuntimeError::Unprocessable(message.into())
 }
@@ -135,7 +136,7 @@ impl Runtime {
                 return Err(bad("行情配置包含重复交易对。"));
             }
         }
-        let previous = self.ledger.policies(tenant_id).map_err(map_ledger)?;
+        let previous = self.control.policies(tenant_id).map_err(map_state)?;
         if previous.as_slice() != policies {
             let mut processes = self
                 .source_processes
@@ -157,21 +158,21 @@ impl Runtime {
         }
         // The control-plane journal is independent from collector journals.
         // A policy change cannot start a producer through a read subscription.
-        self.ledger
+        self.control
             .replace_policies(tenant_id, policies)
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         Ok(json!({"synced":policies.len(),"last_error":null}))
     }
 
     pub fn data_policies(&self, tenant_id: &str) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        Ok(json!({"items":self.ledger.policies(tenant_id).map_err(map_ledger)?}))
+        Ok(json!({"items":self.control.policies(tenant_id).map_err(map_state)?}))
     }
 
     pub fn data_services(&self, tenant_id: &str) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        let jobs = self.ledger.data_jobs(tenant_id).map_err(map_ledger)?;
-        let policies = self.ledger.policies(tenant_id).map_err(map_ledger)?;
+        let jobs = self.control.data_jobs(tenant_id).map_err(map_state)?;
+        let policies = self.control.policies(tenant_id).map_err(map_state)?;
         let active = jobs
             .iter()
             .filter(|j| matches!(j["status"].as_str(), Some("queued" | "running")))
@@ -185,14 +186,14 @@ impl Runtime {
 
     pub fn data_job_list(&self, tenant_id: &str) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        Ok(json!({"items":self.ledger.data_jobs(tenant_id).map_err(map_ledger)?}))
+        Ok(json!({"items":self.control.data_jobs(tenant_id).map_err(map_state)?}))
     }
 
     pub fn data_job(&self, tenant_id: &str, id: &str) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        self.ledger
+        self.control
             .data_job(tenant_id, id)
-            .map_err(map_ledger)?
+            .map_err(map_state)?
             .ok_or_else(|| RuntimeError::NotFound("数据任务不存在。".into()))
     }
 
@@ -226,8 +227,8 @@ impl Runtime {
                 "size_precision":precision("size_precision")?,
             });
             let id = hash_job(tenant_id, &normalized);
-            return self.ledger.queue_data_job(tenant_id, &id, action, &normalized)
-                .map_err(map_ledger);
+            return self.control.queue_data_job(tenant_id, &id, action, &normalized)
+                .map_err(map_state);
         }
         if !matches!(action, "backfill" | "archive_fetch" | "archive_import") {
             return Err(RuntimeError::Conflict(
@@ -276,9 +277,9 @@ impl Runtime {
             });
             let id = hash_job(tenant_id, &normalized);
             return self
-                .ledger
+                .control
                 .queue_data_job(tenant_id, &id, action, &normalized)
-                .map_err(map_ledger);
+                .map_err(map_state);
         }
         if action == "archive_fetch" {
             let product = field(payload, "product")?;
@@ -290,9 +291,9 @@ impl Runtime {
             let normalized = payload.clone();
             let id = hash_job(tenant_id, &normalized);
             return self
-                .ledger
+                .control
                 .queue_data_job(tenant_id, &id, action, &normalized)
-                .map_err(map_ledger);
+                .map_err(map_state);
         }
         let product = payload
             .get("product")
@@ -348,17 +349,17 @@ impl Runtime {
             object.entry("interval".to_string()).or_insert(json!("1m"));
         }
         let id = hash_job(tenant_id, &normalized);
-        self.ledger
+        self.control
             .queue_data_job(tenant_id, &id, action, &normalized)
-            .map_err(map_ledger)
+            .map_err(map_state)
     }
 
     pub fn cancel_data_job(&self, tenant_id: &str, id: &str) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
         if self
-            .ledger
+            .control
             .transition_data_job(tenant_id, id, "queued", "cancelled", None)
-            .map_err(map_ledger)?
+            .map_err(map_state)?
         {
             return self.data_job(tenant_id, id);
         }
@@ -377,9 +378,9 @@ impl Runtime {
         self.require_active(tenant_id)?;
         let original = self.data_job(tenant_id, id)?;
         if !self
-            .ledger
+            .control
             .transition_data_job(tenant_id, id, "queued", "running", None)
-            .map_err(map_ledger)?
+            .map_err(map_state)?
         {
             return Err(RuntimeError::Conflict(
                 "任务已领取、取消或需要人工核验。".into(),
@@ -406,9 +407,9 @@ impl Runtime {
             Ok(value) => ("completed", value),
             Err(error) => ("failed", json!({"detail":error.to_string()})),
         };
-        self.ledger
+        self.control
             .transition_data_job(tenant_id, id, "running", status, Some(&body))
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         self.data_job(tenant_id, id)
     }
 
@@ -740,7 +741,7 @@ impl Runtime {
             .collect::<Vec<_>>();
         // The Python Pipeline determines precision from authoritative
         // Instrument definitions. Never hard-code 8 for native Parquet.
-        let policies = self.ledger.policies(tenant_id).map_err(map_ledger)?;
+        let policies = self.control.policies(tenant_id).map_err(map_state)?;
         let instrument = policies
             .iter()
             .find(|item| item["product"] == product && item["symbol"] == symbol);
@@ -801,14 +802,14 @@ impl Runtime {
             ));
         }
         let result = self
-            .ledger
+            .control
             .record_subscription(
                 tenant_id, account_id, product, symbol, role, state, progress,
             )
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         self.ledger
             .add_event(tenant_id, account_id, "subscription", &result.to_string())
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         Ok(result)
     }
 
@@ -819,7 +820,7 @@ impl Runtime {
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
         Ok(
-            json!({"subscriptions":self.ledger.subscriptions(tenant_id,account_id).map_err(map_ledger)?}),
+            json!({"subscriptions":self.control.subscriptions(tenant_id,account_id).map_err(map_state)?}),
         )
     }
 
@@ -841,7 +842,7 @@ impl Runtime {
         let issued = self
             .ledger
             .strategies(tenant_id, account_id)
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         if !issued
             .iter()
             .any(|item| item.issuance_id == issuance_id && item.grant_purpose == purpose)
@@ -856,7 +857,7 @@ impl Runtime {
         if items.is_empty() || items.len() > 8 {
             return Err(bad("策略行情数据流无效。"));
         }
-        let policies = self.ledger.policies(tenant_id).map_err(map_ledger)?;
+        let policies = self.control.policies(tenant_id).map_err(map_state)?;
         let mut unique = BTreeSet::new();
         for stream in items {
             let source = stream
@@ -892,9 +893,9 @@ impl Runtime {
             }
         }
         // A read-side subscription never changes policies or starts a worker.
-        self.ledger
+        self.control
             .set_strategy_reader(tenant_id, account_id, issuance_id, streams, lookback)
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         self.strategy_market_status(tenant_id)
     }
 
@@ -905,18 +906,18 @@ impl Runtime {
         issuance_id: &str,
     ) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
-        self.ledger
+        self.control
             .remove_strategy_reader(tenant_id, account_id, issuance_id)
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         self.strategy_market_status(tenant_id)
     }
 
     pub fn strategy_market_status(&self, tenant_id: &str) -> Result<Value, RuntimeError> {
         self.require_active(tenant_id)?;
         let readers = self
-            .ledger
+            .control
             .strategy_readers(tenant_id)
-            .map_err(map_ledger)?;
+            .map_err(map_state)?;
         let mut required = std::collections::BTreeMap::<String, i64>::new();
         for reader in &readers {
             let lookback = reader["lookback_bars"].as_i64().unwrap_or(1);
