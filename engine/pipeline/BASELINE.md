@@ -14,7 +14,7 @@
 - `sources/binance/archive/` 仅包含 Binance 官方 ZIP，跨 Binance Spot / USD-M 复用一份，不是跨交易所公共抽象。
 - `sources/shared/nautilus/` 提供原生只读 LiveNode 和 TradeTick ZIP 导入；`catalog/` 管理历史 Bar/Tick 数据与读写；`runtime/` 只协调 Data Job、租户、进程及写入互斥，不持有产品修复算法。
 - 期权仅保留 K 线历史抓取及暂未接通的实时消息解析；签名账户成交与行权结算归 `engine/connection/binance-options/`、`engine/ledger/`，不能把账户证据误作历史行情。
-- `catalog/integrity` 只保留被实际调用的基础校验；无调用方的旧 READY、monitor、session 模块不再提供第二套状态管理。Runtime 现有的 `data_ready=false` 和 `allow_new_risk=false` 门禁不能因清理而解除。
+- 行情输入校验已归属 `sources/shared/market/src/pipeline.rs`；旧 READY、monitor、session 模块不再提供第二套状态管理。Runtime 现有的 `data_ready=false` 和 `allow_new_risk=false` 门禁不能因清理而解除。
 
 ## 稳定性约束和回归
 
