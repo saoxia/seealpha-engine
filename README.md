@@ -36,7 +36,9 @@ docker run --rm -p 127.0.0.1:8766:8766 \
 
 默认镜像基于 Alpine 3.22（musl），内置 PostgreSQL 15，不包含 Python。独立调试符号通过 Docker 的 `debug-symbols` 构建目标导出，不进入运行镜像。
 
-**已有数据卷注意事项：** Debian/glibc 与 Alpine/musl 的 locale、collation 实现不同。切换镜像前请先备份 PostgreSQL 状态卷，并在独立副本上验证启动、账户数据、排序/唯一性相关索引、重启恢复及交易安全门禁；必要时在维护窗口执行 PostgreSQL collation 检查与 REINDEX。不要把数据库主版本相同理解为可以不经验证直接切换生产数据卷。若需要回滚，应还原切换前的备份，而不是在两个镜像间对同一正在使用的数据卷反复切换。
+**已有数据卷注意事项：** Alpine 入口会拒绝没有 `.seealpha-alpine-musl` 标志的旧 PostgreSQL 数据目录；此标志只会在新建 Alpine 数据目录时自动生成。不要手工伪造标志绕过保护；先使用原 Debian 镜像导出数据库，再恢复到全新 Alpine 数据卷。
+
+**迁移风险：** Debian/glibc 与 Alpine/musl 的 locale、collation 实现不同。切换镜像前请先备份 PostgreSQL 状态卷，并在独立副本上验证启动、账户数据、排序/唯一性相关索引、重启恢复及交易安全门禁；必要时在维护窗口执行 PostgreSQL collation 检查与 REINDEX。不要把数据库主版本相同理解为可以不经验证直接切换生产数据卷。若需要回滚，应还原切换前的备份，而不是在两个镜像间对同一正在使用的数据卷反复切换。
 
 ## Rust 原生 EMA
 
