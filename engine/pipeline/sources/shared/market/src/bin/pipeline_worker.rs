@@ -101,8 +101,11 @@ async fn reconcile_history(
     },"1d")?;
     // A shared public Catalog retains the earliest date requested by ANY
     // tenant, including disabled subscriptions that must not delete history.
-    let removed=catalog.prune_bars_before(&id,start)?;
-    if removed>0{eprintln!("pipeline {} {symbol}: removed {removed} expired 1d files",product.as_str())}
+    let instrument=identity::instrument_id(symbol,match product {
+        Product::Spot=>MarketProduct::Spot,Product::FuturesUm=>MarketProduct::FuturesUm
+    })?;
+    let removed=catalog.prune_instrument_bars_before(&instrument,start)?;
+    if removed>0{eprintln!("pipeline {} {symbol}: removed {removed} expired Bar files",product.as_str())}
     let today=utc_today_ms()?;
     if start>=today{return Ok(())}
     let gaps=catalog.bar_gaps(&id,"1d",start,today,50_000)?;
