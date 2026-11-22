@@ -7,8 +7,6 @@ mod config;
 mod data;
 mod evidence;
 mod history;
-mod verified_replay;
-pub use verified_replay::VerifiedHistoryWindow;
 mod inspection;
 mod jobs;
 mod session;
