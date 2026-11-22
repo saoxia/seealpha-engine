@@ -33,6 +33,10 @@ pub struct ClickHouseConfig {
 impl ClickHouseConfig {
     /// Optional connection: absence is not an error until the caller opts in.
     pub fn from_env() -> Result<Option<Self>, ClickHouseError> {
+        // Explicit opt-in: an endpoint alone never enables ClickHouse.
+        if std::env::var("SEEALPHA_CLICKHOUSE_ENABLED").ok().as_deref() != Some("true") {
+            return Ok(None);
+        }
         let url = match std::env::var("SEEALPHA_CLICKHOUSE_URL") {
             Ok(value) if !value.trim().is_empty() => value,
             _ => return Ok(None),
