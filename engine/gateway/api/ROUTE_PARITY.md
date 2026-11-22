@@ -120,7 +120,6 @@ Python 基线 **101** 条 method/path；Rust 现分支找到 **87** 条声明（
 | POST | `/tenants/{tenant_id}/data/control/job/retry` | `IdBody` | 数据控制/任务响应 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/data/control/job/cancel` | `IdBody` | 数据控制/任务响应 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/data/control/exports/{identity}` | `Query / path` | 数据控制/任务响应 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/data/control/delete-plan` | `DataDeletePlanRequest` | 数据控制/任务响应 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/data/control/pair-delete-plan` | `PairDeletePlanRequest` | 数据控制/任务响应 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/data/control/configuration-plan` | `PolicyBody` | 数据控制/任务响应 | **已路由（差异）** | Python Catalog/Journal 语义、422 细节、分页/质量须继续互操作核对；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/data/control/feed-status` | `无体或对象` | 数据控制/任务响应 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
