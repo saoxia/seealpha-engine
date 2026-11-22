@@ -17,17 +17,17 @@ fn utc_today_ms()->Result<i64> {
 }
 
 fn desired(rows:&[(String,PipelineSubscription)])
-    ->Result<BTreeMap<String,(i64,bool,Option<(u32,u32)>)>>
+    ->Result<BTreeMap<String,(i64,Option<i64>,Option<(u32,u32)>)>>
 {
     let mut out=BTreeMap::new();
     for (_,row) in rows {
         validate_subscription(row)?;
         let start=row.start_ms()?;
         let entry=out.entry(row.symbol.clone())
-            .or_insert((start,false,None::<(u32,u32)>));
+            .or_insert((start,None::<i64>,None::<(u32,u32)>));
         entry.0=entry.0.min(start);
         if row.enabled {
-            entry.1=true;
+            entry.1=Some(entry.1.map_or(start,|earliest|earliest.min(start)));
             if let (Some(price),Some(size))=(row.price_precision,row.size_precision) {
                 if entry.2.is_some_and(|previous|previous!=(price,size)) {
                     return Err(format!("conflicting instrument precision: {}",row.symbol).into());
@@ -73,9 +73,11 @@ fn native_root(key:&str,product:&str)->Result<PathBuf>{
 
 fn sync_collector(product:&str,desired_symbols:&BTreeSet<String>,active:&mut Option<Collector>)->Result<()>{
     let joined=desired_symbols.iter().cloned().collect::<Vec<_>>().join(",");
-    if let Some(child)=active.as_mut(){
-        if child.child.try_wait()?.is_some(){*active=None}
-    }
+    let exited=match active.as_mut(){
+        Some(child)=>child.child.try_wait()?.is_some(),
+        None=>false,
+    };
+    if exited{*active=None;}
     if active.as_ref().is_some_and(|child|child.symbols==joined){return Ok(())}
     if let Some(child)=active.as_mut(){child.stop()?;}
     *active=None;
@@ -94,7 +96,7 @@ fn sync_collector(product:&str,desired_symbols:&BTreeSet<String>,active:&mut Opt
 
 async fn reconcile_history(
     catalog:&Catalog,product:Product,source:&BinanceSource,
-    symbol:&str,start:i64,precision:Option<(u32,u32)>,
+    symbol:&str,retain_from:i64,fetch_from:i64,precision:Option<(u32,u32)>,
 )->Result<()>{
     let id=identity::bar_type(symbol,match product {
         Product::Spot=>MarketProduct::Spot,Product::FuturesUm=>MarketProduct::FuturesUm
@@ -104,11 +106,11 @@ async fn reconcile_history(
     let instrument=identity::instrument_id(symbol,match product {
         Product::Spot=>MarketProduct::Spot,Product::FuturesUm=>MarketProduct::FuturesUm
     })?;
-    let removed=catalog.prune_instrument_bars_before(&instrument,start)?;
+    let removed=catalog.prune_instrument_bars_before(&instrument,retain_from)?;
     if removed>0{eprintln!("pipeline {} {symbol}: removed {removed} expired Bar files",product.as_str())}
     let today=utc_today_ms()?;
-    if start>=today{return Ok(())}
-    let gaps=catalog.bar_gaps(&id,"1d",start,today,50_000)?;
+    if fetch_from>=today{return Ok(())}
+    let gaps=catalog.bar_gaps(&id,"1d",fetch_from,today,50_000)?;
     if gaps.is_empty(){return Ok(())}
     let (price_precision,size_precision)=match precision {
         Some(values)=>values,
@@ -145,9 +147,9 @@ async fn cycle(
     if let Err(error)=sync_collector(product.as_str(),&live,active) {
         eprintln!("pipeline {} realtime: {error}",product.as_str());
     }
-    for (symbol,(start,enabled,precision)) in expected {
-        if !enabled {continue}
-        if let Err(error)=reconcile_history(catalog,product,source,&symbol,start,precision).await{
+    for (symbol,(retain_from,fetch_from,precision)) in expected {
+        let Some(fetch_from)=fetch_from else{continue};
+        if let Err(error)=reconcile_history(catalog,product,source,&symbol,retain_from,fetch_from,precision).await{
             eprintln!("pipeline {} {symbol} history: {error}",product.as_str());
         }
     }
@@ -185,6 +187,6 @@ mod tests{
                       ("b".into(),make("2025-01-01",false))];
         let spec=desired(&rows).unwrap();
         assert_eq!(spec["BTCUSDT"].0,make("2025-01-01",false).start_ms().unwrap());
-        assert!(spec["BTCUSDT"].1);
+        assert_eq!(spec["BTCUSDT"].1,Some(make("2025-06-01",true).start_ms().unwrap()));
     }
 }
