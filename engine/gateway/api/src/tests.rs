@@ -27,7 +27,6 @@ use super::*;
             research_signing_key: None,
             research_mcp_enabled: false,
             venue_base: None,
-            python: std::path::PathBuf::from("python3"),
         };
         let runtime = Arc::new(Runtime::open(&config).unwrap());
         let market = Arc::new(BinanceSource::new().unwrap_or_else(|_| panic!("client")));
