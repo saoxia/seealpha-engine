@@ -21,10 +21,6 @@ pub(crate) fn routes() -> Router<AppState> {
             "/tenants/{tenant_id}/venue/options/klines",
             post(option_klines),
         )
-        .route(
-            "/tenants/{tenant_id}/venue/catalog",
-            post(legacy_options_catalog),
-        )
 }
 async fn read_funding(
     State(state): State<AppState>,
@@ -94,18 +90,6 @@ async fn option_contracts(
     Ok(Json(json!({"items":contracts,"exchange":"binance",
         "product":"options","scope":"public_exchange_contracts",
         "exchange_orders":0})))
-}
-async fn legacy_options_catalog(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    if body["product"].as_str() != Some("options") {
-        return Err(AppError::conflict(
-            "非期权交易产品的 Rust 公共合约目录仍在迁移。",
-        ));
-    }
-    option_contracts(State(state), Path(tenant)).await
 }
 async fn option_klines(
     State(state): State<AppState>,
