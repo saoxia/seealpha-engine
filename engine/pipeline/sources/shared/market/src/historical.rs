@@ -31,6 +31,7 @@ pub struct HistoricalTracker{
     completed:BTreeMap<String,Completed>,
     pending:BTreeMap<String,Revision>,
     loaded:BTreeSet<String>,
+    observed:BTreeMap<String,(u64,u128)>,
 }
 fn file_fingerprint(path:&Path)->Result<u64>{
     let meta=path.symlink_metadata()?;
@@ -283,7 +284,25 @@ impl HistoricalTracker {
             let key=format!("{instrument}/{filename}");
             names.insert(key.clone());
             let path=directory.join(filename);
-            let fingerprint=file_fingerprint(&path)?;
+            let meta=path.symlink_metadata()?;
+            if !meta.is_file()||meta.file_type().is_symlink(){
+                return Err("invalid source Parquet file".into());
+            }
+            let stamp=(meta.len(),meta.modified()?
+                .duration_since(std::time::UNIX_EPOCH)?.as_nanos());
+            // Full-file fingerprinting is expensive for multi-year Tick
+            // history. Hash only new/replaced files; unchanged metadata
+            // reuses the already verified fingerprint in this process.
+            let fingerprint=if self.observed.get(&key)==Some(&stamp){
+                match (self.pending.get(&key),self.completed.get(&key)){
+                    (Some(task),_)=>task.fingerprint,
+                    (_,Some(done))=>done.fingerprint,
+                    _=>file_fingerprint(&path)?,
+                }
+            }else{
+                file_fingerprint(&path)?
+            };
+            self.observed.insert(key.clone(),stamp);
             let first_ns:i64=row["start_ns"].as_str().ok_or("start missing")?.parse()?;
             let last_ns:i64=row["end_ns"].as_str().ok_or("end missing")?.parse()?;
             if first_ns<0||last_ns<first_ns{return Err("invalid Tick file range".into())}
@@ -299,6 +318,10 @@ impl HistoricalTracker {
             {continue}
             self.pending.insert(key,Revision{fingerprint,start_ms,end_ms,cursor_ms:start_ms});
         }
+        // File replacement/removal must invalidate the metadata fast-path:
+        // a later reappearance always gets a fresh content fingerprint.
+        self.observed.retain(|key,_|
+            !key.starts_with(&format!("{instrument}/"))||names.contains(key));
         // A removed native file invalidates its former time range too.
         // Replay that range against REMAINING TradeTicks, deleting obsolete
         // 1s and upper candles rather than keeping stale OHLCV.
