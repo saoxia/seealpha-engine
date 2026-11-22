@@ -1,0 +1,11 @@
+[package]
+name = "seealpha-account-events-pipeline"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+seealpha-ledger = { path = "../../ledger" }
+rust_decimal = "1"
+serde_json = "1"
