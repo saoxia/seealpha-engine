@@ -6,48 +6,19 @@
 //! account/report subscriber is wired, evidence-dependent methods fail closed.
 use crate::{Runtime, RuntimeError, map_ledger};
 use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
-// Stored for a future authenticated native actor; current Runtime intentionally
-// never reads credentials or makes private exchange requests.
-#[allow(dead_code)]
-#[derive(Clone)]
-struct NativeCredentials {
-    api_key: String,
-    secret: String,
-}
-type SecretMap = HashMap<(String, String, String), NativeCredentials>;
-
-fn secrets() -> &'static Mutex<SecretMap> {
-    static SECRETS: OnceLock<Mutex<SecretMap>> = OnceLock::new();
-    SECRETS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn identity(tenant: &str, account: &str, environment: &str) -> (String, String, String) {
-    (tenant.to_owned(), account.to_owned(), environment.to_owned())
-}
-
-fn validate_secret(api_key: &str, secret: &str) -> Result<(), RuntimeError> {
-    if api_key.is_empty() || secret.is_empty() || api_key == secret
-        || api_key.chars().any(|c| c == '\n' || c == '\r')
-        || secret.chars().any(|c| c == '\n' || c == '\r')
-    {
-        return Err(RuntimeError::Conflict("交易账户凭据无效。".into()));
-    }
-    Ok(())
-}
 
 fn native_evidence_unavailable() -> RuntimeError {
     RuntimeError::Conflict(
-        "Nautilus 原生账户及成交证据读取尚未接入，拒绝使用已删除的 REST 连接器。".into(),
+        "Nautilus 原生账户/成交报告尚未接入 Runtime；拒绝使用旧 REST 连接器或未经认证的数据。".into(),
     )
 }
 
 impl Runtime {
+    /// Do not retain credentials for an execution client that does not exist.
+    /// A native LiveNode must own its own credentials and authenticated account.
     pub fn register_connection(
-        &self, tenant_id: &str, account_id: &str, environment: &str,
-        api_key: &str, secret: &str,
+        &self, tenant_id: &str, _account_id: &str, environment: &str,
+        _api_key: &str, _secret: &str,
     ) -> Result<Value, RuntimeError> {
         let tenant = self.require_active(tenant_id)?;
         if tenant.purpose != "production" {
@@ -56,26 +27,9 @@ impl Runtime {
         if !matches!(environment, "production" | "sandbox") {
             return Err(RuntimeError::Unprocessable("账户环境无效。".into()));
         }
-        validate_secret(api_key, secret)?;
-        secrets().lock()
-            .map_err(|_| RuntimeError::Conflict("账户凭据锁不可用。".into()))?
-            .insert(identity(tenant_id, account_id, environment), NativeCredentials {
-                api_key: api_key.into(), secret: secret.into(),
-            });
-        // "registered" means an in-process secret exists; NEVER "connected".
-        self.ledger.upsert_connection(
-            tenant_id, account_id, environment, "registered",
-        ).map_err(map_ledger)?;
-        self.ledger.add_event(
-            tenant_id, account_id, "connection",
-            &json!({"environment":environment,"status":"registered",
-                "backend":"nautilus_binance_native","connected":false}).to_string(),
-        ).map_err(map_ledger)?;
-        Ok(json!({
-            "tenant_id":tenant_id,"account_id":account_id,
-            "environment":environment,"status":"registered",
-            "execution_backend":"nautilus_binance_native","connected":false,
-        }))
+        Err(RuntimeError::Conflict(
+            "原生执行节点尚未与 Runtime 连接；不再接受没有实际连接效果的账户凭据登记。".into(),
+        ))
     }
 
     pub fn forget_connection(
@@ -85,9 +39,6 @@ impl Runtime {
         if !matches!(environment, "production" | "sandbox") {
             return Err(RuntimeError::Unprocessable("账户环境无效。".into()));
         }
-        secrets().lock()
-            .map_err(|_| RuntimeError::Conflict("账户凭据锁不可用。".into()))?
-            .remove(&identity(tenant_id, account_id, environment));
         self.ledger.upsert_connection(
             tenant_id, account_id, environment, "closed",
         ).map_err(map_ledger)?;
@@ -124,10 +75,9 @@ impl Runtime {
 mod tests {
     use super::*;
     #[test]
-    fn rejects_malformed_credentials_without_persisting_them() {
-        assert!(validate_secret("", "secret").is_err());
-        assert!(validate_secret("same", "same").is_err());
-        assert!(validate_secret("key\n", "secret").is_err());
-        assert!(validate_secret("key", "secret").is_ok());
+    fn registration_never_pretends_to_connect_or_cache_credentials() {
+        // Runtime::register_connection must fail closed until a trusted native
+        // actor is wired. API parameters are kept for backward compatibility.
+        assert!(native_evidence_unavailable().to_string().contains("Nautilus"));
     }
 }
