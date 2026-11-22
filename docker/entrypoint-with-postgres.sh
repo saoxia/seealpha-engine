@@ -192,6 +192,14 @@ fi
 # Product-local autonomous market data loops (no Engine data-job dispatcher).
 # They are inactive until a tenant defines a subscription via the config API.
 if [[ "${SEEALPHA_PIPELINE_ENABLED:-1}" == "1" ]]; then
+  # Pipeline writes into the same Catalog root that Runtime reads.
+  catalog_root="${ENGINE_CATALOG_DIR:-/app/data/catalog}"
+  if [[ "$catalog_root" != /* ]]; then catalog_root="/app/$catalog_root"; fi
+  mkdir -p "$catalog_root"
+  if [[ -L "$catalog_root" ]]; then
+    echo "Pipeline Catalog root cannot be a symlink" >&2
+    exit 1
+  fi
   # Ensure a mounted/persistent Catalog root is provisioned by the operator.
   # Missing Catalog only causes a retry; the process never reports READY.
   seealpha-pipeline spot &
