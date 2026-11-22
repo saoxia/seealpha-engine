@@ -154,7 +154,6 @@ mod tests {
             research_signing_key: None,
             research_mcp_enabled: false,
             venue_base: Some("http://127.0.0.1:18080".into()),
-            python: std::path::PathBuf::from("python3"),
         };
         let runtime = Runtime::open(&config).unwrap();
         runtime.ensure_tenant("7", "production", "active").unwrap();
