@@ -72,6 +72,20 @@ fn scope(tenant: &str, account: &str, instrument: &str) -> Result<String, Runtim
     }
     Ok(format!("{tenant}:{account}:{instrument}"))
 }
+
+/// Until Nautilus authenticated positions and fill reports are wired,
+/// caller-supplied account quantities may only drive isolated paper state.
+/// This is not a production exchange-evidence adapter.
+fn require_paper_evidence_scope(runtime: &Runtime, tenant: &str, account: &str) -> Result<(), RuntimeError> {
+    let registration = runtime.require_active(tenant)?;
+    if registration.purpose != "development" || account != "paper" {
+        return Err(RuntimeError::Conflict(
+            "Nautilus authenticated positions/fills are not wired; only development paper evidence is accepted".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl Runtime {
     /// Reads a durable state; unresolved flight remains pending.
     pub fn recover_native_portfolio(
@@ -141,6 +155,13 @@ impl Runtime {
             .ok_or_else(|| RuntimeError::NotFound("portfolio state missing".into()))?;
         if state.revision != expected_revision {
             return Err(RuntimeError::Conflict("stale portfolio state".into()));
+        }
+        // Terminal reports and cancellation denials are exchange facts, never
+        // authenticated merely by a JSON request from a production tenant.
+        if matches!(&event,
+            NativePortfolioEvent::ConfirmTerminal { .. } | NativePortfolioEvent::CancelDenied { .. }
+        ) {
+            require_paper_evidence_scope(self, tenant, account)?;
         }
         let mut coordinator = state.coordinator;
         let result = match event {
@@ -218,6 +239,7 @@ impl Runtime {
         account_position: Decimal,
         request_id: &str,
     ) -> Result<NativePortfolioResult, RuntimeError> {
+        require_paper_evidence_scope(self, tenant, account)?;
         let state = self
             .recover_native_portfolio(tenant, account, instrument)?
             .ok_or_else(|| RuntimeError::NotFound("portfolio state missing".into()))?;
@@ -255,6 +277,7 @@ impl Runtime {
         price: Decimal,
         bar: Option<Bar>,
     ) -> Result<NativePortfolioResult, RuntimeError> {
+        require_paper_evidence_scope(self, tenant, account)?;
         let state = self
             .recover_native_portfolio(tenant, account, instrument)?
             .ok_or_else(|| RuntimeError::NotFound("portfolio state missing".into()))?;
@@ -377,4 +400,44 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(state);
     }
+    #[test]
+    fn unverified_exchange_evidence_cannot_advance_production_state() {
+        let state = std::env::temp_dir().join(format!(
+            "seealpha-production-evidence-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let config = Config {
+            host: "127.0.0.1".into(), port: 0, auth_mode: AuthMode::None,
+            token: String::new(), state_dir: state.clone(),
+            project: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            tenant_id: None, tenant_purpose: None, research_signing_key: None,
+            research_mcp_enabled: false, venue_base: None,
+            python: PathBuf::from("python3"),
+        };
+        let runtime = Runtime::open(&config).unwrap();
+        runtime.ensure_tenant("prod", "production", "active").unwrap();
+        let saved = runtime.save_native_portfolio(
+            "prod", "binance-account", "ETHUSDT",
+            &Coordinator::new(Decimal::ONE, Decimal::from(10)).unwrap(), None
+        ).unwrap();
+        assert!(matches!(runtime.reconcile_native_portfolio(
+            "prod", "binance-account", "ETHUSDT", &saved.revision,
+            None, Decimal::ZERO, "request-1"
+        ), Err(RuntimeError::Conflict(_))));
+        assert!(matches!(runtime.apply_native_portfolio_fill(
+            "prod", "binance-account", "ETHUSDT", &saved.revision,
+            "order-1", "trade-1", Decimal::ONE, Decimal::from(100), None
+        ), Err(RuntimeError::Conflict(_))));
+        assert!(matches!(runtime.apply_native_portfolio_event(
+            "prod", "binance-account", "ETHUSDT", &saved.revision,
+            NativePortfolioEvent::ConfirmTerminal {
+                order_id: "order-1".into(), canceled: true, denied_at: None
+            }
+        ), Err(RuntimeError::Conflict(_))));
+        assert_eq!(runtime.recover_native_portfolio(
+            "prod", "binance-account", "ETHUSDT"
+        ).unwrap().unwrap().revision, saved.revision);
+        let _ = std::fs::remove_dir_all(state);
+    }
+
 }
