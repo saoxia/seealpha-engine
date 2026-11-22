@@ -1,21 +1,10 @@
-//! Persisted Rust-side compatibility records for the Python Engine's account,
-//! market-data and task endpoints. These are data only: reading a subscription
-//! must never start a collector or send an exchange order.
+//! Trading account compatibility reads. Non-financial Pipeline state lives in ControlStore.
 use crate::{Ledger, LedgerError};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use rusqlite::params;
 use serde_json::{Value, json};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn sqlite(err: rusqlite::Error) -> LedgerError {
     LedgerError::Sqlite(err.to_string())
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|x| i64::try_from(x.as_millis()).ok())
-        .unwrap_or(0)
 }
 
 fn parse(text: &str) -> Result<Value, LedgerError> {
