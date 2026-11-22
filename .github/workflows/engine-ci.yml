@@ -67,11 +67,32 @@ jobs:
   rust-and-strategy:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: seealpha
+          POSTGRES_PASSWORD: seealpha-ci-only
+          POSTGRES_DB: seealpha
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seealpha -d seealpha"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      SEEALPHA_DATABASE_URL: postgres://seealpha:seealpha-ci-only@127.0.0.1:5432/seealpha
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
+      - name: Refresh PostgreSQL dependencies
+        run: cargo generate-lockfile
+      - name: Preserve regenerated lockfile for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgresql-cargo-lock
+          path: Cargo.lock
       # Run compilation first so pre-existing workspace formatting debt does not
       # prevent us from observing type/borrow-checker failures in the PR.
       - name: Compile check
@@ -95,6 +116,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Update PostgreSQL lockfile for image validation
+        run: cargo generate-lockfile
       - name: Build Rust-only Engine image
         run: docker build -f docker/engine.Dockerfile -t seealpha-engine:native .
       - name: Verify native image needs no Python
