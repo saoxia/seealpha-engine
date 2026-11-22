@@ -88,72 +88,6 @@ fn register_native_envelope(
     }
 }
 
-
-/// Read-only audit/recovery trace. This joins SeeAlpha's immutable target
-/// attribution with the native client-order identity and any *already stored*
-/// exchange observation. It neither queries an exchange nor accepts new
-/// observations; in particular, an ACK is never promoted to a verified fill.
-pub(crate) fn load_native_intent_trace(
-    store: &StateStore,
-    tenant: &str,
-    account: &str,
-    environment: &str,
-    request_id: &str,
-) -> Result<serde_json::Value, LedgerError> {
-    if !valid_id(tenant, 128) || !valid_id(account, 128)
-        || !valid_id(request_id, 128)
-        || !matches!(environment, "sandbox" | "production")
-    {
-        return Err(LedgerError::Conflict("invalid native intent trace scope".into()));
-    }
-    let intent = store.registered_order_intent(tenant, account, request_id)?
-        .ok_or_else(|| LedgerError::Conflict("native order intent not found".into()))?;
-    let client = intent["client_order_id"].as_str()
-        .ok_or_else(|| LedgerError::Conflict("missing client order identity".into()))?;
-    if intent["execution_backend"] != "nautilus_binance_native"
-        || intent["environment"] != environment
-        || !valid_id(client, 128)
-    {
-        return Err(LedgerError::Conflict("native intent scope or backend mismatch".into()));
-    }
-    let observation = store.latest_order_observation(
-        tenant, account, environment, client,
-    )?;
-    let observation_present = observation.is_some();
-    Ok(json!({
-        "tenant_id": tenant,
-        "account_id": account,
-        "environment": environment,
-        "request_id": request_id,
-        "client_order_id": client,
-        "intent": intent,
-        "latest_order_observation": observation,
-        "observation_present": observation_present,
-        // A status report is not a verified fill, funding transaction or
-        // complete account reconciliation. These flags are deliberately false.
-        "fill_verified_by_trace": false,
-        "account_reconciled_by_trace": false,
-        "send_authorized": false,
-    }))
-}
-
-impl crate::Runtime {
-    /// Recovery inspection only. Does not send, retry or invent fills.
-    pub fn native_execution_trace(
-        &self,
-        tenant: &str,
-        account: &str,
-        environment: &str,
-        request_id: &str,
-    ) -> Result<serde_json::Value, crate::RuntimeError> {
-        use crate::map_ledger;
-        self.require_active(tenant)?;
-        load_native_intent_trace(
-            &self.state_store, tenant, account, environment, request_id,
-        ).map_err(map_ledger)
-    }
-}
-
 fn valid_id(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
@@ -185,7 +119,6 @@ fn positive_decimal(raw: &str) -> bool {
     raw.parse::<rust_decimal::Decimal>()
         .is_ok_and(|v| v > rust_decimal::Decimal::ZERO)
 }
-
 
 /// Explicit native-backend Runtime entrypoint. This is an *outbox staging*
 /// operation, not a send path. It never instantiates VenueClient or Nautilus.
