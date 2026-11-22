@@ -139,9 +139,9 @@ impl Transaction<'_> {
     pub fn prepare(&self, sql: &str) -> Result<Statement<'_>, Error> {
         self.conn.prepare(sql)
     }
-    pub fn last_insert_rowid(&self) -> i64 {
+    pub fn last_insert_rowid(&self) -> Result<i64, Error> {
         self.query_row("SELECT currval(pg_get_serial_sequence('account_evidence_events','id'))",
-            &[], |row| row.get(0)).unwrap_or(0)
+            &[], |row| row.get(0))
     }
     pub fn commit(mut self) -> Result<(), Error> {
         self.conn.execute_batch("COMMIT")?;
