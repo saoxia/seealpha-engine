@@ -100,3 +100,9 @@ SEEALPHA_DATABASE_URL='postgresql://...' cargo run --locked -p seealpha-market -
 - Native `TradeSubscriber::on_trade` 已将 Bar 更新发布到同一 Nautilus LiveNode 的原生 typed Bar topic，`BarType` 为 `LAST-INTERNAL`。尚未闭合的更新使用**真实 Tick 事件时间**作为 `ts_event`，不得提前标记为未来收盘时间。
 - 采集进程与策略引擎是**不同进程**。当前实现仅证明 LiveNode 内的原生消息发布，**尚未证明跨进程策略订阅可见**。需要额外打通跨进程消费和实时 Bar 状态恢复后才能宣称端到端完成。
 - Nautilus 原生流持久化仍只写原始 TradeTick；不要求每笔 Tick 都重复写 Parquet。SeeAlpha Catalog 已支持通过原子文件重写修订同一时间桶的 Bar，但历史 Tick 无缺口重放/聚合、重启恢复与 Bar Catalog 全周期落盘尚未验收。
+
+### 实时与历史 K 线聚合的分工
+
+- **实时**：每个新的 TradeTick 直接更新所有周期（包括未闭合 K 线），不为了分层而引入一秒延迟；`1s` 本身也实时更新。
+- **历史重建**：优先从经过校验、确认已经结束的 `1s` K 线批量聚合更大周期，避免将全部历史 Tick 反复逐周期处理。`aggregate_historical_seconds()` 提供这一共享纯计算能力；历史 ZIP 导入、验证覆盖范围和完整重建调度仍需接通。
+- **没有成交的秒**：不凭空生成 1s 或更高周期 K 线。历史聚合接收明确的已核验数据覆盖截止时间，只有被完整覆盖的周期才标记为 `closed`，不得把最后一个未覆盖完的窗口误标为已闭合。
