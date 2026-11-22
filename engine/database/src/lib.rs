@@ -2,7 +2,7 @@
 //! Retains the business-facing row/transaction API while replacing the storage engine.
 pub use postgres;
 use postgres::{Client, NoTls, types::{FromSql, ToSql}};
-use std::{cell::RefCell, fmt, path::Path, hash::{Hash, Hasher}};
+use std::{fmt, hash::{Hash, Hasher}, path::Path, sync::Mutex};
 
 #[derive(Debug)]
 pub enum Error {
@@ -76,18 +76,33 @@ pub fn schema_for_path(path: &Path) -> String {
     }
 }
 
-pub struct Connection { client: RefCell<Client>, schema: String }
+pub struct Connection { client: Mutex<Client>, schema: String }
 impl Connection {
-    /// Storage is PostgreSQL-only; fixture paths select isolated schemas.
+    // The synchronous postgres crate creates an internal Tokio runtime.
+    // All database I/O runs off the async HTTP executor to avoid nesting runtimes.
+    fn with_client<T, F>(&self, run: F) -> Result<T, Error>
+    where T: Send, F: FnOnce(&mut Client) -> Result<T, Error> + Send {
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut client = self.client.lock().map_err(|_| Error::InvalidRow("postgres mutex poisoned".into()))?;
+                run(&mut client)
+            }).join().map_err(|_| Error::InvalidRow("postgres worker panicked".into()))?
+        })
+    }
+
     pub fn open(path: &Path) -> Result<Self, Error> {
         let url = std::env::var("SEEALPHA_DATABASE_URL")
             .map_err(|_| Error::InvalidRow("SEEALPHA_DATABASE_URL is required".into()))?;
-        let mut client = Client::connect(&url, NoTls)?;
+        let mut client = std::thread::spawn(move || Client::connect(&url, NoTls))
+            .join().map_err(|_| Error::InvalidRow("postgres connect worker panicked".into()))??;
         let schema = schema_for_path(path);
-        client.batch_execute(&format!(
-            "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public;"
-        ))?;
-        Ok(Self { client: RefCell::new(client), schema })
+        // Lock bootstrap to prevent concurrent CREATE SCHEMA catalog races.
+        let ddl = format!(
+            "BEGIN; SELECT pg_advisory_xact_lock(732114683); CREATE SCHEMA IF NOT EXISTS {schema}; COMMIT; SET search_path TO {schema}, public;"
+        );
+        std::thread::scope(|scope| scope.spawn(|| client.batch_execute(&ddl))
+            .join().map_err(|_| Error::InvalidRow("postgres schema worker panicked".into()))?)?;
+        Ok(Self { client: Mutex::new(client), schema })
     }
 
     pub fn execute_batch(&self, sql: &str) -> Result<(), Error> {
@@ -95,19 +110,18 @@ impl Connection {
             "CREATE SCHEMA IF NOT EXISTS {};", self.schema
         )).replace("SET LOCAL search_path TO seealpha, public;", &format!(
             "SET LOCAL search_path TO {}, public;", self.schema
-        ));
-        self.client.borrow_mut().batch_execute(&sql)?;
-        Ok(())
+        )).replace("BEGIN;\n", "BEGIN;\nSELECT pg_advisory_xact_lock(732114683);\n");
+        self.with_client(move |client| { client.batch_execute(&sql)?; Ok(()) })
     }
 
     pub fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<usize, Error> {
-        let n = self.client.borrow_mut().execute(sql, params)?;
+        let n = self.with_client(|client| Ok(client.execute(sql, params)?))?;
         usize::try_from(n).map_err(|_| Error::InvalidRow("row count overflow".into()))
     }
 
     pub fn query_row<T, F>(&self, sql: &str, params: &[&(dyn ToSql + Sync)], f: F) -> Result<T, Error>
     where F: FnOnce(&Row) -> Result<T, Error> {
-        let row = self.client.borrow_mut().query_opt(sql, params)?;
+        let row = self.with_client(|client| Ok(client.query_opt(sql, params)?))?;
         match row {
             Some(row) => f(&Row(row)),
             None => Err(Error::NotFound),
@@ -128,7 +142,7 @@ pub struct Statement<'a> { conn: &'a Connection, sql: String }
 impl Statement<'_> {
     pub fn query_map<T, F>(&mut self, params: &[&(dyn ToSql + Sync)], mut f: F) -> Result<std::vec::IntoIter<Result<T, Error>>, Error>
     where F: FnMut(&Row) -> Result<T, Error> {
-        let rows = self.conn.client.borrow_mut().query(&self.sql, params)?;
+        let rows = self.conn.with_client(|client| Ok(client.query(&self.sql, params)?))?;
         Ok(rows.into_iter().map(|row| f(&Row(row))).collect::<Vec<_>>().into_iter())
     }
 }
