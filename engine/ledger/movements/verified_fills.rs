@@ -33,7 +33,7 @@ impl Ledger {
             .prepare("SELECT tenant_id,account_id,environment,fill_id,fill_json FROM fills")
             .map_err(sqlite)?;
         let rows = stmt
-            .query_map([], |r| {
+            .query_map(&[], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
