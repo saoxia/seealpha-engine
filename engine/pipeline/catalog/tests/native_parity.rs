@@ -2,7 +2,7 @@
 //! gate. Prepare the fixtures with tests/interop.py before running this test.
 //! The default Rust test suite never requires Python or touches an old volume.
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use seealpha_catalog::{Catalog, MarketProduct, RecordKind};
+use seealpha_catalog::{Catalog, RecordKind, bar_type};
 use serde::Deserialize;
 use std::{fs, path::Path};
 
@@ -38,12 +38,18 @@ fn python_native_to_rust_roundtrip() {
         let kind = RecordKind::from_name(&item.kind).unwrap();
         if item.kind == "bars" {
             let symbol = item.symbol.as_deref().unwrap();
-            let product = MarketProduct::parse(item.product.as_deref().unwrap()).unwrap();
+            let product = item.product.as_deref().unwrap();
             let interval = item.interval.as_deref().unwrap();
+            // Fixture adapter only; production mapping lives in Source.
+            let instrument = match product {
+                "spot" | "options" => format!("{symbol}.BINANCE"),
+                "futures_um" => format!("{symbol}-PERP.BINANCE"),
+                _ => panic!("unknown fixture product"),
+            };
+            let identity = bar_type(&instrument, interval).unwrap();
             let original = source
                 .read_bars(
-                    symbol,
-                    product,
+                    &identity,
                     interval,
                     item.start_ns,
                     item.end_ns,
@@ -53,8 +59,7 @@ fn python_native_to_rust_roundtrip() {
             assert!(!original.is_empty());
             let path = rust
                 .append_bars(
-                    symbol,
-                    product,
+                    &identity,
                     interval,
                     &original,
                     item.price_precision.unwrap(),
@@ -64,8 +69,7 @@ fn python_native_to_rust_roundtrip() {
             assert!(path.is_file());
             assert_eq!(
                 rust.read_bars(
-                    symbol,
-                    product,
+                    &identity,
                     interval,
                     item.start_ns,
                     item.end_ns,
@@ -77,8 +81,7 @@ fn python_native_to_rust_roundtrip() {
             assert!(
                 source
                     .bar_gaps(
-                        symbol,
-                        product,
+                        &identity,
                         interval,
                         item.start_ms.unwrap(),
                         item.end_ms.unwrap(),

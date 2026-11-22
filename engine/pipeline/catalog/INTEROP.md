@@ -5,15 +5,18 @@ rewriting, repairing, or deleting source history.
 
 ## APIs
 
-- Catalog::read_bars: strict Binance close-minus-1ms bars, precision and
-  instrument identity checks; bounded reads in [start_ns, end_ns).
+- Catalog::read_bars: takes a normalized Nautilus BarType from Source, checks
+  Parquet schema identity, UTC close-minus-1ms convention and stored Decimal precision;
+  bounded reads in [start_ns, end_ns).
 - Catalog::read_records: schema-preserving non-Bar / raw-Bar projection,
   nanoseconds as **decimal strings** in JSON (never floating-point),
   non-finite values fail closed.
 - Catalog::bar_gaps: reports missing aligned Bar windows without fabricating
   bars or starting collector work.
-- Catalog::append_bars: existing immutable Bar publisher with stricter
-  declared price/size precision validation.
+- Catalog::append_bars: immutable Bar publisher by normalized BarType, with
+  declared price/size precision and generic storage-integrity validation.
+  Exchange symbol formats, option expiry and product-specific zero-price policy
+  belong to Source, not Catalog.
 - Catalog::append_record_batches: writes **non-Bar native events**, including
   TradeTick, QuoteTick, OrderBookDepth, OptionGreeks, FundingRateUpdate,
   InstrumentStatus, InstrumentClose, Instruments and feature/supplement types.

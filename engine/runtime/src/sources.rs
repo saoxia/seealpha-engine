@@ -1,7 +1,7 @@
 //! Explicit opt-in native Binance source supervisor, one child per product.
 //! Only read-only public market data; it NEVER marks a producer READY until
 //! native REST handover, clock and Catalog validation are complete.
-use crate::{Runtime, RuntimeError, map_ledger};
+use crate::{Runtime, RuntimeError};
 use seealpha_binance_market_data_source::{Product, parse_manifest};
 use serde_json::{Value, json};
 use std::fs;

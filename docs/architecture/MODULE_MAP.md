@@ -19,7 +19,7 @@
 | 产品采集及存储基线 | `engine/pipeline/BASELINE.md` | Spot 原始成交、USD-M 聚合成交、Options 仅历史 K 线；记录未完成的自动维护闭环 |
 | Binance 官方历史 ZIP | `engine/pipeline/sources/binance/archive/src/bin/` | `engine/pipeline/sources/shared/nautilus/src/bin/import_archive.rs` 原生 Catalog 导入 |
 | 行情 K 线输入校验 | `engine/pipeline/sources/shared/market/src/pipeline.rs` | Decimal 价格、OHLCV、时间对齐与连续性验证在 Source 中进行；交易风险门禁仍由 Runtime 持有 |
-| 历史 Catalog | `engine/pipeline/catalog/src/` | 仅通用 Parquet 数据读写、文件范围及存储缺口检查；市场 K 线修复/聚合逻辑已归属 Source |
+| 历史 Catalog | `engine/pipeline/catalog/src/` | 接收标准化 InstrumentId/BarType，仅执行 Parquet 数据读写、文件范围及存储缺口检查；产品身份/价格规则归 Source |
 | 独立撮合和验证回放 | `backtest/src/` | `engine/runtime/src/verified_replay.rs` |
 
 持久化行情文件放在 Git 忽略的根级 `data/` 或外部数据卷，见 [数据目录约定](DATA_LAYOUT.md)。

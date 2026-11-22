@@ -1,6 +1,6 @@
 # SeeAlpha 行情 Pipeline
 
-Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `catalog/`（存储、查询及可信性检查）。`sources/` 按 Binance 产品类型组织；共享代码不会为每个产品重复复制。
+Pipeline 只分为 `sources/`（来源、产品类型、连接、采集及行情质量校验）和 `catalog/`（通用 Nautilus/Parquet 存储、查询及存储一致性检查）。`sources/` 按 Binance 产品类型组织；共享代码不会为每个产品重复复制。
 
 | 位置 | 现有责任 | 当前状态 |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Pipeline 只分为 `sources/`（来源、产品类型、连接与采集）和 `c
 | `sources/shared/nautilus/` | Spot / USD-M 共用的独立 Rust NautilusTrader LiveNode 和原生历史 ZIP 导入程序 | 编译为同一二进制，但按产品启动独立进程；实验性，未通过 READY |
 | `sources/binance/archive/` | 跨 Spot / USD-M 的 Binance 官方历史 ZIP 获取、来源校验与 Manifest | 现有 `seealpha-binance-market-data-source` crate |
 | `sources/shared/market/` | 当前共用的公共市场模型、REST 客户端、K 线和时间校验工具；USD-M 近期成交解析由 binance_futures_um/agg_trades.rs 承担 | 现有 `seealpha-market` crate，公共 API 不变 |
-| `catalog/` | Parquet/SQLite 历史存储、读取、修复和派生缓存 | 当前兼容实现 |
+| `catalog/` | 通用 Parquet 历史数据存储、读取、文件索引和缺口查询，不解析 Binance 产品 | 原生存储适配 |
 
 ## 连接生命周期
 

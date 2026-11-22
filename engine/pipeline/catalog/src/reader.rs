@@ -2,7 +2,7 @@
 //! layout. No Python interpreter, SQLite rewrite or implicit directory creation.
 use crate::{
     Catalog, CatalogError,
-    model::{CatalogBar, MarketProduct, NANO_PER_MS, bar_type, bar_window, instrument_id},
+    model::{CatalogBar, NANO_PER_MS, bar_window, parse_bar_type},
 };
 use arrow_array::types::{Int8Type, Int16Type, Int32Type, UInt8Type, UInt16Type, UInt32Type};
 use arrow_array::{
@@ -423,67 +423,6 @@ fn nested_row_value(array: &dyn Array, i: usize, depth: usize) -> Result<Value, 
         array.data_type()
     )))
 }
-/// Decode Python's Nautilus BarType from the *right* so USD-M "-PERP"
-/// and option contract hyphens cannot corrupt the symbol identity.
-fn parse_bar_folder(folder: &str) -> Result<(String, MarketProduct, String), CatalogError> {
-    let mut parts = folder.rsplitn(5, '-');
-    let external = parts.next();
-    let source = parts.next();
-    let unit = parts.next();
-    let number = parts.next().and_then(|v| v.parse::<u32>().ok());
-    let instrument = parts
-        .next()
-        .ok_or_else(|| CatalogError::Invalid("BarType 无效。".into()))?;
-    if external != Some("EXTERNAL") || source != Some("LAST") {
-        return Err(CatalogError::Invalid("不是外部 Nautilus BarType。".into()));
-    }
-    let interval = match (number, unit) {
-        (Some(1), Some("SECOND")) => "1s",
-        (Some(1), Some("MINUTE")) => "1m",
-        (Some(3), Some("MINUTE")) => "3m",
-        (Some(5), Some("MINUTE")) => "5m",
-        (Some(15), Some("MINUTE")) => "15m",
-        (Some(30), Some("MINUTE")) => "30m",
-        (Some(1), Some("HOUR")) => "1h",
-        (Some(2), Some("HOUR")) => "2h",
-        (Some(4), Some("HOUR")) => "4h",
-        (Some(6), Some("HOUR")) => "6h",
-        (Some(8), Some("HOUR")) => "8h",
-        (Some(12), Some("HOUR")) => "12h",
-        (Some(1), Some("DAY")) => "1d",
-        (Some(3), Some("DAY")) => "3d",
-        (Some(1), Some("WEEK")) => "1w",
-        (Some(1), Some("MONTH")) => "1M",
-        _ => return Err(CatalogError::Invalid("BarType 周期无效。".into())),
-    };
-    let (symbol, product) = parse_instrument_folder(instrument)?;
-    if bar_type(&symbol, product, interval)? != folder {
-        return Err(CatalogError::Invalid("BarType 与产品标识不匹配。".into()));
-    }
-    Ok((symbol, product, interval.to_owned()))
-}
-fn parse_instrument_folder(instrument: &str) -> Result<(String, MarketProduct), CatalogError> {
-    let (symbol, market) = if let Some(symbol) = instrument.strip_suffix("-PERP.BINANCE") {
-        (symbol, MarketProduct::FuturesUm)
-    } else if let Some(symbol) = instrument.strip_suffix(".BINANCE") {
-        (
-            symbol,
-            if symbol.contains('-') {
-                MarketProduct::Options
-            } else {
-                MarketProduct::Spot
-            },
-        )
-    } else {
-        return Err(CatalogError::Invalid("不是 Binance InstrumentId。".into()));
-    };
-    if instrument_id(symbol, market)? != instrument {
-        return Err(CatalogError::Invalid(
-            "目录标识与 InstrumentId 不匹配。".into(),
-        ));
-    }
-    Ok((symbol.to_owned(), market))
-}
 fn directories(root: &Path) -> Result<Vec<String>, CatalogError> {
     if !inspect_existing_directory(root)? {
         return Ok(Vec::new());
@@ -526,8 +465,7 @@ impl Catalog {
     /// No filling gaps and no source downloads. An empty existing path yields [].
     pub fn read_bars(
         &self,
-        symbol: &str,
-        product: MarketProduct,
+        bar_identity: &str,
         interval: &str,
         start_ns: i64,
         end_ns: i64,
@@ -536,8 +474,10 @@ impl Catalog {
         if start_ns >= end_ns || start_ns < 0 || !(1..=MAX_BATCH).contains(&limit) {
             return Err(CatalogError::Invalid("历史 K 线范围或数量无效。".into()));
         }
-        let id = bar_type(symbol, product, interval)?;
-        let rel = RecordKind::Bars.directory(&id)?;
+        let (instrument, recorded_interval) = parse_bar_type(bar_identity)?;
+        if recorded_interval != interval { return Err(CatalogError::Invalid("BarType 周期与请求不一致。".into())); }
+        let id = bar_identity;
+        let rel = RecordKind::Bars.directory(id)?;
         let files = candidate_files(&self.root, &rel, start_ns, end_ns)?;
         let mut result = Vec::new();
         let mut seen = BTreeSet::new();
@@ -548,9 +488,9 @@ impl Catalog {
                 .map_err(|err| CatalogError::Parquet(err.to_string()))?;
             let metadata = reader.schema().metadata();
             if metadata.get("type_name").map(String::as_str) != Some("Bar")
-                || metadata.get("bar_type").map(String::as_str) != Some(id.as_str())
+                || metadata.get("bar_type").map(String::as_str) != Some(id)
                 || metadata.get("instrument_id").map(String::as_str)
-                    != Some(instrument_id(symbol, product)?.as_str())
+                    != Some(instrument.as_str())
             {
                 return Err(CatalogError::Invalid(
                     "Parquet BarType 或合约标识不一致。".into(),
@@ -607,7 +547,7 @@ impl Catalog {
                         close: get_decimal(&batch, "close", row)?,
                         volume: get_decimal(&batch, "volume", row)?,
                     };
-                    bar.validate(interval, product)?;
+                    bar.validate(interval)?;
                     if [bar.open, bar.high, bar.low, bar.close]
                         .iter()
                         .any(|value| value.round_dp(price_precision) != *value)
@@ -632,8 +572,7 @@ impl Catalog {
     /// gaps, but a backtest must not turn such gaps into fabricated bars.
     pub fn read_contiguous_bars(
         &self,
-        symbol: &str,
-        product: MarketProduct,
+        bar_identity: &str,
         interval: &str,
         start_ms: i64,
         end_ms: i64,
@@ -644,8 +583,7 @@ impl Catalog {
         }
         let mut expected = start_ms;
         let result = self.read_bars(
-            symbol,
-            product,
+            bar_identity,
             interval,
             start_ms
                 .checked_mul(NANO_PER_MS)
@@ -670,8 +608,7 @@ impl Catalog {
     /// Consumers can decide whether to repair; a read never starts collection.
     pub fn bar_gaps(
         &self,
-        symbol: &str,
-        product: MarketProduct,
+        bar_identity: &str,
         interval: &str,
         start_ms: i64,
         end_ms: i64,
@@ -692,7 +629,7 @@ impl Catalog {
         let end_ns = end_ms
             .checked_mul(NANO_PER_MS)
             .ok_or_else(|| CatalogError::Invalid("结束时间溢出。".into()))?;
-        let bars = self.read_bars(symbol, product, interval, start_ns, end_ns, limit)?;
+        let bars = self.read_bars(bar_identity, interval, start_ns, end_ns, limit)?;
         // Monthly windows are calendar-variable; preserve the verified
         // bar_window successor logic instead of assuming a fixed duration.
         if let Some(step_ms) = crate::interval_ms(interval)? {
@@ -836,45 +773,34 @@ impl Catalog {
         }
         Ok(out)
     }
-    /// Match Python dataset_inventory: discover product/interval from
-    /// existing Nautilus v2 data directories, not from configured policies.
-    /// Per-file event ranges are returned without claiming quality coverage.
+    /// Generic Nautilus storage inventory; product interpretation belongs to Source.
     pub fn scan_inventory(&self) -> Result<Vec<Value>, CatalogError> {
         let mut out = Vec::new();
         for folder in directories(&self.root.join("data/bars"))? {
-            let (symbol, product, interval) = parse_bar_folder(&folder)?;
+            let (instrument, interval) = parse_bar_type(&folder)?;
             let ranges = self.inventory(&RecordKind::Bars, &folder)?;
-            if ranges.is_empty() {
-                continue;
-            }
-            out.push(json!({"symbol":symbol,"product":product.as_str(),
-                "instrument_id":instrument_id(&symbol,product)?,
-                "level":interval,"data_type":"bars",
-                "event_ranges_ns":ranges.iter().map(|r|json!([
-                    r["start_ns"],r["end_ns"]
-                ])).collect::<Vec<_>>(),
-                "quality":"unverified","backend":"nautilus_v2_parquet"}));
+            if ranges.is_empty() { continue; }
+            out.push(json!({
+                "identifier":folder, "instrument_id":instrument,
+                "level":interval, "data_type":"bars",
+                "event_ranges_ns":ranges.iter().map(|r| json!([r["start_ns"],r["end_ns"]]))
+                    .collect::<Vec<_>>(),
+                "quality":"unverified", "backend":"nautilus_v2_parquet"
+            }));
         }
         for folder in directories(&self.root.join("data/trades"))? {
-            let (symbol, product) = parse_instrument_folder(&folder)?;
             let ranges = self.inventory(&RecordKind::Trades, &folder)?;
-            if ranges.is_empty() {
-                continue;
-            }
-            out.push(json!({"symbol":symbol,"product":product.as_str(),
-                "instrument_id":folder,"level":"tick","data_type":"trades",
-                "event_ranges_ns":ranges.iter().map(|r|json!([
-                    r["start_ns"],r["end_ns"]
-                ])).collect::<Vec<_>>(),
-                "quality":"unverified","backend":"nautilus_v2_parquet"}));
+            if ranges.is_empty() { continue; }
+            out.push(json!({
+                "identifier":folder, "instrument_id":folder,
+                "level":"tick", "data_type":"trades",
+                "event_ranges_ns":ranges.iter().map(|r|json!([r["start_ns"],r["end_ns"]]))
+                    .collect::<Vec<_>>(),
+                "quality":"unverified", "backend":"nautilus_v2_parquet"
+            }));
         }
-        out.sort_by(|a, b| {
-            a["product"]
-                .as_str()
-                .cmp(&b["product"].as_str())
-                .then(a["symbol"].as_str().cmp(&b["symbol"].as_str()))
-                .then(a["level"].as_str().cmp(&b["level"].as_str()))
-        });
+        out.sort_by(|a,b| a["identifier"].as_str().cmp(&b["identifier"].as_str())
+            .then(a["level"].as_str().cmp(&b["level"].as_str())));
         Ok(out)
     }
 
@@ -919,28 +845,17 @@ mod tests {
 
     use super::*;
     #[test]
-    fn inventory_reconstructs_option_and_perpetual_bar_types_from_right() {
-        assert_eq!(
-            parse_bar_folder("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL").unwrap(),
-            (
-                "ETHUSDT".to_string(),
-                MarketProduct::FuturesUm,
-                "1m".to_string()
-            )
-        );
-        assert_eq!(
-            parse_bar_folder("BTC-271231-90000-P.BINANCE-5-MINUTE-LAST-EXTERNAL").unwrap(),
-            (
-                "BTC-271231-90000-P".to_string(),
-                MarketProduct::Options,
-                "5m".to_string()
-            )
-        );
-        assert!(parse_bar_folder("BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-FAKE").is_err());
+    fn generic_inventory_parses_bar_type_without_exchange_inference() {
+        assert_eq!(parse_bar_type("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL").unwrap(),
+            ("ETHUSDT-PERP.BINANCE".into(), "1m".into()));
+        assert_eq!(parse_bar_type("BTC-271231-90000-P.BINANCE-5-MINUTE-LAST-EXTERNAL").unwrap(),
+            ("BTC-271231-90000-P.BINANCE".into(), "5m".into()));
+        assert_eq!(parse_bar_type("BTC-USDT.OKX-5-MINUTE-LAST-EXTERNAL").unwrap(),
+            ("BTC-USDT.OKX".into(), "5m".into()));
     }
     #[test]
     fn path_names_and_windows_are_ported_from_python() {
-        let identifier = bar_type("ETHUSDT", MarketProduct::FuturesUm, "1m").unwrap();
+        let identifier = crate::bar_type("ETHUSDT-PERP.BINANCE", "1m").unwrap();
         assert_eq!(
             RecordKind::Bars.directory(&identifier).unwrap(),
             PathBuf::from("data/bars/ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL")
