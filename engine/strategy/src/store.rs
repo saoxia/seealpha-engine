@@ -142,9 +142,10 @@ impl StrategyStore {
         let url = std::env::var("SEEALPHA_DATABASE_URL")
             .map_err(|_| conflict("SEEALPHA_DATABASE_URL is required"))?;
         let mut connection = Client::connect(&url, NoTls).map_err(err)?;
-        connection.batch_execute(
-            "CREATE SCHEMA IF NOT EXISTS seealpha; SET search_path TO seealpha, public;"
-        ).map_err(err)?;
+        let schema = seealpha_database::schema_for_path(root);
+        connection.batch_execute(&format!(
+            "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public;"
+        )).map_err(err)?;
         connection.batch_execute(INDEX_SCHEMA).map_err(err)?;
         let store = Self { root: root.into(), lock: Mutex::new(()), index: Mutex::new(connection) };
         store.rebuild_index()?;
