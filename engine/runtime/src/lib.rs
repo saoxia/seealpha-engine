@@ -23,6 +23,7 @@ mod native_handoff;
 mod research;
 mod state_store;
 pub use orders::OrderCommand;
+pub use state_store::{OrderRecoveryItem, ReconciliationTask};
 
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PackageBody, PaperRequest, StrategyInput};
@@ -103,7 +104,7 @@ impl Runtime {
         // Query at most one page per tenant on startup; the paginated API
         // below exposes the entire durable queue without loading it at boot.
         for tenant in ledger.active_tenant_ids().map_err(map_ledger)? {
-            let page = ledger
+            let page = state_store
                 .order_recovery_page(&tenant, 0, 500)
                 .map_err(map_ledger)?;
             if !page.is_empty() {
@@ -139,9 +140,9 @@ impl Runtime {
         tenant: &str,
         offset: usize,
         limit: usize,
-    ) -> Result<Vec<seealpha_ledger::OrderRecoveryItem>, RuntimeError> {
+    ) -> Result<Vec<OrderRecoveryItem>, RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger
+        self.state_store
             .order_recovery_page(tenant, offset, limit)
             .map_err(map_ledger)
     }
@@ -154,7 +155,7 @@ impl Runtime {
         now_ms: i64,
     ) -> Result<usize, RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger
+        self.state_store
             .enqueue_order_reconciliations(tenant, now_ms)
             .map_err(map_ledger)
     }
@@ -167,9 +168,9 @@ impl Runtime {
         worker: &str,
         now_ms: i64,
         lease_ms: i64,
-    ) -> Result<Option<seealpha_ledger::ReconciliationTask>, RuntimeError> {
+    ) -> Result<Option<ReconciliationTask>, RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger
+        self.state_store
             .claim_order_reconciliation(tenant, worker, now_ms, lease_ms)
             .map_err(map_ledger)
     }
@@ -189,7 +190,7 @@ impl Runtime {
         error_code: Option<&str>,
     ) -> Result<(), RuntimeError> {
         self.require_active(tenant)?;
-        self.ledger
+        self.state_store
             .finish_order_reconciliation(
                 tenant,
                 account,
@@ -201,6 +202,12 @@ impl Runtime {
                 error_code,
             )
             .map_err(map_ledger)
+    }
+
+    /// Read persisted order projections owned by Runtime execution.
+    pub fn stored_orders(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<state_store::StoredOrder>, RuntimeError> {
+        self.require_active(tenant)?;
+        self.state_store.orders(tenant, account, env).map_err(map_ledger)
     }
 
     pub fn inflight(&self) -> usize {
