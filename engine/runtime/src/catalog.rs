@@ -261,16 +261,6 @@ impl Runtime {
             "file":path.strip_prefix(catalog.root()).ok()
                 .map(|p|p.to_string_lossy().to_string()),
             "exchange_orders":0});
-        // Derived 1m rollups are a repairable cache, never authoritative
-        // Catalog evidence. Failure must not recast a committed import as
-        // uncommitted or elevate the live data/venue readiness gate.
-        if interval == "1m"
-            && matches!(product_name, "spot" | "futures_um")
-            && let Err(err) =
-                self.persist_native_minute_rollups(tenant, product_name, symbol, &native)
-        {
-            eprintln!("native derived rollup cache requires repair: {err}");
-        }
         Ok(published)
     }
     /// Generic native Parquet data for instruments, TradeTick, QuoteTick,
