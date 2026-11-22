@@ -23,27 +23,6 @@ impl Ledger {
             .map_err(|error| LedgerError::Database(error.to_string()))
     }
 
-    pub fn put_gap(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        scope: &str,
-        gap_key: &str,
-        gap_json: &str,
-    ) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO gaps (tenant_id, account_id, scope, gap_key, gap_json, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6)
-                 ON CONFLICT(tenant_id, account_id, scope, gap_key) DO UPDATE SET
-                   gap_json=excluded.gap_json, updated_at=excluded.updated_at",
-                params![tenant_id, account_id, scope, gap_key, gap_json, now_ms()],
-            )
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        Ok(())
-    }
-
     /// Read the persisted account connection registrations without credentials.
     /// This is a registration record, not evidence of live exchange access.
     pub fn account_connections(
@@ -96,22 +75,6 @@ impl Ledger {
         Ok(())
     }
 
-    pub fn add_event(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        kind: &str,
-        body: &str,
-    ) -> Result<(), LedgerError> {
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO events (tenant_id, account_id, kind, body_json, created_at) VALUES ($1, $2, $3, $4, $5)",
-                params![tenant_id, account_id, kind, body, now_ms()],
-            )
-            .map_err(|error| LedgerError::Database(error.to_string()))?;
-        Ok(())
-    }
 
 
 }
