@@ -69,16 +69,19 @@ pub(crate) fn stage_native_intent(
         "position_mode": intent.position_mode,
         "execution_backend": "nautilus_binance_native",
     });
+    register_native_envelope(ledger, intent, &envelope)
+}
+
+fn register_native_envelope(
+    store: &StateStore,
+    intent: &NativeIntent<'_>,
+    envelope: &serde_json::Value,
+) -> Result<NativeIntentDecision, LedgerError> {
     let digest = Sha256::digest(envelope.to_string().as_bytes());
     let fingerprint = format!("{digest:x}");
-    match ledger.preregister_order_intent(
-        intent.tenant,
-        intent.account,
-        intent.environment,
-        intent.request_id,
-        intent.client_order_id,
-        &fingerprint,
-        &envelope,
+    match store.preregister_order_intent(
+        intent.tenant, intent.account, intent.environment,
+        intent.request_id, intent.client_order_id, &fingerprint, envelope,
     )? {
         IntentStart::Fresh => Ok(NativeIntentDecision::StagedFirstAttempt),
         IntentStart::ReconcileOnly => Ok(NativeIntentDecision::ReconcileOnly),
@@ -150,7 +153,48 @@ pub(crate) fn stage_target_adjustment(
         price: &price,
         position_mode: input.position_mode,
     };
-    stage_native_intent(store, &intent).map(Some)
+    // The exact strategy composition and preflight position are part of the
+    // immutable order request, not just the net venue quantity. Sort by member
+    // ID for deterministic fingerprints independent of input iteration order.
+    // These are attribution *claims*, never authenticated venue fills.
+    let mut publications: Vec<_> = input.targets.iter()
+        .map(|target| (target.member_id.as_str(), target.signed_quantity.to_string(), target.risk_exit))
+        .collect();
+    publications.sort_unstable_by(|left, right| left.0.cmp(right.0));
+    let envelope = json!({
+        "action": "NEW",
+        "environment": intent.environment,
+        "client_order_id": intent.client_order_id,
+        "product": intent.product,
+        "symbol": intent.symbol,
+        "side": intent.side,
+        "order_type": intent.order_type,
+        "quantity": intent.quantity,
+        "price": intent.price,
+        "position_mode": intent.position_mode,
+        "execution_backend": "nautilus_binance_native",
+        "origin": "target_netting",
+        "target_publications": publications,
+        "net_target": adjustment.net_target.to_string(),
+        "planning_position": input.position.to_string(),
+        "planning_increment": input.increment.to_string(),
+        "planning_max_abs_target": input.max_abs_target.to_string(),
+    });
+    // Avoid trusting the order's calculated total without the same validation
+    // used by the explicit native instruction path.
+    if !matches!(intent.environment, "sandbox" | "production")
+        || !matches!(intent.product, "spot" | "futures_um")
+        || !valid_id(intent.account, 40)
+        || !valid_id(intent.request_id, 128)
+        || !valid_id(intent.client_order_id, 128)
+        || !valid_symbol(intent.product, intent.symbol)
+        || !valid_mode(intent.product, intent.position_mode)
+        || !positive_decimal(intent.quantity)
+        || !positive_decimal(intent.price)
+    {
+        return Err(LedgerError::Conflict("invalid target native intent".into()));
+    }
+    register_native_envelope(store, &intent, &envelope).map(Some)
 }
 
 fn valid_id(value: &str, max: usize) -> bool {
@@ -498,6 +542,45 @@ mod tests {
         let changed = TargetIntent { position: rust_decimal::Decimal::ZERO, ..request };
         assert!(stage_target_adjustment(&store, &changed).is_err());
         assert!(store.fills("tenant1", "account1", "sandbox").unwrap().is_empty());
+    }
+
+    #[test]
+    fn strategy_composition_is_immutable_even_with_identical_net_order() {
+        use seealpha_execution::MemberTarget;
+        let store = ledger();
+        let first = [
+            MemberTarget { member_id: "alpha".into(), signed_quantity: rust_decimal::Decimal::from(4), risk_exit: false },
+            MemberTarget { member_id: "beta".into(), signed_quantity: rust_decimal::Decimal::from(-1), risk_exit: false },
+        ];
+        let reversed = [first[1].clone(), first[0].clone()];
+        let second = [
+            MemberTarget { member_id: "alpha".into(), signed_quantity: rust_decimal::Decimal::from(5), risk_exit: false },
+            MemberTarget { member_id: "beta".into(), signed_quantity: rust_decimal::Decimal::from(-2), risk_exit: false },
+        ];
+        let input = TargetIntent {
+            tenant: "tenant1", account: "account1", environment: "sandbox",
+            request_id: "attribution-1", client_order_id: "native-attribution-1",
+            product: "futures_um", symbol: "BTCUSDT-PERP", position_mode: "one_way",
+            price: rust_decimal::Decimal::from(2000),
+            targets: &first, position: rust_decimal::Decimal::ZERO,
+            increment: rust_decimal::Decimal::ONE,
+            max_abs_target: rust_decimal::Decimal::from(10),
+            position_reconciled: true, orders_reconciled: true,
+        };
+        assert_eq!(stage_target_adjustment(&store, &input).unwrap(), Some(NativeIntentDecision::StagedFirstAttempt));
+        let original = store.registered_order_intent("tenant1", "account1", "attribution-1").unwrap().unwrap();
+        assert_eq!(original["quantity"], "3");
+        assert_eq!(original["origin"], "target_netting");
+        assert_eq!(original["target_publications"].as_array().unwrap().len(), 2);
+        assert_eq!(stage_target_adjustment(&store, &TargetIntent { targets: &reversed, ..input }).unwrap(),
+            Some(NativeIntentDecision::ReconcileOnly));
+        assert!(stage_target_adjustment(&store, &TargetIntent { targets: &second, ..input }).is_err());
+        let altered_risk = [
+            MemberTarget { risk_exit: true, ..first[0].clone() },
+            first[1].clone(),
+        ];
+        assert!(stage_target_adjustment(&store, &TargetIntent { targets: &altered_risk, ..input }).is_err());
+        assert_eq!(store.registered_order_intent("tenant1", "account1", "attribution-1").unwrap().unwrap(), original);
     }
 
     #[test]
