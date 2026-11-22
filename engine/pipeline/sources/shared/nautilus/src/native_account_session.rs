@@ -253,7 +253,7 @@ impl NativeAccountSubscription {
                     if let Some(view) = current.fresh(now, max_age_ns) {
                         // Read-only output of Nautilus-reported numbers, never
                         // "signed" or "verified" Ledger financial evidence.
-                        if let Ok(row) = serde_json::to_string(view) {
+                        if let Ok(row) = serde_json::to_string(&view) {
                             println!("{row}");
                         }
                     }
