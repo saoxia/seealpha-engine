@@ -65,15 +65,21 @@ pub fn schema_for_path(path: &Path) -> String {
         return format!("seealpha_fixture_memory_{}_{}",
             std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
     }
-    // Application stores share one schema, while standalone fixtures are isolated.
-    match path.file_name().and_then(|n| n.to_str()) {
-        Some("postgres-state" | "control-state" | "strategies") => "seealpha".into(),
-        _ => {
-            let mut hash = std::collections::hash_map::DefaultHasher::new();
-            path.hash(&mut hash);
-            format!("seealpha_fixture_{:016x}", hash.finish())
-        }
+    // Every test's temporary state directory is isolated, but its Ledger,
+    // Control and Strategy stores must share the same schema across restarts.
+    if path.starts_with(std::env::temp_dir()) {
+        let scoped = if matches!(path.file_name().and_then(|n| n.to_str()),
+            Some("postgres-state" | "control-state" | "strategies")) {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        scoped.hash(&mut hash);
+        return format!("seealpha_fixture_{:016x}", hash.finish());
     }
+    // Normal application state (including container restarts) shares one schema.
+    "seealpha".into()
 }
 
 pub struct Connection { client: Mutex<Client>, schema: String }
