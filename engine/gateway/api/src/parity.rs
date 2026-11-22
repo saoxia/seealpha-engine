@@ -71,19 +71,13 @@ async fn positions(
     let env = query
         .environment
         .ok_or_else(|| AppError::bad_request("账户环境无效。"))?;
-    // SQLite positions are historical/paper records, not a verified live
-    // Nautilus Position Cache. Never expose them as current venue positions.
-    if env != "paper" {
-        return Err(AppError::conflict(
-            "生产/测试网实时持仓尚未接入原生 Nautilus Cache，拒绝返回旧 Ledger 仓位。",
-        ));
-    }
-    let positions = state
-        .runtime
-        .ledger
-        .positions(&tenant, &account, &env)
-        .map_err(|e| AppError::bad_request(e.to_string()))?;
-    Ok(Json(json!({"positions":positions})))
+    // Old Ledger positions are not an authoritative live or paper Position
+    // service. Do not return an empty array (which could be interpreted as a
+    // verified flat account) while the native position reader is unavailable.
+    let _ = (account, env);
+    Err(AppError::conflict(
+        "Nautilus 原生持仓查询尚未接入，旧 Ledger 仓位不可用。",
+    ))
 }
 
 async fn request(
