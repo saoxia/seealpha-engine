@@ -1,5 +1,5 @@
 -- SeeAlpha-owned runtime tables. Separate from NautilusTrader's PostgreSQL schema.
--- Pending cutover: this DDL alone does not migrate existing SQLite rows or update Rust callers.
+-- Legacy SQLite records require the separate offline migration; this schema does not import rows.
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS seealpha;
 SET LOCAL search_path TO seealpha, public;
