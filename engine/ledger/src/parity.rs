@@ -12,17 +12,6 @@ fn parse(text: &str) -> Result<Value, LedgerError> {
 }
 
 impl Ledger {
-    pub fn request(
-        &self,
-        tenant_id: &str,
-        account_id: &str,
-        request_id: &str,
-    ) -> Result<Option<Value>, LedgerError> {
-        self.get_order_request(tenant_id, account_id, request_id)?
-            .map(|value| parse(&value))
-            .transpose()
-    }
-
     pub fn gaps_for_scope(
         &self,
         tenant_id: &str,
