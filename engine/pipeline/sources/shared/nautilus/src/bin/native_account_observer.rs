@@ -34,11 +34,12 @@ use seealpha_nautilus_binance_data::native_account_session::{
 /// An explicitly enabled native PostgreSQL Cache. The password is read from a
 /// mounted local file and never accepted in command-line arguments or logs.
 fn postgres_cache_from_env() -> Result<Option<PostgresCacheConfig>> {
-    match std::env::var("SEEALPHA_ENABLE_POSTGRES_CACHE").as_deref() {
-        Err(std::env::VarError::NotPresent) | Ok("0") => return Ok(None),
-        Ok("1") => {},
+    match std::env::var("SEEALPHA_ENABLE_POSTGRES_CACHE") {
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Ok(value) if value == "0" => return Ok(None),
+        Ok(value) if value == "1" => {}
         _ => anyhow::bail!("SEEALPHA_ENABLE_POSTGRES_CACHE must be 0 or 1"),
-    };
+    }
     let password_file = std::env::var("SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE")
         .context("PostgreSQL cache enabled without password file")?;
     let password_file = Path::new(&password_file);
