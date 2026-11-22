@@ -131,6 +131,9 @@ fi
 
 # The observer reads the credential from this file. No password command-line flag.
 export SEEALPHA_POSTGRES_CACHE_PASSWORD_FILE="$PG_CREDENTIAL_FILE"
+# The Engine uses the existing local PostgreSQL instance for SeeAlpha-owned state.
+# Do not print the connection string: it includes the persistent database password.
+export SEEALPHA_DATABASE_URL="postgresql://seealpha_cache:${PG_PASSWORD}@127.0.0.1:5432/seealpha_cache"
 # Local endpoint hint only; actual native Cache is enabled explicitly on observer.
 
 unset PG_PASSWORD
