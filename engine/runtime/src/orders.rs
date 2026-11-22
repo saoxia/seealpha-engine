@@ -40,6 +40,22 @@ impl Runtime {
         crate::native_handoff::stage_native_order_command(self, &command)
     }
 
+    /// Read-only request history for legacy API consumers. This does not
+    /// authorize a send, settlement, or native account reconciliation.
+    pub fn order_request_view(
+        &self,
+        tenant_id: &str,
+        account_id: &str,
+        request_id: &str,
+    ) -> Result<Value, RuntimeError> {
+        self.require_active(tenant_id)?;
+        let raw = self.state_store.get_order_request(tenant_id, account_id, request_id)
+            .map_err(map_ledger)?
+            .ok_or_else(|| RuntimeError::NotFound("没有该订单请求记录。".into()))?;
+        serde_json::from_str(&raw)
+            .map_err(|_| RuntimeError::Conflict("订单请求记录损坏。".into()))
+    }
+
     /// Only the native authenticated event stream can reconcile native orders.
     /// No implicit retry, no custom REST recovery, no invented fills.
     #[allow(clippy::too_many_arguments)]
