@@ -59,12 +59,19 @@ fn read_native_account(tenant: &str, account: &str) -> Result<Value, RuntimeErro
         return Err(unavailable());
     }
     let report: Value = serde_json::from_slice(&response).map_err(|_| unavailable())?;
+    validate_native_report(report, tenant, account)
+
+}
+
+#[cfg(unix)]
+fn validate_native_report(report: Value, tenant: &str, account: &str) -> Result<Value, RuntimeError> {
+    let unavailable = || RuntimeError::Conflict("Nautilus testnet 账户报告缺失、错误或过期。".into());
     if report["tenant_id"].as_str() != Some(tenant)
         || report["account_id"].as_str() != Some(account)
         || report["environment"] != "sandbox"
         || report["source"] != "nautilus_testnet_read_only"
-        || report["native_account"]["account_id"].as_str().is_none()
-        || report["native_account"]["event_id"].as_str().is_none()
+        || report["native_account"]["account_id"].as_str().is_none_or(str::is_empty)
+        || report["native_account"]["event_id"].as_str().is_none_or(str::is_empty)
         || !report["native_account"]["balances"].is_object()
         || !report["native_account"]["margins"].is_array()
     {
@@ -143,6 +150,33 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn native_read_rejects_wrong_identity_source_and_stale_event() {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+        let good = json!({
+            "tenant_id": "tenant_1",
+            "account_id": "account_1",
+            "environment": "sandbox",
+            "source": "nautilus_testnet_read_only",
+            "native_account": {
+                "account_id": "BINANCE-SPOT-001",
+                "event_id": "test-event",
+                "observed_at_ns": now,
+                "balances": {"USDT": {"total": "100", "free": "80", "locked": "20"}},
+                "margins": []
+            }
+        });
+        assert!(validate_native_report(good.clone(), "tenant_1", "account_1").is_ok());
+        assert!(validate_native_report(good.clone(), "other", "account_1").is_err());
+        let mut forged = good.clone();
+        forged["source"] = json!("signed_exchange_account_query");
+        assert!(validate_native_report(forged, "tenant_1", "account_1").is_err());
+        let mut old = good;
+        old["native_account"]["observed_at_ns"] = json!(1);
+        assert!(validate_native_report(old, "tenant_1", "account_1").is_err());
+    }
+
     #[test]
     fn native_evidence_is_not_marked_available_by_stub() {
         assert!(matches!(native_evidence_unavailable(), RuntimeError::Conflict(_)));
