@@ -1,7 +1,5 @@
 use crate::{Bar, BarFeature, MarketError, PublicTrade};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
-use seealpha_quality::{self, Kline};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -50,9 +48,19 @@ pub fn validate_bars(bars: &[Bar], interval_ms: i64) -> Result<(), MarketError> 
     if interval_ms <= 0 {
         return Err(MarketError::Interval);
     }
-    let mut projected = Vec::with_capacity(bars.len());
+    // Keep the source's contiguous, closed-bar checks without the previous
+    // Decimal -> f64 -> quality-crate conversion.
+    let mut previous: Option<i64> = None;
     for bar in bars {
-        if bar.open_time_ms < 0 || bar.open_time_ms % interval_ms != 0 {
+        if !(0..100_000_000_000_000).contains(&bar.open_time_ms)
+            || bar.open_time_ms % interval_ms != 0
+        {
+            return Err(MarketError::Time);
+        }
+        if let Some(before) = previous
+            && (bar.open_time_ms <= before
+                || bar.open_time_ms.checked_sub(before) != Some(interval_ms))
+        {
             return Err(MarketError::Time);
         }
         if bar.volume < Decimal::ZERO
@@ -72,18 +80,9 @@ pub fn validate_bars(bars: &[Bar], interval_ms: i64) -> Result<(), MarketError> 
         if bar.close_time_ms != expected_close {
             return Err(MarketError::Time);
         }
-        projected.push(Kline {
-            open_time_ms: bar.open_time_ms,
-            close_time_ms: bar.close_time_ms,
-            open: dec_f64(bar.open)?,
-            high: dec_f64(bar.high)?,
-            low: dec_f64(bar.low)?,
-            close: dec_f64(bar.close)?,
-            volume: dec_f64(bar.volume)?,
-        });
+        previous = Some(bar.open_time_ms);
     }
-    seealpha_quality::validate_klines(&projected, interval_ms)
-        .map_err(|error| MarketError::Quality(error.to_string()))
+    Ok(())
 }
 
 /// Audit public trade identities without assuming that missing IDs can be
@@ -230,17 +229,56 @@ fn json_i64(value: &Value) -> Result<i64, MarketError> {
     value.as_i64().ok_or(MarketError::Time)
 }
 
-fn dec_f64(value: Decimal) -> Result<f64, MarketError> {
-    value
-        .to_f64()
-        .filter(|number| number.is_finite())
-        .ok_or(MarketError::Decimal)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn source_validation_rejects_internal_gaps_and_out_of_order_bars() {
+        let bar = |open_time_ms| Bar {
+            open_time_ms,
+            close_time_ms: open_time_ms + 59_999,
+            open: Decimal::from(100),
+            high: Decimal::from(101),
+            low: Decimal::from(99),
+            close: Decimal::from(100),
+            volume: Decimal::ONE,
+        };
+        assert!(validate_bars(&[bar(0), bar(60_000)], 60_000).is_ok());
+        assert!(validate_bars(&[bar(0), bar(120_000)], 60_000).is_err());
+        assert!(validate_bars(&[bar(60_000), bar(0)], 60_000).is_err());
+        assert!(validate_bars(&[bar(0), bar(0)], 60_000).is_err());
+    }
+
+    #[test]
+    fn source_validation_preserves_decimal_precision_and_ohlcv_checks() {
+        let mut bar = Bar {
+            open_time_ms: 0, close_time_ms: 59_999,
+            open: "0.0000000000000000000000000001".parse().unwrap(),
+            high: "0.0000000000000000000000000002".parse().unwrap(),
+            low: "0.0000000000000000000000000001".parse().unwrap(),
+            close: "0.0000000000000000000000000002".parse().unwrap(),
+            volume: Decimal::ZERO,
+        };
+        assert!(validate_bars(&[bar], 60_000).is_ok());
+        bar.low = "0.0000000000000000000000000003".parse().unwrap();
+        assert!(validate_bars(&[bar], 60_000).is_err());
+        bar.low = bar.open;
+        bar.close_time_ms = 60_000;
+        assert!(validate_bars(&[bar], 60_000).is_err());
+    }
+
+    #[test]
+    fn source_validation_rejects_out_of_range_timestamp() {
+        let bar = Bar {
+            open_time_ms: 100_000_000_000_000,
+            close_time_ms: 100_000_000_059_999,
+            open: Decimal::ONE, high: Decimal::ONE,
+            low: Decimal::ONE, close: Decimal::ONE, volume: Decimal::ZERO,
+        };
+        assert!(validate_bars(&[bar], 60_000).is_err());
+    }
 
     #[test]
     fn parses_and_validates_a_closed_binance_kline() {
