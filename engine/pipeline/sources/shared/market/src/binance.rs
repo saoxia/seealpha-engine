@@ -210,19 +210,6 @@ fn precision_from_increment(raw:&str)->Result<u32,MarketError>{
     Ok(precision)
 }
 
-#[cfg(test)]
-mod precision_tests {
-    use super::*;
-    #[test]
-    fn instrument_filters_are_exact_not_inferred_from_candle_values(){
-        assert_eq!(precision_from_increment("0.01000000").unwrap(),2);
-        assert_eq!(precision_from_increment("1.00000000").unwrap(),0);
-        assert_eq!(precision_from_increment("0.00010000").unwrap(),4);
-        assert!(precision_from_increment("0.00000000").is_err());
-        assert_eq!(precision_from_increment("0.25000000").unwrap(),2);
-    }
-}
-
 fn parse_trades(value: &Value) -> Result<Vec<PublicTrade>, MarketError> {
     let rows = value.as_array().ok_or(MarketError::Payload)?;
     let mut trades = Vec::with_capacity(rows.len());
@@ -270,4 +257,17 @@ fn parse_levels(value: &Value) -> Result<Vec<DepthLevel>, MarketError> {
         });
     }
     Ok(levels)
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::*;
+    #[test]
+    fn instrument_filters_are_exact_not_inferred_from_candle_values(){
+        assert_eq!(precision_from_increment("0.01000000").unwrap(),2);
+        assert_eq!(precision_from_increment("1.00000000").unwrap(),0);
+        assert_eq!(precision_from_increment("0.00010000").unwrap(),4);
+        assert!(precision_from_increment("0.00000000").is_err());
+        assert_eq!(precision_from_increment("0.25000000").unwrap(),2);
+    }
 }
