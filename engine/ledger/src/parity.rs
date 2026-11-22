@@ -1,10 +1,10 @@
 //! Trading account compatibility reads. Non-financial Pipeline state lives in ControlStore.
 use crate::{Ledger, LedgerError};
-use rusqlite::params;
+use seealpha_database::params;
 use serde_json::{Value, json};
 
-fn sqlite(err: rusqlite::Error) -> LedgerError {
-    LedgerError::Sqlite(err.to_string())
+fn sqlite(err: seealpha_database::Error) -> LedgerError {
+    LedgerError::Database(err.to_string())
 }
 
 fn parse(text: &str) -> Result<Value, LedgerError> {
@@ -21,8 +21,8 @@ impl Ledger {
         let conn = self.lock()?;
         let mut query = conn
             .prepare(
-                "SELECT position_json FROM positions WHERE tenant_id=?1 AND account_id=?2
-             AND environment=?3 ORDER BY position_id",
+                "SELECT position_json FROM positions WHERE tenant_id=$1 AND account_id=$2
+             AND environment=$3 ORDER BY position_id",
             )
             .map_err(sqlite)?;
         let rows = query
@@ -53,8 +53,8 @@ impl Ledger {
         let conn = self.lock()?;
         let mut query = conn
             .prepare(
-                "SELECT gap_json FROM gaps WHERE tenant_id=?1 AND account_id=?2
-             AND (?3 IS NULL OR scope=?3) ORDER BY scope,gap_key",
+                "SELECT gap_json FROM gaps WHERE tenant_id=$1 AND account_id=$2
+             AND ($3 IS NULL OR scope=$3) ORDER BY scope,gap_key",
             )
             .map_err(sqlite)?;
         let rows = query
@@ -76,7 +76,7 @@ impl Ledger {
         let mut query = conn
             .prepare(
                 "SELECT id,kind,body_json,created_at FROM events
-             WHERE tenant_id=?1 AND account_id=?2 AND id>?3 ORDER BY id LIMIT ?4",
+             WHERE tenant_id=$1 AND account_id=$2 AND id>$3 ORDER BY id LIMIT $4",
             )
             .map_err(sqlite)?;
         let rows = query
