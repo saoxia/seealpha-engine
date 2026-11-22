@@ -85,6 +85,74 @@ pub(crate) fn stage_native_intent(
     }
 }
 
+
+/// Typed Target -> immutable Nautilus intent handoff. This does not submit an
+/// order or grant permission to send. The caller must be an internal Nautilus
+/// adapter which has independently reconciled account positions and open orders.
+#[allow(dead_code)] // Not attached to live Nautilus until trusted cache bridge exists.
+pub(crate) struct TargetIntent<'a> {
+    pub tenant: &'a str,
+    pub account: &'a str,
+    pub environment: &'a str,
+    pub request_id: &'a str,
+    pub client_order_id: &'a str,
+    pub product: &'a str,
+    pub symbol: &'a str,
+    pub position_mode: &'a str,
+    pub price: rust_decimal::Decimal,
+    pub targets: &'a [seealpha_execution::MemberTarget],
+    pub position: rust_decimal::Decimal,
+    pub increment: rust_decimal::Decimal,
+    pub max_abs_target: rust_decimal::Decimal,
+    pub position_reconciled: bool,
+    pub orders_reconciled: bool,
+}
+
+/// None = targets already satisfied (or no strategy publications), so no
+/// outbox registration is made. A replay of the same immutable adjustment is
+/// reconcile-only. The decision is NEVER authorization to invoke Nautilus.
+#[allow(dead_code)]
+pub(crate) fn stage_target_adjustment(
+    store: &StateStore,
+    input: &TargetIntent<'_>,
+) -> Result<Option<NativeIntentDecision>, LedgerError> {
+    use seealpha_execution::target::plan::plan_adjustment;
+    if input.price <= rust_decimal::Decimal::ZERO {
+        return Err(LedgerError::Conflict("invalid target limit price".into()));
+    }
+    let adjustment = plan_adjustment(
+        input.targets,
+        input.position,
+        input.increment,
+        input.max_abs_target,
+        input.position_reconciled,
+        input.orders_reconciled,
+    ).map_err(|error| LedgerError::Conflict(format!("unsafe target adjustment: {error}")))?;
+    let Some(adjustment) = adjustment else { return Ok(None); };
+    let side = if adjustment.signed_quantity > rust_decimal::Decimal::ZERO {
+        "BUY"
+    } else {
+        "SELL"
+    };
+    let quantity = adjustment.signed_quantity.abs().to_string();
+    let price = input.price.to_string();
+    let intent = NativeIntent {
+        tenant: input.tenant,
+        account: input.account,
+        environment: input.environment,
+        request_id: input.request_id,
+        client_order_id: input.client_order_id,
+        product: input.product,
+        symbol: input.symbol,
+        side,
+        order_type: "LIMIT",
+        quantity: &quantity,
+        price: &price,
+        position_mode: input.position_mode,
+    };
+    stage_native_intent(store, &intent).map(Some)
+}
+
 fn valid_id(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
@@ -396,5 +464,68 @@ mod tests {
             assert!(stage_native_intent(&ledger, &invalid).is_err());
         }
         assert!(ledger.order_recovery_page("tenant1", 0, 10).unwrap().is_empty());
+    } 
+    #[test]
+    fn targets_stage_one_immutable_native_intent_without_sending() {
+        use seealpha_execution::MemberTarget;
+        let store = ledger();
+        let targets = [
+            MemberTarget { member_id: "long".into(), signed_quantity: rust_decimal::Decimal::from(6), risk_exit: false },
+            MemberTarget { member_id: "short".into(), signed_quantity: rust_decimal::Decimal::from(-2), risk_exit: false },
+        ];
+        let request = TargetIntent {
+            tenant: "tenant1", account: "account1", environment: "sandbox",
+            request_id: "target-1", client_order_id: "target-client-1",
+            product: "futures_um", symbol: "BTCUSDT-PERP",
+            position_mode: "one_way", price: rust_decimal::Decimal::from(2000),
+            targets: &targets, position: rust_decimal::Decimal::ONE,
+            increment: rust_decimal::Decimal::ONE,
+            max_abs_target: rust_decimal::Decimal::from(10),
+            position_reconciled: true, orders_reconciled: true,
+        };
+        assert_eq!(
+            stage_target_adjustment(&store, &request).unwrap(),
+            Some(NativeIntentDecision::StagedFirstAttempt)
+        );
+        let stored = store.registered_order_intent("tenant1", "account1", "target-1").unwrap().unwrap();
+        assert_eq!(stored["side"], "BUY");
+        assert_eq!(stored["quantity"], "3");
+        assert_eq!(stored["execution_backend"], "nautilus_binance_native");
+        assert_eq!(
+            stage_target_adjustment(&store, &request).unwrap(),
+            Some(NativeIntentDecision::ReconcileOnly)
+        );
+        let changed = TargetIntent { position: rust_decimal::Decimal::ZERO, ..request };
+        assert!(stage_target_adjustment(&store, &changed).is_err());
+        assert!(store.fills("tenant1", "account1", "sandbox").unwrap().is_empty());
     }
+
+    #[test]
+    fn target_handoff_requires_reconciled_nautilus_inputs_and_nonzero_delta() {
+        use seealpha_execution::MemberTarget;
+        let store = ledger();
+        let targets = [MemberTarget {
+            member_id: "alpha".into(),
+            signed_quantity: rust_decimal::Decimal::from(2), risk_exit: false,
+        }];
+        let base = TargetIntent {
+            tenant: "tenant1", account: "account1", environment: "sandbox",
+            request_id: "target-2", client_order_id: "target-client-2",
+            product: "spot", symbol: "BTCUSDT", position_mode: "spot",
+            price: rust_decimal::Decimal::from(2000),
+            targets: &targets, position: rust_decimal::from_str_exact("2").unwrap(),
+            increment: rust_decimal::Decimal::ONE,
+            max_abs_target: rust_decimal::Decimal::from(10),
+            position_reconciled: true, orders_reconciled: true,
+        };
+        assert_eq!(stage_target_adjustment(&store, &base).unwrap(), None);
+        let pending = TargetIntent {
+            position: rust_decimal::Decimal::ZERO,
+            orders_reconciled: false,
+            ..base
+        };
+        assert!(stage_target_adjustment(&store, &pending).is_err());
+        assert!(store.registered_order_intent("tenant1", "account1", "target-2").unwrap().is_none());
+    }
+
 }
