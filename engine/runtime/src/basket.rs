@@ -48,23 +48,11 @@ impl Runtime {
         let manifest = bind_phase_orders(&stored.checkpoint).map_err(basket_error)?;
         let snapshot = self
             .ledger
-            .account_snapshot(tenant, account, environment)
-            .map_err(map_ledger)?
-            .ok_or_else(|| RuntimeError::Conflict("缺少已核实的交易所账户持仓。".into()))?;
-        if snapshot.revision != expected_account_revision
-            || snapshot.source != "signed_exchange_account_query"
-        {
-            return Err(RuntimeError::Conflict(
-                "交易所账户快照来源或版本不匹配。".into(),
-            ));
-        }
-        let ts_ns = u64::try_from(snapshot.observed_at_ms)
-            .ok()
-            .and_then(|ts| ts.checked_mul(1_000_000))
-            .ok_or_else(|| RuntimeError::Conflict("账户快照时间无效。".into()))?;
-        if ts_ns > now_ns || now_ns - ts_ns > max_age_ns {
-            return Err(RuntimeError::Conflict("账户持仓证据过期。".into()));
-        }
+            .account_snapshot_for_risk(
+                tenant, account, environment, expected_account_revision,
+                now_ns, max_age_ns,
+            )
+            .map_err(map_ledger)?;
         let reported = snapshot.state["positions"]
             .as_object()
             .ok_or_else(|| RuntimeError::Conflict("账户持仓证据缺失。".into()))?;
