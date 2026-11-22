@@ -28,6 +28,10 @@ values remain strings to avoid narrowing precision.
 
 The **existing Binance official ZIP remains the first choice**. Only a failed
 USD-M ZIP fetch triggers the bounded ClickHouse read of a suspect minute.
+ClickHouse is **optional and best-effort**: absent URL, invalid settings, connection
+failure, query error, unsupported symbol or zero rows all skip the fallback
+without replacing the original ZIP failure. A successful official ZIP path never
+queries ClickHouse. No connection attempt is made at service startup.
 Currently this is evidence-only: no Catalog import or completeness guarantee.
 **Important:** the table is raw `trade`, while the current USD-M Nautilus
 repair/import path uses `aggTrades`. Never pass these rows through that importer
