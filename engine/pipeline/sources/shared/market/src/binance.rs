@@ -21,6 +21,29 @@ impl BinanceSource {
         Ok(Self { client })
     }
 
+    /// Instrument precision comes from Binance's exchangeInfo filters, not
+    /// from observed price samples or a guessed fixed decimal scale.
+    pub async fn instrument_precisions(
+        &self,product:Product,symbol:&str,
+    )->Result<(u32,u32),MarketError>{
+        check_symbol(symbol)?;
+        let endpoint=match product {
+            Product::Spot=>"https://data-api.binance.vision/api/v3/exchangeInfo",
+            Product::FuturesUm=>"https://fapi.binance.com/fapi/v1/exchangeInfo",
+        };
+        let body=self.get_json(endpoint,&[("symbol",symbol.to_string())]).await?;
+        let items=body["symbols"].as_array().ok_or(MarketError::Payload)?;
+        if items.len()!=1 || items[0]["symbol"].as_str()!=Some(symbol){
+            return Err(MarketError::Payload);
+        }
+        let filters=items[0]["filters"].as_array().ok_or(MarketError::Payload)?;
+        let tick=filters.iter().find(|v|v["filterType"]=="PRICE_FILTER")
+            .and_then(|v|v["tickSize"].as_str()).ok_or(MarketError::Payload)?;
+        let step=filters.iter().find(|v|v["filterType"]=="LOT_SIZE")
+            .and_then(|v|v["stepSize"].as_str()).ok_or(MarketError::Payload)?;
+        Ok((precision_from_increment(tick)?,precision_from_increment(step)?))
+    }
+
     /// Bounded historical closed-bar reads for the native Rust data manager.
     ///
     /// [start_ms,end_ms) is an exact aligned time range. A missing bar,
@@ -176,6 +199,31 @@ impl PublicSource for BinanceSource {
             },
             depth: parse_depth(&depth_json)?,
         })
+    }
+}
+
+fn precision_from_increment(raw:&str)->Result<u32,MarketError>{
+    let number=raw.parse::<rust_decimal::Decimal>().map_err(|_|MarketError::Payload)?;
+    if number<=rust_decimal::Decimal::ZERO {return Err(MarketError::Payload);}
+    let precision=number.normalize().scale();
+    if precision>16 {return Err(MarketError::Payload);}
+    // Binance tick/step values must be exact powers of ten for a single
+    // decimal-place precision to describe their allowed price/quantity grid.
+    let expected=rust_decimal::Decimal::new(1,precision);
+    if number!=expected {return Err(MarketError::Payload);}
+    Ok(precision)
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::*;
+    #[test]
+    fn instrument_filters_are_exact_not_inferred_from_candle_values(){
+        assert_eq!(precision_from_increment("0.01000000").unwrap(),2);
+        assert_eq!(precision_from_increment("1.00000000").unwrap(),0);
+        assert_eq!(precision_from_increment("0.00010000").unwrap(),4);
+        assert!(precision_from_increment("0.00000000").is_err());
+        assert!(precision_from_increment("0.25000000").is_err());
     }
 }
 
