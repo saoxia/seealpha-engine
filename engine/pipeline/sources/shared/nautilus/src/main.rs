@@ -119,11 +119,12 @@ fn native_bar(
     let identity = format!("{instrument}-{period}-LAST-INTERNAL");
     let bar_type = BarType::from(identity.as_str());
     let price = |value: rust_decimal::Decimal| -> Result<Price> {
-        Ok(format!("{:.*}", tick.price.precision as usize, value).parse()?)
+        format!("{:.*}", tick.price.precision as usize, value)
+            .parse::<Price>().map_err(anyhow::Error::msg)
     };
-    let volume: Quantity = format!(
+    let volume = format!(
         "{:.*}", tick.size.precision as usize, snapshot.volume
-    ).parse()?;
+    ).parse::<Quantity>().map_err(anyhow::Error::msg)?;
     let time = if snapshot.closed {
         // Final events use the actual prior period boundary, never time
         // from the triggering tick in the following period.
@@ -362,9 +363,22 @@ mod tests {
         }
     }
 
+    fn stub_tick_for_intrabar_tests() -> TradeTick {
+        use nautilus_model::{enums::AggressorSide, identifiers::TradeId};
+        TradeTick::new(
+            InstrumentId::from("ETHUSDT.BINANCE"),
+            "100.00".parse().unwrap(),
+            "1.000".parse().unwrap(),
+            AggressorSide::Buyer,
+            TradeId::from("1"),
+            UnixNanos::new(1_000_000_000),
+            UnixNanos::new(1_000_000_100),
+        )
+    }
+
     #[test]
     fn each_binance_interval_produces_native_unclosed_bar() {
-        let tick=nautilus_model::data::stubs::stub_trade_ethusdt_buy();
+        let tick=stub_tick_for_intrabar_tests();
         for &interval in tick_bars::INTERVALS {
             let snapshot=tick_bars::TickBar {
                 interval:interval.into(),
@@ -386,7 +400,7 @@ mod tests {
 
     #[test]
     fn closing_bar_uses_period_end_not_future_tick_time() {
-        let tick=nautilus_model::data::stubs::stub_trade_ethusdt_buy();
+        let tick=stub_tick_for_intrabar_tests();
         let snapshot=tick_bars::TickBar {
             interval:"1s".into(),open_time_ms:1_000,close_time_ms:1_999,
             open:"100".parse().unwrap(),high:"101".parse().unwrap(),
