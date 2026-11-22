@@ -1,4 +1,4 @@
-//! Application-owned durable state: research outputs and immutable order intents.
+//! Application-owned durable paper sessions and immutable order intents.
 //! This is not a balance, position, or exchange fill ledger. Uses the same
 //! PostgreSQL schema initialized by Runtime before stores are opened.
 mod registry;
