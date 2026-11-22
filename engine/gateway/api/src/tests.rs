@@ -488,18 +488,17 @@ use super::*;
             .runtime
             .ensure_tenant("42", "development", "active")
             .unwrap();
-        setup
-            .runtime
-            .ledger
-            .import_funding_events(
-                "42",
-                "ETHUSDT",
-                &[json!({
-                    "symbol":"ETHUSDT","funding_time_ms":100,
-                    "rate_type":"Regular","funding_rate":"0.0001","mark_price":"2000"
-                })],
-            )
-            .unwrap();
+        let root = setup.runtime.native_catalog_root();
+        std::fs::create_dir_all(&root).unwrap();
+        let catalog = seealpha_catalog::Catalog::open_existing(&root).unwrap();
+        seealpha_market::funding::persist_funding(
+            &catalog, "ETHUSDT",
+            &[seealpha_market::funding::FundingObservation {
+                symbol: "ETHUSDT".into(), funding_time_ms: 100,
+                rate_type: "Regular".into(),
+                funding_rate: "0.0001".into(), mark_price: "2000".into(),
+            }],
+        ).unwrap();
         let app = router(setup);
         let request = Request::builder()
             .uri("/tenants/42/data/funding")
