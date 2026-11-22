@@ -1,4 +1,6 @@
 //! Strategy target holdings, netting, sizing and replay.
+pub mod plan;
+
 use rust_decimal::Decimal;
 use thiserror::Error;
 
