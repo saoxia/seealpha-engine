@@ -5,6 +5,11 @@ mod basket_journal;
 mod coordinator_state;
 mod research;
 mod paper;
+mod order_intents;
+mod order_reconciliation_tasks;
+mod order_requests;
+pub use order_intents::{IntentStart, OrderRecoveryItem};
+pub use order_reconciliation_tasks::ReconciliationTask;
 pub(crate) use paper::{SessionStart, SessionWrite};
 
 use seealpha_database::Connection;
@@ -35,4 +40,23 @@ pub(super) fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|v| v.as_millis()).unwrap_or(0)).unwrap_or(0)
+}
+
+#[cfg(test)]
+impl StateStore {
+    // Preserve the original Ledger test fixtures without exposing tenant writes to production.
+    fn ensure_tenant(&self, tenant: &str, purpose: &str, status: &str) -> Result<(), LedgerError> {
+        use seealpha_database::params;
+        self.lock()?.execute("INSERT INTO tenants(tenant_id,purpose,status) VALUES ($1,$2,$3) ON CONFLICT(tenant_id) DO UPDATE SET purpose=excluded.purpose,status=excluded.status", params![tenant,purpose,status]).map_err(|e| LedgerError::Database(e.to_string()))?;
+        Ok(())
+    }
+    fn request(&self, tenant: &str, account: &str, request: &str) -> Result<Option<serde_json::Value>, LedgerError> {
+        self.get_order_request(tenant,account,request)?.map(|s| serde_json::from_str(&s).map_err(|e| LedgerError::Database(e.to_string()))).transpose()
+    }
+    fn fills(&self, tenant: &str, account: &str, env: &str) -> Result<Vec<String>, LedgerError> {
+        use seealpha_database::params;
+        let conn=self.lock()?;
+        let mut stmt=conn.prepare("SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2 AND environment=$3").map_err(|e| LedgerError::Database(e.to_string()))?;
+        stmt.query_map(params![tenant,account,env], |r| r.get::<_,String>(0)).map_err(|e| LedgerError::Database(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e| LedgerError::Database(e.to_string()))
+    }
 }
