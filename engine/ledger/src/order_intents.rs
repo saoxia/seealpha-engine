@@ -239,32 +239,9 @@ impl Ledger {
         Ok(items)
     }
 
-    /// Persist an immutable intent AND a Python-readable UNKNOWN request row
-    /// in one IMMEDIATE transaction. Only Fresh is eligible for *one* attempt.
+    /// Atomically preregister one immutable order request; never send here.
     #[allow(clippy::too_many_arguments)]
     pub fn preregister_order_intent(
-        &self,
-        tenant: &str,
-        account: &str,
-        environment: &str,
-        request_id: &str,
-        client_order_id: &str,
-        fingerprint: &str,
-        intent: &Value,
-    ) -> Result<IntentStart, LedgerError> {
-        self.preregister_order_intent_inner(
-            tenant,
-            account,
-            environment,
-            request_id,
-            client_order_id,
-            fingerprint,
-            intent,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn preregister_order_intent_inner(
         &self,
         tenant: &str,
         account: &str,
