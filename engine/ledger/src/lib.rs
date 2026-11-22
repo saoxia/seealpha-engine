@@ -1,7 +1,7 @@
 //! SQLite runtime book for tenants, trading evidence, and paper orders.
-// Ledger/Funds business domains: state, movements, attribution, and checking.
-// The four Ledger/Funds business domains live beside src/ for a flat
-// repository layout. Keep src/lib.rs as the Rust crate root.
+// Native Nautilus owns account/position state; this crate only persists
+// SeeAlpha-specific movement evidence, attribution and reconciliation data.
+// Keep src/lib.rs as the Rust crate root.
 #[path = "../movements/mod.rs"]
 mod movements;
 #[path = "../allocations/mod.rs"]
