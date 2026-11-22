@@ -1,6 +1,6 @@
 //! Strategy package and issuance persistence on an immutable filesystem.
 //! PostgreSQL indexes issuance metadata; executable artifacts live only in files.
-use postgres::{Client, NoTls, Transaction};
+use seealpha_database::{Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::{self, OpenOptions}, io::{Read, Write}, path::{Component, Path, PathBuf}, sync::{Mutex, atomic::{AtomicU64, Ordering}}};
@@ -41,7 +41,7 @@ struct StoredRecord {
     /// Hash of the original ZIP when an uploaded ZIP was provided.
     zip_sha256: Option<String>,
 }
-pub struct StrategyStore { root: PathBuf, lock: Mutex<()>, index: Mutex<Client> }
+pub struct StrategyStore { root: PathBuf, lock: Mutex<()>, index: Mutex<Connection> }
 
 fn err(error: impl std::fmt::Display) -> StoreError { StoreError::Io(error.to_string()) }
 fn conflict(message: &str) -> StoreError { StoreError::Conflict(message.into()) }
@@ -139,14 +139,9 @@ impl StrategyStore {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(root, fs::Permissions::from_mode(0o700)).map_err(err)?;
         }
-        let url = std::env::var("SEEALPHA_DATABASE_URL")
-            .map_err(|_| conflict("SEEALPHA_DATABASE_URL is required"))?;
-        let mut connection = Client::connect(&url, NoTls).map_err(err)?;
-        let schema = seealpha_database::schema_for_path(root);
-        connection.batch_execute(&format!(
-            "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public;"
-        )).map_err(err)?;
-        connection.batch_execute(INDEX_SCHEMA).map_err(err)?;
+        let connection = Connection::open(root).map_err(err)?;
+        // The index and trading Ledger use the same dedicated PostgreSQL schema.
+        connection.execute_batch(INDEX_SCHEMA).map_err(err)?;
         let store = Self { root: root.into(), lock: Mutex::new(()), index: Mutex::new(connection) };
         store.rebuild_index()?;
         Ok(store)
