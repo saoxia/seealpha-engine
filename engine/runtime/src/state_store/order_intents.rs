@@ -371,6 +371,7 @@ impl StateStore {
     /// Append an authenticated observation, without crediting cash/position.
     /// A FILLED/PARTIALLY_FILLED label requires separate, already persisted
     /// trade IDs, not merely the order ACK or executedQty field.
+    #[allow(dead_code)] // Reserved for authenticated native order evidence; never synthesize fills.
     pub fn append_order_observation(
         &self,
         tenant: &str,
@@ -598,6 +599,7 @@ impl StateStore {
         tx.commit().map_err(sql)
     }
 
+    #[allow(dead_code)] // Read-only native recovery evidence once authenticated integration exists.
     pub fn latest_order_observation(
         &self,
         tenant: &str,

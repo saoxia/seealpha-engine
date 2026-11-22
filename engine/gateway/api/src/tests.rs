@@ -27,9 +27,9 @@ use super::*;
             research_signing_key: None,
             research_mcp_enabled: false,
             venue_base: None,
-            python: std::path::PathBuf::from("python3"),
         };
         let runtime = Arc::new(Runtime::open(&config).unwrap());
+        runtime.ensure_tenant("42", "development", "active").unwrap();
         let market = Arc::new(BinanceSource::new().unwrap_or_else(|_| panic!("client")));
         AppState {
             config: Arc::new(config),
@@ -115,139 +115,23 @@ use super::*;
     }
 
     #[tokio::test]
-    async fn worker_settings_require_an_active_tenant_even_when_unpinned() {
-        let mut setup = state();
-        Arc::get_mut(&mut setup.config).unwrap().tenant_id = None;
-        setup
-            .runtime
-            .ensure_tenant("42", "development", "active")
-            .unwrap();
-        let app = router(setup);
-        let request = |tenant: &str| {
-            Request::builder()
-                .uri(format!("/tenants/{tenant}/jobs/worker-settings"))
-                .header(
-                    "authorization",
-                    "Bearer ci-engine-token-0123456789abcdef0123456789abcdef",
-                )
-                .body(Body::empty())
-                .unwrap()
-        };
-        let (status, _, _) = call(&app, request("42")).await;
-        assert_eq!(status, StatusCode::OK);
-        let (status, _, _) = call(&app, request("99")).await;
-        assert_eq!(status, StatusCode::CONFLICT);
-    }
-
-    #[tokio::test]
-    async fn account_health_reads_only_its_own_connection_metadata() {
-        let mut setup = state();
-        Arc::get_mut(&mut setup.config).unwrap().tenant_id = None;
-        setup
-            .runtime
-            .ensure_tenant("42", "development", "active")
-            .unwrap();
-        setup
-            .runtime
-            .ensure_tenant("43", "development", "active")
-            .unwrap();
-        setup
-            .runtime
-            .upsert_connection("42", "a", "production", "registered")
-            .unwrap();
-        setup
-            .runtime
-            .upsert_connection("42", "other", "sandbox", "registered")
-            .unwrap();
-        setup
-            .runtime
-            .upsert_connection("43", "a", "sandbox", "registered")
-            .unwrap();
-        let app = router(setup);
-        let get_health = |tenant: &str, account: &str| {
-            Request::builder()
-                .uri(format!("/tenants/{tenant}/accounts/{account}/health"))
-                .header(
-                    "authorization",
-                    "Bearer ci-engine-token-0123456789abcdef0123456789abcdef",
-                )
-                .body(Body::empty())
-                .unwrap()
-        };
-        let (status, header, response) = call(&app, get_health("42", "a")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(header, "2");
-        assert_eq!(response["status"], "ok");
-        let connections = response["connections"].as_array().unwrap();
-        assert_eq!(connections.len(), 1);
-        assert_eq!(connections[0]["tenant_id"], "42");
-        assert_eq!(connections[0]["account_id"], "a");
-        assert_eq!(connections[0]["environment"], "production");
-        assert_eq!(connections[0]["status"], "registered");
-        assert!(response.to_string().find("api_secret").is_none());
-
-        let (status, _, isolated) = call(&app, get_health("42", "missing")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(isolated["connections"].as_array().unwrap().is_empty());
-
-        let (status, _, other) = call(&app, get_health("43", "a")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(other["connections"][0]["environment"], "sandbox");
-
-        let (status, _, _) = call(&app, get_health("44", "a")).await;
-        assert_eq!(status, StatusCode::CONFLICT);
-    }
-
-    #[tokio::test]
-    async fn connection_and_snapshot_routes_do_not_echo_secrets() {
+    async fn retired_registry_and_account_routes_are_absent() {
         let app = router(state());
-        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
-        let (status, _, _) = call(
-            &app,
-            Request::builder()
-                .method("PUT")
-                .uri("/tenants/42")
-                .header("authorization", format!("Bearer {token}"))
+        let token = "Bearer ci-engine-token-0123456789abcdef0123456789abcdef";
+        for (method, path) in [
+            ("PUT", "/tenants/42"),
+            ("POST", "/tenants/42/accounts/a/connections"),
+            ("GET", "/tenants/42/accounts/a/health"),
+            ("POST", "/tenants/42/accounts/a/snapshots"),
+        ] {
+            let request = Request::builder()
+                .method(method).uri(path).header("authorization", token)
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"purpose":"development","status":"active"}"#))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let (status, _, body) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/tenants/42/accounts/11/connections")
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{"environment":"production","api_key":"key-one","api_secret":"secret-one"}"#,
-                ))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT);
-        let rendered = body.to_string();
-        assert!(!rendered.contains("secret-one"));
-        assert!(!rendered.contains("key-one"));
-        let (status, _, body) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/tenants/42/accounts/11/snapshots")
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{"environment":"production","api_key":"key-one","api_secret":"secret-one"}"#,
-                ))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT);
-        let rendered = body.to_string();
-        assert!(!rendered.contains("secret-one"));
-        assert!(rendered.contains("Nautilus"));
+                .body(Body::from(r#"{"api_secret":"never-echo"}"#)).unwrap();
+            let (status, _, body) = call(&app, request).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert!(!body.to_string().contains("never-echo"));
+        }
     }
 
     #[tokio::test]
@@ -255,18 +139,6 @@ use super::*;
         let app = router(state());
         let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
         let headers = format!("Bearer {token}");
-        let (status, _, _) = call(
-            &app,
-            Request::builder()
-                .method("PUT")
-                .uri("/tenants/42")
-                .header("authorization", &headers)
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"purpose":"development","status":"active"}"#))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
         let body = r#"{"start":"0","end":"1080000","interval":"1m","starting_spot_balance":"1000","starting_perpetual_balance":"1000","max_gross_notional":"1000"}"#;
         let (status, _, carry) = call(
             &app,
@@ -332,16 +204,6 @@ use super::*;
                 .body(Body::from(body.to_owned()))
                 .unwrap()
         };
-        let (status, _, _) = call(
-            &app,
-            make(
-                "/tenants/42",
-                "PUT",
-                r#"{"purpose":"development","status":"active"}"#,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
         let (status,_,policy)=call(&app,make(
             "/tenants/42/data/control/sync","POST",
             r#"{"policies":[{"product":"spot","symbol":"ETHUSDT","realtime_enabled":true,"base_level":"1m"}]}"#
@@ -393,15 +255,6 @@ use super::*;
                 .body(Body::from(body.to_owned()))
                 .unwrap()
         };
-        let _ = call(
-            &app,
-            make(
-                "/tenants/42",
-                "PUT",
-                r#"{"purpose":"development","status":"active"}"#,
-            ),
-        )
-        .await;
         let (status, _, response) = call(
             &app,
             make(
@@ -425,63 +278,24 @@ use super::*;
     }
 
     #[tokio::test]
-    async fn native_catalog_page_and_coverage_are_read_only_and_contiguous() {
-        let setup = state();
-        std::fs::create_dir_all(setup.runtime.native_catalog_root()).unwrap();
-        let app = router(setup);
-        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
-        let make = |path: &str, method: &str, body: &str| {
-            Request::builder()
-                .uri(path)
-                .method(method)
-                .header("authorization", format!("Bearer {token}"))
+    async fn retired_catalog_bar_routes_are_absent() {
+        let app = router(state());
+        let token = "Bearer ci-engine-token-0123456789abcdef0123456789abcdef";
+        for (method, path) in [
+            ("POST", "/tenants/42/data/catalog/bars"),
+            ("GET", "/tenants/42/data/catalog/bars"),
+            ("POST", "/tenants/42/data/coverage"),
+            ("POST", "/tenants/42/data/page"),
+            ("POST", "/tenants/42/data/chart"),
+            ("POST", "/tenants/42/data/latest"),
+        ] {
+            let request = Request::builder()
+                .method(method).uri(path).header("authorization", token)
                 .header("content-type", "application/json")
-                .body(Body::from(body.to_owned()))
-                .unwrap()
-        };
-        let _ = call(
-            &app,
-            make(
-                "/tenants/42",
-                "PUT",
-                r#"{"purpose":"development","status":"active"}"#,
-            ),
-        )
-        .await;
-        let (status,_,imported)=call(&app,make(
-            "/tenants/42/data/catalog/bars","POST",
-            r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
-                "price_precision":8,"size_precision":8,
-                "bars":[
-                    {"open_time_ms":0,"open":"100","high":"101","low":"99","close":"100","volume":"5"},
-                    {"open_time_ms":60000,"open":"100","high":"102","low":"100","close":"101","volume":"4"}
-                ]}"#
-        )).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(imported["imported"], 2);
-        let query = r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
-            "start_ms":0,"end_ms":120000}"#;
-        let (status, _, coverage) =
-            call(&app, make("/tenants/42/data/coverage", "POST", query)).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(coverage["complete"], true);
-        let (status, _, page) = call(&app, make("/tenants/42/data/page", "POST", query)).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(page["records"].as_array().unwrap().len(), 2);
-        let (status, _, _) = call(
-            &app,
-            make(
-                "/tenants/42/data/catalog/bars",
-                "POST",
-                r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
-                "price_precision":8,"size_precision":8,
-                "bars":[{"open_time_ms":0,"open":"100","high":"101","low":"99",
-                        "close":"99","volume":"5"}]}"#,
-            ),
-        )
-        .await;
-        // Conflicting historical OHLCV is immutable; never silently overwrite it.
-        assert_eq!(status, StatusCode::CONFLICT);
+                .body(Body::from("{}")).unwrap();
+            let (status, _, _) = call(&app, request).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        }
     }
 
     #[tokio::test]
@@ -508,59 +322,3 @@ use super::*;
         assert!(data.get("rows").is_none());
     }
 
-    #[tokio::test]
-    async fn clickhouse_api_defaults_off_hides_password_and_persists_settings() {
-        let setup = state();
-        let runtime = setup.runtime.clone();
-        runtime.ensure_tenant("42", "development", "active").unwrap();
-        let app = router(setup.clone());
-        let endpoint = "/tenants/42/data/clickhouse/config";
-        let token = "Bearer ci-engine-token-0123456789abcdef0123456789abcdef";
-        let request = |method: &str, body: &str| Request::builder()
-            .uri(endpoint)
-            .method(method)
-            .header("authorization", token)
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_owned()))
-            .unwrap();
-        let (status, _, initial) = call(&app, request("GET", "")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(initial["enabled"], false);
-        assert_eq!(initial["configured"], false);
-
-        let (status, _, saved) = call(&app, request("PUT",
-            r#"{"enabled":true,"url":"http://127.0.0.1:8123","database":"market","user":"reader","password":"secret-do-not-echo"}"#,
-        )).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(saved["enabled"], true);
-        assert_eq!(saved["password_configured"], true);
-        assert!(!saved.to_string().contains("secret-do-not-echo"));
-
-        let (status, _, disabled) = call(&app, request("PUT", r#"{"enabled":false}"#)).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(disabled["enabled"], false);
-        assert_eq!(disabled["password_configured"], true);
-        assert_eq!(runtime.control.clickhouse_settings("42").unwrap().unwrap()["enabled"], false);
-
-        let (status, _, enabled) = call(&app, request("PUT", r#"{"enabled":true}"#)).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(enabled["enabled"], true);
-        assert_eq!(runtime.control.clickhouse_settings("42").unwrap().unwrap()["password"], "secret-do-not-echo");
-        let (status, _, read) = call(&app, request("GET", "")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(!read.to_string().contains("secret-do-not-echo"));
-
-        let persisted = runtime.control.clickhouse_settings("42").unwrap().unwrap();
-        assert_eq!(persisted["enabled"], true);
-        assert_eq!(persisted["password"], "secret-do-not-echo");
-
-        let (status, _, bad) = call(&app, request("PUT",
-            r#"{"enabled":true,"url":"http://evil:user@127.0.0.1:8123"}"#,
-        )).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(!bad.to_string().contains("secret-do-not-echo"));
-
-        let (status, _, _) = call(&app, Request::builder().uri(endpoint)
-            .body(Body::empty()).unwrap()).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-    }

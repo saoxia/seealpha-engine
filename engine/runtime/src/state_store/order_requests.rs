@@ -1,5 +1,5 @@
 //! Durable execution request projections, not economic ledger facts.
-use super::{StateStore, now_ms};
+use super::StateStore;
 use seealpha_ledger::LedgerError;
 use seealpha_database::{OptionalExtension, params};
 

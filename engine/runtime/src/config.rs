@@ -19,7 +19,6 @@ pub struct Config {
     pub research_signing_key: Option<String>,
     pub research_mcp_enabled: bool,
     pub venue_base: Option<String>,
-    pub python: PathBuf,
 }
 
 impl Config {
@@ -71,9 +70,6 @@ impl Config {
             venue_base: std::env::var("ENGINE_VENUE_BASE")
                 .ok()
                 .filter(|value| !value.is_empty()),
-            python: std::env::var("ENGINE_PYTHON")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("python3")),
         };
         config.validate()?;
         Ok(config)
@@ -115,9 +111,6 @@ impl Config {
         Ok(())
     }
 
-    pub fn host_script(&self) -> PathBuf {
-        self.project.join("python/strategy_host/host.py")
-    }
 
     pub fn book_path(&self) -> PathBuf {
         self.state_dir.join("postgres-state")

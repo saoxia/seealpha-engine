@@ -1,4 +1,4 @@
-//! History, carry, option and candidate backtest HTTP handlers.
+//! History, carry and option backtest HTTP handlers.
 use super::*;
 
 pub(super) async fn run_backtest(
@@ -290,50 +290,3 @@ pub(super) async fn latest_protected(
     ))
 }
 
-pub(super) async fn run_candidate(
-    State(state): State<AppState>,
-    Path((tenant_id, account_id)): Path<(String, String)>,
-    Json(body): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    let name = body
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("candidate");
-    Ok(Json(
-        state
-            .runtime
-            .run_candidate_backtest(
-                &tenant_id,
-                &account_id,
-                name,
-                decimal_field(&body, "ending_balance", "0")?,
-            )
-            .map_err(AppError::from)?,
-    ))
-}
-
-pub(super) async fn cancel_candidate(
-    State(state): State<AppState>,
-    Path((tenant_id, account_id)): Path<(String, String)>,
-    Query(query): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<Value>, AppError> {
-    let name = query.get("name").map(String::as_str).unwrap_or("candidate");
-    Ok(Json(
-        state
-            .runtime
-            .cancel_candidate(&tenant_id, &account_id, name)
-            .map_err(AppError::from)?,
-    ))
-}
-
-pub(super) async fn latest_candidate(
-    State(state): State<AppState>,
-    Path((tenant_id, account_id)): Path<(String, String)>,
-) -> Result<Json<Value>, AppError> {
-    Ok(Json(
-        state
-            .runtime
-            .latest_kind(&tenant_id, &account_id, "candidate", "还没有候选回测")
-            .map_err(AppError::from)?,
-    ))
-}

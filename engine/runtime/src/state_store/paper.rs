@@ -89,6 +89,7 @@ impl StateStore {
     }
 
 
+    #[cfg(test)]
     pub fn order_count(&self, tenant_id: &str, account_id: &str) -> Result<i64, LedgerError> {
         let connection = self.lock()?;
         connection

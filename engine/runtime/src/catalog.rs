@@ -1,7 +1,6 @@
-//! Single historical-data facade for the Python Engine's existing
-//! Nautilus v2 Parquet Catalog, without SQLite market-data fallback.
-//! Python used data/catalog as the source of truth; Rust no longer requires
-//! copying the entire catalog into the Engine's small control-plane book.
+//! Historical-data facade over the native Nautilus v2 Parquet Catalog.
+//! The Catalog is authoritative for market data; Runtime does not copy it
+//! into the control-plane PostgreSQL database.
 use crate::{Runtime, RuntimeError};
 use rust_decimal::Decimal;
 use seealpha_catalog::{
@@ -41,11 +40,6 @@ fn one(bar: &NativeBar) -> BookBar {
         volume: bar.volume.to_string(),
     }
 }
-fn time_ns(value: i64) -> Result<i64, RuntimeError> {
-    value
-        .checked_mul(NANO_PER_MS)
-        .ok_or_else(|| RuntimeError::Unprocessable("历史时间转换为纳秒时溢出。".into()))
-}
 impl Runtime {
     pub fn native_catalog_root(&self) -> PathBuf {
         // Python PipelineSettings.paths.catalog accepts project-relative
@@ -72,95 +66,6 @@ impl Runtime {
                 "Catalog 数据目录不可用：{e}"
             ))),
         }
-    }
-    /// Catalog coverage is authoritative for recorded closed bars only.
-    /// It must NEVER be promoted into a live Feed READY permission without
-    /// independently verified Source journal gaps and committed checkpoints.
-    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
-    #[allow(clippy::too_many_arguments)]
-    pub fn inspect_catalog_coverage(
-        &self,
-        tenant: &str,
-        product_name: &str,
-        symbol: &str,
-        interval: &str,
-        start_ms: i64,
-        end_ms: i64,
-        limit: usize,
-    ) -> Result<Value, RuntimeError> {
-        self.require_active(tenant)?;
-        if limit == 0 || limit > 50_000 || end_ms <= start_ms || start_ms < 0 {
-            return Err(RuntimeError::Unprocessable(
-                "历史覆盖率查询范围无效。".into(),
-            ));
-        }
-        let catalog = self.native_catalog()?.ok_or_else(|| {
-            RuntimeError::Conflict("原生 Catalog 尚不存在，不能声明数据就绪。".into())
-        })?;
-        let gaps = catalog
-            .bar_gaps(
-                &market_bar_type(product_name, symbol, interval)?,
-                interval,
-                start_ms,
-                end_ms,
-                limit,
-            )
-            .map_err(error)?;
-        let ranges = gaps
-            .iter()
-            .map(|gap| {
-                json!({
-                    "start_ms": gap.start_ms, "end_ms": gap.end_ms
-                })
-            })
-            .collect::<Vec<_>>();
-        Ok(json!({
-            "product": product_name, "symbol": symbol, "interval": interval,
-            "start_ms": start_ms, "end_ms": end_ms,
-            "catalog_contiguous": ranges.is_empty(),
-            "missing_ranges": ranges,
-            "source_checkpoint_verified": false,
-            "feed_ready": false,
-            "allow_new_risk": false,
-            "source": "nautilus_v2_parquet",
-        }))
-    }
-
-    /// Read [start,end) UTC, matching HistoricalMarketData.bars() exactly:
-    /// Parquet event timestamp is candle close minus 1 millisecond.
-    // Retain explicit v2 migration inputs until equivalent contract coverage is proven.
-    #[allow(clippy::too_many_arguments)]
-    pub fn read_market_bars(
-        &self,
-        tenant: &str,
-        product_name: &str,
-        symbol: &str,
-        interval: &str,
-        start_ms: i64,
-        end_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<BookBar>, RuntimeError> {
-        self.require_active(tenant)?;
-        if start_ms < 0 || end_ms <= start_ms || !(1..=50_000).contains(&limit) {
-            return Err(RuntimeError::Unprocessable(
-                "历史 K 线查询范围无效。".into(),
-            ));
-        }
-        let catalog = self.native_catalog()?.ok_or_else(|| {
-            RuntimeError::NotFound("未挂载 Nautilus v2 Catalog。".into())
-        })?;
-        let rows = catalog
-            .read_bars(
-                &market_bar_type(product_name, symbol, interval)?, interval,
-                time_ns(start_ms)?, time_ns(end_ms)?, limit as usize,
-            )
-            .map_err(error)?;
-        // Product-specific price policy still guards historical reads.
-        for row in &rows {
-            seealpha_market::identity::validate_market_bar(row, product(product_name)?)
-                .map_err(|e| RuntimeError::Unprocessable(e.to_string()))?;
-        }
-        Ok(rows.iter().map(one).collect())
     }
     /// The strict backtest variant refuses missing Parquet files, partial
     /// coverage, out-of-order clocks, fabricated bars and cross-product data.
@@ -283,28 +188,6 @@ impl Runtime {
     /// Generic native Parquet data for instruments, TradeTick, QuoteTick,
     /// funding, depth, greeks, statuses and custom features. Requires an
     /// existing mounted Catalog; never silently reads a different product.
-    /// Opt-in, historical-only reader for the separate native feature format.
-    /// This is not an exchange/source READY attestation.
-    pub fn read_native_trade_features(
-        &self,
-        tenant: &str,
-        identity: &str,
-        start_ns: i64,
-        end_ns: i64,
-        limit: usize,
-    ) -> Result<Vec<Value>, RuntimeError> {
-        self.native_market_events(
-            tenant,
-            &RecordKind::Feature {
-                identifier: "rust-v1".to_owned(),
-                name: "NativeTradeFeaturesV1".to_owned(),
-            },
-            identity,
-            start_ns,
-            end_ns,
-            limit,
-        )
-    }
     pub fn native_market_events(
         &self,
         tenant: &str,

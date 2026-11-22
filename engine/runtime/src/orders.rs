@@ -99,16 +99,6 @@ fn loopback_fixture_url(value: &str) -> bool {
         .is_some_and(|address| address.ip().is_loopback())
 }
 
-pub(super) fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.as_ref().len() * 2);
-    for byte in bytes.as_ref() {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,7 +144,6 @@ mod tests {
             research_signing_key: None,
             research_mcp_enabled: false,
             venue_base: Some("http://127.0.0.1:18080".into()),
-            python: std::path::PathBuf::from("python3"),
         };
         let runtime = Runtime::open(&config).unwrap();
         runtime.ensure_tenant("7", "production", "active").unwrap();
