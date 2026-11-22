@@ -69,6 +69,75 @@ impl NativeOrderLinkSubscription {
     }
 }
 
+/// Link the existing Nautilus event subscription to SeeAlpha virtual orders.
+///
+/// A caller supplies an already committed Coordinator and Nautilus's latest
+/// OrderCore for the registered client order. The callback must CAS-persist the
+/// result before any virtual fills are released; this API never submits orders.
+pub fn attach_native_virtual_attribution(
+    resolve_binding: impl Fn(&str) -> Option<OwnedNativeBinding> + 'static,
+    resolve_snapshot: impl Fn(&str) -> Option<(
+        seealpha_execution::coordinator::Coordinator,
+        nautilus_model::orders::OrderCore,
+    )> + 'static,
+    commit: impl Fn(
+        &str,
+        &seealpha_nautilus_binance_data::native_virtual_attribution::VirtualAttribution,
+    ) -> anyhow::Result<()> + 'static,
+    publish: impl Fn(Vec<seealpha_execution::coordinator::VirtualFill>) + 'static,
+    on_error: impl Fn(String) + 'static,
+) -> NativeOrderLinkSubscription {
+    use std::rc::Rc;
+    use seealpha_nautilus_binance_data::{
+        native_execution::NativeOrderBinding,
+        native_virtual_attribution::project_native_order_observation,
+    };
+    // All handlers execute on the same thread-local Nautilus message bus.
+    let resolver = Rc::new(resolve_binding);
+    let errors = Rc::new(on_error);
+    let resolver_for_events = Rc::clone(&resolver);
+    let errors_for_events = Rc::clone(&errors);
+    let events = move |event: NativeOrderObservation| {
+        let client_id = match &event {
+            NativeOrderObservation::Accepted(x) => &x.client_order_id,
+            NativeOrderObservation::Filled(x) => &x.client_order_id,
+            NativeOrderObservation::FillVoided { client_order_id } => client_order_id,
+        };
+        let Some(binding) = resolver_for_events(client_id) else {
+            errors_for_events("native attribution binding disappeared".into());
+            return;
+        };
+        let Some((coordinator, native_order)) = resolve_snapshot(client_id) else {
+            errors_for_events("Nautilus order or committed coordinator unavailable".into());
+            return;
+        };
+        let bound = NativeOrderBinding {
+            account_id: &binding.account_id,
+            instrument_id: &binding.instrument_id,
+            client_order_id: &binding.client_order_id,
+            venue_order_id: binding.venue_order_id.as_deref(),
+        };
+        match project_native_order_observation(
+            &coordinator, &event, &native_order, &bound, None,
+        ) {
+            Ok(projected) => {
+                // An unsuccessful CAS releases no attributed fills.
+                if let Err(e) = commit(client_id, &projected) {
+                    errors_for_events(format!("native attribution CAS failed: {e}"));
+                    return;
+                }
+                publish(projected.fills);
+            }
+            Err(e) => errors_for_events(format!("native attribution rejected: {e}")),
+        }
+    };
+    NativeOrderLinkSubscription::attach_resolver(
+        move |id| resolver(id),
+        events,
+        move |message| errors(message),
+    )
+}
+
 impl Drop for NativeOrderLinkSubscription {
     fn drop(&mut self) {
         msgbus::unsubscribe_order_events(self.topic.clone().into(), &self.handler);
