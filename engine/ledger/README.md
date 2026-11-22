@@ -11,7 +11,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 | `allocations/` | 策略内部归属（目前仅定义边界） | 不将内部成交冒充交易所成交 |
 | `reconciliation/` | 资金与归属核验边界 | Nautilus 基础订单/持仓对账之外的证据完整性检查 |
 | `src/order_intents.rs` | 不可变发送前委托意图和未知状态恢复 | 单次预登记、重复请求只核验、不重复发送 |
-| `src/basket_journal.rs` / `src/coordinator_state.rs` | SeeAlpha 业务检查点 | 不是交易所资金余额缓存 |
+| `runtime/src/state_store/` | Basket/Coordinator/Paper/Research 业务状态 | 由 Runtime 持久化，不归 Ledger Funds |
 
 ## 四个最小业务核心（2026-11-22）
 
@@ -36,6 +36,15 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 - 删除 `parity.rs::positions()` 对历史 `positions` 表的读接口；Gateway `/positions` 在 Nautilus 原生持仓核验尚未接线前明确失败关闭，包含 `paper` 环境，不能把缺少证据的空仓位响应当作已核实状态。
 - **不执行 DROP 表或历史数据迁移**：既有 `positions` 和 `order_observations` 数据保留供审计及后续受控迁移。
 - `order_intents.rs` 的订单观察与恢复链路暂时保留：虽然没有生产观察写入调用方，`order_recovery_page()` 依赖历史观察、且带有禁止未知状态重发的安全约束；必须由已验收的 Nautilus 持久报告与恢复功能替代后再删。
+
+## 应用状态职责迁出（2026-11-22）
+
+- 研究快照与回测结果：`engine/runtime/src/state_store/research.rs`；由 Runtime 持有并持久化，不属于资金账本。
+- Basket Journal 与 Portfolio Coordinator CAS 检查点：`engine/runtime/src/state_store/{basket_journal,coordinator_state}.rs`；作为 Runtime 的 Portfolio 用例状态，原有并发修订规则保持不变。
+- Paper Session 和模拟持仓：`engine/runtime/src/state_store/paper.rs`；仅用于独立模拟，不能被当作真实账户余额或 Nautilus Position Cache。
+- 上述存储继续使用相同 PostgreSQL schema 和既有表，**没有重建、复制或删除历史数据**。目前由 Runtime 在 Ledger 初始化后建立自己的数据库连接。当前不为目录整理而增设多个长期运行服务。
+- Ledger 暂时保留不可变原生订单意图及只读对账任务队列，因为其属于未完成原生执行链路的安全恢复门禁；待 Nautilus/执行领域有真实替代并经过验证后再迁出。
+- Legacy 订单、缺口、事件兼容读写暂留现有持久化入口，避免无收益的全仓库 API 重写。本阶段变更尚须通过 CI/数据库回归验证。
 
 ## 安全原则
 
