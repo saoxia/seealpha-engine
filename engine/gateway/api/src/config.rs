@@ -1,4 +1,4 @@
-//! Engine HTTP settings. No tenant or bearer authentication.
+//! Engine HTTP settings. No application-level bearer authentication.
 use std::path::{Path,PathBuf};
 
 #[derive(Debug,Clone)]
