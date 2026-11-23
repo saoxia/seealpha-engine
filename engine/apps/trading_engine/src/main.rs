@@ -36,8 +36,6 @@ fn open_state(config:Config)->Result<AppState,String>{
     bootstrap_engine_schema(&db).map_err(|e|e.to_string())?;
     drop(db);
     let ledger=Ledger::open(&book).map_err(|e|e.to_string())?;
-    // Preserve historical synthetic-fill quarantine before serving reads.
-    ledger.quarantine_synthetic_fills().map_err(|e|e.to_string())?;
     let strategy_store=StrategyStore::open(&book.with_file_name("strategies"))
         .map_err(|e|e.to_string())?;
     let control=ControlStore::open(&book.with_file_name("control-state"))
