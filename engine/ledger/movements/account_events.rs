@@ -17,7 +17,6 @@ impl Ledger {
     /// exchange fill/settlement. Caller cannot choose amount or mark success.
     pub fn record_account_evidence_event(
         &self,
-        
         account: &str,
         environment: &str,
         kind: &str,
@@ -54,7 +53,8 @@ impl Ledger {
                     "SELECT evidence_json FROM account_settlements
                      WHERE account_id=$1 AND environment=$2
                      AND product=$3 AND event_kind=$4 AND event_id=$5",
-                    params![account,
+                    params![
+                        account,
                         environment,
                         product,
                         event_kind,
@@ -122,8 +122,9 @@ impl Ledger {
             "INSERT INTO account_evidence_events
              (account_id,environment,kind,evidence_id,evidence_json,recorded_at_ms)
              VALUES($1,$2,$3,$4,$5,$6)",
-            params![account,
-                environment,
+            params![
+                        account,
+                        environment,
                 kind,
                 evidence_id,
                 event,
@@ -138,7 +139,6 @@ impl Ledger {
 
     pub fn account_evidence_event_page(
         &self,
-        
         account: &str,
         environment: &str,
         after: i64,

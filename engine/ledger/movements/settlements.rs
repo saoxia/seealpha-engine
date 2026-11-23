@@ -19,7 +19,6 @@ fn decimal(row: &Value, key: &str) -> Result<Decimal, LedgerError> {
 impl Ledger {
     pub fn import_account_settlements(
         &self,
-        
         account: &str,
         environment: &str,
         product: &str,
@@ -103,7 +102,8 @@ impl Ledger {
                      (account_id,environment,product,event_kind,event_id,
                       symbol,evidence_json)
                      VALUES ($1,$2,$3,$4,$5,$6,$7)",
-                    params![account,
+                    params![
+                        account,
                         environment,
                         product,
                         kind,
@@ -121,7 +121,6 @@ impl Ledger {
 
     pub fn account_settlements(
         &self,
-        
         account: &str,
         environment: &str,
         product: &str,
@@ -158,7 +157,6 @@ mod tests {
             "time_ms":10,"transaction_id":"11","source":"binance_signed_income"});
         ledger
             .import_account_settlements(
-                
                 "a",
                 "production",
                 "futures_um",
@@ -167,7 +165,6 @@ mod tests {
             .unwrap();
         ledger
             .import_account_settlements(
-                
                 "a",
                 "production",
                 "futures_um",

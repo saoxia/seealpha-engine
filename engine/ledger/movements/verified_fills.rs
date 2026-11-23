@@ -23,7 +23,6 @@ fn now_ms() -> i64 {
 impl Ledger {
     pub fn fills(
         &self,
-        
         account_id: &str,
         environment: &str,
     ) -> Result<Vec<String>, LedgerError> {
@@ -61,7 +60,6 @@ impl Ledger {
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
-
                 ))
             })
             .map_err(db_error)?;
@@ -104,7 +102,6 @@ impl Ledger {
 
     pub fn import_verified_fills(
         &self,
-        
         account: &str,
         environment: &str,
         order_id: &str,
@@ -166,7 +163,7 @@ impl Ledger {
         Ok(rows.len())
     }
 
-    pub fn quarantined_fill_count(&self,  account: &str) -> Result<i64, LedgerError> {
+    pub fn quarantined_fill_count(&self, account: &str) -> Result<i64, LedgerError> {
         let conn = self.lock()?;
         conn.query_row(
             "SELECT COUNT(*) FROM quarantined_unverified_fills WHERE account_id=$1",

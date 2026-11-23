@@ -6,7 +6,6 @@ SET LOCAL search_path TO seealpha, public;
 
 -- Ledger-owned immutable order safety envelope (until native execution cutover).
 CREATE TABLE IF NOT EXISTS order_intents (
-
     account_id TEXT NOT NULL,
     request_id TEXT NOT NULL,
     environment TEXT NOT NULL,
@@ -17,7 +16,6 @@ CREATE TABLE IF NOT EXISTS order_intents (
     PRIMARY KEY (account_id, request_id)
 );
 CREATE TABLE IF NOT EXISTS order_observations (
-
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL,
     client_order_id TEXT NOT NULL,
@@ -41,7 +39,6 @@ CREATE TABLE IF NOT EXISTS account_evidence_events (
 -- Strategy attribution of immutable, verified account evidence.
 -- No balance/position cache and no synthetic exchange fills.
 CREATE TABLE IF NOT EXISTS account_event_allocations (
-
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL CHECK(environment IN ('production','sandbox')),
     event_id BIGINT NOT NULL REFERENCES account_evidence_events(id),
@@ -52,7 +49,6 @@ CREATE TABLE IF NOT EXISTS account_event_allocations (
 );
 
 CREATE TABLE IF NOT EXISTS orders (
-
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL,
     client_order_id TEXT NOT NULL,
@@ -61,7 +57,6 @@ CREATE TABLE IF NOT EXISTS orders (
     PRIMARY KEY (account_id, environment, client_order_id)
 );
 CREATE TABLE IF NOT EXISTS fills (
-
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL,
     fill_id TEXT NOT NULL,
@@ -70,7 +65,6 @@ CREATE TABLE IF NOT EXISTS fills (
     PRIMARY KEY (account_id, environment, fill_id)
 );
 CREATE TABLE IF NOT EXISTS quarantined_unverified_fills (
-
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL,
     fill_id TEXT NOT NULL,
@@ -80,7 +74,6 @@ CREATE TABLE IF NOT EXISTS quarantined_unverified_fills (
     PRIMARY KEY(account_id,environment,fill_id)
 );
 CREATE TABLE IF NOT EXISTS account_settlements (
-
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL,
     product TEXT NOT NULL,

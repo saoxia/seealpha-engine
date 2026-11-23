@@ -16,7 +16,7 @@ impl Ledger {
     /// to a strategy. Repeating an identical attribution is safe; any rewrite
     /// is rejected. Cross-account references and over-allocation fail closed.
     pub fn attribute_account_event(
-        &self,  account: &str, environment: &str,
+        &self, account: &str, environment: &str,
         event_id: i64, strategy_id: &str, basis_points: i64,
     ) -> Result<(), LedgerError> {
         if account.is_empty() || strategy_id.is_empty()
@@ -57,7 +57,7 @@ impl Ledger {
     /// Read-only attribution. Unattributed share remains explicitly visible;
     /// the absence of attribution does not imply a funding discrepancy.
     pub fn account_event_allocations(
-        &self,  account: &str, environment: &str, event_id: i64
+        &self, account: &str, environment: &str, event_id: i64
     ) -> Result<Value, LedgerError> {
         if !matches!(environment, "production" | "sandbox") || event_id <= 0 { return Err(bad()); }
         let conn = self.lock()?;

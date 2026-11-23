@@ -10,7 +10,7 @@ impl Ledger {
     /// A nonzero unallocated count means attribution is incomplete, not a
     /// detected cash discrepancy. No account balance is inferred here.
     pub fn reconcile_account_attribution(
-        &self,  account: &str, environment: &str,
+        &self, account: &str, environment: &str,
     ) -> Result<Value, LedgerError> {
         if account.is_empty()
             || !matches!(environment,"production" | "sandbox") {
