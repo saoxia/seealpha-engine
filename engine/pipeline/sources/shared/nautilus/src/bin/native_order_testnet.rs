@@ -33,6 +33,7 @@ use nautilus_model::{
         OrderRejected, OrderSubmitted,
     },
     identifiers::{StrategyId, TraderId},
+    orders::Order,
 };
 use nautilus_trading::{
     nautilus_strategy,
