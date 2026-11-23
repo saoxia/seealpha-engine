@@ -42,10 +42,10 @@ Options 也采用相同规范。由于尚无期权 TradeTick 实时/历史接入
 
 Docker 单容器启动三个 `seealpha-pipeline` Worker（可设置 `SEEALPHA_PIPELINE_ENABLED=0` 关闭），分别处理 `spot`、`futures_um` 和 `options`。Worker 每 30 秒读取一次 `pipeline_subscriptions`；API **只写配置**，不排队下载，也不控制实时进程。
 
-每个租户使用相同配置格式：`product`、`symbol`、`history_start`（UTC YYYY-MM-DD）、`realtime_enabled`、`enabled`，以及可选的 `price_precision`、`size_precision`。默认由 Pipeline 从 Binance `exchangeInfo` 的 PRICE_FILTER / LOT_SIZE 读取精度；两项显式填写时必须来自经过核实的 Instrument 元数据。
+订阅配置格式：`product`、`symbol`、`history_start`（UTC YYYY-MM-DD）、`realtime_enabled`、`enabled`，以及可选的 `price_precision`、`size_precision`。默认由 Pipeline 从 Binance `exchangeInfo` 的 PRICE_FILTER / LOT_SIZE 读取精度；两项显式填写时必须来自经过核实的 Instrument 元数据。
 
 ```http
-PUT /tenants/demo/pipeline/subscriptions/spot/ETHUSDT
+PUT /pipeline/subscriptions/spot/ETHUSDT
 Content-Type: application/json
 
 {
@@ -59,9 +59,9 @@ Content-Type: application/json
 
 **精度**：Spot/USD-M 原生端从官方 Instrument 元数据确定精度。未实现的期权 Tick 聚合不能假定精度或报告已落盘。
 
-`GET /tenants/demo/pipeline/subscriptions?product=spot` 查看配置；
-`DELETE /tenants/demo/pipeline/subscriptions/spot/ETHUSDT` 仅禁用订阅，保留数据。
-现有 Engine 租户鉴权和状态门禁照常生效。
+`GET /pipeline/subscriptions?product=spot` 查看配置；
+`DELETE /pipeline/subscriptions/spot/ETHUSDT` 仅禁用订阅，保留数据。
+API 仅修改订阅配置；生产部署需要在网络层限制访问。
 
 ### 历史数据和保留规则
 
@@ -69,7 +69,7 @@ Worker **不会**调用 Binance Kline API 回填 Bar。Spot/USD-M 的产品 Work
 
 **数据可用性限制**：自动维护从原生 Catalog **已完成发布**的 TradeTick 文件开始，不会主动下载缺失的 Binance ZIP，也不证明源文件覆盖完整。高周期 Bar 是对当时已知 Tick 的计算结果，不应将其误认为完整且已通过来源连续性认证的历史数据；READY 仍须单独校验。Options 暂无 Tick 来源，不会生成官方 Kline 替代品。
 
-`history_start` 后移后，Catalog 只删除严格早于 UTC 日界线的完整 Bar Parquet 文件；任何跨边界的文件均拒绝删除，不裁断原始文件、不错误声明完成清理。对共享 Catalog，所有租户（**包括已禁用、仍要求保留历史的租户**）中最早的 `history_start` 才是清理下界。删除不影响其他产品、交易对或租户保留要求。
+`history_start` 后移后，Catalog 只删除严格早于 UTC 日界线的完整 Bar Parquet 文件；任何跨边界的文件均拒绝删除，不裁断原始文件、不错误声明完成清理。同一产品和交易对保留一条订阅记录，禁用订阅仍保留其 `history_start` 作为清理下界。删除不影响其他产品或交易对。
 
 **尚未实现：** 原生 TradeTick/ZIP 自动保留期清理、跨边界 Bar Parquet 安全裁剪、Tick 断点回补、完整历史/实时交接与 READY 认证。旧 Runtime 数据任务接口已删除，不应将其重新引入。
 
@@ -89,9 +89,9 @@ SEEALPHA_DATABASE_URL='postgresql://...' cargo run --locked -p seealpha-market -
 
 ## 运行时数据任务清理
 
-旧 Runtime `data.rs`、`data_policies` / `data_jobs` 的创建与调度 API 已从代码中移除。数据订阅统一使用 `/tenants/{tenant}/pipeline/subscriptions` 的 GET/PUT/DELETE；调用仅写入 PostgreSQL，Spot、USD-M、Options Worker 独立按配置运行，不再产生一次性数据任务 ID、状态队列或重试 API。
+旧 Runtime `data.rs`、`data_policies` / `data_jobs` 的创建与调度 API 已从代码中移除。数据订阅统一使用 `/pipeline/subscriptions` 的 GET/PUT/DELETE；调用仅写入 PostgreSQL，Spot、USD-M、Options Worker 独立按配置运行，不再产生一次性数据任务 ID、状态队列或重试 API。
 
-**数据迁移边界：** 已安装数据库中的旧表不会自动 DROP（避免升级时破坏历史记录），但不再创建或访问。一次性 ZIP 归档下载/导入以及旧按日修复操作不再通过 Runtime API 执行；它们的底层代码仍保留在 Pipeline。要让这些操作自动执行，需继续在各产品 Pipeline 中接入对应的配置驱动流程。
+**数据库边界：** 不提供旧库迁移或兼容逻辑，升级时必须重建 SeeAlpha 数据库。一次性 ZIP 归档下载/导入以及旧按日修复操作不再通过 Runtime API 执行；它们的底层代码仍保留在 Pipeline。要让这些操作自动执行，需继续在各产品 Pipeline 中接入对应的配置驱动流程。
 
 ## 全产品 K 线唯一来源与实时更新规则
 
