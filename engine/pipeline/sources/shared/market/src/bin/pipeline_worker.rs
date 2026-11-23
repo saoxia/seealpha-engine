@@ -13,11 +13,11 @@ fn catalog_path()->PathBuf {
 
 struct Desired {retain_from:i64,fetch_from:Option<i64>,precision:Option<(u32,u32)>}
 
-fn desired(rows:&[(String,PipelineSubscription)])
+fn desired(rows:&[PipelineSubscription])
     ->Result<BTreeMap<String,Desired>>
 {
     let mut out=BTreeMap::new();
-    for (_,row) in rows {
+    for row in rows {
         validate_subscription(row)?;
         let start=row.start_ms()?;
         let entry=out.entry(row.symbol.clone())
@@ -142,8 +142,8 @@ async fn cycle(
 )->Result<()>{
     let rows=control.product_subscriptions(product.as_str())?;
     let expected=desired(&rows)?;
-    let live=rows.iter().filter(|(_,row)|row.enabled&&row.realtime_enabled)
-        .map(|(_,row)|row.symbol.clone()).collect::<BTreeSet<_>>();
+    let live=rows.iter().filter(|row|row.enabled&&row.realtime_enabled)
+        .map(|row|row.symbol.clone()).collect::<BTreeSet<_>>();
     // One native LiveNode per PRODUCT, never a separate WebSocket for each symbol.
     if let Err(error)=sync_collector(product.as_str(),&live,active) {
         eprintln!("pipeline {} realtime: {error}",product.as_str());
