@@ -7,7 +7,6 @@
 | 目录 | 职责与现状 |
 | --- | --- |
 | `engine/pipeline/` | Nautilus 原生行情节点、补充数据源、数据完整性验证与 Catalog |
-| `engine/execution/` | 目标数量、净额与裁剪计算；作为独立 crate 保留，当前没有策略 API 调用 |
 | `engine/ledger/` | 订单意图、账户事件、真实成交、对账与存储 |
 | `engine/database/` | PostgreSQL 数据访问、schema 引导 |
 | `engine/connection/` | Binance Options 规范化；Spot/USD-M 的 Nautilus 执行工厂仍属非实盘接入阶段 |
@@ -19,7 +18,7 @@
 ## 尚未接通的目标能力
 
 - **策略**：计划复用 NautilusTrader 的原生 Strategy、Actor、指标与生命周期；目前不启动自研策略宿主，也不允许上传任意 Python/Rust 代码运行。
-- **Risk / Execution**：交易风险预算、订单准入、撤改单、幂等与失败恢复仍需独立端到端设计。现有目标数量算法不是实盘交易权限。
+- **Risk / Execution**：原独立目标数量/净额/裁剪 crate 已删除。后续应直接验证并复用 NautilusTrader 原生订单状态机、执行、撤改单、缓存与对账，仅针对 SeeAlpha 的策略信号组合、资金分配、必要业务授权与可信成交归属补充代码；未完成端到端验收前不启用实盘。
 - **回测**：旧模拟撮合和回测模块已删除，后续另行规划。
 
 ## 应用与数据边界
