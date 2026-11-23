@@ -54,8 +54,8 @@ pub mod order_probe {
         })
     }
 
-//! Manual order command boundary: Nautilus owns order construction, sending and OMS.
-//! No exchange-specific order sender, account budget or arbitrary quantity limit here.
+// Manual order command boundary: Nautilus owns order construction, sending and OMS.
+// No exchange-specific order sender, account budget or arbitrary quantity limit here.
 use anyhow::{Context, Result, ensure};
 use nautilus_binance::common::enums::BinanceEnvironment;
 use nautilus_model::{
@@ -66,7 +66,6 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use super::{NativeExecutionTarget, PositionMode, resolve_native_target};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
