@@ -70,20 +70,6 @@ CREATE TABLE IF NOT EXISTS strategy_issuances (
  PRIMARY KEY (tenant_id,account_id,issuance_id)
 );
 CREATE INDEX IF NOT EXISTS strategy_name_version ON strategy_issuances (tenant_id,code_key,version);
--- Preserve an existing legacy column and its historical values, but permit
--- new type-neutral issuance rows without any tenant-purpose attribute.
-DO $
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'strategy_issuances'
-          AND column_name = 'grant_purpose'
-    ) THEN
-        ALTER TABLE strategy_issuances ALTER COLUMN grant_purpose DROP NOT NULL;
-    END IF;
-END
-$;
 ";
 fn insert_index(tx: &mut Transaction<'_>, record: &StoredRecord) -> Result<(), StoreError> {
     let l = &record.load;
@@ -155,6 +141,18 @@ impl StrategyStore {
         let connection = Connection::open(root).map_err(err)?;
         // The index and trading Ledger use the same dedicated PostgreSQL schema.
         connection.execute_batch(INDEX_SCHEMA).map_err(err)?;
+        // Older databases have a non-null grant_purpose column. Keep its
+        // historical values, but permit new issuance rows without that field.
+        if connection.query_opt(
+            "SELECT 1 FROM information_schema.columns
+             WHERE table_schema=current_schema() AND table_name='strategy_issuances'
+             AND column_name='grant_purpose'",
+            &[],
+        ).map_err(err)?.is_some() {
+            connection.execute_batch(
+                "ALTER TABLE strategy_issuances ALTER COLUMN grant_purpose DROP NOT NULL"
+            ).map_err(err)?;
+        }
         let store = Self { root: root.into(), lock: Mutex::new(()), index: Mutex::new(connection) };
         store.rebuild_index()?;
         Ok(store)
@@ -378,6 +376,61 @@ impl StrategyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_issuance_metadata_remains_readable_without_tenant_type() {
+        let old = serde_json::json!({
+            "load": {
+                "tenant_id": "tenant", "account_id": "account",
+                "issuance_id": "legacy", "code_key": "ema_crossover",
+                "version": "1", "grant_purpose": "development",
+                "parameters_json": "{}", "entry_point": "native:ema_crossover",
+                "package_hash": "a".repeat(64),
+            },
+            "zip_sha256": null,
+        });
+        let record: StoredRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(record.load.issuance_id, "legacy");
+        assert!(serde_json::to_value(&record).unwrap()["load"]
+            .get("grant_purpose").is_none());
+    }
+
+    #[test]
+    fn legacy_non_null_column_accepts_type_neutral_issuance() {
+        if std::env::var("SEEALPHA_DATABASE_URL").is_err() { return; }
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-legacy-purpose-{}-{}",
+            std::process::id(), STAGING.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let connection = Connection::open(&root).unwrap();
+        connection.execute_batch(INDEX_SCHEMA).unwrap();
+        connection.execute_batch(
+            "ALTER TABLE strategy_issuances ADD COLUMN grant_purpose TEXT NOT NULL"
+        ).unwrap();
+        drop(connection);
+        let store = StrategyStore::open(&root).unwrap();
+        let load = StrategyLoad {
+            tenant_id: "tenant".into(), account_id: "account".into(),
+            issuance_id: "issue".into(), code_key: "ema_crossover".into(),
+            version: "1".into(), parameters_json: "{}".into(),
+            entry_point: "native:ema_crossover".into(),
+            package_hash: sha(b"manifest"), archive: b"manifest".to_vec(),
+        };
+        store.insert(&load).unwrap();
+        let connection = store.index.lock().unwrap();
+        let row = connection.query_one(
+            "SELECT grant_purpose FROM strategy_issuances WHERE tenant_id=$1
+             AND account_id=$2 AND issuance_id=$3",
+            &[&"tenant", &"account", &"issue"],
+        ).unwrap();
+        let legacy: Option<String> = row.get(0);
+        assert_eq!(legacy, None);
+        drop(connection);
+        assert_eq!(store.strategies("tenant", "account").unwrap(), vec![load]);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn self_describing_zip_is_extracted_and_is_immutable() {
