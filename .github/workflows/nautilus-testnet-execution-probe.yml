@@ -1,0 +1,28 @@
+name: Native Nautilus testnet execution probe
+
+on:
+  pull_request:
+    paths:
+      - 'engine/pipeline/sources/shared/nautilus/**'
+      - 'docs/validation/NAUTILUS_TESTNET_EXECUTION_PROBE.md'
+      - '.github/workflows/nautilus-testnet-execution-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-native-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine/pipeline/sources/shared/nautilus
+      - name: Check full standalone crate, including opt-in testnet binary
+        run: cargo check --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml --all-targets
+      - name: Offline testnet probe contract tests
+        run: cargo test --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml --lib testnet_order_probe::
+      # NO TESTNET CREDENTIALS and NO cargo run; this workflow cannot trade.
