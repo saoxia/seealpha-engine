@@ -7,7 +7,7 @@ pub mod native_account_session;
 pub mod native_execution;
 pub mod native_order_link;
 pub mod native_virtual_attribution;
-pub mod testnet_order_probe;
+pub mod order_probe;
 
 use std::{
     fs::{File, OpenOptions},
