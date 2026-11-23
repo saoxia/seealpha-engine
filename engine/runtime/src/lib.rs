@@ -1,14 +1,13 @@
 //! Cross-domain orchestration for tenant scopes and issued strategy previews.
 mod config;
 mod session;
-mod state_store;
 
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::PreviewRequest;
 pub use seealpha_strategy::native_issuance::{IssuedNativeInput as StrategyInput, NativeSubmission as StrategySubmission};
 
 use seealpha_ledger::{Ledger, LedgerError};
-pub use state_store::Tenant;
+use seealpha_database::{Connection, OptionalExtension, params};
 use seealpha_strategy::store::{StrategyStore, StoreError};
 use seealpha_catalog::{ControlStore, ControlError};
 use seealpha_strategy::native_issuance::inspect_native_package;
@@ -30,7 +29,7 @@ pub enum RuntimeError {
 
 pub struct Runtime {
     pub ledger: Ledger,
-    state_store: state_store::StateStore,
+    tenant_connection: Connection,
     pub strategy_store: StrategyStore,
     pub control: ControlStore,
     inflight: AtomicUsize,
@@ -54,7 +53,7 @@ impl Runtime {
             .map_err(|e| RuntimeError::BadRequest(format!("状态库不可用。{e}")))?;
         drop(schema_connection);
         let ledger = Ledger::open(book).map_err(map_ledger)?;
-        let state_store = state_store::StateStore::open(book).map_err(map_ledger)?;
+        let tenant_connection = Connection::open(book).map_err(map_database)?;
         let strategy_store = StrategyStore::open(&book.with_file_name("strategies")).map_err(map_store)?;
         let control = ControlStore::open(&book.with_file_name("control-state")).map_err(map_control)?;
         // A previous Rust version invented empty fills for NEW order
@@ -63,7 +62,7 @@ impl Runtime {
         ledger.quarantine_synthetic_fills().map_err(map_ledger)?;
         Ok(Self {
             ledger,
-            state_store,
+            tenant_connection,
             strategy_store,
             control,
             inflight: AtomicUsize::new(0),
@@ -80,13 +79,7 @@ impl Runtime {
         purpose: &str,
         status: &str,
     ) -> Result<Tenant, RuntimeError> {
-        self.state_store
-            .ensure_tenant(tenant_id, purpose, status)
-            .map_err(map_ledger)
-    }
-
-    pub fn active_tenant_ids(&self) -> Result<Vec<String>, RuntimeError> {
-        self.state_store.active_tenant_ids().map_err(map_ledger)
+        upsert_tenant(&self.tenant_connection, tenant_id, purpose, status)
     }
 
     pub fn runnable(&self, tenant_id: &str, action: &str) -> Result<Value, RuntimeError> {
@@ -136,7 +129,7 @@ impl Runtime {
         &self,
         submission: &StrategySubmission<'_>,
     ) -> Result<Value, RuntimeError> {
-        let tenant = self.state_store.tenant(submission.tenant_id).map_err(map_ledger)?
+        let tenant = tenant_record(&self.tenant_connection, submission.tenant_id)?
             .ok_or_else(|| RuntimeError::Conflict("租户不存在。".into()))?;
         if tenant.status != "active" {
             return Err(RuntimeError::Conflict("已归档的租户不能加载策略。".into()));
@@ -193,10 +186,7 @@ impl Runtime {
     }
 
     pub fn require_active(&self, tenant_id: &str) -> Result<Tenant, RuntimeError> {
-        let tenant = self
-            .state_store
-            .tenant(tenant_id)
-            .map_err(map_ledger)?
+        let tenant = tenant_record(&self.tenant_connection, tenant_id)?
             .ok_or_else(|| RuntimeError::Conflict("租户不存在。".into()))?;
         if tenant.status != "active" {
             return Err(RuntimeError::Conflict(
@@ -212,6 +202,71 @@ impl Runtime {
 
     pub(crate) fn track_end(&self) {
         self.inflight.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Local tenant scope only. Nautilus remains the account/position authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tenant {
+    pub tenant_id: String,
+    pub purpose: String,
+    pub status: String,
+}
+
+fn tenant_record(connection: &Connection, tenant_id: &str) -> Result<Option<Tenant>, RuntimeError> {
+    connection.query_row(
+        "SELECT tenant_id, purpose, status FROM tenants WHERE tenant_id=$1",
+        params![tenant_id],
+        |row| Ok(Tenant {
+            tenant_id: row.get(0)?,
+            purpose: row.get(1)?,
+            status: row.get(2)?,
+        }),
+    ).optional().map_err(map_database)
+}
+
+fn upsert_tenant(
+    connection: &Connection,
+    tenant_id: &str,
+    purpose: &str,
+    status: &str,
+) -> Result<Tenant, RuntimeError> {
+    if !matches!(purpose, "production" | "development")
+        || !matches!(status, "active" | "archived")
+    {
+        return Err(RuntimeError::Conflict("租户类型或状态无效。".into()));
+    }
+    connection.execute(
+        "INSERT INTO tenants (tenant_id, purpose, status) VALUES ($1, $2, $3)
+         ON CONFLICT(tenant_id) DO UPDATE SET purpose=excluded.purpose, status=excluded.status",
+        params![tenant_id, purpose, status],
+    ).map_err(map_database)?;
+    tenant_record(connection, tenant_id)?
+        .ok_or_else(|| RuntimeError::BadRequest("状态库不可用。missing row".into()))
+}
+
+fn map_database(error: seealpha_database::Error) -> RuntimeError {
+    RuntimeError::BadRequest(format!("状态库不可用。{error}"))
+}
+
+#[cfg(test)]
+mod tenant_tests {
+    use super::*;
+
+    #[test]
+    fn persists_tenant_scope_and_rejects_invalid_updates() {
+        let connection = Connection::open(std::path::Path::new(":memory:")).unwrap();
+        seealpha_database::bootstrap_engine_schema(&connection).unwrap();
+        let tenant = upsert_tenant(&connection, "t", "development", "active").unwrap();
+        assert_eq!(tenant.tenant_id, "t");
+        assert_eq!(tenant.purpose, "development");
+        assert_eq!(tenant.status, "active");
+        assert!(tenant_record(&connection, "other").unwrap().is_none());
+        assert!(upsert_tenant(&connection, "t", "other", "active").is_err());
+        assert!(upsert_tenant(&connection, "t", "development", "invalid").is_err());
+        let archived = upsert_tenant(&connection, "t", "development", "archived").unwrap();
+        assert_eq!(archived.status, "archived");
+        assert_eq!(tenant_record(&connection, "t").unwrap(), Some(archived));
     }
 }
 

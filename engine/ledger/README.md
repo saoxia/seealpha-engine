@@ -11,11 +11,11 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 | `allocations/` | 可信经济事件的策略归属（基础实现） | 不将内部成交冒充交易所成交 |
 | `reconciliation/` | 经济事件归属核验 | 不替代 Nautilus 原生订单/持仓对账或交易所余额校验 |
 | `../runtime/` | 租户状态和只读策略预览 | 2026-11-23 移除旧订单意图和恢复实现，历史表保留 |
-| `runtime/src/state_store/` | Basket/Coordinator/Paper/Research 业务状态 | 由 Runtime 持久化，不归 Ledger Funds |
+| `../runtime/` 的租户访问 | 租户 purpose/status | Runtime 直接通过 Database 访问现有 `tenants` 表；无独立 StateStore |
 
 ## 四个最小业务核心（2026-11-22）
 
-- **Accounts 登记**：已迁往 Runtime StateStore 的 `registry.rs`，保留租户、连接的业务元信息；不存余额、持仓、账户快照，不授予发送权限。原生账户状态仍由 Nautilus 维护。
+- **租户登记**：由 Runtime 直接访问现有 `tenants` 表，不保留 StateStore；不存余额、持仓、账户快照，不授予发送权限。原生账户状态仍由 Nautilus 维护。
 - **Movements**：沿用经过认证的成交、资金费、结算及 `account_evidence_events`，没有上游证据时拒绝生成事件，既不凭 ACK 入账也不建一套现金余额账。
 - **Allocations**：`attribute_account_event` 将已登记的可信账户经济事件按整数 basis points（总计最多 10000）不可变地归属策略；跨租户/账户/环境、重复改写和超额分配均拒绝；尚不计算策略盈亏或合成虚拟成交。
 - **Reconciliation**：`reconcile_account_attribution` 汇总已存证据的已归属/未归属情况，明确标记历史完整性、交易所余额和持仓对账均**未完成**；这不是通过真实账户对账的证明。
@@ -60,7 +60,9 @@ The former Runtime-owned order intent/recovery implementation was removed on 202
 ## Ledger 源码收敛（2026-11-22）
 
 - `mod.rs` 是 Ledger crate 根入口，维护 Ledger 初始化、公共类型、连接锁和保留历史表的安全测试；原 `src/lib.rs` 已移除。
-- 租户与账户连接登记已经从 Ledger 迁至 `engine/runtime/src/state_store/registry.rs`，包括 `active_tenant_ids`、`ensure_tenant`、`tenant`、`account_connections` 和 `upsert_connection`。
+- 租户登记已从 Ledger 迁至 Runtime，并进一步移除旧 StateStore；当前只保留必要的 `ensure_tenant` 和 active 租户校验。历史账户连接登记接口不再存在。
 - `movements/verified_fills.rs` 持有 `fills()` 读取与认证成交写入；不新增原生订单状态机。
 - 旧 `src/records.rs` 已删除，迁移不修改 SQL Schema 或现有 API 方法签名。
-- 共享 PostgreSQL Schema 由 Runtime 启动时调用 `seealpha_database::bootstrap_engine_schema`，然后打开 Ledger / StateStore。Ledger 仅在单元测试构建下为独立 fixture 初始化 Schema；不执行 DROP 或历史数据转换。
+- 共享 PostgreSQL Schema 由 Runtime 启动时调用 `seealpha_database::bootstrap_engine_schema`，然后打开 Ledger / Runtime 租户连接。Ledger 仅在单元测试构建下为独立 fixture 初始化 Schema；不执行 DROP 或历史数据转换。
+
+> 2026-11-23 注：上文“应用状态职责迁出”记录了历史迁移方案，其中引用的旧 `state_store` 子模块已退役，不表示目前代码中仍存在这些功能。

@@ -4,6 +4,8 @@ Runtime 负责租户状态检查、策略下发/预览的跨模块编排。策�
 
 ## 2026-11-23 精简
 
+- 删除 `state_store/` 包装目录及未使用的 `active_tenant_ids()`；Runtime 直接通过 Database 读取和更新 `tenants` 表。保留租户作用域与 active/archived 门禁，不改动数据库数据。
+
 - 删除 `orders.rs`、`native_handoff.rs`、`state_store/order_intents.rs`。此前的订单实现仅登记意图，不连接 Nautilus 发送端或真实认证恢复。
 - Gateway 退役订单提交、Spot 订单提交、交易控制和请求对账的 POST 路由；同路径的 POST `/orders` 返回 405（GET 仍保留），其余已退役 POST 路由经身份/租户门禁后返回 404。只读历史订单与可信成交查询仍保留。
 - `strategy-preview` 仍只输出信号和目标仓位，不构造 Paper 成交与持仓。
