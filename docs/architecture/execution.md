@@ -4,7 +4,7 @@
 
 - 原 `engine/execution/` 自研目标数量、净额、步长与裁剪 crate 已删除，不保留空壳或兼容接口。它此前不被主 Engine/HTTP 在线调用；删除不代表组合交易功能已经由 NautilusTrader 替代。
 - `engine/pipeline/sources/shared/nautilus/`：独立原生 Binance Spot/USD-M 执行工厂、订单事件身份映射、虚拟成交归属纯计算及离线节点构造测试。该项目不在主 Cargo workspace 中，尚未完成生产发送及恢复验证。
-- `engine/pipeline/sources/shared/nautilus/src/bin/native_order_testnet.rs`：**独立 Testnet-only、默认离线验证**的一次性原生下单/撤单探针。它需要显式 `--submit-testnet-once` 才可能下单，不是生产发送通道；详情见 [Testnet 执行验收清单](../validation/NAUTILUS_TESTNET_EXECUTION_PROBE.md)。
+- `engine/pipeline/sources/shared/nautilus/src/bin/native_order_probe.rs`：独立、人工调用的 Binance Live/Testnet 原生订单 CLI，可提交 MARKET、LIMIT、TAKE_PROFIT_MARKET，观察订单事件并可选在接受后撤单。无额外数量上限或默认自动撤单；**尚未接入主 Engine Runtime、Ledger 或生产订单路由**。详情见 [原生订单验证说明](../validation/NAUTILUS_NATIVE_ORDER_PROBE.md)。
 - `engine/pipeline/sources/binance_account/`：原生订单事件只读观察及待接入的策略成交归属辅助；不是第二套 OMS。
 - `engine/ledger/movements/verified_fills.rs`：经核验的成交证据与经济记录；不能根据 ACK 或未认证的 Nautilus 事件推导真实成交。
 - `engine/gateway/api/src/routes/orders.rs`：历史订单和 Ledger 已核验成交只读查询，不是 Nautilus 实时订单状态源。
