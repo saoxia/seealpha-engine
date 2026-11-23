@@ -4,7 +4,7 @@
 
 ## 数据配置
 
-使用 `PUT /tenants/{tenant}/pipeline/subscriptions/options/{symbol}` 保存完整期权合约标识、`history_start`（UTC）、`realtime_enabled` 和 `enabled`。API 只修改 PostgreSQL；Options Worker 定期读取同一配置表，不创建任务队列。
+使用 `PUT /pipeline/subscriptions/options/{symbol}` 保存完整期权合约标识、`history_start`（UTC）、`realtime_enabled` 和 `enabled`。API 只修改 PostgreSQL；Options Worker 定期读取同一配置表，不创建任务队列。
 
 目前 Options Worker 能识别合约并按安全文件边界执行既有 Bar 保留范围清理；**没有实现期权原生 TradeTick 采集、逐笔历史 ZIP 回填、以 Tick 生成全周期 Bar 或实时 WebSocket 订阅**。即使配置 `realtime_enabled=true`，也不能把期权行情当作 READY。
 
