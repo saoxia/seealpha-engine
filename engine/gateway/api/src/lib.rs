@@ -23,7 +23,7 @@ use axum::{Json, Router};
 use base64::Engine;
 use seealpha_market::{MarketSnapshot, Product, PublicSource};
 use seealpha_runtime::{
-    AuthMode, Config, OrderCommand, PreviewRequest, Runtime, RuntimeError,
+    AuthMode, Config, PreviewRequest, Runtime, RuntimeError,
     StrategySubmission,
 };
 use serde::Deserialize;
@@ -89,19 +89,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/orders",
-            get(list_orders).post(order_command),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/spot/orders",
-            post(order_command),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/trading/controls",
-            post(order_command),
-        )
-        .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/reconcile",
-            post(reconcile_order),
+            get(list_orders),
         )
         .route(
             "/tenants/{tenant_id}/accounts/{account_id}/fills",

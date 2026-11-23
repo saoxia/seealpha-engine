@@ -26,7 +26,6 @@ use super::*;
             tenant_purpose: Some("development".into()),
             research_signing_key: None,
             research_mcp_enabled: false,
-            venue_base: None,
         };
         let runtime = Arc::new(Runtime::open(&config).unwrap());
         runtime.ensure_tenant("42", "development", "active").unwrap();
@@ -111,7 +110,30 @@ use super::*;
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn retired_order_write_and_reconciliation_routes_are_absent() {
+        let app = router(state());
+        let token = "Bearer ci-engine-token-0123456789abcdef0123456789abcdef";
+        for path in [
+            "/tenants/42/accounts/a/orders",
+            "/tenants/42/accounts/a/spot/orders",
+            "/tenants/42/accounts/a/trading/controls",
+            "/tenants/42/accounts/a/requests/request-1/reconcile",
+        ] {
+            let request = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("authorization", token)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"api_secret":"never-echo"}"#))
+                .unwrap();
+            let (status, _, body) = call(&app, request).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert!(!body.to_string().contains("never-echo"));
+        }
     }
 
     #[tokio::test]

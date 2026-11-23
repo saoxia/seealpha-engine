@@ -1,12 +1,8 @@
-//! Cross-domain runtime orchestration for data, strategy previews and order recovery.
+//! Cross-domain orchestration for tenant scopes and issued strategy previews.
 mod config;
 mod inspection;
 mod session;
-mod orders;
-mod native_handoff;
 mod state_store;
-pub use orders::OrderCommand;
-pub use state_store::OrderRecoveryItem;
 
 pub use config::{AuthMode, Config, ensure_state_dir};
 pub use session::{PreviewRequest, StrategyInput};
@@ -79,26 +75,6 @@ impl Runtime {
         // acknowledgements. Preserve those rows in an audit quarantine,
         // never treat them as real exchange-executed trades.
         ledger.quarantine_synthetic_fills().map_err(map_ledger)?;
-        // Restart discovery is read-only. Without authenticated exchange
-        // evidence, pending orders MUST remain unresolved; no submit/retry.
-        // Query at most one page per tenant on startup; the paginated API
-        // below exposes the entire durable queue without loading it at boot.
-        for tenant in state_store.active_tenant_ids().map_err(map_ledger)? {
-            let page = state_store
-                .order_recovery_page(&tenant, 0, 500)
-                .map_err(map_ledger)?;
-            if !page.is_empty() {
-                eprintln!(
-                    "order recovery: tenant={tenant} pending_reconciliation_at_least={}{}; no automatic resend",
-                    page.len(),
-                    if page.len() == 500 {
-                        " (more pages possible)"
-                    } else {
-                        ""
-                    }
-                );
-            }
-        }
         Ok(Self {
             ledger,
             state_store,
@@ -106,21 +82,6 @@ impl Runtime {
             control,
             inflight: AtomicUsize::new(0),
         })
-    }
-
-    /// Read-only, paginated recovery inventory. This is a list of work
-    /// requiring signed exchange queries and account reconciliation, not an
-    /// authorization to resend or synthesize fills.
-    pub fn order_recovery_page(
-        &self,
-        tenant: &str,
-        offset: usize,
-        limit: usize,
-    ) -> Result<Vec<OrderRecoveryItem>, RuntimeError> {
-        self.require_active(tenant)?;
-        self.state_store
-            .order_recovery_page(tenant, offset, limit)
-            .map_err(map_ledger)
     }
 
     pub fn inflight(&self) -> usize {

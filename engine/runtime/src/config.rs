@@ -18,7 +18,6 @@ pub struct Config {
     pub tenant_purpose: Option<String>,
     pub research_signing_key: Option<String>,
     pub research_mcp_enabled: bool,
-    pub venue_base: Option<String>,
 }
 
 impl Config {
@@ -67,9 +66,6 @@ impl Config {
             research_mcp_enabled: std::env::var("ENGINE_RESEARCH_MCP_ENABLED")
                 .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE"))
                 .unwrap_or(false),
-            venue_base: std::env::var("ENGINE_VENUE_BASE")
-                .ok()
-                .filter(|value| !value.is_empty()),
         };
         config.validate()?;
         Ok(config)

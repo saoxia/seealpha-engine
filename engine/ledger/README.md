@@ -10,7 +10,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 | `movements/` | 有认证来源的成交、费用、资金费和结算 | 不依据 ACK、余额差值或公共费率推断资金事实 |
 | `allocations/` | 可信经济事件的策略归属（基础实现） | 不将内部成交冒充交易所成交 |
 | `reconciliation/` | 经济事件归属核验 | 不替代 Nautilus 原生订单/持仓对账或交易所余额校验 |
-| `../runtime/src/state_store/order_intents.rs` | 不可变发送前委托意图和未知状态恢复 | 单次预登记、重复请求只核验、不重复发送 |
+| `../runtime/` | 租户状态和只读策略预览 | 2026-11-23 移除旧订单意图和恢复实现，历史表保留 |
 | `runtime/src/state_store/` | Basket/Coordinator/Paper/Research 业务状态 | 由 Runtime 持久化，不归 Ledger Funds |
 
 ## 四个最小业务核心（2026-11-22）
@@ -35,7 +35,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 - 已移除 Ledger `records.rs`：租户和连接登记归 `accounts/`，历史认证成交查询归 `movements/verified_fills.rs`；通用 `gaps_for_scope()`、`event_page()` 等操作接口归 Runtime StateStore。
 - 删除 `parity.rs::positions()` 对历史 `positions` 表的读接口；Gateway `/positions` 在 Nautilus 原生持仓核验尚未接线前明确失败关闭，包含 `paper` 环境，不能把缺少证据的空仓位响应当作已核实状态。
 - **不执行 DROP 表或历史数据迁移**：既有 `positions` 和 `order_observations` 数据保留供审计及后续受控迁移。
-- `order_intents.rs` 的订单观察与恢复链路暂时保留：虽然没有生产观察写入调用方，`order_recovery_page()` 依赖历史观察、且带有禁止未知状态重发的安全约束；必须由已验收的 Nautilus 持久报告与恢复功能替代后再删。
+- 2026-11-23 更新：旧 Runtime 订单观察与恢复链路已移除，历史数据仍在；Nautilus 端到端认证恢复**尚未替代完成**，禁止实盘。
 
 ## 应用状态职责迁出（2026-11-22）
 
@@ -43,7 +43,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 - Basket Journal 与 Portfolio Coordinator CAS 检查点：`engine/runtime/src/state_store/{basket_journal,coordinator_state}.rs`；作为 Runtime 的 Portfolio 用例状态，原有并发修订规则保持不变。
 - Paper Session 和模拟持仓：`engine/runtime/src/state_store/paper.rs`；仅用于独立模拟，不能被当作真实账户余额或 Nautilus Position Cache。
 - 上述存储继续使用相同 PostgreSQL schema 和既有表，**没有重建、复制或删除历史数据**。目前由 Runtime 在 Ledger 初始化后建立自己的数据库连接。当前不为目录整理而增设多个长期运行服务。
-- 不可变原生订单意图与只读对账任务队列已迁至 Runtime StateStore；保持同步预登记、未知订单只查询不重发的约束。
+- 2026-11-23 更新：原 Runtime 订单意图和只读对账实现已移除；相关历史数据未删除或迁移。
 - Legacy 订单、缺口和通用操作事件读写归 Runtime StateStore。资金经济证据仍归 Ledger。所有迁移均保留历史表，不执行自动删除。
 
 ## 安全原则
@@ -55,7 +55,7 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 
 ## Execution persistence ownership
 
-Durable order intents, GET-only recovery scheduling, order request views and stored order projections are Runtime-owned (`runtime/src/state_store/`). Ledger retains signed fills, settlements and economic evidence; Runtime owns tenant and connection registration. Historical execution tables remain intact; no DROP or backfill.
+The former Runtime-owned order intent/recovery implementation was removed on 2026-11-23. The native production dispatcher and replacement recovery loop remain disabled. Ledger retains signed fills, settlements and economic evidence; historical execution tables remain intact with no DROP or backfill.
 
 ## Ledger 源码收敛（2026-11-22）
 
