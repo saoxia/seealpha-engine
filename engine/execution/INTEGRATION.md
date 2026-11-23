@@ -47,7 +47,7 @@ OMS event log, settlement ledger or streaming subscriber belongs in Execution.
 entry points are gone. Historical stored coordinator/basket blobs are not
 automatically migrated or used to resubmit orders.
 
-The live Nautilus node/order-cache snapshot resolver, tenant-scoped durable
+The live Nautilus node/order-cache snapshot resolver, account-scoped durable
 attribution CAS implementation, native fill-void reconciliation, and
 end-to-end restart acceptance have **not** been completed by this removal.
 Until those are verified, production order sending remains disabled.
