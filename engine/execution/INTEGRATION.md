@@ -1,5 +1,7 @@
 # SeeAlpha Execution — native-first contract
 
+> 2026-11-23 更新：Runtime 旧订单预登记/恢复实现及 Gateway 写入/对账 POST 路由已删除。Execution 只规划调整量，Nautilus 生产发送和独立发送前授权/认证恢复仍未接通；实盘继续禁用。旧 PostgreSQL 历史订单表保留。
+
 The old standalone Coordinator, Basket order lifecycle, checkpoint journal,
 phase gate, order evidence and risk monitor have been **deleted**, together
 with their research-only Runtime endpoints and checkpoint storage adapters.

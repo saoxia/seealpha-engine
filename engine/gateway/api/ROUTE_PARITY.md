@@ -44,16 +44,16 @@
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/snapshots` | `Credentials` | 账户快照 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/trading/state` | `TradingStateBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/spot/trading/state` | `SpotTradingStateBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/spot/orders` | `SpotCommandBody` | 委托/受理状态（非成交） | **已路由（受限）** | 实盘写入关闭/须预登记，不能当作完整 Python 交易行为等价；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/orders` | `CommandBody` | 委托/受理状态（非成交） | **已路由（受限）** | 实盘写入关闭/须预登记，不能当作完整 Python 交易行为等价；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/trading/controls` | `ProfessionalCommandBody` | JSON 对象/列表 | **已路由（受限）** | 实盘写入关闭/须预登记，不能当作完整 Python 交易行为等价；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/spot/orders` | `SpotCommandBody` | 委托/受理状态（非成交） | **已移除（2026-11-23）** | 经过身份/租户门禁后 404；原生执行尚未启用 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/orders` | `CommandBody` | 委托/受理状态（非成交） | **已移除（2026-11-23）** | 身份/租户门禁后 405（GET /orders 保留）；原生执行尚未启用 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/trading/controls` | `ProfessionalCommandBody` | JSON 对象/列表 | **已移除（2026-11-23）** | 经过身份/租户门禁后 404；原生执行尚未启用 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/orders` | `Query / path` | 委托/受理状态（非成交） | **已路由（受限）** | 实盘写入关闭/须预登记，不能当作完整 Python 交易行为等价；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/fills` | `Query / path` | 真实 Fill 证据 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/positions` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/gaps` | `Query / path` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/gaps` | `GapBody` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/reconcile` | `ReconcileBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/reconcile` | `ReconcileBody` | JSON 对象/列表 | **已移除（2026-11-23）** | 经过身份/租户门禁后 404；原生执行尚未启用 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/requests/{request_id}/ledger-sync` | `无体或对象` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/events` | `Query / path` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers/note` | `WorkerNote` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |

@@ -1719,7 +1719,6 @@ dependencies = [
 name = "seealpha-runtime"
 version = "0.1.0"
 dependencies = [
- "axum",
  "rust_decimal",
  "seealpha-catalog",
  "seealpha-database",
@@ -1727,11 +1726,8 @@ dependencies = [
  "seealpha-ledger",
  "seealpha-market",
  "seealpha-strategy",
- "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
