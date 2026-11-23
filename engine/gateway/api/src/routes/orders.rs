@@ -7,7 +7,6 @@ pub(super) async fn list_orders(
     Query(query): Query<EnvironmentQuery>,
 ) -> Result<Json<Value>, AppError> {
     let environment = query.environment.unwrap_or_else(|| "paper".into());
-    state.runtime.require_active(&tenant_id).map_err(AppError::from)?;
     // Historical order rows only; not an authoritative Nautilus order view.
     let connection = seealpha_database::Connection::open(&state.config.book_path())
         .map_err(|error| AppError::bad_request(format!("状态库不可用。{error}")))?;

@@ -14,15 +14,14 @@ MCP 协议与工具映射源码位于 `engine/gateway/mcp/`，HTTP API crate 位
 
 - 默认 `ENGINE_RESEARCH_MCP_ENABLED=false`。启用时需同时配置独立的
   `ENGINE_RESEARCH_SIGNING_KEY`（至少 32 字符，不可复用 Engine 管理令牌）、
-  `ENGINE_TENANT_ID` 和 `ENGINE_TENANT_PURPOSE=development`；
-  还需该租户在 Engine 运行状态中实际处于 `active`。
+  `ENGINE_TENANT_ID`（绑定数据范围）。不再要求租户用途或 active 状态。
 - 入口为同一 Engine 端口下的 **`POST /research/mcp`**。
   标准协议为 `2025-11-25` 的 Streamable HTTP，支持 JSON-RPC 单响应；
   不开放独立 SSE GET 流、MCP session、stdio 或自动服务发现。
   `GET /research/mcp` 和 `DELETE /research/mcp` 返回 405。
 - MCP 请求需要 `Authorization: Bearer <short-lived-research-grant>`，
   由可信 Platform 在验证用户、租户、任务、数据集和策略权限后签发。
-  Engine 每次独立验签、检查任务/租户/用途/Grant TTL，并在调用工具时再次执行
+  Engine 每次独立验签、检查任务/租户/Grant TTL，并在调用工具时再次执行
   原 Research API 的具体权限检查。
 - 原来的 HTTP API 仍使用 `X-SeeAlpha-Engine-Contract-Version: 2` 和
   `X-SeeAlpha-Research-Contract-Version: 1`；MCP 通过自己的
@@ -33,7 +32,7 @@ MCP 协议与工具映射源码位于 `engine/gateway/mcp/`，HTTP API crate 位
 
 Docker 镜像继续默认只暴露既有端口 `8766`。新增开关不会自动修改既有
 租户容器、凭据或环境文件；需要在显式审核并重建隔离开发容器后才可启用。
-生产租户不能开启 MCP。不存在 MCP 到生产下单、交易所凭据或通用 Engine 管理 API
+MCP 不因租户类型开放或关闭。不存在 MCP 到实盘下单、交易所凭据或通用 Engine 管理 API
 的工具映射。
 
 ## 可调用工具
@@ -63,7 +62,7 @@ Docker 镜像继续默认只暴露既有端口 `8766`。新增开关不会自动
 
 ## 协议调用示例
 
-以下示例中的 `$RESEARCH_GRANT` 必须由可信 Platform 为开发租户和当前任务签发，
+以下示例中的 `$RESEARCH_GRANT` 必须由可信 Platform 为绑定租户和当前任务签发，
 **不要**把令牌写入 Agent Prompt、命令历史、日志或模型上下文。
 
 ```bash

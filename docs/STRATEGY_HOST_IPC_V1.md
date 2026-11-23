@@ -36,6 +36,6 @@ A publication has exactly one of `quantity` or `weight`; a weight is in [-1,1]. 
 
 ## Trust and safety
 
-The protocol version is not an authorization credential. Before any issued Python strategy runs, the runtime verifies the trusted Ledger issuance and requested package bytes/parameters, and `run_issued_host` independently checks the immutable archive SHA-256, metadata, tenant, account and grant purpose. Development directory strategies are restricted to development tenants. Host subprocess I/O, timeout and memory bounds still apply. On unsupported protocol versions, no target is forwarded to portfolio/risk/ledger.
+The protocol version is not an authorization credential. Before any issued Python strategy runs, the runtime verifies the trusted Ledger issuance and requested package bytes/parameters, and `run_issued_host` independently checks the immutable archive SHA-256, metadata, tenant and account identity. Directory strategies do not gain privileges from tenant types; issued archives still require immutable authorization. Host subprocess I/O, timeout and memory bounds still apply. On unsupported protocol versions, no target is forwarded to portfolio/risk/ledger.
 
 This is the first incremental envelope for future adapters; changing the wire schema requires a new version and migration/compatibility tests. Live exchange orders are not exposed to the strategy adapter.

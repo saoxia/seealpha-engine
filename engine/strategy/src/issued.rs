@@ -17,7 +17,6 @@ pub struct IssuedStrategy<'a> {
     pub tenant_id: &'a str,
     pub account_id: &'a str,
     pub issuance_id: &'a str,
-    pub grant_purpose: &'a str,
     pub code_key: &'a str,
     pub version: &'a str,
     pub entry_point: &'a str,
@@ -29,7 +28,6 @@ pub struct AccountScope<'a> {
     /// Obtained from the authenticated request / selected Runtime tenant.
     pub tenant_id: &'a str,
     pub account_id: &'a str,
-    pub purpose: &'a str,
 }
 
 /// Compare all immutable issuance fields with verified package bytes and the
@@ -44,8 +42,6 @@ pub fn authorize_issued(
         || !valid_identifier(issued.issuance_id, 64)
         || issued.tenant_id != caller.tenant_id
         || issued.account_id != caller.account_id
-        || issued.grant_purpose != caller.purpose
-        || !matches!(caller.purpose, "development" | "production")
         || !super::valid_name(issued.code_key)
         || !super::valid_version(issued.version)
         || !super::valid_entry(issued.entry_point)
@@ -182,7 +178,6 @@ mod tests {
             tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
-            grant_purpose: "development",
             code_key: "alpha_strategy",
             version: "1.2",
             entry_point: "strategy:MyStrategy",
@@ -197,7 +192,6 @@ mod tests {
         let scope = AccountScope {
             tenant_id: "tenant-1",
             account_id: "account-1",
-            purpose: "development",
         };
         authorize_issued(record, scope, &meta()).unwrap();
         assert!(
@@ -222,17 +216,6 @@ mod tests {
             )
             .is_err()
         );
-        assert!(
-            authorize_issued(
-                record,
-                AccountScope {
-                    purpose: "production",
-                    ..scope
-                },
-                &meta()
-            )
-            .is_err()
-        );
         let mut wrong = meta();
         wrong.version = "1.3".into();
         assert!(authorize_issued(record, scope, &wrong).is_err());
@@ -251,7 +234,6 @@ mod tests {
         let scope = AccountScope {
             tenant_id: "tenant-1",
             account_id: "account-1",
-            purpose: "development",
         };
         let params = serde_json::json!({});
         let command = HostCommand {

@@ -59,11 +59,6 @@ CREATE TABLE IF NOT EXISTS account_event_allocations (
 CREATE INDEX IF NOT EXISTS account_event_allocations_by_evidence
     ON account_event_allocations(tenant_id,account_id,environment,event_id);
 
-CREATE TABLE IF NOT EXISTS tenants (
-    tenant_id TEXT PRIMARY KEY,
-    purpose TEXT NOT NULL,
-    status TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS orders (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -119,7 +114,7 @@ CREATE TABLE IF NOT EXISTS pipeline_subscriptions (
 -- Source: engine/strategy/src/store.rs
 CREATE TABLE IF NOT EXISTS strategy_issuances (
  tenant_id TEXT NOT NULL, account_id TEXT NOT NULL, issuance_id TEXT NOT NULL,
- code_key TEXT NOT NULL, version TEXT NOT NULL, grant_purpose TEXT NOT NULL,
+ code_key TEXT NOT NULL, version TEXT NOT NULL,
  parameters_json TEXT NOT NULL, entry_point TEXT NOT NULL,
  package_hash TEXT NOT NULL, zip_sha256 TEXT,
  PRIMARY KEY (tenant_id,account_id,issuance_id)

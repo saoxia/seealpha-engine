@@ -15,7 +15,6 @@ pub struct Config {
     pub state_dir: PathBuf,
     pub project: PathBuf,
     pub tenant_id: Option<String>,
-    pub tenant_purpose: Option<String>,
     pub research_signing_key: Option<String>,
     pub research_mcp_enabled: bool,
 }
@@ -57,9 +56,6 @@ impl Config {
             state_dir,
             project,
             tenant_id: std::env::var("ENGINE_TENANT_ID")
-                .ok()
-                .filter(|value| !value.is_empty()),
-            tenant_purpose: std::env::var("ENGINE_TENANT_PURPOSE")
                 .ok()
                 .filter(|value| !value.is_empty()),
             research_signing_key,

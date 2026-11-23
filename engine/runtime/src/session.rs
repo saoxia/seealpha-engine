@@ -1,23 +1,14 @@
 //! Read-only strategy preview. No custom paper matching, fills, or positions.
-use crate::{Runtime, RuntimeError, map_strategy};
+use crate::{Runtime, RuntimeError, StrategyInput, map_strategy};
 use rust_decimal::Decimal;
 use seealpha_execution::{
     MemberTarget, TargetHolding, clip_member_targets, net_signed_quantity,
 };
 use seealpha_market::{MarketSnapshot, run_pipeline};
-use seealpha_strategy::executor::{
-    ExecutionInput, IssuedNativeEmaExecutor, StrategyExecutor,
-};
-use seealpha_strategy::{AccountScope, IssuedStrategy, Publication, StrategyBar};
+use seealpha_strategy::executor::ExecutionInput;
+use seealpha_strategy::{AccountScope, Publication, StrategyBar, native_issuance::execute_issued_native};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-
-#[derive(Debug, Clone)]
-pub struct StrategyInput {
-    pub member_id: String,
-    pub archive: Vec<u8>,
-    pub parameters: Value,
-}
 
 #[derive(Debug, Clone)]
 pub struct PreviewRequest {
@@ -32,7 +23,7 @@ impl Runtime {
     /// Run only account-issued strategies against supplied bars.
     /// Never register a session, infer paper fills, or mutate positions.
     pub fn preview_strategies(&self, request: PreviewRequest) -> Result<Value, RuntimeError> {
-        let tenant = self.require_active(&request.tenant_id)?;
+        self.require_strategy_scope(&request.tenant_id)?;
         if request.strategies.is_empty() {
             return Err(RuntimeError::Conflict("该租户账户没有已下发的策略。".into()));
         }
@@ -64,39 +55,21 @@ impl Runtime {
                 .ok_or_else(|| RuntimeError::Conflict(
                     "预览策略没有对应账户的可信下发记录。".into()
                 ))?;
-            let stored_parameters: Value = serde_json::from_str(&load.parameters_json)
-                .map_err(|_| RuntimeError::Conflict("已下发策略参数记录损坏。".into()))?;
-            if load.archive.as_slice() != strategy.archive.as_slice()
-                || stored_parameters != strategy.parameters
-            {
-                return Err(RuntimeError::Conflict(
-                    "预览策略包或参数与可信下发记录不一致。".into()
-                ));
-            }
             self.track_start();
-            let outcome = IssuedNativeEmaExecutor {
-                manifest: &strategy.archive,
-                issued: IssuedStrategy {
-                    tenant_id: &load.tenant_id,
-                    account_id: &load.account_id,
-                    issuance_id: &load.issuance_id,
-                    grant_purpose: &load.grant_purpose,
-                    code_key: &load.code_key,
-                    version: &load.version,
-                    entry_point: &load.entry_point,
-                    package_hash: &load.package_hash,
-                },
-                scope: AccountScope {
+            let outcome = execute_issued_native(
+                load,
+                AccountScope {
                     tenant_id: &request.tenant_id,
                     account_id: &request.account_id,
-                    purpose: &tenant.purpose,
                 },
-            }.execute(ExecutionInput {
-                parameters: &strategy.parameters,
-                symbol: &request.snapshot.symbol,
-                interval: &request.snapshot.interval,
-                bars: &bars,
-            });
+                &strategy.archive,
+                ExecutionInput {
+                    parameters: &strategy.parameters,
+                    symbol: &request.snapshot.symbol,
+                    interval: &request.snapshot.interval,
+                    bars: &bars,
+                },
+            );
             self.track_end();
             let run = outcome.map_err(map_strategy)?;
             let limit = positive_field(&run.prepared, "risk_limit")?;

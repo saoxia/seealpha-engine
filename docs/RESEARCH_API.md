@@ -7,11 +7,10 @@
 
 ## 启用条件
 
-仅在**固定开发租户**的 Engine 容器上配置独立 `ENGINE_RESEARCH_SIGNING_KEY`（至少 32 字符、不得与 `ENGINE_TOKEN` 相同）时，才挂载 `/research/v1/*`。
+在**已绑定租户 ID**的 Engine 容器上配置独立 `ENGINE_RESEARCH_SIGNING_KEY`（至少 32 字符、不得与 `ENGINE_TOKEN` 相同）时，才挂载 `/research/v1/*`。
 
 同时要求：
-- `ENGINE_TENANT_ID` 已固定，`ENGINE_TENANT_PURPOSE=development`。
-- Engine 持久化租户状态为 `active` 且用途为 `development`。
+- `ENGINE_TENANT_ID` 已固定；不再要求租户类型或状态。
 - 请求附带 **`X-SeeAlpha-Engine-Contract-Version: 2`** 和 **`X-SeeAlpha-Research-Contract-Version: 1`**。
 - Bearer 为 Platform 在授权后签发的短时任务级 HMAC grant，包含 `version`、`audience`、`tenant_id`、`task_id`、`ops`、`datasets`、`strategies`、`not_before`、`expires_at`，有效期最多一小时。
 
@@ -45,7 +44,7 @@ Engine 只提供 `engine.research_auth.sign_research_grant()` 作为可信 Platf
 
 - `strategy_ref` 必须是 `account:<account_id>`，表示**已经由 Platform 下发给该开发账户**的策略组合，不接受任意 Python 路径或生成代码。
 - `dataset_refs` 当前恰好 1 个，格式 `futures_um:<symbol>:1m|5m` 或 `spot:<symbol>:1m|5m`，须与已下发策略的 symbol 一致；Engine 将明确的产品类型传递到已有永续/现货 Backtest Worker。
-- `purpose=development`、`execution=simulation` 固定；`parameters={}`；其它动态参数、通用多品种策略回测和任意期权策略回测尚需 Engine 契约升级。现有 366 天上限继续保留。
+- `execution=simulation` 固定（历史设计）；`parameters={}`；其它动态参数、通用多品种策略回测和任意期权策略回测尚需 Engine 契约升级。现有 366 天上限继续保留。
 - 相同租户和研究任务的相同 `idempotency_key` 经有范围的哈希映射到旧队列幂等键。回测查询/取消会核验任务归属；跨任务不能因猜出 job ID 就读取结果。
 - 当前队列运行中的回测不支持安全强制取消，仍返回 409；不伪造取消成功。
 
@@ -54,15 +53,15 @@ Engine 只提供 `engine.research_auth.sign_research_grant()` 作为可信 Platf
 
 ## AI 自由 Python 策略（开发 Docker 内现有 Worker）
 
-新增 `POST /research/v1/python-candidate-backtests`。该路径**默认关闭**，仅在**开发租户 Engine** 显式设置 `ENGINE_RESEARCH_PYTHON_ENABLED=true`、且启用独立 `ENGINE_RESEARCH_SIGNING_KEY` 时可用。生产租户即使设置该开关也无法通过开发用途检查。
+新增 `POST /research/v1/python-candidate-backtests`。该路径**默认关闭**，仅在**经授权的 Engine** 显式设置 `ENGINE_RESEARCH_PYTHON_ENABLED=true`、且启用独立 `ENGINE_RESEARCH_SIGNING_KEY` 时可用。是否可用取决于具体操作授权与隔离要求，不再依赖租户类型。
 
-**调度职责属于 Platform 后端**：根据已登录用户拥有的开发租户、该租户的虚拟账户、历史数据订阅和研究任务选择对应 Engine Docker 地址；保存不可变策略 ZIP/SHA-256/候选 ID；在每次操作时签发短期研究 Grant。Engine 不选择用户租户、不根据 Agent 提供的路径寻找另一个 Docker，不接收 Engine 管理 Token 作为研究凭据。Engine 本身必须再次验证签名、租户 ID、用途、账号、dataset 和研究操作，以防错路由。
+**调度职责属于 Platform 后端**：根据已登录用户拥有的租户、该租户的虚拟账户、历史数据订阅和研究任务选择对应 Engine Docker 地址；保存不可变策略 ZIP/SHA-256/候选 ID；在每次操作时签发短期研究 Grant。Engine 不选择用户租户、不根据 Agent 提供的路径寻找另一个 Docker，不接收 Engine 管理 Token 作为研究凭据。Engine 本身必须再次验证签名、租户 ID、账号、dataset 和研究操作，以防错路由。
 
 研究请求传送已经打包的完整 Python 策略 ZIP（base64）及 SHA-256、候选 ID、`strategy_ref=account:<id>`、一个授权 `futures_um:<symbol>:1m|5m` 或 `spot:<symbol>:1m|5m` 数据集和回测参数；需要 `python_candidates:submit` Grant。ZIP 使用已有 `seealpha-package.json` 规范，最多 256 KiB、32 个文件，必须有与 `entry_point` 对应的 `.py` 入口，manifest 中需 `parameters.symbol`、`allocation` 和 `risk_limit`。禁止 ZIP 路径穿越、符号链接、重复文件与明显凭据字段。接口在 Engine API 进程**只静态检查并提交任务，不 import/exec AI Python**。
 
 真正执行时，Engine **容器内部既有 `TaskCoordinator → Backtest Worker` 子进程**读取该任务不可变 ZIP，从数据 Catalog 加载历史行情，调用原有 `load_entry`/NautilusTrader `Strategy` 和组合目标净额机制，模拟运行后写回关联 `candidate_id`/`package_hash` 的结果。沿用既有超时、取消、队列、幂等键、模拟回测接口及已有 Engine Docker；不增加 Gateway、MCP、额外 Docker 或管理 API。普通生产策略不会被此研究候选包修改。
 
-**安全边界**：Engine 的 Token 负责身份验证，研究 HMAC Grant 验证绑定的开发租户与操作；两者不等于对同 Docker 内不可信 Python 提供了独立的进程安全隔离。同一 UID 的策略代码可能访问容器内同 UID 进程及文件（包括潜在的服务凭据）。此功能仅供受信任的开发用户显式启用；面向任意不可信用户开放前必须另行解决该限制。新开关不会改写已有开发容器的 env 文件，需在升级部署时明确重建受影响容器；绝不自动调整生产环境。
+**安全边界**：Engine 的 Token 负责身份验证，研究 HMAC Grant 验证绑定的租户与操作；两者不等于对同 Docker 内不可信 Python 提供了独立的进程安全隔离。同一 UID 的策略代码可能访问容器内同 UID 进程及文件（包括潜在的服务凭据）。此功能仅供受信任的开发用户显式启用；面向任意不可信用户开放前必须另行解决该限制。新开关不会改写已有开发容器的 env 文件，需在升级部署时明确重建受影响容器；绝不自动调整生产环境。
 
 示例调用在 Platform 的研究代理及 Harness CLI 文档中，`backtest-get` 可返回关联结果。当前 Python 候选可针对单一永续或现货品种研究；不是通用跨产品/期权候选回测功能，也不自动生成生产策略授权。
 
@@ -83,7 +82,7 @@ CANDIDATE = {
 }
 ```
 
-允许的 `kind`：`ema_cross`、`ema_revert`、`sma_cross`、`sma_revert`。仅一个 `futures_um:symbol:1m|5m` 或 `spot:symbol:1m|5m`、固定开发目的、模拟模式、账户作用域、短时 Research Grant。Engine 在调用 `TaskCoordinator` 前重新解包、静态解析 Python AST 并校验 SHA-256；**绝不 import/exec/eval AI 源码**。Worker 复用 NautilusTrader、现有有界任务队列/取消/超时/幂等机制，但只创建 Engine 自己维护的 `CandidateSignal`。候选回测不写入已下发策略清单，也不自动进入生产。
+允许的 `kind`：`ema_cross`、`ema_revert`、`sma_cross`、`sma_revert`。仅一个 `futures_um:symbol:1m|5m` 或 `spot:symbol:1m|5m`、固定模拟模式、账户作用域、短时 Research Grant。Engine 在调用 `TaskCoordinator` 前重新解包、静态解析 Python AST 并校验 SHA-256；**绝不 import/exec/eval AI 源码**。Worker 复用 NautilusTrader、现有有界任务队列/取消/超时/幂等机制，但只创建 Engine 自己维护的 `CandidateSignal`。候选回测不写入已下发策略清单，也不自动进入生产。
 
 请求包含 `candidate_id`（32 位小写十六进制）、`package_hash`（SHA-256）、`archive`（base64）、`strategy_ref`、`dataset_refs`、`start/end`、`starting_balance`、`quote_currency` 和 `idempotency_key`。查询结果复用 `GET /v1/backtests/{id}`，完成时返回关联的候选 ID/哈希/规范化规则与回测结果。相同幂等键不同规则会拒绝；研究任务不能读取其他任务回测。
 
@@ -97,4 +96,4 @@ CANDIDATE = {
 
 ## 可选 MCP 适配（不替代 Research HTTP）
 
-显式设置 `ENGINE_RESEARCH_MCP_ENABLED=true` 时，固定开发租户可使用同一 ASGI 应用内的 `POST /research/mcp`（MCP Streamable HTTP，JSON-only、无会话）。MCP 工具复用本页的授权、数据集校验、候选包和原有 TaskCoordinator，不提供实盘命令或任意 Shell；默认关闭，现有 Harness 不会自动切换。详见 [Engine 原生 MCP Research 接口](MCP_RESEARCH.md)。
+显式设置 `ENGINE_RESEARCH_MCP_ENABLED=true` 时，已绑定的租户可使用同一 ASGI 应用内的 `POST /research/mcp`（MCP Streamable HTTP，JSON-only、无会话）。MCP 工具复用本页的授权、数据集校验、候选包和原有 TaskCoordinator，不提供实盘命令或任意 Shell；默认关闭，现有 Harness 不会自动切换。详见 [Engine 原生 MCP Research 接口](MCP_RESEARCH.md)。

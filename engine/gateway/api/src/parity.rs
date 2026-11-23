@@ -41,14 +41,10 @@ struct Environment {
     environment: Option<String>,
 }
 async fn positions(
-    State(state): State<AppState>,
-    Path((tenant, account)): Path<(String, String)>,
+    State(_state): State<AppState>,
+    Path((_tenant, account)): Path<(String, String)>,
     Query(query): Query<Environment>,
 ) -> Result<Json<Value>, AppError> {
-    state
-        .runtime
-        .require_active(&tenant)
-        .map_err(AppError::from)?;
     let env = query
         .environment
         .ok_or_else(|| AppError::bad_request("账户环境无效。"))?;
@@ -66,10 +62,6 @@ async fn data_inventory(
     Path(tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state
-        .runtime
-        .require_active(&tenant)
-        .map_err(AppError::from)?;
     let symbols = body["symbols"].as_array().cloned().unwrap_or_default();
     if symbols.len() > 200 {
         return Err(AppError::bad_request("查询品种数量超出范围。"));
@@ -128,7 +120,7 @@ fn native_kind(body: &Value) -> Result<seealpha_catalog::RecordKind, AppError> {
 }
 async fn native_events(
     State(state): State<AppState>,
-    Path(tenant): Path<String>,
+    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let identity = body["identifier"]
@@ -141,7 +133,6 @@ async fn native_events(
         return Err(AppError::bad_request("最大事件批次不能超过 50,000。"));
     }
     let kind = native_kind(&body)?;
-    state.runtime.require_active(&tenant).map_err(AppError::from)?;
     let rows = state.require_catalog()?
         .read_records(&kind, identity, from, until, limit as usize)
         .map_err(|error| AppError::conflict(error.to_string()))?;
@@ -153,14 +144,13 @@ async fn native_events(
 }
 async fn native_inventory(
     State(state): State<AppState>,
-    Path(tenant): Path<String>,
+    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let identity = body["identifier"]
         .as_str()
         .ok_or_else(|| AppError::bad_request("行情目录标识缺失。"))?;
     let kind = native_kind(&body)?;
-    state.runtime.require_active(&tenant).map_err(AppError::from)?;
     let entries = state.require_catalog()?
         .inventory(&kind, identity)
         .map_err(|error| AppError::conflict(error.to_string()))?;

@@ -55,7 +55,7 @@ impl StrategyExecutor for IssuedNativeEmaExecutor<'_> {
     }
 }
 
-/// Development-directory Python adapter only. Issued/production archives must
+/// Directory-based Python adapter only. Issued archives must
 /// continue through `run_issued_host` with account-scoped authorization.
 #[derive(Debug, Clone, Copy)]
 pub struct DevelopmentPythonExecutor<'a> {
@@ -153,7 +153,6 @@ mod tests {
             tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
-            grant_purpose: "development",
             code_key: "ema_crossover",
             version: "1",
             entry_point: "native:ema_crossover",
@@ -162,7 +161,6 @@ mod tests {
         let scope = AccountScope {
             tenant_id: "tenant-1",
             account_id: "account-1",
-            purpose: "development",
         };
         let bars = ["1", "1", "1", "10", "10", "0"].map(bar);
         let parameters = json!({"fast_period": 2, "slow_period": 3});
@@ -198,7 +196,6 @@ mod tests {
             tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
-            grant_purpose: "production",
             code_key: "alpha_strategy",
             version: "1.0",
             entry_point: "strategy:Strategy",
@@ -212,7 +209,6 @@ mod tests {
             scope: AccountScope {
                 tenant_id: "tenant-1",
                 account_id: "account-1",
-                purpose: "production",
             },
         };
         assert!(executor
@@ -245,7 +241,6 @@ mod tests {
             tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
-            grant_purpose: "production",
             code_key: "alpha_strategy",
             version: "1.0",
             entry_point: "strategy:Strategy",
@@ -259,7 +254,6 @@ mod tests {
             scope: AccountScope {
                 tenant_id: "tenant-1",
                 account_id: "account-1",
-                purpose: "production",
             },
         };
         let result = executor.execute(ExecutionInput {

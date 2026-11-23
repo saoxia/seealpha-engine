@@ -26,7 +26,6 @@ pub struct StrategyLoad {
     pub issuance_id: String,
     pub code_key: String,
     pub version: String,
-    pub grant_purpose: String,
     pub parameters_json: String,
     pub entry_point: String,
     /// Hash of the executable manifest bytes (legacy-compatible).
@@ -65,7 +64,7 @@ fn read_record(path: &Path) -> Result<StoredRecord, StoreError> {
 const INDEX_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS strategy_issuances (
  tenant_id TEXT NOT NULL, account_id TEXT NOT NULL, issuance_id TEXT NOT NULL,
- code_key TEXT NOT NULL, version TEXT NOT NULL, grant_purpose TEXT NOT NULL,
+ code_key TEXT NOT NULL, version TEXT NOT NULL,
  parameters_json TEXT NOT NULL, entry_point TEXT NOT NULL,
  package_hash TEXT NOT NULL, zip_sha256 TEXT,
  PRIMARY KEY (tenant_id,account_id,issuance_id)
@@ -76,21 +75,21 @@ fn insert_index(tx: &mut Transaction<'_>, record: &StoredRecord) -> Result<(), S
     let l = &record.load;
     tx.execute(
         "INSERT INTO strategy_issuances
-         (tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
+         (tenant_id,account_id,issuance_id,code_key,version,
           parameters_json,entry_point,package_hash,zip_sha256)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING",
         &[&l.tenant_id,&l.account_id,&l.issuance_id,&l.code_key,&l.version,
-                &l.grant_purpose,&l.parameters_json,&l.entry_point,&l.package_hash,&record.zip_sha256]
+                &l.parameters_json,&l.entry_point,&l.package_hash,&record.zip_sha256]
     ).map_err(err)?;
     Ok(())
 }
-type IndexedIdentity = (String,String,String,String,String,String,Option<String>);
+type IndexedIdentity = (String,String,String,String,String,Option<String>);
 fn read_index_row(row: &postgres::Row) -> StrategyLoad {
     StrategyLoad {
         tenant_id: row.get(0), account_id: row.get(1), issuance_id: row.get(2),
-        code_key: row.get(3), version: row.get(4), grant_purpose: row.get(5),
-        parameters_json: row.get(6), entry_point: row.get(7),
-        package_hash: row.get(8), archive: Vec::new(),
+        code_key: row.get(3), version: row.get(4),
+        parameters_json: row.get(5), entry_point: row.get(6),
+        package_hash: row.get(7), archive: Vec::new(),
     }
 }
 
@@ -142,6 +141,18 @@ impl StrategyStore {
         let connection = Connection::open(root).map_err(err)?;
         // The index and trading Ledger use the same dedicated PostgreSQL schema.
         connection.execute_batch(INDEX_SCHEMA).map_err(err)?;
+        // Older databases have a non-null grant_purpose column. Keep its
+        // historical values, but permit new issuance rows without that field.
+        if connection.query_opt(
+            "SELECT 1 FROM information_schema.columns
+             WHERE table_schema=current_schema() AND table_name='strategy_issuances'
+             AND column_name='grant_purpose' AND is_nullable='NO'",
+            &[],
+        ).map_err(err)?.is_some() {
+            connection.execute_batch(
+                "ALTER TABLE strategy_issuances ALTER COLUMN grant_purpose DROP NOT NULL"
+            ).map_err(err)?;
+        }
         let store = Self { root: root.into(), lock: Mutex::new(()), index: Mutex::new(connection) };
         store.rebuild_index()?;
         Ok(store)
@@ -173,13 +184,13 @@ impl StrategyStore {
                     insert_index(&mut tx, &record)?;
                     let l = &record.load;
                     let prior = tx.query_one(
-                        "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+                        "SELECT code_key,version,parameters_json,entry_point,package_hash,zip_sha256
                          FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
                         &[&l.tenant_id,&l.account_id,&l.issuance_id],
                     ).map_err(err)?;
                     let identity: IndexedIdentity = (prior.get(0),prior.get(1),prior.get(2),
-                        prior.get(3),prior.get(4),prior.get(5),prior.get(6));
-                    if identity != (l.code_key.clone(),l.version.clone(),l.grant_purpose.clone(),
+                        prior.get(3),prior.get(4),prior.get(5));
+                    if identity != (l.code_key.clone(),l.version.clone(),
                         l.parameters_json.clone(),l.entry_point.clone(),l.package_hash.clone(),
                         record.zip_sha256.clone()) {
                         return Err(conflict("indexed issuance differs from verified disk record"));
@@ -216,11 +227,11 @@ impl StrategyStore {
         let mut tx = conn.transaction().map_err(err)?;
         let l = &record.load;
         let current: Option<IndexedIdentity> = tx.query_opt(
-            "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+            "SELECT code_key,version,parameters_json,entry_point,package_hash,zip_sha256
              FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
             &[&l.tenant_id,&l.account_id,&l.issuance_id],
-        ).map_err(err)?.map(|r| (r.get(0),r.get(1),r.get(2),r.get(3),r.get(4),r.get(5),r.get(6)));
-        let expected = (l.code_key.clone(),l.version.clone(),l.grant_purpose.clone(),
+        ).map_err(err)?.map(|r| (r.get(0),r.get(1),r.get(2),r.get(3),r.get(4),r.get(5)));
+        let expected = (l.code_key.clone(),l.version.clone(),
             l.parameters_json.clone(),l.entry_point.clone(),l.package_hash.clone(),
             record.zip_sha256.clone());
         match current {
@@ -229,12 +240,12 @@ impl StrategyStore {
             None => {
                 insert_index(&mut tx, record)?;
                 let actual = tx.query_one(
-                    "SELECT code_key,version,grant_purpose,parameters_json,entry_point,package_hash,zip_sha256
+                    "SELECT code_key,version,parameters_json,entry_point,package_hash,zip_sha256
                      FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 AND issuance_id=$3",
                     &[&l.tenant_id,&l.account_id,&l.issuance_id],
                 ).map_err(err)?;
                 let indexed: IndexedIdentity = (actual.get(0),actual.get(1),actual.get(2),
-                    actual.get(3),actual.get(4),actual.get(5),actual.get(6));
+                    actual.get(3),actual.get(4),actual.get(5));
                 if indexed != expected { return Err(conflict("indexed issuance differs")); }
             },
         }
@@ -246,7 +257,7 @@ impl StrategyStore {
         if !valid_id(tenant) || !valid_id(account) { return Err(conflict("invalid scope")); }
         let conn = self.index.lock().map_err(err)?;
         let rows = conn.query(
-            "SELECT tenant_id,account_id,issuance_id,code_key,version,grant_purpose,
+            "SELECT tenant_id,account_id,issuance_id,code_key,version,
                     parameters_json,entry_point,package_hash
              FROM strategy_issuances WHERE tenant_id=$1 AND account_id=$2 ORDER BY issuance_id",
             &[&tenant,&account],
@@ -267,7 +278,6 @@ impl StrategyStore {
     fn insert_artifact(&self, load: &StrategyLoad, zip: Option<&[u8]>) -> Result<(), StoreError> {
         if ![&load.tenant_id,&load.account_id,&load.issuance_id,&load.code_key,
              &load.version].iter().all(|v| valid_id(v))
-            || !matches!(load.grant_purpose.as_str(),"production"|"development")
             || load.package_hash != sha(&load.archive)
             || serde_json::from_str::<serde_json::Value>(&load.parameters_json).is_err()
             || load.entry_point.is_empty()
@@ -368,6 +378,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_issuance_metadata_remains_readable_without_tenant_type() {
+        let old = serde_json::json!({
+            "load": {
+                "tenant_id": "tenant", "account_id": "account",
+                "issuance_id": "legacy", "code_key": "ema_crossover",
+                "version": "1", "grant_purpose": "development",
+                "parameters_json": "{}", "entry_point": "native:ema_crossover",
+                "package_hash": "a".repeat(64),
+            },
+            "zip_sha256": null,
+        });
+        let record: StoredRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(record.load.issuance_id, "legacy");
+        assert!(serde_json::to_value(&record).unwrap()["load"]
+            .get("grant_purpose").is_none());
+    }
+
+    #[test]
+    fn legacy_non_null_column_accepts_type_neutral_issuance() {
+        if std::env::var("SEEALPHA_DATABASE_URL").is_err() { return; }
+        let root = std::env::temp_dir().join(format!(
+            "seealpha-legacy-purpose-{}-{}",
+            std::process::id(), STAGING.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let connection = Connection::open(&root).unwrap();
+        connection.execute_batch(INDEX_SCHEMA).unwrap();
+        connection.execute_batch(
+            "ALTER TABLE strategy_issuances ADD COLUMN grant_purpose TEXT NOT NULL"
+        ).unwrap();
+        drop(connection);
+        let store = StrategyStore::open(&root).unwrap();
+        let load = StrategyLoad {
+            tenant_id: "tenant".into(), account_id: "account".into(),
+            issuance_id: "issue".into(), code_key: "ema_crossover".into(),
+            version: "1".into(), parameters_json: "{}".into(),
+            entry_point: "native:ema_crossover".into(),
+            package_hash: sha(b"manifest"), archive: b"manifest".to_vec(),
+        };
+        store.insert(&load).unwrap();
+        let connection = store.index.lock().unwrap();
+        let row = connection.query_one(
+            "SELECT grant_purpose FROM strategy_issuances WHERE tenant_id=$1
+             AND account_id=$2 AND issuance_id=$3",
+            &[&"tenant", &"account", &"issue"],
+        ).unwrap();
+        let legacy: Option<String> = row.get(0);
+        assert_eq!(legacy, None);
+        drop(connection);
+        assert_eq!(store.strategies("tenant", "account").unwrap(), vec![load]);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn self_describing_zip_is_extracted_and_is_immutable() {
         use std::io::Write as _;
         let manifest = br#"{"format":1,"runtime":"rust-builtin","name":"ema_crossover","version":"1","entry_point":"native:ema_crossover"}"#;
@@ -389,7 +454,7 @@ mod tests {
         let db = StrategyStore::open(&root).unwrap();
         let load = StrategyLoad {
             tenant_id:"tenant".into(), account_id:"account".into(), issuance_id:"zip-issue".into(),
-            code_key:"ema_crossover".into(), version:"1".into(), grant_purpose:"development".into(),
+            code_key:"ema_crossover".into(), version:"1".into(),
             parameters_json:"{}".into(),entry_point:"native:ema_crossover".into(),
             package_hash:sha(manifest),archive:manifest.to_vec(),
         };
@@ -425,7 +490,7 @@ mod tests {
         if std::env::var("SEEALPHA_DATABASE_URL").is_err() { return; }
         let root = std::env::temp_dir().join(format!("seealpha-fs-{}-{}",std::process::id(),STAGING.fetch_add(1,Ordering::Relaxed)));
         let load=StrategyLoad{tenant_id:"tenant".into(),account_id:"account".into(),issuance_id:"issue".into(),
-            code_key:"ema_crossover".into(),version:"1".into(),grant_purpose:"development".into(),
+            code_key:"ema_crossover".into(),version:"1".into(),
             parameters_json:"{}".into(),entry_point:"native:ema_crossover".into(),
             package_hash:sha(b"manifest"),archive:b"manifest".to_vec()};
         {let db=StrategyStore::open(&root).unwrap();db.insert(&load).unwrap();db.insert(&load).unwrap();

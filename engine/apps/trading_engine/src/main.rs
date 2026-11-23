@@ -60,23 +60,6 @@ fn main() -> ExitCode {
 }
 
 async fn run_smoke(state: AppState) -> Result<(), std::io::Error> {
-    let tenant = state
-        .config
-        .tenant_id
-        .clone()
-        .unwrap_or_else(|| "smoke".into());
-    let purpose = state
-        .config
-        .tenant_purpose
-        .clone()
-        .unwrap_or_else(|| "development".into());
-    if purpose == "production" {
-        return Err(std::io::Error::other("smoke refuses a production tenant"));
-    }
-    state
-        .runtime
-        .ensure_tenant(&tenant, &purpose, "active")
-        .map_err(io_error)?;
     let symbol = std::env::var("ENGINE_SMOKE_SYMBOL").unwrap_or_else(|_| "ETHUSDT".into());
     let interval = std::env::var("ENGINE_SMOKE_INTERVAL").unwrap_or_else(|_| "1m".into());
     let limit = std::env::var("ENGINE_SMOKE_LIMIT")

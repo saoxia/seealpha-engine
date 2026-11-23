@@ -17,7 +17,6 @@ pub struct ResearchContext<'a> {
     pub tenant_id: &'a str,
     /// From the trusted task registry, never a request body.
     pub task_id: &'a str,
-    pub tenant_purpose: &'a str,
 }
 
 /// Check operation *and* the resource owner's pinned tenant/task together.
@@ -29,8 +28,7 @@ pub fn authorize_operation(
     dataset: Option<&str>,
     strategy: Option<&str>,
 ) -> Result<(), ResearchError> {
-    if context.tenant_purpose != "development"
-        || context.tenant_id != grant.tenant_id
+    if context.tenant_id != grant.tenant_id
         || context.task_id != grant.task_id
         || !super::identifier(context.tenant_id)
         || !super::identifier(context.task_id)
@@ -259,25 +257,20 @@ mod tests {
         }
     }
 
-    fn context<'a>(tenant: &'a str, task: &'a str, purpose: &'a str) -> ResearchContext<'a> {
-        ResearchContext {
-            tenant_id: tenant,
-            task_id: task,
-            tenant_purpose: purpose,
-        }
+    fn context<'a>(tenant: &'a str, task: &'a str) -> ResearchContext<'a> {
+        ResearchContext { tenant_id: tenant, task_id: task }
     }
 
     #[test]
-    fn reject_cross_tenant_cross_task_production_and_ungranted_scope() {
+    fn reject_cross_tenant_cross_task_and_ungranted_scope() {
         let g = grant();
-        let dev = context("tenant-a", "task-1", "development");
+        let scope = context("tenant-a", "task-1");
         assert!(
-            authorize_operation(&g, dev, "snapshots:read", Some("spot:ETHUSDT:1m"), None).is_ok()
+            authorize_operation(&g, scope, "snapshots:read", Some("spot:ETHUSDT:1m"), None).is_ok()
         );
         for c in [
-            context("tenant-b", "task-1", "development"),
-            context("tenant-a", "task-2", "development"),
-            context("tenant-a", "task-1", "production"),
+            context("tenant-b", "task-1"),
+            context("tenant-a", "task-2"),
         ] {
             assert_eq!(
                 authorize_operation(&g, c, "snapshots:read", None, None),
@@ -285,7 +278,7 @@ mod tests {
             );
         }
         assert_eq!(
-            authorize_operation(&g, dev, "candidates:submit", None, Some("account:other")),
+            authorize_operation(&g, scope, "candidates:submit", None, Some("account:other")),
             Err(ResearchError::Scope)
         );
     }
@@ -293,7 +286,7 @@ mod tests {
     #[test]
     fn snapshot_creation_window_is_bounded_and_scope_checked() {
         let g = grant();
-        let c = context("tenant-a", "task-1", "development");
+        let c = context("tenant-a", "task-1");
         const MAX: i64 = 31 * 24 * 60 * 60 * 1_000_000_000;
         authorize_snapshot_request(&g, c, "spot:ETHUSDT:1m", 0, MAX).unwrap();
         assert_eq!(
@@ -317,7 +310,7 @@ mod tests {
     #[test]
     fn snapshot_is_scoped_and_not_ready_until_evidence_exists() {
         let g = grant();
-        let c = context("tenant-a", "task-1", "development");
+        let c = context("tenant-a", "task-1");
         let mut m = json!({
             "snapshot_id": "0123456789abcdef0123456789abcdef",
             "tenant_id": "tenant-a", "task_id": "task-1",
@@ -353,7 +346,7 @@ mod tests {
     #[test]
     fn candidate_envelope_checks_hash_task_account_and_dataset() {
         let g = grant();
-        let c = context("tenant-a", "task-1", "development");
+        let c = context("tenant-a", "task-1");
         let archive = b"offline-archive";
         let hash = format!("{:x}", Sha256::digest(archive));
         let mut candidate = CandidateEnvelope {

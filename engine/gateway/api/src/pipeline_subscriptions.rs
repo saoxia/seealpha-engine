@@ -16,7 +16,6 @@ struct Scope{product:Option<String>}
 async fn list(
     State(state):State<AppState>,Path(tenant):Path<String>,Query(filter):Query<Scope>,
 )->Result<Json<Value>,AppError>{
-    state.runtime.require_active(&tenant).map_err(AppError::from)?;
     let rows=state.runtime.control.subscriptions(&tenant,filter.product.as_deref())
         .map_err(|e|AppError::bad_request(e.to_string()))?;
     Ok(Json(json!({"items":rows})))
@@ -26,7 +25,6 @@ async fn upsert(
     Path((tenant,product,symbol)):Path<(String,String,String)>,
     Json(item):Json<PipelineSubscription>,
 )->Result<Json<Value>,AppError>{
-    state.runtime.require_active(&tenant).map_err(AppError::from)?;
     if item.product!=product || item.symbol!=symbol {
         return Err(AppError::bad_request("path and subscription identity differ"));
     }
@@ -40,7 +38,6 @@ async fn disable(
     State(state):State<AppState>,
     Path((tenant,product,symbol)):Path<(String,String,String)>,
 )->Result<Json<Value>,AppError>{
-    state.runtime.require_active(&tenant).map_err(AppError::from)?;
     if !matches!(product.as_str(),"spot"|"futures_um"|"options"){
         return Err(AppError::bad_request("invalid product"));
     }

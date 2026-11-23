@@ -3,7 +3,7 @@ use super::*;
 
 pub(super) async fn inspect_strategy(
     State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
+    Path(_tenant_id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let encoded = body["archive"]
@@ -19,7 +19,7 @@ pub(super) async fn inspect_strategy(
     Ok(Json(
         state
             .runtime
-            .inspect_strategy_package(&tenant_id, &archive, &params)
+            .inspect_strategy_package(&archive, &params)
             .map_err(AppError::from)?,
     ))
 }
@@ -43,7 +43,6 @@ pub(super) async fn strategy_load(
                 code_key: &body.code_key,
                 entry_point: &body.entry_point,
                 package_hash: &body.package_hash,
-                grant_purpose: &body.grant_purpose,
                 parameters: &body.parameters,
                 archive: &archive,
             })

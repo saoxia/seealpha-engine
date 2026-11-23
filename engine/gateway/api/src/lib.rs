@@ -141,11 +141,11 @@ async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Re
     {
         return research_header();
     }
-    if let Some(pinned) = &state.config.tenant_id
-        && let Some(target) = tenant_from(&path)
-        && target != pinned
+    // Tenant-scoped endpoints require a trusted pinned tenant identifier.
+    if let Some(target) = tenant_from(&path)
+        && state.config.tenant_id.as_deref() != Some(target)
     {
-        return error(StatusCode::FORBIDDEN, "Engine 租户不匹配。");
+        return error(StatusCode::FORBIDDEN, "Engine 租户未绑定或不匹配。");
     }
     if !research && state.config.auth_mode == AuthMode::Token {
         let presented = request
@@ -364,8 +364,6 @@ struct StrategyLoadBody {
     entry_point: String,
     #[serde(default)]
     package_hash: String,
-    #[serde(default)]
-    grant_purpose: String,
     #[serde(default)]
     parameters: Value,
     archive: String,

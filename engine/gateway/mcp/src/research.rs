@@ -161,7 +161,7 @@ pub(super) async fn handle(
                     .filter(|(_, operation, _)| grant.ops.iter().any(|op| op == operation))
                     .map(|(name, _, schema)| {
                         json!({
-                            "name":name,"description":"Task-scoped development research",
+                            "name":name,"description":"Task-scoped authorized research",
                             "inputSchema":schema
                         })
                     })
