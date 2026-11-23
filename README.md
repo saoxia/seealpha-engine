@@ -1,6 +1,6 @@
 # SeeAlpha Engine
 
-Rust-based market-data, strategy, backtest and read-only trading research engine. The process binary is `seealpha-engine`.
+Rust-based market-data, strategy and read-only trading research engine. The process binary is `seealpha-engine`.
 
 ## Modules
 
@@ -12,9 +12,9 @@ Rust-based market-data, strategy, backtest and read-only trading research engine
 - `engine/pipeline/` — market ingestion, Catalog, subscription desired state and source interfaces.
 - `engine/ledger/` — verified economic evidence, fills and audit history.
 - `engine/database/` — PostgreSQL access and schema bootstrap.
-- `engine/backtest/`, `engine/connection/` — backtests and external integrations.
+- `engine/connection/` — external exchange integrations.
 
-There is **no `engine/runtime` crate**, application-level Engine Token, or caller-supplied tenant. Strategy and pipeline operations use existing domain stores directly.
+There is **no `engine/runtime` or `engine/backtest` crate**, application-level Engine Token, or caller-supplied tenant. The legacy backtest implementation, matching simulator and result endpoints have been removed; backtesting will be redesigned separately. Strategy and pipeline operations use existing domain stores directly.
 
 ## Build
 

@@ -590,8 +590,8 @@ impl Catalog {
         }
         Ok(result)
     }
-    /// The strict form used for replay. Historical charts may contain valid
-    /// gaps, but a backtest must not turn such gaps into fabricated bars.
+    /// Strict complete-window read for consumers that require gap-free bars.
+    /// Missing windows are rejected rather than silently synthesized.
     pub fn read_contiguous_bars(
         &self,
         bar_identity: &str,
@@ -601,7 +601,7 @@ impl Catalog {
         limit: usize,
     ) -> Result<Vec<CatalogBar>, CatalogError> {
         if start_ms < 0 || end_ms <= start_ms {
-            return Err(CatalogError::Invalid("回测 K 线范围无效。".into()));
+            return Err(CatalogError::Invalid("完整 K 线读取范围无效。".into()));
         }
         let mut expected = start_ms;
         let result = self.read_bars(
@@ -622,7 +622,7 @@ impl Catalog {
             expected = bar_window(interval, expected)?.1;
         }
         if expected != end_ms {
-            return Err(CatalogError::Invalid("历史 K 线不完整，禁止回测。".into()));
+            return Err(CatalogError::Invalid("历史 K 线不完整。".into()));
         }
         Ok(result)
     }

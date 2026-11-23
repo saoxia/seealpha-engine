@@ -16,6 +16,5 @@
 | Research 只读数据集发现 | `engine/gateway/api/src/research_v1.rs` |
 | 可选 MCP 只读适配 | `engine/gateway/mcp/src/research.rs` |
 | 原生 Binance / Nautilus 独立行情节点 | `engine/pipeline/sources/shared/nautilus/` |
-| 历史回测 | `engine/backtest/` |
 
-不再存在 Runtime crate 或通用应用层租户/Token 授权服务。历史 DB `tenant_id` 为待非破坏性迁移的兼容字段，不在 HTTP 路由中暴露。不要为了保持目录命名而重新创建空的中间层。禁用实盘发送和保证可信成交事实属于独立交易安全边界。
+不再存在 Runtime crate、旧回测 crate 或通用应用层租户/Token 授权服务。历史 DB `tenant_id` 为待非破坏性迁移的兼容字段，不在 HTTP 路由中暴露。不要为了保持目录命名而重新创建空的中间层。禁用实盘发送和保证可信成交事实属于独立交易安全边界。

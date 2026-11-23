@@ -11,6 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 rust_decimal = "1"
-seealpha-backtest = { path = "../../engine/backtest" }
 seealpha-market = { path = "../../engine/pipeline/sources/shared/market" }
 serde_json = "1"

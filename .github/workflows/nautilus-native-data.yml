@@ -63,10 +63,10 @@ jobs:
           cargo test -p seealpha-market historical_second_bars_ --locked
       - name: Check Pipeline lint
         run: cargo clippy -p seealpha-catalog -p seealpha-market -p seealpha-http --all-targets --locked -- -D warnings
-      - name: Run pure Execution and Backtest regressions
-        run: cargo test -p seealpha-execution -p seealpha-backtest --locked
-      - name: Check Execution/Backtest lint
-        run: cargo clippy -p seealpha-execution -p seealpha-backtest --all-targets --locked -- -D warnings
+      - name: Run pure Execution regressions
+        run: cargo test -p seealpha-execution --locked
+      - name: Check Execution lint
+        run: cargo clippy -p seealpha-execution --all-targets --locked -- -D warnings
 
   native-binance-data:
     runs-on: ubuntu-latest

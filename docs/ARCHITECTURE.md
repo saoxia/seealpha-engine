@@ -12,13 +12,13 @@ apps/trading_engine
           ├── execution (目标数量与风险裁剪)
           ├── pipeline/market + catalog (行情与订阅)
           ├── ledger (真实证据与历史读侧)
-          └── backtest (受控历史回测)
 ```
 
 - Apps 负责创建应用级 Store；Gateway 持有引用、解析请求、调用领域实现和返回响应。
 - 只读策略预览编排位于 `gateway/api/src/strategy_preview.rs`：读取不可变策略记录，使用 Strategy 原生执行器及 Execution 的目标净额/风险裁剪；不撮合、不开仓、不写成交。
 - 订单 POST、实盘账户和原生持仓读侧未启用；历史订单 GET 不代表真实 Nautilus 当前状态。
 - `/research/v1/datasets` 是 Catalog 的只读索引；可选 `/research/mcp` 只暴露 `list_datasets`。没有研究 Grant、异步快照任务或候选回测 API。
+- 旧 `engine/backtest/` 及模拟撮合、历史目标持仓回放、回测报告计算已经删除。历史行情读写和缺口检查仍在 Pipeline/Catalog；回测后续重新开发。
 - HTTP 不接受 `tenant_id`；`account_id` 仍用于区分策略与经济证据。历史数据库表的租户列保留，当前写入使用内部兼容命名空间 `local`；这是存储遗留，不是公开租户授权功能。
 
 ## 部署边界

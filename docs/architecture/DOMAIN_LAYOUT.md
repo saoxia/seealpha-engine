@@ -11,7 +11,6 @@
 | `engine/execution/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
 | `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
 | `engine/connection/` | Binance Options 专属协议规范化；Spot/USD-M 执行工厂位于 `engine/pipeline/sources/shared/nautilus/`，真实订单发送尚未接通 |
-| `engine/backtest/` | 历史回放、模拟撮合、验证性回测 |
 
 ### Binance Options 专属代码边界（分步迁移）
 
@@ -31,6 +30,10 @@
 - `engine/runtime/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
 - `engine/gateway/`：对外协议入口；`api/` 为 HTTP API crate，内部 `src/research/` 负责研究签名授权与范围校验；`mcp/` 为复用现有 HTTP 服务的 MCP 协议模块，不增加独立进程或监听端口
 - `engine/apps/`：Engine 主程序和其他可执行入口
+
+## 回测移除边界
+
+旧 `engine/backtest/`、模拟撮合、历史策略回放和回测结果计算已删除，当前未保留回测兼容入口。独立行情存储与历史读取属于 Pipeline，不因删除回测而移除。未来回测应作为新需求重新设计。
 
 ## 持久化数据目录
 
@@ -52,5 +55,5 @@
 
 1. 目录调整不变更 crate 名、Rust 公开 API、HTTP 契约、持久化格式、订单幂等或租户隔离。
 2. 真实订单 ACK 不等于成交；只有独立核验的真实成交证据才能更新账本事实。
-3. 行情读取或回测不得隐式启动生产者、伪造 READY 或缺失的行情证据。
+3. 行情读取不得隐式启动生产者、伪造 READY 或缺失的行情证据。未来重建的回测能力必须遵守同样的数据真实性要求。
 4. 领域边界不等于同步调用顺序；重构时保留正确的事务和失败恢复语义。

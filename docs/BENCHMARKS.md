@@ -24,7 +24,7 @@ smaller. It is not evidence that a networked database got faster.
 The historical Python baseline is retained in the table above, but its obsolete runner has been removed alongside the legacy Python Engine. Current Rust-only benchmark:
 
 ```bash
-cargo run --locked --release -p seealpha-bench -- gaps 200000
+cargo run --locked --release -p seealpha-bench -- aggregate 200000
 ```
 
-The Rust command accepts `net`, `aggregate`, `klines`, and `sqlite` as well. The old Python timing must not be represented as a fresh, rerun comparison.
+The current Rust binary accepts `net`, `aggregate`, and `klines` only. The historical Python table is archival evidence, not a current rerun. Legacy backtest workload and its crate have been removed.
