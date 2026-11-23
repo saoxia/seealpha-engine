@@ -1,9 +1,10 @@
 //! HTTP v2 boundary. Every response carries `X-SeeAlpha-Engine-Contract-Version: 2`.
 //! Live exchange routes refuse before any credential is stored.
+mod config;
+mod strategy_preview;
 mod derivatives;
 mod parity;
 mod pipeline_subscriptions;
-pub mod research;
 mod research_v1;
 #[path = "routes/system.rs"]
 mod system_routes;
@@ -22,14 +23,13 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use seealpha_market::{MarketSnapshot, Product, PublicSource};
-use seealpha_runtime::{
-    AuthMode, Config, PreviewRequest, Runtime, RuntimeError,
-    StrategySubmission,
-};
+pub use config::Config;
+use seealpha_catalog::ControlStore;
+use seealpha_ledger::Ledger;
+use seealpha_strategy::store::StrategyStore;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use subtle::ConstantTimeEq;
 use tower_http::limit::RequestBodyLimitLayer;
 
 pub const CONTRACT_HEADER: &str = "X-SeeAlpha-Engine-Contract-Version";
@@ -38,9 +38,15 @@ pub const CONTRACT_VERSION: &str = "2";
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
-    pub runtime: Arc<Runtime>,
+    pub ledger: Arc<Ledger>,
+    pub strategy_store: Arc<StrategyStore>,
+    pub control: Arc<ControlStore>,
     pub market: Arc<dyn PublicSource>,
 }
+
+// Legacy PostgreSQL and immutable strategy storage still use a namespace column.
+// External routes never accept a tenant identifier; historical rows are preserved.
+pub(crate) const LEGACY_STORAGE_SCOPE: &str = "local";
 
 impl AppState {
     /// Use the same mounted Nautilus v2 Catalog path as the former Runtime facade.
@@ -74,37 +80,34 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         .route("/health", get(health))
-        .route("/tenants/{tenant_id}/runnable", post(runnable))
         .route(
-            "/tenants/{tenant_id}/strategy-packages/inspect",
+            "/strategy-packages/inspect",
             post(inspect_strategy),
         )
         .route(
-            "/tenants/{tenant_id}/strategy-loads",
+            "/strategy-loads",
             post(strategy_load).get(list_strategies),
         )
         .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/strategy-preview",
+            "/accounts/{account_id}/strategy-preview",
             post(strategy_preview),
         )
         .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/orders",
+            "/accounts/{account_id}/orders",
             get(list_orders),
         )
         .route(
-            "/tenants/{tenant_id}/accounts/{account_id}/fills",
+            "/accounts/{account_id}/fills",
             get(list_fills),
         )
         .merge(parity::routes())
         .merge(pipeline_subscriptions::routes())
         .merge(derivatives::routes())
         .fallback(not_found);
-    if state.config.research_signing_key.is_some() {
-        router = router.merge(research_v1::routes(state.config.research_mcp_enabled));
-    }
+    router = router.merge(research_v1::routes(state.config.research_mcp_enabled));
     router
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
+        .layer(axum::middleware::from_fn(gate))
         .with_state(state)
 }
 
@@ -117,110 +120,22 @@ pub async fn serve(state: AppState) -> Result<(), std::io::Error> {
     axum::serve(listener, router(state)).await
 }
 
-async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    let path = request.uri().path().to_string();
-    let research_http = path.starts_with("/research/v1/");
-    let research_mcp = path == "/research/mcp";
-    let research = research_http || research_mcp;
-    let research_header = || {
-        let mut response = error(StatusCode::UPGRADE_REQUIRED, "Engine HTTP 契约版本不兼容。");
-        if research_http {
-            response.headers_mut().insert(
-                "X-SeeAlpha-Research-Contract-Version",
-                HeaderValue::from_static("1"),
-            );
-        }
-        response
-    };
+async fn gate(request: Request, next: Next) -> Response {
+    let path=request.uri().path();
+    let research_http=path.starts_with("/research/v1/");
+    let research_mcp=path=="/research/mcp";
     if !research_mcp
-        && let Some(version) = request
-            .headers()
-            .get(CONTRACT_HEADER)
-            .and_then(|value| value.to_str().ok())
-        && version != CONTRACT_VERSION
+        && let Some(version)=request.headers().get(CONTRACT_HEADER).and_then(|v|v.to_str().ok())
+        && version!=CONTRACT_VERSION
     {
-        return research_header();
+        return error(StatusCode::UPGRADE_REQUIRED,"Engine HTTP 契约版本不兼容。");
     }
-    // Tenant-scoped endpoints require a trusted pinned tenant identifier.
-    if let Some(target) = tenant_from(&path)
-        && state.config.tenant_id.as_deref() != Some(target)
-    {
-        return error(StatusCode::FORBIDDEN, "Engine 租户未绑定或不匹配。");
-    }
-    if !research && state.config.auth_mode == AuthMode::Token {
-        let presented = request
-            .headers()
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("");
-        if !bearer_matches(presented, &state.config.token) {
-            return error(StatusCode::UNAUTHORIZED, "引擎令牌无效。");
-        }
-    }
-    let mut response = next.run(request).await;
-    response
-        .headers_mut()
-        .insert(CONTRACT_HEADER, HeaderValue::from_static(CONTRACT_VERSION));
-    if research_http && state.config.research_signing_key.is_some() {
-        response.headers_mut().insert(
-            "X-SeeAlpha-Research-Contract-Version",
-            HeaderValue::from_static("1"),
-        );
+    let mut response=next.run(request).await;
+    response.headers_mut().insert(CONTRACT_HEADER,HeaderValue::from_static(CONTRACT_VERSION));
+    if research_http {
+        response.headers_mut().insert("X-SeeAlpha-Research-Contract-Version",HeaderValue::from_static("1"));
     }
     response
-}
-
-fn parse_time_ms(value: &str) -> Option<i64> {
-    if let Ok(millis) = value.parse::<i64>() {
-        return Some(millis);
-    }
-    let text = value
-        .trim()
-        .trim_end_matches('Z')
-        .trim_end_matches("+00:00");
-    let (date, time) = text.split_once('T')?;
-    let mut dates = date.split('-');
-    let year: i64 = dates.next()?.parse().ok()?;
-    let month: i64 = dates.next()?.parse().ok()?;
-    let day: i64 = dates.next()?.parse().ok()?;
-    let mut clock = time.split(':');
-    let hour: i64 = clock.next()?.parse().ok()?;
-    let minute: i64 = clock.next()?.parse().ok()?;
-    let second_text = clock.next()?;
-    if second_text.contains('.') && !second_text.split('.').nth(1)?.chars().all(|c| c == '0') {
-        return None;
-    }
-    let second: i64 = second_text.split('.').next()?.parse().ok()?;
-    if !(0..=23).contains(&hour)
-        || !(0..=59).contains(&minute)
-        || !(0..=59).contains(&second)
-        || clock.next().is_some()
-    {
-        return None;
-    }
-    let days = days_from_civil(year, month, day)?;
-    Some(((days * 24 + hour) * 60 + minute) * 60 + second).map(|secs| secs * 1000)
-}
-
-fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let max_day = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return None,
-    };
-    if day < 1 || day > max_day {
-        return None;
-    }
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let mp = month + if month > 2 { -3 } else { 9 };
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146097 + doe - 719468)
 }
 
 async fn not_found() -> Result<Json<Value>, AppError> {
@@ -261,17 +176,6 @@ fn parse_decimal(text: &str) -> Result<rust_decimal::Decimal, AppError> {
         .map_err(|_| AppError::bad_request("K 线数值无效。"))
 }
 
-fn tenant_from(path: &str) -> Option<&str> {
-    let rest = path.strip_prefix("/tenants/")?;
-    let id = rest.split('/').next().unwrap_or("");
-    if id.is_empty() { None } else { Some(id) }
-}
-
-fn bearer_matches(presented: &str, token: &str) -> bool {
-    let expected = format!("Bearer {token}");
-    presented.len() == expected.len() && bool::from(presented.as_bytes().ct_eq(expected.as_bytes()))
-}
-
 fn error(status: StatusCode, detail: &str) -> Response {
     (
         status,
@@ -306,28 +210,8 @@ impl AppError {
     fn forbidden(message: impl Into<String>) -> Self {
         Self::Forbidden(message.into())
     }
-    fn unauthorized(message: impl Into<String>) -> Self {
-        Self::Unauthorized(message.into())
-    }
-    fn upgrade(message: impl Into<String>) -> Self {
-        Self::Upgrade(message.into())
-    }
     fn unprocessable(message: impl Into<String>) -> Self {
         Self::Unprocessable(message.into())
-    }
-    fn not_implemented(message: impl Into<String>) -> Self {
-        Self::NotImplemented(message.into())
-    }
-}
-
-impl From<RuntimeError> for AppError {
-    fn from(error: RuntimeError) -> Self {
-        match error {
-            RuntimeError::Conflict(message) => Self::Conflict(message),
-            RuntimeError::BadRequest(message) => Self::BadRequest(message),
-            RuntimeError::NotFound(message) => Self::NotFound(message),
-            RuntimeError::Unprocessable(message) => Self::Unprocessable(message),
-        }
     }
 }
 
@@ -345,11 +229,6 @@ impl IntoResponse for AppError {
         };
         error(status, &detail)
     }
-}
-
-#[derive(Deserialize)]
-struct RunnableBody {
-    action: String,
 }
 
 #[derive(Deserialize)]

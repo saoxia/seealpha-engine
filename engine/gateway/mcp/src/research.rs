@@ -1,15 +1,12 @@
 //! Task-scoped Research MCP Streamable HTTP adapter.
 //! The API gateway mounts this handler at the existing `/research/mcp` route.
 //! It shares scoped read-only dataset discovery with the HTTP gateway.
-use super::{
-    AppError, AppState, authorize, available_datasets,
-};
+use super::{AppError,AppState,available_datasets};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use crate::research::Grant;
 use serde_json::{Value, json};
 
 pub(super) const MCP_VERSION: &str = "2025-11-25";
@@ -48,11 +45,11 @@ fn tool_catalog() -> Vec<(&'static str, &'static str, Value)> {
     )]
 }
 
-fn tool_call(state: &AppState, grant: &Grant, name: &str, args: &Value) -> Result<Value, AppError> {
+fn tool_call(state: &AppState, name: &str, args: &Value) -> Result<Value, AppError> {
     let object = args.as_object()
         .ok_or_else(|| AppError::unprocessable("Invalid research tool arguments"))?;
     match name {
-        "list_datasets" if object.is_empty() => available_datasets(state, grant),
+        "list_datasets" if object.is_empty() => available_datasets(state),
         _ => Err(AppError::unprocessable("Invalid research tool arguments")),
     }
 }
@@ -67,7 +64,6 @@ pub(super) async fn handle(
             "Browser origins not allowed on Research MCP",
         ));
     }
-    let grant = authorize(&state, &headers, false)?;
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|h| h.to_str().ok())
@@ -158,10 +154,9 @@ pub(super) async fn handle(
             } else {
                 let tools: Vec<Value> = tool_catalog()
                     .into_iter()
-                    .filter(|(_, operation, _)| grant.ops.iter().any(|op| op == operation))
                     .map(|(name, _, schema)| {
                         json!({
-                            "name":name,"description":"Task-scoped authorized research",
+                            "name":name,"description":"Read-only local research inventory",
                             "inputSchema":schema
                         })
                     })
@@ -171,9 +166,7 @@ pub(super) async fn handle(
         }
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or("");
-            let available = tool_catalog().iter().any(|(tool, operation, _)| {
-                *tool == name && grant.ops.iter().any(|op| op == operation)
-            });
+            let available = tool_catalog().iter().any(|(tool, _, _)| *tool == name);
             if !available {
                 rpc_error(id, -32602, "Unknown or unavailable tool")
             } else {
@@ -181,7 +174,7 @@ pub(super) async fn handle(
                 if !args.is_object() {
                     rpc_error(id, -32602, "Invalid tool arguments")
                 } else {
-                    let payload = match tool_call(&state, &grant, name, args) {
+                    let payload = match tool_call(&state, name, args) {
                         Ok(value) => tool_success(value),
                         Err(error) => tool_error(error),
                     };

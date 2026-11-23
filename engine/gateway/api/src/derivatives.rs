@@ -4,7 +4,7 @@
 use crate::{AppError, AppState};
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::State,
     routing::post,
 };
 use seealpha_catalog::{RecordKind, NANO_PER_MS};
@@ -13,13 +13,13 @@ use serde_json::{Value, json};
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
-        .route("/tenants/{tenant_id}/data/funding", post(read_funding))
+        .route("/data/funding", post(read_funding))
         .route(
-            "/tenants/{tenant_id}/venue/options/contracts",
+            "/venue/options/contracts",
             post(option_contracts),
         )
         .route(
-            "/tenants/{tenant_id}/venue/options/klines",
+            "/venue/options/klines",
             post(option_klines),
         )
 }
@@ -62,7 +62,6 @@ fn funding_observations(
 
 async fn read_funding(
     State(state): State<AppState>,
-    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let symbol = body["symbol"]
@@ -101,7 +100,6 @@ async fn read_funding(
 }
 async fn option_contracts(
     State(_state): State<AppState>,
-    Path(_tenant): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let source = OptionsSource::new().map_err(|e| AppError::bad_request(e.to_string()))?;
     let contracts = source
@@ -114,7 +112,6 @@ async fn option_contracts(
 }
 async fn option_klines(
     State(_state): State<AppState>,
-    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let symbol = body["symbol"]

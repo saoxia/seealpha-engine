@@ -28,7 +28,7 @@ impl Ledger {
         let connection = Connection::open(path)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
         // Standalone Ledger unit fixtures need the shared schema; production
-        // bootstrap belongs to Runtime before Ledger and StateStore open.
+        // bootstrap belongs to the application entry point before opening stores.
         #[cfg(test)]
         seealpha_database::bootstrap_engine_schema(&connection)
             .map_err(|e| LedgerError::Database(e.to_string()))?;
