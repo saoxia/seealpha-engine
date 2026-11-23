@@ -64,15 +64,6 @@ CREATE TABLE IF NOT EXISTS fills (
     updated_at BIGINT NOT NULL,
     PRIMARY KEY (account_id, environment, fill_id)
 );
-CREATE TABLE IF NOT EXISTS quarantined_unverified_fills (
-    account_id TEXT NOT NULL,
-    environment TEXT NOT NULL,
-    fill_id TEXT NOT NULL,
-    fill_json TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    quarantined_at BIGINT NOT NULL,
-    PRIMARY KEY(account_id,environment,fill_id)
-);
 CREATE TABLE IF NOT EXISTS account_settlements (
     account_id TEXT NOT NULL,
     environment TEXT NOT NULL,
