@@ -16,7 +16,6 @@ pub struct NativeSubmission<'a> {
     pub code_key: &'a str,
     pub entry_point: &'a str,
     pub package_hash: &'a str,
-    pub grant_purpose: &'a str,
     pub parameters: &'a Value,
     pub archive: &'a [u8],
 }
@@ -69,24 +68,11 @@ pub fn inspect_native_package(
 
 impl StrategyStore {
     /// Validate immutable issuance identity, prepare parameters and persist it.
-    /// The caller must supply a trusted tenant scope and purpose.
+    /// The caller must supply a trusted tenant/account identity.
     pub fn issue_native(
         &self,
         submission: &NativeSubmission<'_>,
-        tenant_purpose: &str,
     ) -> Result<NativeAccepted, StrategyError> {
-        let grant_purpose = if submission.grant_purpose.is_empty() {
-            tenant_purpose
-        } else {
-            submission.grant_purpose
-        };
-        if grant_purpose != tenant_purpose {
-            return Err(StrategyError::Package(if tenant_purpose == "production" {
-                "正式租户只能加载正式授权。".into()
-            } else {
-                "下发用途与租户类型不一致。".into()
-            }));
-        }
         if submission.account_id.is_empty()
             || submission.issuance_id.is_empty()
             || submission.account_id.len() > 40
@@ -116,7 +102,6 @@ impl StrategyStore {
                 tenant_id: submission.tenant_id,
                 account_id: submission.account_id,
                 issuance_id: submission.issuance_id,
-                grant_purpose,
                 code_key,
                 version,
                 entry_point,
@@ -125,7 +110,6 @@ impl StrategyStore {
             AccountScope {
                 tenant_id: submission.tenant_id,
                 account_id: submission.account_id,
-                purpose: tenant_purpose,
             },
         )?;
         let load = StrategyLoad {
@@ -134,7 +118,6 @@ impl StrategyStore {
             issuance_id: submission.issuance_id.to_string(),
             code_key: code_key.to_string(),
             version: version.to_string(),
-            grant_purpose: grant_purpose.to_string(),
             parameters_json: prepared.parameters.to_string(),
             entry_point: entry_point.to_string(),
             package_hash: package_hash.to_string(),
@@ -197,7 +180,6 @@ pub fn execute_issued_native(
             tenant_id: &load.tenant_id,
             account_id: &load.account_id,
             issuance_id: &load.issuance_id,
-            grant_purpose: &load.grant_purpose,
             code_key: &load.code_key,
             version: &load.version,
             entry_point: &load.entry_point,
@@ -239,13 +221,13 @@ mod tests {
         let load = StrategyLoad {
             tenant_id: "tenant".into(), account_id: "account".into(),
             issuance_id: "issue".into(), code_key: "ema_crossover".into(),
-            version: "1".into(), grant_purpose: "development".into(),
+            version: "1".into(),
             parameters_json: "{}".into(),
             entry_point: "native:ema_crossover".into(), package_hash: digest,
             archive: MANIFEST.to_vec(),
         };
         let scope = AccountScope {
-            tenant_id: "tenant", account_id: "account", purpose: "development",
+            tenant_id: "tenant", account_id: "account",
         };
         let params = json!({});
         let input = ExecutionInput {

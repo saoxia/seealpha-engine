@@ -84,7 +84,6 @@ mod tests {
             tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
-            grant_purpose: "production",
             code_key: NATIVE_EMA_CODE,
             version: "1",
             entry_point: NATIVE_EMA_ENTRY,
@@ -93,15 +92,10 @@ mod tests {
         let scope = AccountScope {
             tenant_id: "tenant-1",
             account_id: "account-1",
-            purpose: "production",
         };
         authorize_native_manifest(MANIFEST, record, scope).unwrap();
         assert!(authorize_native_manifest(MANIFEST, record, AccountScope {
             account_id: "different",
-            ..scope
-        }).is_err());
-        assert!(authorize_native_manifest(MANIFEST, record, AccountScope {
-            purpose: "development",
             ..scope
         }).is_err());
         assert!(authorize_native_manifest(b"{}", record, scope).is_err());
