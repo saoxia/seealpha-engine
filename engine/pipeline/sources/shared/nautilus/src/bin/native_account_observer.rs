@@ -82,11 +82,9 @@ fn account_socket_path() -> Result<Option<(PathBuf, String)>> {
     };
     let account = std::env::var("SEEALPHA_ENGINE_ACCOUNT_ID")
         .context("native account socket requires SEEALPHA_ENGINE_ACCOUNT_ID")?;
-    for id in [&account] {
-        ensure!(!id.is_empty() && id.len() <= 64
-            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
-            "invalid engine account identity");
-    }
+    ensure!(!account.is_empty() && account.len() <= 64
+        && account.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+        "invalid engine account identity");
     let dir = PathBuf::from(dir);
     ensure!(dir.is_absolute(), "native account socket dir must be absolute");
     let meta = fs::symlink_metadata(&dir).context("native account socket directory missing")?;
