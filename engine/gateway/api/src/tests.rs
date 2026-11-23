@@ -160,63 +160,6 @@ use super::*;
     }
 
     #[tokio::test]
-    async fn historical_carry_and_option_requests_fail_closed_without_required_evidence() {
-        let app = router(state());
-        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
-        let headers = format!("Bearer {token}");
-        let body = r#"{"start":"0","end":"1080000","interval":"1m","starting_spot_balance":"1000","starting_perpetual_balance":"1000","max_gross_notional":"1000"}"#;
-        let (status, _, carry) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/tenants/42/accounts/desk/carry-backtests")
-                .header("authorization", &headers)
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(carry["detail"].as_str().unwrap_or("").contains("手续费"));
-        let (status, _, latest) = call(
-            &app,
-            Request::builder()
-                .uri("/tenants/42/accounts/desk/carry-backtests/latest")
-                .header("authorization", &headers)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert!(latest.get("detail").is_some());
-        let protected = r#"{"start":"0","end":"240000","interval":"1m","starting_options_balance":"1000","starting_perpetual_balance":"1000","max_gross_notional":"1000"}"#;
-        let (status, _, option) = call(
-            &app,
-            Request::builder()
-                .method("POST")
-                .uri("/tenants/42/accounts/desk/protected-option-backtests")
-                .header("authorization", &headers)
-                .header("content-type", "application/json")
-                .body(Body::from(protected))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(option["detail"].as_str().unwrap_or("").contains("期权合约"));
-        let (status, _, latest_option) = call(
-            &app,
-            Request::builder()
-                .uri("/tenants/42/accounts/desk/protected-option-backtests/latest")
-                .header("authorization", &headers)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert!(latest_option.get("detail").is_some());
-    }
-
-    #[tokio::test]
     async fn native_control_and_reader_routes_do_not_start_collectors() {
         let app = router(state());
         let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
@@ -289,41 +232,6 @@ use super::*;
             .body(Body::empty()).unwrap();
         let (status, _, _) = call(&app, request).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn native_backtest_denies_missing_history_without_fetching_or_synthesizing() {
-        let app = router(state());
-        let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
-        let make = |path: &str, method: &str, body: &str| {
-            Request::builder()
-                .uri(path)
-                .method(method)
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_owned()))
-                .unwrap()
-        };
-        let (status, _, response) = call(
-            &app,
-            make(
-                "/tenants/42/accounts/a/backtests",
-                "POST",
-                r#"{"product":"spot","symbol":"ETHUSDT","interval":"1m",
-                "start":"2026-11-20T00:00:00Z","end":"2026-11-20T00:02:00Z",
-                "starting_balance":"1000","quote_currency":"USDT"}"#,
-            ),
-        )
-        .await;
-        // No mounted Catalog is a distinct missing-evidence error, never a
-        // fabricated backtest result.
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert!(
-            response["detail"]
-                .as_str()
-                .unwrap_or("")
-                .contains("Catalog")
-        );
     }
 
     #[tokio::test]

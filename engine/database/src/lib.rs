@@ -235,7 +235,7 @@ mod schema_contract_tests {
         for table in [
             "tenants", "portfolio_coordinator_states", "basket_journals",
             "order_reconciliation_tasks", "order_requests", "order_request_views",
-            "positions", "paper_positions", "backtest_results", "paper_sessions",
+            "positions", "paper_positions", "paper_sessions",
         ] {
             assert!(
                 !schema.contains(&format!("CREATE TABLE IF NOT EXISTS {table} (")),

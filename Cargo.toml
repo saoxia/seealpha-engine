@@ -15,7 +15,6 @@ members = [
     "engine/strategy",
     "engine/connection/binance-options",
     "engine/connection/clickhouse",
-    "engine/backtest",
     "engine/runtime",
     "engine/gateway/api",
     "engine/apps/trading_engine",

@@ -71,7 +71,7 @@ impl Runtime {
         self.inflight.load(Ordering::Relaxed)
     }
 
-    pub fn runnable(&self, tenant_id: &str, action: &str) -> Result<Value, RuntimeError> {
+    pub fn runnable(&self, action: &str) -> Result<Value, RuntimeError> {
         match action {
             // Tenant identity alone does not imply permission to trade.
             // Enable only after separately reviewed end-to-end order admission,
@@ -79,11 +79,6 @@ impl Runtime {
             "live" => Err(RuntimeError::Conflict(
                 "Rust 实盘交易尚未通过集成验收，当前禁止交易。".into(),
             )),
-            "backtest" => Ok(json!({
-                "tenant_id": tenant_id,
-                "action": action,
-                "status": "runnable",
-            })),
             "paper" => Err(RuntimeError::Conflict(
                 "自定义 Paper 会话已退役；模拟执行须使用独立的 Nautilus 原生后端。".into(),
             )),

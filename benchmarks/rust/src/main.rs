@@ -1,6 +1,5 @@
 //! Same-workload hot-path measurements. Setup is outside the timer.
 use rust_decimal::Decimal;
-use seealpha_backtest::{HistoryBar, PublishedTarget, run_backtest};
 use seealpha_market::{Bar, PublicTrade, aggregate_trades, validate_bars};
 use serde_json::json;
 use std::hint::black_box;
@@ -16,7 +15,6 @@ fn main() {
         "net" => net(n),
         "aggregate" => aggregate(n),
         "klines" => klines(n),
-        "backtest" => backtest(n),
         other => {
             eprintln!("unknown workload {other}");
             std::process::exit(2);
@@ -95,37 +93,6 @@ fn klines(n: usize) -> (f64, serde_json::Value, u64) {
     validate_bars(black_box(&rows), 60_000).expect("klines");
     let elapsed = started.elapsed().as_secs_f64();
     (elapsed, json!(n), peak_rss_kib())
-}
-
-fn backtest(n: usize) -> (f64, serde_json::Value, u64) {
-    let bars = (0..n)
-        .map(|index| HistoryBar {
-            open_time_ms: index as i64 * 60_000,
-            close: Decimal::from(100 + (index % 20) as i64),
-        })
-        .collect::<Vec<_>>();
-    let targets = (0..n)
-        .step_by(50)
-        .map(|index| PublishedTarget {
-            member_id: "ema".into(),
-            bar_index: index,
-            quantity: if (index / 50) % 2 == 0 {
-                Decimal::ONE
-            } else {
-                Decimal::ZERO
-            },
-        })
-        .collect::<Vec<_>>();
-    let started = Instant::now();
-    let report = run_backtest(
-        black_box(&bars),
-        black_box(&targets),
-        Decimal::from(1_000_000),
-        Decimal::from(10),
-    )
-    .expect("backtest");
-    let elapsed = started.elapsed().as_secs_f64();
-    (elapsed, json!(report.bar_count), peak_rss_kib())
 }
 
 fn peak_rss_kib() -> u64 {

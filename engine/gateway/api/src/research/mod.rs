@@ -3,7 +3,7 @@
 //! The engine verifies grants. It does not expose a route that signs them.
 mod scope;
 pub use scope::{
-    CandidateEnvelope, ResearchContext, SnapshotAccess, authorize_candidate_envelope,
+    ResearchContext, SnapshotAccess,
     authorize_operation, authorize_snapshot, authorize_snapshot_request, verify_snapshot_bytes,
 };
 
@@ -20,11 +20,6 @@ const OPS: &[&str] = &[
     "datasets:read",
     "snapshots:create",
     "snapshots:read",
-    "backtests:submit",
-    "backtests:read",
-    "backtests:cancel",
-    "candidates:submit",
-    "python_candidates:submit",
 ];
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -248,7 +243,7 @@ mod tests {
         assert_eq!(grant.tenant_id, "987654321");
         require_op(&grant, "datasets:read", Some("ethusdt"), None).unwrap();
         assert_eq!(
-            require_op(&grant, "backtests:submit", None, None),
+            require_op(&grant, "snapshots:create", None, None),
             Err(ResearchError::Scope)
         );
         let mut forged = TOKEN.to_string();

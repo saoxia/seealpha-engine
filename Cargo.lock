@@ -1569,22 +1569,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "seealpha-backtest"
-version = "0.1.0"
-dependencies = [
- "rust_decimal",
- "seealpha-execution",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "seealpha-bench"
 version = "0.1.0"
 dependencies = [
  "rust_decimal",
- "seealpha-backtest",
  "seealpha-market",
  "serde_json",
 ]

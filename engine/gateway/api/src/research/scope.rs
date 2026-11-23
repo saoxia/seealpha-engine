@@ -154,85 +154,11 @@ pub fn verify_snapshot_bytes(evidence: &SnapshotAccess, bytes: &[u8]) -> Result<
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct CandidateEnvelope<'a> {
-    pub candidate_id: &'a str,
-    pub package_hash: &'a str,
-    pub archive: &'a [u8],
-    pub dataset_ref: &'a str,
-    pub strategy_ref: &'a str,
-    pub unrestricted_python: bool,
-}
-
-/// Validate the candidate's ownership and immutable envelope, *not* its Python.
-/// Call the restricted AST parser (or isolated Python candidate inspector) before
-/// dispatch; never execute unverified archive contents from this function alone.
-pub fn authorize_candidate_envelope(
-    grant: &Grant,
-    context: ResearchContext<'_>,
-    candidate: CandidateEnvelope<'_>,
-) -> Result<(), ResearchError> {
-    let operation = if candidate.unrestricted_python {
-        "python_candidates:submit"
-    } else {
-        "candidates:submit"
-    };
-    authorize_operation(
-        grant,
-        context,
-        operation,
-        Some(candidate.dataset_ref),
-        Some(candidate.strategy_ref),
-    )?;
-    let max_bytes = if candidate.unrestricted_python {
-        256 * 1024
-    } else {
-        64 * 1024
-    };
-    if !lower_hex(candidate.candidate_id, 32)
-        || !lower_hex(candidate.package_hash, 64)
-        || candidate.archive.is_empty()
-        || candidate.archive.len() > max_bytes
-        || !valid_dataset(candidate.dataset_ref)
-        || !valid_account_ref(candidate.strategy_ref)
-    {
-        return Err(ResearchError::Scope);
-    }
-    let digest = format!("{:x}", Sha256::digest(candidate.archive));
-    if digest != candidate.package_hash {
-        return Err(ResearchError::Scope);
-    }
-    Ok(())
-}
-
 fn lower_hex(input: &str, length: usize) -> bool {
     input.len() == length
         && input
             .bytes()
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-}
-
-fn valid_account_ref(input: &str) -> bool {
-    let Some(account) = input.strip_prefix("account:") else {
-        return false;
-    };
-    !account.is_empty() && account.len() <= 40 && super::identifier(account)
-}
-
-fn valid_dataset(input: &str) -> bool {
-    let mut segments = input.split(':');
-    let (Some(product), Some(symbol), Some(interval)) =
-        (segments.next(), segments.next(), segments.next())
-    else {
-        return false;
-    };
-    segments.next().is_none()
-        && matches!(product, "spot" | "futures_um")
-        && matches!(interval, "1m" | "5m")
-        && (3..=20).contains(&symbol.len())
-        && symbol
-            .bytes()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -248,7 +174,6 @@ mod tests {
             ops: vec![
                 "snapshots:read".into(),
                 "snapshots:create".into(),
-                "candidates:submit".into(),
             ],
             datasets: vec!["spot:ETHUSDT:1m".into()],
             strategies: vec!["account:account1".into()],
@@ -278,7 +203,7 @@ mod tests {
             );
         }
         assert_eq!(
-            authorize_operation(&g, scope, "candidates:submit", None, Some("account:other")),
+            authorize_operation(&g, scope, "snapshots:read", None, Some("account:other")),
             Err(ResearchError::Scope)
         );
     }
@@ -343,37 +268,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn candidate_envelope_checks_hash_task_account_and_dataset() {
-        let g = grant();
-        let c = context("tenant-a", "task-1");
-        let archive = b"offline-archive";
-        let hash = format!("{:x}", Sha256::digest(archive));
-        let mut candidate = CandidateEnvelope {
-            candidate_id: "0123456789abcdef0123456789abcdef",
-            package_hash: &hash,
-            archive,
-            dataset_ref: "spot:ETHUSDT:1m",
-            strategy_ref: "account:account1",
-            unrestricted_python: false,
-        };
-        authorize_candidate_envelope(&g, c, candidate).unwrap();
-        candidate.strategy_ref = "account:account2";
-        assert_eq!(
-            authorize_candidate_envelope(&g, c, candidate),
-            Err(ResearchError::Scope)
-        );
-        candidate.strategy_ref = "account:account1";
-        candidate.unrestricted_python = true;
-        assert_eq!(
-            authorize_candidate_envelope(&g, c, candidate),
-            Err(ResearchError::Scope)
-        );
-        candidate.unrestricted_python = false;
-        candidate.dataset_ref = "spot:BTCUSDT:1m";
-        assert_eq!(
-            authorize_candidate_envelope(&g, c, candidate),
-            Err(ResearchError::Scope)
-        );
-    }
 }
