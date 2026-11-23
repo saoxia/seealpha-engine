@@ -13,25 +13,20 @@ fn catalog_path()->PathBuf {
 
 struct Desired {retain_from:i64,fetch_from:Option<i64>,precision:Option<(u32,u32)>}
 
-fn desired(rows:&[PipelineSubscription])
-    ->Result<BTreeMap<String,Desired>>
-{
+fn desired(rows:&[PipelineSubscription]) -> Result<BTreeMap<String,Desired>> {
     let mut out=BTreeMap::new();
     for row in rows {
         validate_subscription(row)?;
         let start=row.start_ms()?;
-        let entry=out.entry(row.symbol.clone())
-            .or_insert(Desired{retain_from:start,fetch_from:None,precision:None});
-        entry.retain_from=entry.retain_from.min(start);
-        if row.enabled {
-            entry.fetch_from=Some(entry.fetch_from.map_or(start,|earliest|earliest.min(start)));
-            if let (Some(price),Some(size))=(row.price_precision,row.size_precision) {
-                if entry.precision.is_some_and(|previous|previous!=(price,size)) {
-                    return Err(format!("conflicting instrument precision: {}",row.symbol).into());
-                }
-                entry.precision=Some((price,size));
-            }
-        }
+        let precision=match (row.price_precision,row.size_precision) {
+            (Some(price),Some(size))=>Some((price,size)),
+            _=>None,
+        };
+        out.insert(row.symbol.clone(),Desired {
+            retain_from:start,
+            fetch_from:row.enabled.then_some(start),
+            precision,
+        });
     }
     Ok(out)
 }
