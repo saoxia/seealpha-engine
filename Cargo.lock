@@ -1631,7 +1631,6 @@ dependencies = [
  "seealpha-http",
  "seealpha-ledger",
  "seealpha-market",
- "seealpha-strategy",
  "serde_json",
  "tokio",
 ]
@@ -1651,13 +1650,10 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "http-body-util",
- "rust_decimal",
  "seealpha-catalog",
  "seealpha-database",
- "seealpha-execution",
  "seealpha-ledger",
  "seealpha-market",
- "seealpha-strategy",
  "serde",
  "serde_json",
  "tokio",
@@ -1692,20 +1688,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "seealpha-strategy"
-version = "0.1.0"
-dependencies = [
- "postgres",
- "rust_decimal",
- "seealpha-database",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror",
- "zip",
 ]
 
 [[package]]

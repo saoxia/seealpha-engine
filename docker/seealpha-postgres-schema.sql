@@ -96,14 +96,4 @@ CREATE TABLE IF NOT EXISTS pipeline_subscriptions (
  PRIMARY KEY(product,symbol)
 );
 
--- Source: engine/strategy/src/store.rs
-CREATE TABLE IF NOT EXISTS strategy_issuances (
- account_id TEXT NOT NULL, issuance_id TEXT NOT NULL,
- code_key TEXT NOT NULL, version TEXT NOT NULL,
- parameters_json TEXT NOT NULL, entry_point TEXT NOT NULL,
- package_hash TEXT NOT NULL, zip_sha256 TEXT,
- PRIMARY KEY (account_id,issuance_id)
-);
-CREATE INDEX IF NOT EXISTS strategy_name_version ON strategy_issuances (code_key,version);
-
 COMMIT;

@@ -12,7 +12,6 @@ members = [
     "engine/execution",
     "engine/ledger",
     "engine/database",
-    "engine/strategy",
     "engine/connection/binance-options",
     "engine/connection/clickhouse",
     "engine/gateway/api",
