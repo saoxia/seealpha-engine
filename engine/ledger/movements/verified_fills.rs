@@ -23,18 +23,17 @@ fn now_ms() -> i64 {
 impl Ledger {
     pub fn fills(
         &self,
-        tenant_id: &str,
         account_id: &str,
         environment: &str,
     ) -> Result<Vec<String>, LedgerError> {
         let connection = self.lock()?;
         let mut statement = connection
             .prepare(
-                "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 ORDER BY fill_id",
+                "SELECT fill_json FROM fills WHERE account_id=$1 AND environment=$2 ORDER BY fill_id",
             )
             .map_err(|error| LedgerError::Database(error.to_string()))?;
         let rows = statement
-            .query_map(params![tenant_id, account_id, environment], |row| {
+            .query_map(params![account_id, environment], |row| {
                 row.get(0)
             })
             .map_err(|error| LedgerError::Database(error.to_string()))?;
@@ -52,7 +51,7 @@ impl Ledger {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db_error)?;
         let mut stmt = tx
-            .prepare("SELECT tenant_id,account_id,environment,fill_id,fill_json FROM fills")
+            .prepare("SELECT account_id,environment,fill_id,fill_json FROM fills")
             .map_err(db_error)?;
         let rows = stmt
             .query_map(&[], |r| {
@@ -61,13 +60,12 @@ impl Ledger {
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
                 ))
             })
             .map_err(db_error)?;
         let mut suspected = Vec::new();
         for row in rows {
-            let (tenant, account, env, id, text) = row.map_err(db_error)?;
+            let (account, env, id, text) = row.map_err(db_error)?;
             let Ok(value) = serde_json::from_str::<Value>(&text) else {
                 continue;
             };
@@ -79,22 +77,22 @@ impl Ledger {
                 && value["price"].is_null()
                 && value["symbol"].as_str().is_some()
             {
-                suspected.push((tenant, account, env, id, text));
+                suspected.push((account, env, id, text));
             }
         }
         drop(stmt);
-        for (tenant, account, env, id, text) in &suspected {
+        for (account, env, id, text) in &suspected {
             tx.execute(
                 "INSERT INTO quarantined_unverified_fills
-                 (tenant_id,account_id,environment,fill_id,fill_json,reason,quarantined_at)
-                 VALUES($1,$2,$3,$4,$5,'synthetic_order_ack_fill',$6) ON CONFLICT DO NOTHING",
-                params![tenant, account, env, id, text, now_ms()],
+                 (account_id,environment,fill_id,fill_json,reason,quarantined_at)
+                 VALUES($1,$2,$3,$4,'synthetic_order_ack_fill',$5) ON CONFLICT DO NOTHING",
+                params![account, env, id, text, now_ms()],
             )
             .map_err(db_error)?;
             tx.execute(
-                "DELETE FROM fills WHERE tenant_id=$1 AND account_id=$2
-                 AND environment=$3 AND fill_id=$4",
-                params![tenant, account, env, id],
+                "DELETE FROM fills WHERE account_id=$1
+                 AND environment=$2 AND fill_id=$3",
+                params![account, env, id],
             )
             .map_err(db_error)?;
         }
@@ -104,7 +102,6 @@ impl Ledger {
 
     pub fn import_verified_fills(
         &self,
-        tenant: &str,
         account: &str,
         environment: &str,
         order_id: &str,
@@ -141,9 +138,9 @@ impl Ledger {
             let text = row.to_string();
             let prior: Option<String> = tx
                 .query_row(
-                    "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2
-                 AND environment=$3 AND fill_id=$4",
-                    params![tenant, account, environment, id],
+                    "SELECT fill_json FROM fills WHERE account_id=$1
+                 AND environment=$2 AND fill_id=$3",
+                    params![account, environment, id],
                     |r| r.get(0),
                 )
                 .optional()
@@ -155,9 +152,9 @@ impl Ledger {
             } else {
                 tx.execute(
                     "INSERT INTO fills
-                     (tenant_id,account_id,environment,fill_id,fill_json,updated_at)
-                     VALUES($1,$2,$3,$4,$5,$6)",
-                    params![tenant, account, environment, id, text, now_ms()],
+                     (account_id,environment,fill_id,fill_json,updated_at)
+                     VALUES($1,$2,$3,$4,$5)",
+                    params![account, environment, id, text, now_ms()],
                 )
                 .map_err(db_error)?;
             }
@@ -166,11 +163,11 @@ impl Ledger {
         Ok(rows.len())
     }
 
-    pub fn quarantined_fill_count(&self, tenant: &str, account: &str) -> Result<i64, LedgerError> {
+    pub fn quarantined_fill_count(&self, account: &str) -> Result<i64, LedgerError> {
         let conn = self.lock()?;
         conn.query_row(
-            "SELECT COUNT(*) FROM quarantined_unverified_fills WHERE tenant_id=$1 AND account_id=$2",
-            params![tenant,account],|r|r.get(0),
+            "SELECT COUNT(*) FROM quarantined_unverified_fills WHERE account_id=$1",
+            params![account],|r|r.get(0),
         ).map_err(db_error)
     }
 }
@@ -192,29 +189,29 @@ mod tests {
         {
             let conn = book.lock().unwrap();
             conn.execute(
-                "INSERT INTO fills(tenant_id,account_id,environment,fill_id,fill_json,updated_at)
-                 VALUES('t','a','production','fill-A',$1,0)",
+                "INSERT INTO fills(account_id,environment,fill_id,fill_json,updated_at)
+                 VALUES('a','production','fill-A',$1,0)",
                 seealpha_database::params![legacy.to_string()],
             )
             .unwrap();
         }
         // Unsigned or fabricated fill input cannot enter the verified table.
         assert!(book.import_verified_fills(
-            "t", "a", "production", "9",
+             "a", "production", "9",
             &[json!({"trade_id":"fill-B","venue_order_id":"9",
                 "quantity":"1","price":"100","source":"order_ack"})],
         ).is_err());
         assert_eq!(book.quarantine_synthetic_fills().unwrap(), 1);
-        assert!(book.fills("t", "a", "production").unwrap().is_empty());
-        assert_eq!(book.quarantined_fill_count("t", "a").unwrap(), 1);
+        assert!(book.fills( "a", "production").unwrap().is_empty());
+        assert_eq!(book.quarantined_fill_count( "a").unwrap(), 1);
         let real = json!({"trade_id":"binance:futures_um:ETHUSDT:123",
             "venue_order_id":"9","quantity":"1","price":"100",
             "source":"signed_exchange_user_trades"});
-        book.import_verified_fills("t", "a", "production", "9", std::slice::from_ref(&real))
+        book.import_verified_fills( "a", "production", "9", std::slice::from_ref(&real))
             .unwrap();
-        book.import_verified_fills("t", "a", "production", "9", &[real])
+        book.import_verified_fills( "a", "production", "9", &[real])
             .unwrap();
-        assert_eq!(book.fills("t", "a", "production").unwrap().len(), 1);
+        assert_eq!(book.fills( "a", "production").unwrap().len(), 1);
         let _ = std::fs::remove_file(path);
     }
 }

@@ -13,13 +13,13 @@ pub(super) async fn list_orders(
     let mut statement = connection
         .prepare(
             "SELECT order_json FROM orders
-             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3
+             WHERE account_id=$1 AND environment=$2
              ORDER BY updated_at, client_order_id",
         )
         .map_err(|error| AppError::bad_request(format!("订单查询失败。{error}")))?;
     let rows = statement
         .query_map(
-            seealpha_database::params![LEGACY_STORAGE_SCOPE, account_id, environment],
+            seealpha_database::params![account_id, environment],
             |row| row.get::<_, String>(0),
         )
         .map_err(|error| AppError::bad_request(format!("订单查询失败。{error}")))?;
@@ -44,7 +44,7 @@ pub(super) async fn list_fills(
     let environment = query.environment.unwrap_or_else(|| "production".into());
     let fills = state
         .ledger
-        .fills(LEGACY_STORAGE_SCOPE, &account_id, &environment)
+        .fills(&account_id, &environment)
         .map_err(|error| match error {
             seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
             seealpha_ledger::LedgerError::Database(detail) => AppError::bad_request(detail),
