@@ -5,7 +5,7 @@ Runtime 负责租户状态检查、授权策略包加载和只读策略预览。
 ## 2026-11-23 精简
 
 - 删除 `orders.rs`、`native_handoff.rs`、`state_store/order_intents.rs`。此前的订单实现仅登记意图，不连接 Nautilus 发送端或真实认证恢复。
-- Gateway 退役订单提交、Spot 订单提交、交易控制和请求对账的 POST 路由；通过现有身份/租户门禁后返回 404。保留只读历史订单与可信成交查询。
+- Gateway 退役订单提交、Spot 订单提交、交易控制和请求对账的 POST 路由；同路径的 POST `/orders` 返回 405（GET 仍保留），其余已退役 POST 路由经身份/租户门禁后返回 404。只读历史订单与可信成交查询仍保留。
 - `strategy-preview` 仍只输出信号和目标仓位，不构造 Paper 成交与持仓。
 - 不执行 DROP、数据迁移或删除历史记录。PostgreSQL 中的 `order_intents`、`order_observations`、`orders` 和 `fills` 表保留供受控审计与归档；Runtime 已无旧意图恢复入口。
 

@@ -110,7 +110,7 @@ use super::*;
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -131,7 +131,12 @@ use super::*;
                 .body(Body::from(r#"{"api_secret":"never-echo"}"#))
                 .unwrap();
             let (status, _, body) = call(&app, request).await;
-            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            let expected = if path == "/tenants/42/accounts/a/orders" {
+                StatusCode::METHOD_NOT_ALLOWED
+            } else {
+                StatusCode::NOT_FOUND
+            };
+            assert_eq!(status, expected, "{path}");
             assert!(!body.to_string().contains("never-echo"));
         }
     }

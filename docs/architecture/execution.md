@@ -11,7 +11,7 @@
 
 ## 安全约束
 
-2026-11-23 删除 Runtime `orders.rs`、`native_handoff.rs`、`state_store/order_intents.rs` 和 Gateway 对应的 POST 写入/对账路由。保留历史 PostgreSQL 表和数据，不 DROP、不迁移；旧 Runtime 不再读取订单恢复清单。
+2026-11-23 删除 Runtime `orders.rs`、`native_handoff.rs`、`state_store/order_intents.rs` 和 Gateway 对应的 POST 写入/对账路由。GET `/orders` 保留，因此同路径 POST 返回 405；其余退役路径返回 404。保留历史 PostgreSQL 表和数据，不 DROP、不迁移；旧 Runtime 不再读取订单恢复清单。
 
 真实交易仍然禁用。未来 Nautilus 发送端必须实现并验收**发送前原子不可变授权**、账户/品种身份和风控校验、未知结果仅核验不重发、真实 Trade ID 对账、异常/部分成交/重启恢复；不能将离线节点构造或删去旧代码当作生产可用的证明。
 
