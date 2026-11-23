@@ -48,7 +48,6 @@ pub(crate) fn preview_strategies(
             let outcome = execute_issued_native(
                 load,
                 AccountScope {
-                    tenant_id: &
                     account_id: &account_id,
                 },
                 &strategy.archive,
