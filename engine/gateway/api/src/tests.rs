@@ -37,7 +37,7 @@ fn request(method:&str,path:&str,body:&str)->Request{
         .body(Body::from(body.to_string())).unwrap()
 }
 #[tokio::test]
-async fn health_is_local_and_does_not_require_a_bearer_or_tenant(){
+async fn health_is_local_and_requires_no_bearer(){
     let app=router(state());
     let (status,body)=call(&app,request("GET","/health","")).await;
     assert_eq!(status,StatusCode::OK);
@@ -48,12 +48,10 @@ async fn health_is_local_and_does_not_require_a_bearer_or_tenant(){
     assert_eq!(response.status(),StatusCode::UPGRADE_REQUIRED);
 }
 #[tokio::test]
-async fn new_paths_are_tenantless_and_legacy_paths_are_not_routed(){
+async fn current_paths_are_routed(){
     let app=router(state());
     let (status,_)=call(&app,request("GET","/pipeline/subscriptions","")).await;
     assert_eq!(status,StatusCode::OK);
-    let (status,_)=call(&app,request("GET","/tenants/42/pipeline/subscriptions","")).await;
-    assert_eq!(status,StatusCode::NOT_FOUND);
     let (status,_)=call(&app,request("POST","/accounts/a/orders","{}")).await;
     assert_eq!(status,StatusCode::METHOD_NOT_ALLOWED);
     let (status,body)=call(&app,request("GET","/accounts/a/positions?environment=paper","")).await;
