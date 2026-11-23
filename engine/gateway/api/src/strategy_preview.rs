@@ -5,7 +5,7 @@ use seealpha_execution::{
     MemberTarget, TargetHolding, clip_member_targets, net_signed_quantity,
 };
 use seealpha_market::{MarketSnapshot, run_pipeline};
-use seealpha_strategy::executor::ExecutionInput;
+use seealpha_strategy::ExecutionInput;
 use seealpha_strategy::{AccountScope, Publication, StrategyBar, native_issuance::execute_issued_native};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};

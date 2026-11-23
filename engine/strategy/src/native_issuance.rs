@@ -1,6 +1,6 @@
 //! Built-in Rust strategy inspection, issuance, and authenticated execution.
 //! The caller supplies a trusted account scope; no package grants trading permission.
-use crate::executor::{ExecutionInput, IssuedNativeEmaExecutor, StrategyExecutor};
+use crate::ExecutionInput;
 use crate::native_ema::run_native_ema;
 use crate::native_manifest::{authorize_native_manifest, inspect_native_manifest};
 use crate::store::{StoreError, StrategyLoad, StrategyStore, unpack_native_zip};
@@ -169,9 +169,9 @@ pub fn execute_issued_native(
             "预览策略包或参数与可信下发记录不一致。".into()
         ));
     }
-    IssuedNativeEmaExecutor {
+    authorize_native_manifest(
         manifest,
-        issued: IssuedStrategy {
+        IssuedStrategy {
             account_id: &load.account_id,
             issuance_id: &load.issuance_id,
             code_key: &load.code_key,
@@ -180,7 +180,8 @@ pub fn execute_issued_native(
             package_hash: &load.package_hash,
         },
         scope,
-    }.execute(input)
+    )?;
+    run_native_ema(input.parameters, input.symbol, input.bars)
 }
 
 #[cfg(test)]

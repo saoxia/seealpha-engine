@@ -1,13 +1,18 @@
 # Strategy / 策略领域
 
-Rust crate：`seealpha-strategy`。
+Rust crate: `seealpha-strategy`.
 
-持有策略清单校验、授权原生策略执行、信号/目标持仓发布协议。策略本身不直接发送订单或记录账户事实。本目录由 `alpha/strategy/` 迁入，crate 名及公开 API 不变。
+## Current active responsibilities
 
-当前代码中与 Portfolio、Risk 和 Execution 的边界见 [领域布局](../../docs/architecture/DOMAIN_LAYOUT.md)。
+- `store.rs`: immutable native manifest / ZIP issuance storage, PostgreSQL metadata index, archive integrity and restart recovery.
+- `issued.rs` and `native_manifest.rs`: account-scoped issuance identity and exact SHA-256 verification.
+- `native_issuance.rs`: package inspection, issuance, trusted read-only execution dispatch.
+- `native_ema.rs`: **temporary** Rust EMA crossover implementation used by `/accounts/{account_id}/strategy-preview`. NautilusTrader already has EMA indicators and Rust strategy facilities; migrate only after a verified native integration.
 
-## Rust 原生策略下发与预览
+The current HTTP inspection, issuance and preview paths require this crate. Do not delete it or the EMA evaluator before wiring an equivalent Nautilus runtime and validating signal / parameter parity.
 
-`src/native_issuance.rs` 统一处理原生策略包预检查（ZIP / Manifest / 参数）、不可变账户授权下发、已下发包的读取与执行前可信比对。Runtime 仅验证租户状态、组织 Market/Execution 和返回 API 结果；原生策略执行不具有发送订单权限。
+## Retired legacy
 
-权限不按 `development/production` 租户类型区分：策略下发及运行仅验证固定租户/账户范围、不可变记录、代码入口、版本和 SHA-256。旧索引 `grant_purpose` 列保留历史数据但不再参与授权。
+The Python strategy host is not present in the repository and has no live runtime callers. Removed the unused Python host subprocess, IPC, old ZIP contract, and generic `StrategyExecutor` dispatch layer. Strategy deployment does **not** execute uploaded Python or Rust code; the native manifest selects the compiled-in EMA evaluator.
+
+See [the Nautilus overlap review](../../docs/STRATEGY_NAUTILUS_OVERLAP_20261123.md).

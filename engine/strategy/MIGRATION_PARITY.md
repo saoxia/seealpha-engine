@@ -1,3 +1,5 @@
+> **历史迁移记录（2026-11-23）**：此文件描述已退役的 Python strategy_host / ZIP 执行链，不代表当前 main 的运行能力。当前仅保留原生策略不可变下发和只读预览；见 `engine/strategy/README.md`。
+
 # Strategy / Research Rust migration: parity matrix and integration contract
 
 Baseline: `main@83a19d857bca0ec16faf1a731ccb9835081672ab` (2026-11-21). This change is limited to

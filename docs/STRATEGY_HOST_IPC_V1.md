@@ -1,3 +1,5 @@
+> **历史设计文档（2026-11-23）**：Python strategy_host 已从当前仓库移除；本文协议没有运行中的实现，不是当前 Engine API。当前只支持 Rust 内置策略下发与只读预览。请以 `docs/ARCHITECTURE.md`、`engine/strategy/README.md` 和当前源码为准。
+
 # Strategy Host IPC v1 (local stdio)
 
 The Rust Engine is the sole trading runtime. Python is an **optional** strategy execution adapter, not an order router. This document specifies the bounded **local stdio JSON** boundary. It does not define a remote service, arbitrary package loading or a production Rust package issuance mechanism.
