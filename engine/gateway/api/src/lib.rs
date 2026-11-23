@@ -365,7 +365,6 @@ struct StrategyLoadBody {
     #[serde(default)]
     package_hash: String,
     #[serde(default)]
-    #[serde(default)]
     parameters: Value,
     archive: String,
 }
