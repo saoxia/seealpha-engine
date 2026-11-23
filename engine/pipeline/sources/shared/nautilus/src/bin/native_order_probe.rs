@@ -112,7 +112,7 @@ impl DataActor for NativeOrderProbe {
         let order = match o.kind {
             OrderKind::Market => self.order().market(
                 o.route.instrument, o.side, o.quantity,
-                Some(TimeInForce::Gtc), Some(o.reduce_only), None, None, None, None, None,
+                None, Some(o.reduce_only), None, None, None, None, None,
             ),
             OrderKind::Limit => self.order().limit(
                 o.route.instrument, o.side, o.quantity,
