@@ -11,11 +11,11 @@ Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader
 | `allocations/` | 可信经济事件的策略归属（基础实现） | 不将内部成交冒充交易所成交 |
 | `reconciliation/` | 经济事件归属核验 | 不替代 Nautilus 原生订单/持仓对账或交易所余额校验 |
 | `../runtime/` | 只读策略预览 | 租户状态登记已退役，历史账户/租户范围字段仍保留 |
-| Gateway / Runtime | 配置绑定的租户标识与用途 | 不读取或更新租户状态表，Gateway 拒绝未绑定的租户路径 |
+| Gateway / Runtime | 配置绑定的租户标识 | 不按租户类型授予能力；Gateway 拒绝未绑定的租户路径 |
 
 ## 四个最小业务核心（2026-11-22）
 
-- **租户范围**：已删除 Tenant/StateStore 登记，Gateway 使用固定租户标识；Strategy 仍校验授权用途和账户范围。原生账户状态由 Nautilus 维护。
+- **租户范围**：已删除 Tenant/StateStore 登记，Gateway 使用固定租户标识；Strategy 仍校验账户范围、下发记录和包哈希。原生账户状态由 Nautilus 维护。
 - **Movements**：沿用经过认证的成交、资金费、结算及 `account_evidence_events`，没有上游证据时拒绝生成事件，既不凭 ACK 入账也不建一套现金余额账。
 - **Allocations**：`attribute_account_event` 将已登记的可信账户经济事件按整数 basis points（总计最多 10000）不可变地归属策略；跨租户/账户/环境、重复改写和超额分配均拒绝；尚不计算策略盈亏或合成虚拟成交。
 - **Reconciliation**：`reconcile_account_attribution` 汇总已存证据的已归属/未归属情况，明确标记历史完整性、交易所余额和持仓对账均**未完成**；这不是通过真实账户对账的证明。

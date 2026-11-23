@@ -1,10 +1,10 @@
 # Runtime — 用例编排
 
-Runtime 负责租户状态检查、策略下发/预览的跨模块编排。策略 ZIP 解包、Manifest 检查、参数准备、授权下发及可信执行校验集中在 `strategy/src/native_issuance.rs`。HTTP / Catalog 查询由 Gateway 负责；原生订单生命周期属于 NautilusTrader，目标仓位计算归 Execution，可信经济证据归 Ledger。
+Runtime 负责策略下发/预览的跨模块编排，不再按租户类型区分能力。策略 ZIP 解包、Manifest 检查、参数准备、授权下发及可信执行校验集中在 `strategy/src/native_issuance.rs`。HTTP / Catalog 查询由 Gateway 负责；原生订单生命周期属于 NautilusTrader，目标仓位计算归 Execution，可信经济证据归 Ledger。
 
 ## 2026-11-23 精简
 
-- 删除 `state_store/` 包装目录及未使用的 `active_tenant_ids()`；Runtime 直接通过 Database 读取和更新 `tenants` 表。保留租户作用域与 active/archived 门禁，不改动数据库数据。
+- 删除 `state_store/` 包装目录、`active_tenant_ids()` 与租户状态读写；Runtime 不维护 `tenants` 表。
 
 - 删除 `orders.rs`、`native_handoff.rs`、`state_store/order_intents.rs`。此前的订单实现仅登记意图，不连接 Nautilus 发送端或真实认证恢复。
 - Gateway 退役订单提交、Spot 订单提交、交易控制和请求对账的 POST 路由；同路径的 POST `/orders` 返回 405（GET 仍保留），其余已退役 POST 路由经身份/租户门禁后返回 404。只读历史订单与可信成交查询仍保留。
@@ -15,8 +15,10 @@ Runtime 负责租户状态检查、策略下发/预览的跨模块编排。策�
 
 - 删除租户登记、`active/archived` 状态及其独立数据库连接；新数据库不再创建 `tenants` 表。
 - `tenant_id` 仍用于策略授权及历史数据隔离；Gateway 的 `/tenants/{tenant_id}` 请求必须匹配 `ENGINE_TENANT_ID`，不配置则拒绝。
-- 策略下发和预览依赖可信 `ENGINE_TENANT_PURPOSE`（development/production），并继续检查下发账号与授权一致性。
+- 策略下发和预览只检查固定租户 ID、账户、策略版本、Manifest 哈希及已下发记录；不需要 `ENGINE_TENANT_PURPOSE` 或 `grant_purpose`。
 - 已有的 PostgreSQL `tenants` 表不执行 DROP，历史行保留而不再读取/修改。
+
+- 现存 PostgreSQL 策略索引的旧 `grant_purpose` 列仅作为历史数据保留，新下发记录不再写入该字段；启动时解除旧列的非空约束。
 
 ## 安全边界
 
