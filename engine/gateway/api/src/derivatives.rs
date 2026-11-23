@@ -62,13 +62,9 @@ fn funding_observations(
 
 async fn read_funding(
     State(state): State<AppState>,
-    Path(tenant): Path<String>,
+    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state
-        .runtime
-        .require_active(&tenant)
-        .map_err(AppError::from)?;
     let symbol = body["symbol"]
         .as_str()
         .ok_or_else(|| AppError::bad_request("资金费合约无效。"))?;
@@ -104,13 +100,9 @@ async fn read_funding(
     ))
 }
 async fn option_contracts(
-    State(state): State<AppState>,
-    Path(tenant): Path<String>,
+    State(_state): State<AppState>,
+    Path(_tenant): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    state
-        .runtime
-        .require_active(&tenant)
-        .map_err(AppError::from)?;
     let source = OptionsSource::new().map_err(|e| AppError::bad_request(e.to_string()))?;
     let contracts = source
         .contracts()
@@ -122,13 +114,9 @@ async fn option_contracts(
 }
 async fn option_klines(
     State(state): State<AppState>,
-    Path(tenant): Path<String>,
+    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state
-        .runtime
-        .require_active(&tenant)
-        .map_err(AppError::from)?;
     let symbol = body["symbol"]
         .as_str()
         .ok_or_else(|| AppError::bad_request("期权合约无效。"))?;

@@ -71,15 +71,6 @@ fn authorize(state: &AppState, headers: &HeaderMap, http_v1: bool) -> Result<Gra
     {
         return Err(AppError::forbidden("Research tenant scope denied"));
     }
-    let tenant = state
-        .runtime
-        .require_active(&grant.tenant_id)
-        .map_err(|_| AppError::forbidden("Research requires an active development tenant"))?;
-    if tenant.purpose != "development" {
-        return Err(AppError::forbidden(
-            "Research requires an active development tenant",
-        ));
-    }
     Ok(grant)
 }
 
@@ -205,9 +196,6 @@ mod tests {
             research_mcp_enabled: true,
         };
         let runtime = Arc::new(crate::Runtime::open(&config).unwrap());
-        runtime
-            .ensure_tenant("42", "development", "active")
-            .unwrap();
         AppState {
             config: Arc::new(config),
             runtime,

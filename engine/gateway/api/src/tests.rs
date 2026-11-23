@@ -28,7 +28,6 @@ use super::*;
             research_mcp_enabled: false,
         };
         let runtime = Arc::new(Runtime::open(&config).unwrap());
-        runtime.ensure_tenant("42", "development", "active").unwrap();
         let market = Arc::new(BinanceSource::new().unwrap_or_else(|_| panic!("client")));
         AppState {
             config: Arc::new(config),
@@ -273,6 +272,27 @@ use super::*;
     }
 
     #[tokio::test]
+    async fn tenant_routes_reject_unpinned_or_other_scopes_without_tenant_state() {
+        let mut unpinned = state();
+        Arc::make_mut(&mut unpinned.config).tenant_id = None;
+        let app = router(unpinned);
+        let request = Request::builder()
+            .uri("/tenants/42/pipeline/subscriptions")
+            .header("authorization", "Bearer ci-engine-token-0123456789abcdef0123456789abcdef")
+            .body(Body::empty()).unwrap();
+        let (status, _, _) = call(&app, request).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let app = router(state());
+        let request = Request::builder()
+            .uri("/tenants/other/pipeline/subscriptions")
+            .header("authorization", "Bearer ci-engine-token-0123456789abcdef0123456789abcdef")
+            .body(Body::empty()).unwrap();
+        let (status, _, _) = call(&app, request).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
     async fn native_backtest_denies_missing_history_without_fetching_or_synthesizing() {
         let app = router(state());
         let token = "ci-engine-token-0123456789abcdef0123456789abcdef";
@@ -308,7 +328,7 @@ use super::*;
     }
 
     #[tokio::test]
-    async fn catalog_reads_preserve_tenant_checks_and_missing_mount_errors() {
+    async fn catalog_reads_preserve_pinned_scope_and_missing_mount_errors() {
         let setup = state();
         let app = router(setup.clone());
         let routes = [
@@ -327,10 +347,6 @@ use super::*;
             assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
             assert!(response["detail"].as_str().unwrap_or("").contains("Catalog"));
 
-            setup.runtime.ensure_tenant("42", "development", "archived").unwrap();
-            let (status, _, _) = call(&app, make()).await;
-            assert_eq!(status, StatusCode::CONFLICT, "{path}");
-            setup.runtime.ensure_tenant("42", "development", "active").unwrap();
         }
     }
 
@@ -358,10 +374,6 @@ use super::*;
     #[tokio::test]
     async fn native_funding_is_read_only_settled_exchange_evidence() {
         let setup = state();
-        setup
-            .runtime
-            .ensure_tenant("42", "development", "active")
-            .unwrap();
         // Missing Pipeline Catalog must fail closed rather than read Ledger rates.
         let app = router(setup);
         let request = Request::builder()
