@@ -1,6 +1,4 @@
 //! Cross-domain runtime orchestration for data, strategy previews and order recovery.
-mod catalog;
-pub use catalog::CatalogBar;
 mod config;
 mod inspection;
 mod session;
@@ -19,7 +17,6 @@ use seealpha_strategy::store::{StrategyLoad, StrategyStore, StoreError};
 use seealpha_catalog::{ControlStore, ControlError};
 use seealpha_strategy::{self, native_manifest::inspect_native_manifest};
 use serde_json::{Value, json};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
@@ -54,7 +51,6 @@ pub struct Runtime {
     state_store: state_store::StateStore,
     pub strategy_store: StrategyStore,
     pub control: ControlStore,
-    pub project: PathBuf,
     inflight: AtomicUsize,
 }
 
@@ -108,7 +104,6 @@ impl Runtime {
             state_store,
             strategy_store,
             control,
-            project: config.project.clone(),
             inflight: AtomicUsize::new(0),
         })
     }

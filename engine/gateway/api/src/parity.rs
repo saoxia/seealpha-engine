@@ -17,6 +17,25 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/tenants/{tenant_id}/data/catalog/inventory",post(native_inventory))
 }
 
+/* Catalog inventory interpretation is shared by HTTP dataset listing and Research. */
+pub(crate) fn dataset_inventory(state: &AppState) -> Result<Option<Vec<Value>>, AppError> {
+    let Some(catalog) = state.catalog()? else { return Ok(None); };
+    let mut records = catalog.scan_inventory()
+        .map_err(|error| AppError::conflict(error.to_string()))?;
+    for record in &mut records {
+        let instrument = record["instrument_id"].as_str()
+            .ok_or_else(|| AppError::conflict("Catalog 数据缺失 InstrumentId。"))?;
+        let (symbol, product) = seealpha_market::identity::parse_instrument_id(instrument)
+            .map_err(|error| AppError::conflict(error.to_string()))?;
+        record["symbol"] = json!(symbol);
+        record["product"] = json!(product.as_str());
+    }
+    records.sort_by(|a, b| a["product"].as_str().cmp(&b["product"].as_str())
+        .then(a["symbol"].as_str().cmp(&b["symbol"].as_str()))
+        .then(a["level"].as_str().cmp(&b["level"].as_str())));
+    Ok(Some(records))
+}
+
 #[derive(Deserialize)]
 struct Environment {
     environment: Option<String>,
@@ -55,11 +74,7 @@ async fn data_inventory(
     if symbols.len() > 200 {
         return Err(AppError::bad_request("查询品种数量超出范围。"));
     }
-    if let Some(mut native) = state
-        .runtime
-        .native_dataset_inventory(&tenant)
-        .map_err(AppError::from)?
-    {
+    if let Some(mut native) = dataset_inventory(&state)? {
         native.retain(|item| symbols.is_empty() || symbols.contains(&item["symbol"]));
         return Ok(Json(json!({"items":native,"backend":"nautilus_v2_parquet",
             "quality":"unverified","data_ready":false})));
@@ -125,17 +140,11 @@ async fn native_events(
     if limit == 0 || limit > 50_000 {
         return Err(AppError::bad_request("最大事件批次不能超过 50,000。"));
     }
-    let rows = state
-        .runtime
-        .native_market_events(
-            &tenant,
-            &native_kind(&body)?,
-            identity,
-            from,
-            until,
-            limit as usize,
-        )
-        .map_err(AppError::from)?;
+    let kind = native_kind(&body)?;
+    state.runtime.require_active(&tenant).map_err(AppError::from)?;
+    let rows = state.require_catalog()?
+        .read_records(&kind, identity, from, until, limit as usize)
+        .map_err(|error| AppError::conflict(error.to_string()))?;
     let count = rows.len();
     Ok(Json(json!({"records":rows,"count":count,
         "start_ns":from.to_string(),"end_ns":until.to_string(),
@@ -150,10 +159,11 @@ async fn native_inventory(
     let identity = body["identifier"]
         .as_str()
         .ok_or_else(|| AppError::bad_request("行情目录标识缺失。"))?;
-    let entries = state
-        .runtime
-        .native_market_inventory(&tenant, &native_kind(&body)?, identity)
-        .map_err(AppError::from)?;
+    let kind = native_kind(&body)?;
+    state.runtime.require_active(&tenant).map_err(AppError::from)?;
+    let entries = state.require_catalog()?
+        .inventory(&kind, identity)
+        .map_err(|error| AppError::conflict(error.to_string()))?;
     Ok(Json(
         json!({"items":entries,"backend":"nautilus_v2_parquet",
         "quality":"unverified","does_not_start_collector":true}),
