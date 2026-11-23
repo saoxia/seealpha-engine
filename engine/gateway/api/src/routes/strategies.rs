@@ -13,7 +13,7 @@ pub(super) async fn inspect_strategy(State(_state):State<AppState>,Json(body):Js
 pub(super) async fn strategy_load(State(state):State<AppState>,Json(body):Json<StrategyLoadBody>)->Result<Json<Value>,AppError>{
     let archive=base64::engine::general_purpose::STANDARD.decode(body.archive.trim()).map_err(|_|AppError::bad_request("策略包无效。"))?;
     let accepted=state.strategy_store.issue_native(&NativeSubmission{
-        tenant_id:LEGACY_STORAGE_SCOPE,account_id:&body.account_id,issuance_id:&body.issuance_id,
+        account_id:&body.account_id,issuance_id:&body.issuance_id,
         version:&body.version,code_key:&body.code_key,entry_point:&body.entry_point,
         package_hash:&body.package_hash,parameters:&body.parameters,archive:&archive,
     }).map_err(|e|AppError::conflict(e.to_string()))?;
@@ -22,7 +22,7 @@ pub(super) async fn strategy_load(State(state):State<AppState>,Json(body):Json<S
 }
 pub(super) async fn list_strategies(State(state):State<AppState>,Query(query):Query<AccountQuery>)->Result<Json<Value>,AppError>{
     let loads=if let Some(account)=query.account_id{
-        state.strategy_store.list(LEGACY_STORAGE_SCOPE,&account).map_err(|e|AppError::conflict(e.to_string()))?
+        state.strategy_store.list(&account).map_err(|e|AppError::conflict(e.to_string()))?
     }else{Vec::new()};
     let items=loads.into_iter().map(|load|json!({"account_id":load.account_id,"issuance_id":load.issuance_id,
         "code_key":load.code_key,"version":load.version,"entry_point":load.entry_point,"package_hash":load.package_hash})).collect::<Vec<_>>();
