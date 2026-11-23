@@ -1,6 +1,6 @@
 # Runtime — 用例编排
 
-Runtime 负责租户状态检查、授权策略包加载和只读策略预览。HTTP / Catalog 查询由 Gateway 负责；原生订单生命周期属于 NautilusTrader，目标仓位计算归 Execution，可信经济证据归 Ledger。
+Runtime 负责租户状态检查、策略下发/预览的跨模块编排。策略 ZIP 解包、Manifest 检查、参数准备、授权下发及可信执行校验集中在 `strategy/native_issuance.rs`。HTTP / Catalog 查询由 Gateway 负责；原生订单生命周期属于 NautilusTrader，目标仓位计算归 Execution，可信经济证据归 Ledger。
 
 ## 2026-11-23 精简
 
