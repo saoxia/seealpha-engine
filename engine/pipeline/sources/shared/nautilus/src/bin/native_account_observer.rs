@@ -74,20 +74,18 @@ fn now_ns() -> u64 {
 }
 
 // The socket is deliberately read-only. Filesystem permissions and a pinned
-// tenant/account binding are required; it is not a trading authority.
+// account binding are required; it is not a trading authority.
 #[cfg(unix)]
-fn account_socket_path() -> Result<Option<(PathBuf, String, String)>> {
+fn account_socket_path() -> Result<Option<(PathBuf, String)>> {
     let Ok(dir) = std::env::var("SEEALPHA_ACCOUNT_SOCKET_DIR") else {
         return Ok(None);
     };
-    let tenant = std::env::var("SEEALPHA_TENANT_ID")
-        .context("native account socket requires SEEALPHA_TENANT_ID")?;
     let account = std::env::var("SEEALPHA_ENGINE_ACCOUNT_ID")
         .context("native account socket requires SEEALPHA_ENGINE_ACCOUNT_ID")?;
-    for id in [&tenant, &account] {
+    for id in [&account] {
         ensure!(!id.is_empty() && id.len() <= 64
             && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
-            "invalid tenant or engine account identity");
+            "invalid engine account identity");
     }
     let dir = PathBuf::from(dir);
     ensure!(dir.is_absolute(), "native account socket dir must be absolute");
@@ -95,17 +93,16 @@ fn account_socket_path() -> Result<Option<(PathBuf, String, String)>> {
     ensure!(meta.is_dir() && !meta.file_type().is_symlink()
         && meta.permissions().mode() & 0o077 == 0,
         "native account socket directory must be private (0700)");
-    let path = dir.join(format!("{tenant}--{account}--sandbox.sock"));
+    let path = dir.join(format!("{account}--sandbox.sock"));
     ensure!(!path.exists() && fs::symlink_metadata(&path).is_err(),
         "native account socket path is occupied; refuse to replace it");
-    Ok(Some((path, tenant, account)))
+    Ok(Some((path, account)))
 }
 
 #[cfg(unix)]
 async fn serve_account_socket(
     listener: UnixListener,
     session: Rc<RefCell<NativeAccountSession>>,
-    tenant: String,
     account: String,
 ) {
     loop {
@@ -115,7 +112,7 @@ async fn serve_account_socket(
         let view = session.borrow().fresh(now_ns(), 60_000_000_000);
         let payload = match view {
             Some(view) => serde_json::json!({
-                "tenant_id": tenant, "account_id": account,
+                "account_id": account,
                 "environment": "sandbox", "source": "nautilus_testnet_read_only",
                 "native_account": view,
             }),
@@ -224,14 +221,14 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     let socket_config = account_socket_path()?;
     #[cfg(unix)]
-    let result = if let Some((socket_path, tenant, account)) = socket_config {
+    let result = if let Some((socket_path, account)) = socket_config {
         let listener = UnixListener::bind(&socket_path)
             .context("cannot bind private native account socket")?;
         fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
         let local = LocalSet::new();
         let outcome = local.run_until(async {
             let server = tokio::task::spawn_local(
-                serve_account_socket(listener, Rc::clone(&session), tenant, account)
+                serve_account_socket(listener, Rc::clone(&session), account)
             );
             let outcome = node.run().await;
             server.abort();
