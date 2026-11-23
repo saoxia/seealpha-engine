@@ -1,4 +1,4 @@
-//! Append-only account settlement evidence, scoped to tenant/account/environment.
+//! Append-only account settlement evidence, scoped to account/environment.
 //! Cash impact is never inferred from public funding rates or option greeks.
 use crate::{Ledger, LedgerError};
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
@@ -19,7 +19,7 @@ fn decimal(row: &Value, key: &str) -> Result<Decimal, LedgerError> {
 impl Ledger {
     pub fn import_account_settlements(
         &self,
-        tenant: &str,
+        
         account: &str,
         environment: &str,
         product: &str,
@@ -86,9 +86,9 @@ impl Ledger {
             let previous: Option<String> = tx
                 .query_row(
                     "SELECT evidence_json FROM account_settlements
-                 WHERE tenant_id=$1 AND account_id=$2 AND environment=$3
-                 AND product=$4 AND event_kind=$5 AND event_id=$6",
-                    params![tenant, account, environment, product, kind, event_id],
+                 WHERE account_id=$1 AND environment=$2
+                 AND product=$3 AND event_kind=$4 AND event_id=$5",
+                    params![account, environment, product, kind, event_id],
                     |r| r.get(0),
                 )
                 .optional()
@@ -100,12 +100,10 @@ impl Ledger {
             } else {
                 tx.execute(
                     "INSERT INTO account_settlements
-                     (tenant_id,account_id,environment,product,event_kind,event_id,
+                     (account_id,environment,product,event_kind,event_id,
                       symbol,evidence_json)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-                    params![
-                        tenant,
-                        account,
+                     VALUES ($1,$2,$3,$4,$5,$6,$7)",
+                    params![account,
                         environment,
                         product,
                         kind,
@@ -123,7 +121,7 @@ impl Ledger {
 
     pub fn account_settlements(
         &self,
-        tenant: &str,
+        
         account: &str,
         environment: &str,
         product: &str,
@@ -132,12 +130,12 @@ impl Ledger {
         let mut stmt = conn
             .prepare(
                 "SELECT evidence_json FROM account_settlements
-             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 AND product=$4
+             WHERE account_id=$1 AND environment=$2 AND product=$3
              ORDER BY event_kind,event_id LIMIT 1000",
             )
             .map_err(error)?;
         let rows = stmt
-            .query_map(params![tenant, account, environment, product], |r| {
+            .query_map(params![account, environment, product], |r| {
                 r.get::<_, String>(0)
             })
             .map_err(error)?;
@@ -160,7 +158,7 @@ mod tests {
             "time_ms":10,"transaction_id":"11","source":"binance_signed_income"});
         ledger
             .import_account_settlements(
-                "t",
+                
                 "a",
                 "production",
                 "futures_um",
@@ -169,7 +167,7 @@ mod tests {
             .unwrap();
         ledger
             .import_account_settlements(
-                "t",
+                
                 "a",
                 "production",
                 "futures_um",
@@ -178,14 +176,14 @@ mod tests {
             .unwrap();
         assert_eq!(
             ledger
-                .account_settlements("t", "a", "production", "futures_um")
+                .account_settlements( "a", "production", "futures_um")
                 .unwrap()
                 .len(),
             1
         );
         assert!(
             ledger
-                .account_settlements("t", "a", "sandbox", "futures_um")
+                .account_settlements( "a", "sandbox", "futures_um")
                 .unwrap()
                 .is_empty()
         );
@@ -193,7 +191,7 @@ mod tests {
         changed["income"] = json!("0.1");
         assert!(
             ledger
-                .import_account_settlements("t", "a", "production", "futures_um", &[changed])
+                .import_account_settlements( "a", "production", "futures_um", &[changed])
                 .is_err()
         );
         let _ = std::fs::remove_file(path);

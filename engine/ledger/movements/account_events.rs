@@ -1,4 +1,4 @@
-//! Tenant/account/environment-isolated evidence events. These are not
+//! Account/environment-isolated evidence events. These are not
 //! balance postings: order ACKs and public funding observations never mint cash.
 use crate::{Ledger, LedgerError, now_ms};
 use seealpha_database::{OptionalExtension, TransactionBehavior, params};
@@ -17,14 +17,13 @@ impl Ledger {
     /// exchange fill/settlement. Caller cannot choose amount or mark success.
     pub fn record_account_evidence_event(
         &self,
-        tenant: &str,
+        
         account: &str,
         environment: &str,
         kind: &str,
         evidence_id: &str,
     ) -> Result<i64, LedgerError> {
-        if tenant.is_empty()
-            || account.is_empty()
+        if account.is_empty()
             || evidence_id.is_empty()
             || !matches!(environment, "production" | "sandbox")
             || !matches!(kind, "VERIFIED_FILL" | "FUNDING_FEE" | "OPTION_EXERCISE")
@@ -38,9 +37,9 @@ impl Ledger {
         let raw: Option<String> = match kind {
             "VERIFIED_FILL" => tx
                 .query_row(
-                    "SELECT fill_json FROM fills WHERE tenant_id=$1 AND account_id=$2
-                 AND environment=$3 AND fill_id=$4",
-                    params![tenant, account, environment, evidence_id],
+                    "SELECT fill_json FROM fills WHERE account_id=$1
+                 AND environment=$2 AND fill_id=$3",
+                    params![account, environment, evidence_id],
                     |r| r.get(0),
                 )
                 .optional()
@@ -53,11 +52,9 @@ impl Ledger {
                 };
                 tx.query_row(
                     "SELECT evidence_json FROM account_settlements
-                     WHERE tenant_id=$1 AND account_id=$2 AND environment=$3
-                     AND product=$4 AND event_kind=$5 AND event_id=$6",
-                    params![
-                        tenant,
-                        account,
+                     WHERE account_id=$1 AND environment=$2
+                     AND product=$3 AND event_kind=$4 AND event_id=$5",
+                    params![account,
                         environment,
                         product,
                         event_kind,
@@ -109,9 +106,8 @@ impl Ledger {
         .to_string();
         let prior: Option<(i64, String)> = tx
             .query_row(
-                "SELECT id,evidence_json FROM account_evidence_events WHERE
-             tenant_id=$1 AND account_id=$2 AND environment=$3 AND kind=$4 AND evidence_id=$5",
-                params![tenant, account, environment, kind, evidence_id],
+                "SELECT id,evidence_json FROM account_evidence_events WHERE account_id=$1 AND environment=$2 AND kind=$3 AND evidence_id=$4",
+                params![account, environment, kind, evidence_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
@@ -124,11 +120,9 @@ impl Ledger {
         }
         tx.execute(
             "INSERT INTO account_evidence_events
-             (tenant_id,account_id,environment,kind,evidence_id,evidence_json,recorded_at_ms)
-             VALUES($1,$2,$3,$4,$5,$6,$7)",
-            params![
-                tenant,
-                account,
+             (account_id,environment,kind,evidence_id,evidence_json,recorded_at_ms)
+             VALUES($1,$2,$3,$4,$5,$6)",
+            params![account,
                 environment,
                 kind,
                 evidence_id,
@@ -144,7 +138,7 @@ impl Ledger {
 
     pub fn account_evidence_event_page(
         &self,
-        tenant: &str,
+        
         account: &str,
         environment: &str,
         after: i64,
@@ -157,13 +151,13 @@ impl Ledger {
         let mut stmt = conn
             .prepare(
                 "SELECT id,evidence_json,recorded_at_ms FROM account_evidence_events
-             WHERE tenant_id=$1 AND account_id=$2 AND environment=$3 AND id>$4
-             ORDER BY id LIMIT $5",
+             WHERE account_id=$1 AND environment=$2 AND id>$3
+             ORDER BY id LIMIT $4",
             )
             .map_err(sql)?;
         let rows = stmt
             .query_map(
-                params![tenant, account, environment, after, limit.clamp(1, 1000)],
+                params![account, environment, after, limit.clamp(1, 1000)],
                 |r| {
                     Ok((
                         r.get::<_, i64>(0)?,
@@ -196,21 +190,21 @@ mod tests {
             "income_type":"FUNDING_FEE","income":"-0.00000001","asset":"USDT",
             "time_ms":10,"transaction_id":"abc","source":"binance_signed_income"});
         assert!(
-            book.record_account_evidence_event("t", "a", "production", "FUNDING_FEE", "abc")
+            book.record_account_evidence_event( "a", "production", "FUNDING_FEE", "abc")
                 .is_err()
         );
-        book.import_account_settlements("t", "a", "production", "futures_um", &[signed])
+        book.import_account_settlements( "a", "production", "futures_um", &[signed])
             .unwrap();
         let id = book
-            .record_account_evidence_event("t", "a", "production", "FUNDING_FEE", "abc")
+            .record_account_evidence_event( "a", "production", "FUNDING_FEE", "abc")
             .unwrap();
         assert_eq!(
             id,
-            book.record_account_evidence_event("t", "a", "production", "FUNDING_FEE", "abc")
+            book.record_account_evidence_event( "a", "production", "FUNDING_FEE", "abc")
                 .unwrap()
         );
         assert_eq!(
-            book.account_evidence_event_page("t", "a", "production", 0, 100)
+            book.account_evidence_event_page( "a", "production", 0, 100)
                 .unwrap()["events"]
                 .as_array()
                 .unwrap()
@@ -218,21 +212,21 @@ mod tests {
             1
         );
         assert!(
-            book.account_evidence_event_page("t", "a", "sandbox", 0, 100)
+            book.account_evidence_event_page( "a", "sandbox", 0, 100)
                 .unwrap()["events"]
                 .as_array()
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            book.account_evidence_event_page("other", "a", "production", 0, 100)
+            book.account_evidence_event_page("other", "production", 0, 100)
                 .unwrap()["events"]
                 .as_array()
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            book.record_account_evidence_event("t", "a", "production", "VERIFIED_FILL", "abc")
+            book.record_account_evidence_event( "a", "production", "VERIFIED_FILL", "abc")
                 .is_err()
         );
     }

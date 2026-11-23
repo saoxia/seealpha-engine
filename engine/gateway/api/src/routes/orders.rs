@@ -44,7 +44,7 @@ pub(super) async fn list_fills(
     let environment = query.environment.unwrap_or_else(|| "production".into());
     let fills = state
         .ledger
-        .fills(LEGACY_STORAGE_SCOPE, &account_id, &environment)
+        .fills(&account_id, &environment)
         .map_err(|error| match error {
             seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
             seealpha_ledger::LedgerError::Database(detail) => AppError::bad_request(detail),
