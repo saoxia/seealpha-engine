@@ -1648,7 +1648,6 @@ name = "seealpha-http"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
  "http-body-util",
  "seealpha-catalog",
  "seealpha-database",
