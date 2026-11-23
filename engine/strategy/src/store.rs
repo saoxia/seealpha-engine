@@ -146,7 +146,7 @@ impl StrategyStore {
         if connection.query_opt(
             "SELECT 1 FROM information_schema.columns
              WHERE table_schema=current_schema() AND table_name='strategy_issuances'
-             AND column_name='grant_purpose'",
+             AND column_name='grant_purpose' AND is_nullable='NO'",
             &[],
         ).map_err(err)?.is_some() {
             connection.execute_batch(
