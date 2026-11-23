@@ -95,7 +95,6 @@ impl Runtime {
 
     pub fn inspect_strategy_package(
         &self,
-        tenant_id: &str,
         bytes: &[u8],
         parameters: &Value,
     ) -> Result<Value, RuntimeError> {

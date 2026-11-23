@@ -113,7 +113,7 @@ async fn option_contracts(
         "exchange_orders":0})))
 }
 async fn option_klines(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
