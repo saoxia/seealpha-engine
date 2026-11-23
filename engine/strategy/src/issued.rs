@@ -198,16 +198,6 @@ mod tests {
             )
             .is_err()
         );
-        assert!(
-            authorize_issued(
-                record,
-                AccountScope {
-                    ..scope
-                },
-                &meta()
-            )
-            .is_err()
-        );
         let mut wrong = meta();
         wrong.version = "1.3".into();
         assert!(authorize_issued(record, scope, &wrong).is_err());
