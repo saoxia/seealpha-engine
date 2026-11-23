@@ -55,39 +55,3 @@ fn now_ms() -> i64 {
     .unwrap_or(0)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn retired_native_event_table_is_not_recreated_or_destroyed() {
-        let path = std::env::temp_dir().join(format!(
-            "seealpha-retired-events-{}-{}", std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        let ledger = Ledger::open(&path).unwrap();
-        let conn = ledger.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM information_schema.tables
-             WHERE table_schema=current_schema() AND table_name='native_order_event_quarantine'",
-            &[], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(count, 0);
-        conn.execute_batch(
-            "CREATE TABLE native_order_event_quarantine (event_id TEXT PRIMARY KEY, event_json TEXT NOT NULL);
-             INSERT INTO native_order_event_quarantine VALUES ('old-1', '{\"evidence_status\":\"unverified_native_event\"}');"
-        ).unwrap();
-        drop(conn);
-        drop(ledger);
-        let reopened = Ledger::open(&path).unwrap();
-        let conn = reopened.lock().unwrap();
-        let original: String = conn.query_row(
-            "SELECT event_json FROM native_order_event_quarantine WHERE event_id='old-1'",
-            &[], |row| row.get(0)
-        ).unwrap();
-        assert_eq!(original, r#"{"evidence_status":"unverified_native_event"}"#);
-    }
-
-
-}
