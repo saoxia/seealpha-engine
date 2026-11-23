@@ -11,10 +11,10 @@ use serde_json::{Value, json};
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
-        .route("/tenants/{tenant_id}/accounts/{account_id}/positions",get(positions))
-        .route("/tenants/{tenant_id}/data/datasets",post(data_inventory))
-        .route("/tenants/{tenant_id}/data/catalog/events",post(native_events))
-        .route("/tenants/{tenant_id}/data/catalog/inventory",post(native_inventory))
+        .route("/accounts/{account_id}/positions",get(positions))
+        .route("/data/datasets",post(data_inventory))
+        .route("/data/catalog/events",post(native_events))
+        .route("/data/catalog/inventory",post(native_inventory))
 }
 
 /* Catalog inventory interpretation is shared by HTTP dataset listing and Research. */
@@ -42,7 +42,7 @@ struct Environment {
 }
 async fn positions(
     State(_state): State<AppState>,
-    Path((_tenant, account)): Path<(String, String)>,
+    Path(account): Path<String>,
     Query(query): Query<Environment>,
 ) -> Result<Json<Value>, AppError> {
     let env = query
@@ -59,7 +59,6 @@ async fn positions(
 
 async fn data_inventory(
     State(state): State<AppState>,
-    Path(tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let symbols = body["symbols"].as_array().cloned().unwrap_or_default();
@@ -73,7 +72,7 @@ async fn data_inventory(
     }
     // Inventory remains read-only. Desired subscriptions are not evidence
     // of downloaded market data or validated Catalog readiness.
-    let items = state.runtime.control.subscriptions(&tenant, None)
+    let items = state.control.subscriptions(crate::LEGACY_STORAGE_SCOPE, None)
         .map_err(|error| AppError::bad_request(error.to_string()))?
         .into_iter()
         .filter(|item| symbols.is_empty() || symbols.iter().any(|s|s.as_str()==Some(&item.symbol)))
@@ -120,7 +119,6 @@ fn native_kind(body: &Value) -> Result<seealpha_catalog::RecordKind, AppError> {
 }
 async fn native_events(
     State(state): State<AppState>,
-    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let identity = body["identifier"]
@@ -144,7 +142,6 @@ async fn native_events(
 }
 async fn native_inventory(
     State(state): State<AppState>,
-    Path(_tenant): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let identity = body["identifier"]

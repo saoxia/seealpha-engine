@@ -3,7 +3,7 @@ use super::*;
 
 pub(super) async fn list_orders(
     State(state): State<AppState>,
-    Path((tenant_id, account_id)): Path<(String, String)>,
+    Path(account_id): Path<String>,
     Query(query): Query<EnvironmentQuery>,
 ) -> Result<Json<Value>, AppError> {
     let environment = query.environment.unwrap_or_else(|| "paper".into());
@@ -19,7 +19,7 @@ pub(super) async fn list_orders(
         .map_err(|error| AppError::bad_request(format!("订单查询失败。{error}")))?;
     let rows = statement
         .query_map(
-            seealpha_database::params![tenant_id, account_id, environment],
+            seealpha_database::params![LEGACY_STORAGE_SCOPE, account_id, environment],
             |row| row.get::<_, String>(0),
         )
         .map_err(|error| AppError::bad_request(format!("订单查询失败。{error}")))?;
@@ -38,14 +38,13 @@ pub(super) async fn list_orders(
 
 pub(super) async fn list_fills(
     State(state): State<AppState>,
-    Path((tenant_id, account_id)): Path<(String, String)>,
+    Path(account_id): Path<String>,
     Query(query): Query<EnvironmentQuery>,
 ) -> Result<Json<Value>, AppError> {
     let environment = query.environment.unwrap_or_else(|| "production".into());
     let fills = state
-        .runtime
         .ledger
-        .fills(&tenant_id, &account_id, &environment)
+        .fills(LEGACY_STORAGE_SCOPE, &account_id, &environment)
         .map_err(|error| match error {
             seealpha_ledger::LedgerError::Conflict(message) => AppError::conflict(message),
             seealpha_ledger::LedgerError::Database(detail) => AppError::bad_request(detail),

@@ -1,23 +1,20 @@
 # SeeAlpha Engine 代码导航
 
-本页记录当前源码位置，不把历史迁移文件里的已删除路径当作现行模块。
+| 需求 | 代码位置 |
+| --- | --- |
+| 进程启动、数据库初始化、Store 装配 | `engine/apps/trading_engine/src/main.rs` |
+| HTTP 服务参数、监听约束 | `engine/gateway/api/src/config.rs` |
+| 路由、合同版本、HTTP 错误映射 | `engine/gateway/api/src/lib.rs`、`src/routes/` |
+| Strategy package / issuance | `engine/strategy/src/native_issuance.rs`、`store.rs` |
+| 已下发策略只读预览 | `engine/gateway/api/src/strategy_preview.rs` |
+| 目标持仓计算、净额与风险裁剪 | `engine/execution/target/` |
+| 行情标准化 | `engine/pipeline/sources/shared/market/` |
+| 历史 Catalog | `engine/pipeline/catalog/` |
+| Subscription 配置 | `engine/pipeline/catalog/src/subscriptions.rs` |
+| 订单证据、验证成交和历史审计 | `engine/ledger/` |
+| PostgreSQL 访问及共享 schema | `engine/database/`、`docker/seealpha-postgres-schema.sql` |
+| Research 只读数据集发现 | `engine/gateway/api/src/research_v1.rs` |
+| 可选 MCP 只读适配 | `engine/gateway/mcp/src/research.rs` |
+| 原生 Binance / Nautilus 独立行情节点 | `engine/pipeline/sources/shared/nautilus/` |
 
-| 行为 | 当前代码位置 | 边界 |
-| --- | --- | --- |
-| 二进制启动 / smoke | `engine/apps/trading_engine/src/main.rs` | 生产 HTTP 入口 |
-| 配置与策略用例 | `engine/runtime/src/config.rs`、`lib.rs`、`session.rs` | 发行、预览、Ledger |
-| HTTP 路由和认证 | `engine/gateway/api/src/lib.rs`、`src/routes/` | v2 合同、租户范围 |
-| Research 签名与数据集权限 | `engine/gateway/api/src/research/` | 不提供回测任务 |
-| Research HTTP / MCP | `engine/gateway/api/src/research_v1.rs`、`engine/gateway/mcp/src/research.rs` | 数据集查询、快照 501、MCP list_datasets |
-| 原生策略和目标发布 | `engine/strategy/src/` | 受控 Rust 策略 |
-| 目标净额及风险裁剪 | `engine/execution/` | 不执行模拟撮合 |
-| 订单、成交、账本事实 | `engine/ledger/` | 必须可信证据 |
-| Binance Options 规范化 | `engine/connection/binance-options/` | Spot/USD-M 接口位于 Nautilus |
-| 现货及永续原生数据 | `engine/pipeline/sources/shared/nautilus/` | 独立 Cargo 工程 |
-| 公共行情及校验 | `engine/pipeline/sources/shared/market/` | K 线、成交和质量规则 |
-| 历史 Catalog | `engine/pipeline/catalog/src/` | Parquet 读取、库存、缺口检查 |
-| 历史 ZIP 获取 | `engine/pipeline/sources/binance/archive/` | 数据导入，不运行回测 |
-
-**已移除**：旧 `engine/backtest/` 和回测 API、模拟回放、模拟成交及回测结果。开发新回测时应新建明确边界，不将这些能力附着在现行行情读取或策略预览中。
-
-持久化数据目录见 [DATA_LAYOUT.md](DATA_LAYOUT.md)。
+不再存在 Runtime crate、旧回测 crate 或通用应用层租户/Token 授权服务。历史 DB `tenant_id` 为待非破坏性迁移的兼容字段，不在 HTTP 路由中暴露。不要为了保持目录命名而重新创建空的中间层。禁用实盘发送和保证可信成交事实属于独立交易安全边界。

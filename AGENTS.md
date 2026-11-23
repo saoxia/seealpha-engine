@@ -8,10 +8,10 @@
 
 ## 边界和安全
 
-- `engine/gateway/api` 持有 HTTP v2 与 Research HTTP 路由，`engine/gateway/mcp` 持有 Research MCP 协议处理；`engine/runtime` 负责编排；行情、策略、组合、账本、回测与交易所连接分别归属对应领域 crate。
-- 不在没有明确授权和匹配测试时更改 HTTP v2、租户隔离、数据格式、持久化状态、订单幂等、真实账户安全门禁或生产部署。
+- `engine/gateway/api` 持有 HTTP v2 与 Research HTTP 路由，`engine/gateway/mcp` 持有 Research MCP 协议处理；应用入口装配 Store，Gateway 调用领域模块；行情、策略、目标仓位、账本与交易所连接归属各自的领域 crate；旧回测 crate 已退役。不再存在 Runtime crate、Engine Token 认证和租户级门禁。
+- 不在没有明确授权和匹配测试时更改 HTTP v2 数据接口、数据格式、持久化状态、订单幂等、真实账户安全门禁或生产部署。
 - 订单必须先登记请求意图；外部请求未知结果不得盲目再次发送；只有被核验的真实成交证据能更新已成交事实；模拟成交必须与真实成交分离。
-- 行情读取、策略订阅、回测不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据。
+- 行情读取与策略订阅不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据；未来新回测实现必须遵守同样的安全边界。
 - 不触碰真实账户、真实下单、生产密钥、旧数据重建、生产状态卷或数据库迁移。使用合成/离线数据验证重构。
 - `engine/execution` 和 `engine/risk` 是跨现有 crate 的逻辑领域，参见 `docs/architecture/`；不存在同名独立 crate，不创建空实现。
 - 一级领域清单与状态见 `docs/architecture/DOMAIN_LAYOUT.md`。
