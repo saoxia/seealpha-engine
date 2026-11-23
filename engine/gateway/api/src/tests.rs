@@ -23,7 +23,6 @@ use super::*;
             state_dir: root.join("state"),
             project: root.clone(),
             tenant_id: Some("42".into()),
-            tenant_purpose: Some("development".into()),
             research_signing_key: None,
             research_mcp_enabled: false,
         };

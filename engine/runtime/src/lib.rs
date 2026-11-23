@@ -29,7 +29,6 @@ pub enum RuntimeError {
 pub struct Runtime {
     pub ledger: Ledger,
     tenant_id: Option<String>,
-    tenant_purpose: Option<String>,
     pub strategy_store: StrategyStore,
     pub control: ControlStore,
     inflight: AtomicUsize,
@@ -62,7 +61,6 @@ impl Runtime {
         Ok(Self {
             ledger,
             tenant_id: config.tenant_id.clone(),
-            tenant_purpose: config.tenant_purpose.clone(),
             strategy_store,
             control,
             inflight: AtomicUsize::new(0),
@@ -75,7 +73,7 @@ impl Runtime {
 
     pub fn runnable(&self, tenant_id: &str, action: &str) -> Result<Value, RuntimeError> {
         match action {
-            // A production tenant does not imply permission to trade.
+            // Tenant identity alone does not imply permission to trade.
             // Enable only after separately reviewed end-to-end order admission,
             // signed evidence reconciliation, and explicit cutover authorization.
             "live" => Err(RuntimeError::Conflict(
@@ -117,9 +115,9 @@ impl Runtime {
         &self,
         submission: &StrategySubmission<'_>,
     ) -> Result<Value, RuntimeError> {
-        let purpose = self.strategy_purpose(submission.tenant_id)?;
+        self.require_strategy_scope(submission.tenant_id)?;
         let accepted = self.strategy_store
-            .issue_native(submission, purpose)
+            .issue_native(submission)
             .map_err(map_strategy)?;
         Ok(json!({
             "tenant_id": submission.tenant_id,
@@ -151,7 +149,6 @@ impl Runtime {
                     "issuance_id": load.issuance_id,
                     "code_key": load.code_key,
                     "version": load.version,
-                    "grant_purpose": load.grant_purpose,
                     "entry_point": load.entry_point,
                     "package_hash": load.package_hash,
                 })
@@ -169,13 +166,9 @@ impl Runtime {
             .map_err(map_strategy)
     }
 
-    /// Native strategy operations require a configured tenant and purpose.
-    pub(crate) fn strategy_purpose(&self, tenant_id: &str) -> Result<&str, RuntimeError> {
-        trusted_strategy_purpose(
-            self.tenant_id.as_deref(),
-            self.tenant_purpose.as_deref(),
-            tenant_id,
-        )
+    /// Authorization is bound to the configured tenant identity, not its type.
+    pub(crate) fn require_strategy_scope(&self, tenant_id: &str) -> Result<(), RuntimeError> {
+        require_strategy_tenant(self.tenant_id.as_deref(), tenant_id)
     }
 
     pub(crate) fn track_start(&self) {
@@ -187,18 +180,11 @@ impl Runtime {
     }
 }
 
-fn trusted_strategy_purpose<'a>(
-    pinned_tenant: Option<&str>,
-    purpose: Option<&'a str>,
-    requested_tenant: &str,
-) -> Result<&'a str, RuntimeError> {
-    if pinned_tenant != Some(requested_tenant) {
+fn require_strategy_tenant(pinned: Option<&str>, requested: &str) -> Result<(), RuntimeError> {
+    if pinned != Some(requested) {
         return Err(RuntimeError::Conflict("策略租户与 Engine 绑定范围不一致。".into()));
     }
-    match purpose {
-        Some(value @ ("development" | "production")) => Ok(value),
-        _ => Err(RuntimeError::Conflict("策略运行需要明确的租户用途。".into())),
-    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -206,15 +192,10 @@ mod tenant_scope_tests {
     use super::*;
 
     #[test]
-    fn strategy_scope_requires_explicit_matching_configuration() {
-        assert_eq!(
-            trusted_strategy_purpose(Some("t"), Some("development"), "t").unwrap(),
-            "development"
-        );
-        assert!(trusted_strategy_purpose(Some("t"), Some("development"), "other").is_err());
-        assert!(trusted_strategy_purpose(None, Some("development"), "t").is_err());
-        assert!(trusted_strategy_purpose(Some("t"), None, "t").is_err());
-        assert!(trusted_strategy_purpose(Some("t"), Some("invalid"), "t").is_err());
+    fn strategy_scope_checks_identity_not_tenant_type() {
+        assert!(require_strategy_tenant(Some("t"), "t").is_ok());
+        assert!(require_strategy_tenant(Some("t"), "other").is_err());
+        assert!(require_strategy_tenant(None, "t").is_err());
     }
 }
 

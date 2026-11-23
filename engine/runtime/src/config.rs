@@ -15,7 +15,6 @@ pub struct Config {
     pub state_dir: PathBuf,
     pub project: PathBuf,
     pub tenant_id: Option<String>,
-    pub tenant_purpose: Option<String>,
     pub research_signing_key: Option<String>,
     pub research_mcp_enabled: bool,
 }
@@ -59,9 +58,6 @@ impl Config {
             tenant_id: std::env::var("ENGINE_TENANT_ID")
                 .ok()
                 .filter(|value| !value.is_empty()),
-            tenant_purpose: std::env::var("ENGINE_TENANT_PURPOSE")
-                .ok()
-                .filter(|value| !value.is_empty()),
             research_signing_key,
             research_mcp_enabled: std::env::var("ENGINE_RESEARCH_MCP_ENABLED")
                 .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE"))
@@ -91,13 +87,6 @@ impl Config {
                 if !matches!(self.host.as_str(), "127.0.0.1" | "::1" | "localhost") {
                     return Err("Unauthenticated Engine must listen on loopback".into());
                 }
-            }
-        }
-        if let Some(purpose) = &self.tenant_purpose {
-            if !matches!(purpose.as_str(), "development" | "production")
-                || self.tenant_id.is_none()
-            {
-                return Err("ENGINE_TENANT_PURPOSE requires a pinned tenant and development or production".into());
             }
         }
         if let Some(key) = &self.research_signing_key {

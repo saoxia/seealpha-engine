@@ -43,7 +43,6 @@ pub(super) async fn strategy_load(
                 code_key: &body.code_key,
                 entry_point: &body.entry_point,
                 package_hash: &body.package_hash,
-                grant_purpose: &body.grant_purpose,
                 parameters: &body.parameters,
                 archive: &archive,
             })
