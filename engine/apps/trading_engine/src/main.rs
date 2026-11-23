@@ -4,7 +4,6 @@ use seealpha_market::{BinanceSource,LoadQuery,Product,run_pipeline};
 use seealpha_catalog::ControlStore;
 use seealpha_database::{Connection,bootstrap_engine_schema};
 use seealpha_ledger::Ledger;
-use seealpha_strategy::store::StrategyStore;
 use serde_json::json;
 use std::{process::ExitCode,sync::Arc};
 
@@ -36,15 +35,12 @@ fn open_state(config:Config)->Result<AppState,String>{
     bootstrap_engine_schema(&db).map_err(|e|e.to_string())?;
     drop(db);
     let ledger=Ledger::open(&book).map_err(|e|e.to_string())?;
-    let strategy_store=StrategyStore::open(&book.with_file_name("strategies"))
-        .map_err(|e|e.to_string())?;
     let control=ControlStore::open(&book.with_file_name("control-state"))
         .map_err(|e|e.to_string())?;
     let market=BinanceSource::new().map_err(|e|e.to_string())?;
     Ok(AppState {
         config:Arc::new(config),
         ledger:Arc::new(ledger),
-        strategy_store:Arc::new(strategy_store),
         control:Arc::new(control),
         market:Arc::new(market),
     })

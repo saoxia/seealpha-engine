@@ -71,11 +71,11 @@ pub fn schema_for_path(path: &Path) -> String {
         return format!("seealpha_fixture_memory_{}_{}",
             std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
     }
-    // Every test's temporary state directory is isolated, but its Ledger,
-    // Control and Strategy stores must share the same schema across restarts.
+    // Every test's temporary state directory is isolated, but its Ledger
+    // and Control stores must share the same schema across restarts.
     if path.starts_with(std::env::temp_dir()) {
         let scoped = if matches!(path.file_name().and_then(|n| n.to_str()),
-            Some("postgres-state" | "control-state" | "strategies")) {
+            Some("postgres-state" | "control-state")) {
             path.parent().unwrap_or(path)
         } else {
             path
@@ -247,7 +247,7 @@ mod schema_contract_tests {
             "order_intents", "order_observations", "orders", "fills",
             "account_evidence_events",
             "account_event_allocations", "account_settlements",
-            "pipeline_subscriptions", "strategy_issuances",
+            "pipeline_subscriptions",
         ] {
             let prefix = format!("CREATE TABLE IF NOT EXISTS {table} (");
             let section = schema.split_once(&prefix).unwrap().1.split_once(");").unwrap().0;
@@ -257,7 +257,7 @@ mod schema_contract_tests {
             "order_intents", "order_observations", "orders", "fills",
             "account_evidence_events",
             "account_event_allocations", "account_settlements",
-            "pipeline_subscriptions", "strategy_issuances",
+            "pipeline_subscriptions",
         ] {
             assert!(
                 schema.contains(&format!("CREATE TABLE IF NOT EXISTS {table} (")),

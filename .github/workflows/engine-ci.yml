@@ -64,7 +64,7 @@ jobs:
           done < "$RUNNER_TEMP/engine-changed-files"
           echo "run=false" >> "$GITHUB_OUTPUT"
 
-  rust-and-strategy:
+  rust-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     services:

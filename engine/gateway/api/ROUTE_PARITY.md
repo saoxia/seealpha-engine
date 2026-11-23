@@ -1,3 +1,5 @@
+> **历史接口盘点（2026-11-23）**：本文件中的多租户路径与策略/回测声明并非当前可用路由。EMA 示例及 `/strategy-packages/inspect`、`/strategy-loads`、`/accounts/{account_id}/strategy-preview` 已退役。请以 `docs/ARCHITECTURE.md` 和 `gateway/api/src/lib.rs` 为准。
+
 # Python / Rust HTTP 路由与契约差异矩阵（历史审计）
 
 > **2026-11-23 当前状态**：这是历史迁移对照，不是现行路由清单。独立回测 crate、回测运行能力、同步/异步回测端点以及候选回测均已移除。表格中出现“已路由”的任何回测行均已失效，不应据此恢复旧接口。现行接口仅以 `engine/gateway/api/src/lib.rs` 和 `src/routes/` 为准。
@@ -32,9 +34,9 @@
 | POST | `/tenants/{tenant_id}/drop` | `无体或对象` | 删除租户状态 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/workers/{worker_id}` | `Query / path` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/workers/{worker_id}/stop` | `无体或对象` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/strategy-packages/inspect` | `PackageInspectBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/strategy-loads` | `StrategyLoadBody` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
-| GET | `/tenants/{tenant_id}/strategy-loads` | `Query / path` | JSON 对象/列表 | **已路由（差异待测）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/strategy-packages/inspect` | `PackageInspectBody` | JSON 对象/列表 | **已退役（示例删除）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| POST | `/tenants/{tenant_id}/strategy-loads` | `StrategyLoadBody` | JSON 对象/列表 | **已退役（示例删除）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
+| GET | `/tenants/{tenant_id}/strategy-loads` | `Query / path` | JSON 对象/列表 | **已退役（示例删除）** | 本轮未宣称逐字段请求/响应完全一致；公共 401/403/426；422/404/409 按实现复核 |
 
 ### 账户/交易/回测（36）
 
@@ -60,7 +62,7 @@
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/events` | `Query / path` | JSON 对象/列表 | **已移除（按需精简）** | 2026-11-22 主动退役；不是待恢复的 Python parity 接口 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers/note` | `WorkerNote` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/market/workers` | `WorkerBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |
-| POST | `/tenants/{tenant_id}/accounts/{account_id}/strategy-preview` | `PreviewBody` | 只读策略目标/汇总 | **已路由（只读）** | 不再模拟 Paper Fill 或修改仓位；成员目标缺失时 net_target 为 null |
+| POST | `/tenants/{tenant_id}/accounts/{account_id}/strategy-preview` | `PreviewBody` | 只读策略目标/汇总 | **已退役（示例删除）** | 不再模拟 Paper Fill 或修改仓位；成员目标缺失时 net_target 为 null |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/backtests` | `BacktestBody` | 回测报告 | **已路由（差异）** | Rust 原生语义和历史证据与 Python/Nautilus 不完全等价；公共 401/403/426；422/404/409 按实现复核 |
 | GET | `/tenants/{tenant_id}/accounts/{account_id}/backtests/latest` | `Query / path` | 最新持久结果 / 404 | **已路由（差异）** | Rust 原生语义和历史证据与 Python/Nautilus 不完全等价；公共 401/403/426；422/404/409 按实现复核 |
 | POST | `/tenants/{tenant_id}/accounts/{account_id}/generic-portfolio-backtests` | `GenericPortfolioBacktestBody` | JSON 对象/列表 | **缺失** | 缺少对应 HTTP 路由；需核对底层 Runtime/Domain 能力；公共 401/403/426；422/404/409 按实现复核 |

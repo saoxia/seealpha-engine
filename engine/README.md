@@ -1,18 +1,17 @@
 # Rust 引擎源码
 
-SeeAlpha Engine 全部 Rust 业务领域和应用程序放在本目录，根目录保留 Cargo Workspace 配置、Docker、性能基准、测试及文档。
+SeeAlpha Engine 的当前 Rust 业务领域与应用入口位于 `engine/`。Cargo Workspace、Docker、测试和文档位于仓库根目录。
 
 | 目录 | 职责 |
 | --- | --- |
-| [pipeline](pipeline/) | 完整行情服务：实时订阅、历史采集、质量认证和数据访问 |
-| [strategy](strategy/) | 策略、信号与目标发布 |
-| [execution](execution/) | 组合、目标持仓净额和风险裁剪 |
-| [connection](connection/) | Binance Options 专属规范化接口；Spot/USD-M 标准执行由 Nautilus 原生工厂规划承接 |
-| [ledger](ledger/) | 账户与账本事实及持久化 |
-| [runtime](runtime/) | 跨领域用例编排 |
-| [gateway](gateway/) | HTTP API、MCP 网关与研究授权 |
-| [apps](apps/) | 可执行入口 |
+| [pipeline](pipeline/) | 实时与历史行情、数据质量、Catalog、订阅管理 |
+| [execution](execution/) | 目标数量、净额及风险裁剪计算；不是实盘订单发送器 |
+| [connection](connection/) | Binance Options 规范化接口；Spot/USD-M 继续采用 Nautilus 原生工厂 |
+| [ledger](ledger/) | 账户事实、真实成交及审计证据 |
+| [database](database/) | PostgreSQL 数据访问及 schema 引导 |
+| [gateway](gateway/) | HTTP API、MCP 网关及只读研究入口 |
+| [apps](apps/) | 可执行程序与启动装配 |
 
-独立的 `risk/` 和订单执行状态机仍是规划职责，不创建空目录。回测模块已退役，后续另行重建。详见 [领域布局](../docs/architecture/DOMAIN_LAYOUT.md) 和 [代码导航](../docs/architecture/MODULE_MAP.md)。
+2026-11-23 已退役仅支持 EMA 示例的 `engine/strategy/`，同时移除其下发和预览 API。当前**没有运行中的策略执行器**，后续优先接入 NautilusTrader 的原生策略生命周期，而不是恢复独立通用执行框架。
 
-持久化行情文件位于仓库根级（或外部挂载卷）的 `data/`，不属于 `engine/` 源码目录；参见 [数据目录约定](../docs/architecture/DATA_LAYOUT.md)。
+旧 `runtime/` 与 `backtest/` 目录不存在；回测将来独立规划。不要为外观创建空目录或兼容层。持久化行情文件位于仓库根级 `data/`（或外部挂载卷），见 [数据目录约定](../docs/architecture/DATA_LAYOUT.md)。

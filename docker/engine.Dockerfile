@@ -49,7 +49,7 @@ COPY --from=build /src/engine/pipeline/sources/shared/nautilus/target/release/na
 COPY --from=build /src/engine/pipeline/sources/shared/nautilus/target/release/seealpha-nautilus-binance-data /usr/local/bin/seealpha-nautilus-binance-data
 COPY docker/nautilus-postgres-schema /usr/local/share/nautilus-postgres-schema
 # PostgreSQL listens only on container-local loopback (not EXPOSEd).
-# The persistent state volume holds PostgreSQL and immutable strategy artifacts.
+# The persistent state volume holds PostgreSQL and other active application state.
 COPY docker/entrypoint-with-postgres.sh /usr/local/bin/entrypoint-with-postgres.sh
 RUN chmod 0755 /usr/local/bin/entrypoint-with-postgres.sh
 # Intentionally no Python interpreter or Python strategy files.

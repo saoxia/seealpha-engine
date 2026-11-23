@@ -21,7 +21,6 @@ fn state() -> AppState {
     AppState{
         config:Arc::new(config),
         ledger:Arc::new(Ledger::open(&book).unwrap()),
-        strategy_store:Arc::new(StrategyStore::open(&book.with_file_name("strategies")).unwrap()),
         control:Arc::new(ControlStore::open(&book.with_file_name("control-state")).unwrap()),
         market:Arc::new(BinanceSource::new().unwrap()),
     }
@@ -69,12 +68,16 @@ async fn read_only_research_and_catalog_require_real_inventory_not_a_grant(){
     assert!(body["detail"].as_str().unwrap_or("").contains("Catalog"));
 }
 #[tokio::test]
-async fn strategy_preview_does_not_create_orders_or_synthesize_state(){
+async fn retired_demo_strategy_endpoints_are_not_registered(){
     let app=router(state());
-    let (status,body)=call(&app,request("POST","/accounts/a/strategy-preview",
-        r#"{"symbol":"ETHUSDT","interval":"1m","bars":[]}"#)).await;
-    assert_eq!(status,StatusCode::CONFLICT);
-    assert!(body["detail"].as_str().is_some());
-    let (status,_)=call(&app,request("POST","/accounts/a/paper/sessions","{}")).await;
-    assert_eq!(status,StatusCode::NOT_FOUND);
+    for (method,path) in [
+        ("POST","/strategy-packages/inspect"),
+        ("POST","/strategy-loads"),
+        ("GET","/strategy-loads"),
+        ("POST","/accounts/a/strategy-preview"),
+        ("POST","/accounts/a/paper/sessions"),
+    ] {
+        let (status,_)=call(&app,request(method,path,"{}")).await;
+        assert_eq!(status,StatusCode::NOT_FOUND,"retired path {method} {path}");
+    }
 }
