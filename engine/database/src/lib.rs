@@ -230,6 +230,60 @@ impl Drop for Transaction<'_> {
 #[cfg(test)]
 mod schema_contract_tests {
     #[test]
+    fn legacy_single_scope_fill_is_upgraded_without_losing_evidence() {
+        if std::env::var_os("SEEALPHA_DATABASE_URL").is_none() { return; }
+        let db = super::Connection::open(std::path::Path::new(":memory:")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE fills (
+                tenant_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                fill_id TEXT NOT NULL,
+                fill_json TEXT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                PRIMARY KEY(tenant_id,account_id,environment,fill_id)
+            );
+            INSERT INTO fills VALUES('legacy','account','sandbox','trade-1','{}',100);",
+        ).unwrap();
+        super::bootstrap_engine_schema(&db).unwrap();
+        let count: i64 = db.query_row(
+            "SELECT COUNT(*) FROM fills WHERE account_id='account'
+             AND environment='sandbox' AND fill_id='trade-1'",
+            &[],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+        let column_count: i64 = db.query_row(
+            "SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema=current_schema()
+               AND table_name='fills' AND column_name='tenant_id'",
+            &[],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(column_count, 0);
+    }
+
+    #[test]
+    fn legacy_multiple_scopes_fail_closed_before_data_is_combined() {
+        if std::env::var_os("SEEALPHA_DATABASE_URL").is_none() { return; }
+        let db = super::Connection::open(std::path::Path::new(":memory:")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE fills (
+                tenant_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                fill_id TEXT NOT NULL,
+                fill_json TEXT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                PRIMARY KEY(tenant_id,account_id,environment,fill_id)
+            );
+            INSERT INTO fills VALUES('tenant-a','account','sandbox','trade-1','{}',100);
+            INSERT INTO fills VALUES('tenant-b','account','sandbox','trade-2','{}',100);",
+        ).unwrap();
+        assert!(super::bootstrap_engine_schema(&db).is_err());
+    }
+
+    #[test]
     fn bootstrap_creates_only_active_application_tables() {
         let schema = include_str!("../../../docker/seealpha-postgres-schema.sql");
         for table in [
