@@ -119,7 +119,7 @@ BEGIN
             SELECT 1 FROM information_schema.columns
             WHERE table_schema=current_schema() AND table_name=tbl AND column_name='tenant_id'
         ) THEN
-            EXECUTE format('ALTER TABLE %I DROP COLUMN tenant_id CASCADE',tbl);
+            EXECUTE format('ALTER TABLE %I DROP COLUMN tenant_id',tbl);
             CASE tbl
                 WHEN 'order_intents' THEN
                     ALTER TABLE order_intents ADD PRIMARY KEY (account_id,request_id);
