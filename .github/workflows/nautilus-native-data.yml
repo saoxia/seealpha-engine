@@ -59,7 +59,7 @@ jobs:
           cargo test -p seealpha-market auto_rebuilds_after_native_tick_insert_revision_and_deletion --locked
           cargo test -p seealpha-market open_bars_update_on_every_tick_even_before_close --locked
           cargo test -p seealpha-market instrument_filters_are_exact_not_inferred_from_candle_values --locked
-          cargo test -p seealpha-market earlier_tenant_start_wins_and_disabled_prevents_deletion --locked
+          cargo test -p seealpha-market disabled_subscription_preserves_retention_without_fetch --locked
           cargo test -p seealpha-market historical_second_bars_ --locked
       - name: Check Pipeline lint
         run: cargo clippy -p seealpha-catalog -p seealpha-market -p seealpha-http --all-targets --locked -- -D warnings

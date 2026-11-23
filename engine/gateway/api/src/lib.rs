@@ -44,9 +44,6 @@ pub struct AppState {
     pub market: Arc<dyn PublicSource>,
 }
 
-// Legacy PostgreSQL and immutable strategy storage still use a namespace column.
-// External routes never accept a tenant identifier; historical rows are preserved.
-pub(crate) const LEGACY_STORAGE_SCOPE: &str = "local";
 
 impl AppState {
     /// Use the same mounted Nautilus v2 Catalog path as the former Runtime facade.

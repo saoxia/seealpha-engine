@@ -1,7 +1,7 @@
 //! Language-neutral strategy execution boundary for target-holding research.
 //!
 //! The Rust runtime consumes StrategyRun regardless of implementation language.
-//! Package issuance, tenant authorization and risk/ledger decisions remain at
+//! Package issuance, account authorization and risk/ledger decisions remain at
 //! the runtime boundary; this trait does not confer permission to run packages.
 
 use crate::{AccountScope, HostCommand, IssuedStrategy, StrategyBar, StrategyError, StrategyRun, run_host, run_issued_host};
@@ -150,7 +150,6 @@ mod tests {
         const MANIFEST: &[u8] = br#"{"format":1,"runtime":"rust-builtin","name":"ema_crossover","version":"1","entry_point":"native:ema_crossover"}"#;
         let digest = crate::sha256_hex(MANIFEST);
         let issued = IssuedStrategy {
-            tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
             code_key: "ema_crossover",
@@ -159,7 +158,6 @@ mod tests {
             package_hash: &digest,
         };
         let scope = AccountScope {
-            tenant_id: "tenant-1",
             account_id: "account-1",
         };
         let bars = ["1", "1", "1", "10", "10", "0"].map(bar);
@@ -193,7 +191,6 @@ mod tests {
     fn issued_executor_fails_closed_without_verified_archive() {
         let parameters = json!({});
         let issued = IssuedStrategy {
-            tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
             code_key: "alpha_strategy",
@@ -207,7 +204,6 @@ mod tests {
             archive_path: Path::new("/absent/archive.zip"),
             issued,
             scope: AccountScope {
-                tenant_id: "tenant-1",
                 account_id: "account-1",
             },
         };
@@ -238,7 +234,6 @@ mod tests {
         let mismatched_hash = "a".repeat(64);
         assert_ne!(digest, mismatched_hash);
         let issued = IssuedStrategy {
-            tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
             code_key: "alpha_strategy",
@@ -252,7 +247,6 @@ mod tests {
             archive_path: archive.path(),
             issued,
             scope: AccountScope {
-                tenant_id: "tenant-1",
                 account_id: "account-1",
             },
         };

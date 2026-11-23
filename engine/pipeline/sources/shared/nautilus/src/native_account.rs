@@ -24,7 +24,7 @@ pub struct NativeAccountReportCandidate {
 ///
 /// This function cannot prove transport authenticity, an instrument/product
 /// mapping, complete account coverage, or exchange signature validity.
-/// The caller must bind a trusted native execution client to the tenant and
+/// The caller must bind a trusted native execution client to the
 /// account independently; this API never writes a financial Ledger fact.
 pub fn inspect_native_account_report(
     event: &AccountState,

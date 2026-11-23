@@ -5,7 +5,7 @@
 - NautilusTrader `nautilus-binance` owns Spot/USD-M real-time trade subscriptions, bounded recent trade REST requests, native TradeTick model, Feather streaming, and Parquet Catalog persistence.
 - SeeAlpha `archive_fetch.rs` downloads official daily Binance public ZIP files and validates their CHECKSUM and archive identity.
 - The isolated native Rust `engine/pipeline/sources/shared/nautilus/src/bin/import_archive.rs` validates archive rows, UTC dates, Trade IDs, Instrument precision, SHA-256, and uses the **native** Nautilus Catalog writer. Its importer refuses overlapping intervals and is not data READY.
-- Runtime retains tenant-scoped policies, explicit source process supervision, deterministic job IDs, provenance, and fail-closed `archive_fetch` / `archive_import` tasks.
+- The legacy Runtime task and tenant-policy dispatchers have been removed; archive tools remain independent until a current Pipeline integration is implemented.
 - There are no SeeAlpha Spot/USD-M WebSocket drivers, raw SQLite Tick Journal, old calc process, old Catalog publisher, or custom Nautilus Tick/Quote schema converter in this source crate.
 
 ## Deployment boundary

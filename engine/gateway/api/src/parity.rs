@@ -72,7 +72,7 @@ async fn data_inventory(
     }
     // Inventory remains read-only. Desired subscriptions are not evidence
     // of downloaded market data or validated Catalog readiness.
-    let items = state.control.subscriptions(crate::LEGACY_STORAGE_SCOPE, None)
+    let items = state.control.subscriptions(None)
         .map_err(|error| AppError::bad_request(error.to_string()))?
         .into_iter()
         .filter(|item| symbols.is_empty() || symbols.iter().any(|s|s.as_str()==Some(&item.symbol)))

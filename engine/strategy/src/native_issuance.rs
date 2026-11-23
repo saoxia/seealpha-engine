@@ -1,5 +1,5 @@
 //! Built-in Rust strategy inspection, issuance, and authenticated execution.
-//! The caller supplies a trusted tenant/account scope; no package grants trading permission.
+//! The caller supplies a trusted account scope; no package grants trading permission.
 use crate::executor::{ExecutionInput, IssuedNativeEmaExecutor, StrategyExecutor};
 use crate::native_ema::run_native_ema;
 use crate::native_manifest::{authorize_native_manifest, inspect_native_manifest};
@@ -9,7 +9,6 @@ use serde_json::Value;
 
 #[derive(Clone, Copy)]
 pub struct NativeSubmission<'a> {
-    pub tenant_id: &'a str,
     pub account_id: &'a str,
     pub issuance_id: &'a str,
     pub version: &'a str,
@@ -68,7 +67,7 @@ pub fn inspect_native_package(
 
 impl StrategyStore {
     /// Validate immutable issuance identity, prepare parameters and persist it.
-    /// The caller must supply a trusted tenant/account identity.
+    /// The caller must supply a trusted account identity.
     pub fn issue_native(
         &self,
         submission: &NativeSubmission<'_>,
@@ -99,7 +98,6 @@ impl StrategyStore {
         authorize_native_manifest(
             &prepared.manifest,
             IssuedStrategy {
-                tenant_id: submission.tenant_id,
                 account_id: submission.account_id,
                 issuance_id: submission.issuance_id,
                 code_key,
@@ -108,12 +106,10 @@ impl StrategyStore {
                 package_hash,
             },
             AccountScope {
-                tenant_id: submission.tenant_id,
                 account_id: submission.account_id,
             },
         )?;
         let load = StrategyLoad {
-            tenant_id: submission.tenant_id.to_string(),
             account_id: submission.account_id.to_string(),
             issuance_id: submission.issuance_id.to_string(),
             code_key: code_key.to_string(),
@@ -138,12 +134,11 @@ impl StrategyStore {
     /// Load only immutable, account-issued native strategies.
     pub fn issued_native_inputs(
         &self,
-        tenant_id: &str,
         account_id: &str,
     ) -> Result<Vec<IssuedNativeInput>, StrategyError> {
-        let loads = self.strategies(tenant_id, account_id).map_err(store_error)?;
+        let loads = self.strategies(account_id).map_err(store_error)?;
         if loads.is_empty() {
-            return Err(StrategyError::Package("该租户账户没有已下发的策略。".into()));
+            return Err(StrategyError::Package("该账户没有已下发的策略。".into()));
         }
         loads.into_iter().map(|load| {
             let parameters = serde_json::from_str(&load.parameters_json)
@@ -160,7 +155,7 @@ impl StrategyStore {
 }
 
 /// Bind a requested preview to its trusted persisted issuance before executing.
-/// Runtime supplies the configured tenant/account scope and market input.
+/// Runtime supplies the configured account scope and market input.
 pub fn execute_issued_native(
     load: &StrategyLoad,
     scope: AccountScope<'_>,
@@ -177,7 +172,6 @@ pub fn execute_issued_native(
     IssuedNativeEmaExecutor {
         manifest,
         issued: IssuedStrategy {
-            tenant_id: &load.tenant_id,
             account_id: &load.account_id,
             issuance_id: &load.issuance_id,
             code_key: &load.code_key,
@@ -219,7 +213,7 @@ mod tests {
     fn preview_fails_closed_on_changed_package_parameters_or_scope() {
         let digest = crate::sha256_hex(MANIFEST);
         let load = StrategyLoad {
-            tenant_id: "tenant".into(), account_id: "account".into(),
+account_id: "account".into(),
             issuance_id: "issue".into(), code_key: "ema_crossover".into(),
             version: "1".into(),
             parameters_json: "{}".into(),
@@ -227,7 +221,7 @@ mod tests {
             archive: MANIFEST.to_vec(),
         };
         let scope = AccountScope {
-            tenant_id: "tenant", account_id: "account",
+account_id: "account",
         };
         let params = json!({});
         let input = ExecutionInput {

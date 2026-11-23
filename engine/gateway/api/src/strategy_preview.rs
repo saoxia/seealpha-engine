@@ -1,5 +1,5 @@
 //! Read-only strategy preview. No custom paper matching, fills, or positions.
-use crate::{AppState, AppError, LEGACY_STORAGE_SCOPE};
+use crate::{AppState, AppError};
 use rust_decimal::Decimal;
 use seealpha_execution::{
     MemberTarget, TargetHolding, clip_member_targets, net_signed_quantity,
@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) fn preview_strategies(
     state:&AppState, account_id:&str, snapshot:MarketSnapshot, request_id:Option<String>,
 )->Result<Value,AppError>{
-    let strategies=state.strategy_store.issued_native_inputs(LEGACY_STORAGE_SCOPE,account_id)
+    let strategies=state.strategy_store.issued_native_inputs(account_id)
         .map_err(|e|AppError::conflict(e.to_string()))?;
     if strategies.is_empty(){return Err(AppError::conflict("该账户没有已下发的策略。"));}
         let pipeline = run_pipeline(&snapshot)
@@ -28,7 +28,7 @@ pub(crate) fn preview_strategies(
             volume: bar.volume.to_string(),
         }).collect::<Vec<_>>();
         let loads = state.strategy_store
-            .strategies(&LEGACY_STORAGE_SCOPE, &account_id)
+            .strategies(account_id)
             .map_err(|e|AppError::conflict(e.to_string()))?;
 
         let mut seen = BTreeSet::new();
@@ -48,8 +48,7 @@ pub(crate) fn preview_strategies(
             let outcome = execute_issued_native(
                 load,
                 AccountScope {
-                    tenant_id: &LEGACY_STORAGE_SCOPE,
-                    account_id: &account_id,
+                    account_id,
                 },
                 &strategy.archive,
                 ExecutionInput {

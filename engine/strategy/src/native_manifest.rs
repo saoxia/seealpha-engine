@@ -81,7 +81,6 @@ mod tests {
     fn account_and_digest_must_match_trusted_issuance() {
         let digest = sha256_hex(MANIFEST);
         let record = IssuedStrategy {
-            tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
             code_key: NATIVE_EMA_CODE,
@@ -90,7 +89,6 @@ mod tests {
             package_hash: &digest,
         };
         let scope = AccountScope {
-            tenant_id: "tenant-1",
             account_id: "account-1",
         };
         authorize_native_manifest(MANIFEST, record, scope).unwrap();

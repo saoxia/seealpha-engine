@@ -1,5 +1,5 @@
 //! Immutable exchange funding-rate observations stored in the market Catalog,
- //! not in the tenant's account Ledger.
+ //! not in the account Ledger.
 use crate::{Catalog, CatalogError, model::NANO_PER_MS, reader::{RecordKind, candidate_files}, writer::{file_name, safe_mkdir}};
 use arrow_array::{ArrayRef, Decimal128Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use arrow_schema::{Schema, Field, DataType, TimeUnit};

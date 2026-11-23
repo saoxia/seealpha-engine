@@ -58,7 +58,7 @@ async fn rc9_live_node_wires_native_usdm_execution_and_reconciliation_without_co
 
     // Native execution records belong in Nautilus' own writer and Catalog.
     // SeeAlpha never creates a parallel OrderFilled serialization format.
-    // These are offline-only temporary paths, unrelated to Engine tenant data.
+    // These are offline-only temporary paths, unrelated to Engine account data.
     let root = std::env::temp_dir().join(format!(
         "seealpha-nautilus-exec-config-{}-{}",
         std::process::id(),

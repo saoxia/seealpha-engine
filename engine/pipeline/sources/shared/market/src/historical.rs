@@ -309,7 +309,7 @@ impl HistoricalTracker {
             let start_ms=aligned_start(first_ns.div_euclid(NANO_PER_MS)).max(minimum_ms);
             let end_ms=aligned_end(last_ns.div_euclid(NANO_PER_MS))?;
             if start_ms>=end_ms{continue}
-            // Do not regenerate pruned history. When a tenant advances its
+            // Do not regenerate pruned history. When a subscription advances its
             // requested start backwards, the saved range forces a rebuild.
             if self.completed.get(&key).is_some_and(|c|
                 c.fingerprint==fingerprint && c.start_ms<=start_ms && c.end_ms>=end_ms)

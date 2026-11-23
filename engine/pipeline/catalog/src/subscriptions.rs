@@ -64,35 +64,31 @@ pub fn validate_subscription(value:&PipelineSubscription)->Result<(),ControlErro
 }
 
 impl ControlStore {
-    pub fn upsert_subscription(&self,tenant:&str,value:&PipelineSubscription)->Result<(),ControlError>{
+    pub fn upsert_subscription(&self,value:&PipelineSubscription)->Result<(),ControlError>{
         validate_subscription(value)?;
-        if tenant.is_empty() || tenant.len()>128
-            || !tenant.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'_'||c==b'-') {
-            return Err(ControlError::Conflict("invalid tenant".into()));
-        }
         let conn=self.lock()?;
         conn.execute("INSERT INTO pipeline_subscriptions
-          (tenant_id,product,symbol,history_start,realtime_enabled,enabled,price_precision,size_precision,updated_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-          ON CONFLICT(tenant_id,product,symbol) DO UPDATE SET
+          (product,symbol,history_start,realtime_enabled,enabled,price_precision,size_precision,updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+          ON CONFLICT(product,symbol) DO UPDATE SET
           history_start=EXCLUDED.history_start,realtime_enabled=EXCLUDED.realtime_enabled,
           enabled=EXCLUDED.enabled,price_precision=EXCLUDED.price_precision,
           size_precision=EXCLUDED.size_precision,updated_at=EXCLUDED.updated_at",
-          params![tenant,value.product,value.symbol,value.history_start,value.realtime_enabled,
+          params![value.product,value.symbol,value.history_start,value.realtime_enabled,
             value.enabled,value.price_precision.map(|p|p as i32),
             value.size_precision.map(|p|p as i32),now_ms()]).map_err(db_error)?;
         Ok(())
     }
-    pub fn subscriptions(&self,tenant:&str,product:Option<&str>)->Result<Vec<PipelineSubscription>,ControlError>{
+    pub fn subscriptions(&self,product:Option<&str>)->Result<Vec<PipelineSubscription>,ControlError>{
         if product.is_some_and(|p| !matches!(p,"spot"|"futures_um"|"options")) {
             return Err(ControlError::Conflict("invalid product".into()));
         }
         let conn=self.lock()?;
         let mut q=conn.prepare("SELECT product,symbol,history_start,realtime_enabled,enabled,
               price_precision,size_precision FROM pipeline_subscriptions
-              WHERE tenant_id=$1 AND ($2::text IS NULL OR product=$2) ORDER BY product,symbol")
+              WHERE ($1::text IS NULL OR product=$1) ORDER BY product,symbol")
               .map_err(db_error)?;
-        q.query_map(params![tenant,product],|r|{
+        q.query_map(params![product],|r|{
             let price:Option<i32>=r.get(5)?; let size:Option<i32>=r.get(6)?;
             Ok(PipelineSubscription {
                 product:r.get(0)?,symbol:r.get(1)?,history_start:r.get(2)?,
@@ -101,47 +97,31 @@ impl ControlStore {
             })
         }).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
     }
-    pub fn disable_subscription(&self,tenant:&str,product:&str,symbol:&str)->Result<bool,ControlError>{
+    pub fn disable_subscription(&self,product:&str,symbol:&str)->Result<bool,ControlError>{
         let conn=self.lock()?;
         Ok(conn.execute("UPDATE pipeline_subscriptions SET enabled=FALSE,realtime_enabled=FALSE,
-              updated_at=$4 WHERE tenant_id=$1 AND product=$2 AND symbol=$3",
-              params![tenant,product,symbol,now_ms()]).map_err(db_error)?==1)
+              updated_at=$3 WHERE product=$1 AND symbol=$2",
+              params![product,symbol,now_ms()]).map_err(db_error)?==1)
     }
     /// Disabled configuration retains its data; no deletion without an explicit cutoff.
-    pub fn product_subscriptions(&self,product:&str)->Result<Vec<(String,PipelineSubscription)>,ControlError>{
+    pub fn product_subscriptions(&self,product:&str)->Result<Vec<PipelineSubscription>,ControlError>{
         if !matches!(product,"spot"|"futures_um"|"options"){
             return Err(ControlError::Conflict("invalid product".into()));
         }
         let conn=self.lock()?;
-        let mut q=conn.prepare("SELECT tenant_id,product,symbol,history_start,realtime_enabled,enabled,
+        let mut q=conn.prepare("SELECT product,symbol,history_start,realtime_enabled,enabled,
           price_precision,size_precision FROM pipeline_subscriptions
-          WHERE product=$1 ORDER BY tenant_id,symbol").map_err(db_error)?;
+          WHERE product=$1 ORDER BY symbol").map_err(db_error)?;
         q.query_map(params![product],|r|{
-            let price:Option<i32>=r.get(6)?;let size:Option<i32>=r.get(7)?;
-            Ok((r.get(0)?,PipelineSubscription{
-                product:r.get(1)?,symbol:r.get(2)?,history_start:r.get(3)?,
-                realtime_enabled:r.get(4)?,enabled:r.get(5)?,
+            let price:Option<i32>=r.get(5)?;let size:Option<i32>=r.get(6)?;
+            Ok(PipelineSubscription{
+                product:r.get(0)?,symbol:r.get(1)?,history_start:r.get(2)?,
+                realtime_enabled:r.get(3)?,enabled:r.get(4)?,
                 price_precision:price.map(|v|v as u32),size_precision:size.map(|v|v as u32)
-            }))
+            })
         }).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
     }
-    pub fn enabled_subscriptions(&self,product:&str)->Result<Vec<(String,PipelineSubscription)>,ControlError>{
-        if !matches!(product,"spot"|"futures_um"|"options") {
-            return Err(ControlError::Conflict("invalid product".into()));
-        }
-        let conn=self.lock()?;
-        let mut q=conn.prepare("SELECT tenant_id,product,symbol,history_start,realtime_enabled,enabled,
-              price_precision,size_precision FROM pipeline_subscriptions
-              WHERE product=$1 AND enabled=TRUE ORDER BY tenant_id,symbol").map_err(db_error)?;
-        q.query_map(params![product],|r|{
-            let price:Option<i32>=r.get(6)?;let size:Option<i32>=r.get(7)?;
-            Ok((r.get(0)?,PipelineSubscription{
-                product:r.get(1)?,symbol:r.get(2)?,history_start:r.get(3)?,
-                realtime_enabled:r.get(4)?,enabled:r.get(5)?,
-                price_precision:price.map(|v|v as u32),size_precision:size.map(|v|v as u32),
-            }))
-        }).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
-    }
+
 }
 
 #[cfg(test)]

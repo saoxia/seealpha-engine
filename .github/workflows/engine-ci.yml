@@ -168,7 +168,6 @@ jobs:
           done
           jq -e '.contract_version == "2"' /tmp/engine-health.json
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/health)" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/tenants/99/jobs)" = 404
 
       - name: Local PostgreSQL schema and restart smoke (no exchange credentials)
         run: |

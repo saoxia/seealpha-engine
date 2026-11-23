@@ -1,4 +1,4 @@
-//! Cross-process single-writer reservation for a tenant Nautilus Catalog.
+//! Cross-process single-writer reservation for a Nautilus Catalog.
 //! This is only a SeeAlpha process-coordination guard; Nautilus owns all
 //! TradeTick serialization, Arrow schemas and Parquet catalog operations.
 
