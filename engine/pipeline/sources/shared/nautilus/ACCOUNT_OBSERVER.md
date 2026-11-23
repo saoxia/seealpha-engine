@@ -37,12 +37,12 @@ USD-M 当前只支持显式的 **OneWay/Netting** 测试观测。已有 Hedge �
 
 `native_account_session.rs` 测试涵盖实际 Nautilus 类型与消息总线订阅、账户绑定、资金值视图、过期/错账户、重启后重放拒绝、新事件恢复和损坏游标拒绝。所有测试均不需要真实账户、不会提交订单。
 
-旧 Ledger Accounts SQLite 快照实现已从编译目标移除；历史表不会自动 DROP。生产 Runtime 尚未接通，依赖原生账户证据的路径仍必须 fail-closed。
+旧 Ledger Accounts SQLite 快照实现已从编译目标移除；旧应用数据库需要显式重建。生产 Runtime 尚未接通，依赖原生账户证据的路径仍必须 fail-closed。
 
 ## Accounts 去重后现状
 
 - `NativeAccountSession` 仅在进程内保留 Nautilus 原生 `AccountState`，JSON 展示按需计算，事件订阅以具体 AccountId 为主题。
-- 旧 Ledger `account_snapshots` 代码、新库建表和无生产调用方的旧 Basket 快照 CAS 原型已移除；既有数据库的历史表不自动 DROP。
+- 旧 Ledger `account_snapshots` 代码、新库建表和无生产调用方的旧 Basket 快照 CAS 原型已移除；旧应用数据库需要显式重建。
 - PostgreSQL Cache 使用 Nautilus 自身配置；独立游标只防止重启后重放旧报告，不是另一套余额账本。
 - **仍未完成生产 Runtime 的原生账户与持仓接线**：Observer 是 Testnet 只读实验节点，无法凭本地 JSON 或 `is_reported` 通过生产认证，不能下单。
 - 通用 Basket 状态检查点、不可变订单意图与真实成交/结算证据仍由 SeeAlpha 维护；这些不是重复账户余额缓存。
@@ -55,13 +55,12 @@ USD-M 当前只支持显式的 **OneWay/Netting** 测试观测。已有 Hedge �
 
 ```bash
 export SEEALPHA_ACCOUNT_SOCKET_DIR=/var/lib/seealpha/native-account-sockets
-export SEEALPHA_TENANT_ID=tenant1
 export SEEALPHA_ENGINE_ACCOUNT_ID=account1
 # 另外提供观察器原有的 Binance Testnet 凭据
 cargo run --manifest-path engine/pipeline/sources/shared/nautilus/Cargo.toml \
   --bin native_account_observer -- spot BINANCE-SPOT-001 ./nautilus-account-state
 ```
 
-Engine 启动时为同一目录配置 `ENGINE_NATIVE_ACCOUNT_SOCKET_DIR`。Runtime 在账户快照查询中只接受 `sandbox`，不再收取 API 密钥；它读取由固定账户的原生节点提供的 `tenant1--account1--sandbox.sock`，校验来源、账户、环境和 60 秒时效。Socket 权限为 0600，目录权限为 0700；目录内已有同名 Socket 时原生进程拒绝覆盖。节点退出时移除 Socket。没有原生有效报告则返回冲突错误，而不是回退到旧 SQLite 或可伪造的外部 JSON。
+Engine 启动时为同一目录配置 `ENGINE_NATIVE_ACCOUNT_SOCKET_DIR`。Runtime 在账户快照查询中只接受 `sandbox`，不再收取 API 密钥；它读取由固定账户的原生节点提供的 `account1--sandbox.sock`，校验来源、账户、环境和 60 秒时效。Socket 权限为 0600，目录权限为 0700；目录内已有同名 Socket 时原生进程拒绝覆盖。节点退出时移除 Socket。没有原生有效报告则返回冲突错误，而不是回退到旧 SQLite 或可伪造的外部 JSON。
 
 这是单机部署中的**只读测试网账户余额和保证金查询**。目录访问控制并非跨主机或同 Unix UID 进程之间的强身份认证，因此不应允许不可信程序以同一 Unix 用户运行。它没有读取 Nautilus Position Cache、没有完成资金费/成交历史对账，也没有接通实盘或发送订单；任何真实交易均继续 fail-closed。
