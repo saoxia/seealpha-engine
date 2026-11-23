@@ -242,6 +242,16 @@ mod schema_contract_tests {
                 "retired table {table} must not be recreated",
             );
         }
+        // Ledger and historical order tables no longer have a tenant column.
+        for table in [
+            "order_intents", "order_observations", "orders", "fills",
+            "quarantined_unverified_fills", "account_evidence_events",
+            "account_event_allocations", "account_settlements",
+        ] {
+            let prefix = format!("CREATE TABLE IF NOT EXISTS {table} (");
+            let section = schema.split_once(&prefix).unwrap().1.split_once(");").unwrap().0;
+            assert!(!section.contains("tenant_id"), "{table} still stores tenant data");
+        }
         for table in [
             "order_intents", "order_observations", "orders", "fills",
             "quarantined_unverified_fills", "account_evidence_events",

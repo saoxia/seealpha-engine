@@ -1,70 +1,25 @@
 # Ledger / Funds
 
-Ledger 只维护 SeeAlpha 特有的持久业务事实，不复制 NautilusTrader 的账户、持仓和订单运行时状态。
+Ledger 只保存 SeeAlpha 特有的、经过认证的经济事件。NautilusTrader 是 Account、AccountState、Position 和订单运行时状态的权威来源。
 
-## 职责
+## 业务边界
 
-| 组件 | 数据归属 | 说明 |
-| --- | --- | --- |
-| NautilusTrader | Account / AccountState / Position / Cache / 原生 PostgreSQL Cache | 账户与持仓的唯一运行时权威来源；真实交易前须完成原生执行报告与交易所对账 |
-| `movements/` | 有认证来源的成交、费用、资金费和结算 | 不依据 ACK、余额差值或公共费率推断资金事实 |
-| `allocations/` | 可信经济事件的策略归属（基础实现） | 不将内部成交冒充交易所成交 |
-| `reconciliation/` | 经济事件归属核验 | 不替代 Nautilus 原生订单/持仓对账或交易所余额校验 |
-| `../runtime/` | 只读策略预览 | 租户状态登记已退役，历史账户/租户范围字段仍保留 |
-| Gateway / Runtime | 配置绑定的租户标识 | 不按租户类型授予能力；Gateway 拒绝未绑定的租户路径 |
+- `movements/`：交易所认证成交、资金费、期权结算和经济事件证据；不从 ACK 或余额变化推断成交。
+- `allocations/`：按照整数 basis points（0–10000）将已认证事件不可变地归属策略；拒绝重复改写、越额分配、跨账户和跨环境引用。
+- `reconciliation/`：只核验本地经济事件归属完整性，不代表已完成交易所余额、持仓和全部交易历史对账。
+- Ledger 不维护租户登记、租户身份、租户状态或多租户隔离。业务数据只按 `account_id` 与 `environment` 隔离；策略归属仍保留 `strategy_id`。
+- Ledger 不复制 NautilusTrader 的余额、保证金、Position Cache 和订单状态机。
 
-## 四个最小业务核心（2026-11-22）
+## PostgreSQL 单实例结构（2026-11-23）
 
-- **租户范围**：已删除 Tenant/StateStore 登记，Gateway 使用固定租户标识；Strategy 仍校验账户范围、下发记录和包哈希。原生账户状态由 Nautilus 维护。
-- **Movements**：沿用经过认证的成交、资金费、结算及 `account_evidence_events`，没有上游证据时拒绝生成事件，既不凭 ACK 入账也不建一套现金余额账。
-- **Allocations**：`attribute_account_event` 将已登记的可信账户经济事件按整数 basis points（总计最多 10000）不可变地归属策略；跨租户/账户/环境、重复改写和超额分配均拒绝；尚不计算策略盈亏或合成虚拟成交。
-- **Reconciliation**：`reconcile_account_attribution` 汇总已存证据的已归属/未归属情况，明确标记历史完整性、交易所余额和持仓对账均**未完成**；这不是通过真实账户对账的证明。
+Ledger 的表 `fills`、`quarantined_unverified_fills`、`account_settlements`、`account_evidence_events`、`account_event_allocations`，以及旧订单历史表 `orders`、`order_intents`、`order_observations` 已移除 `tenant_id` 字段及相关复合主键和索引。相关 Ledger 公共方法不再接收 tenant 参数。
 
-本轮只搭建 Ledger 的数据核心，不新增 HTTP 路由、自动执行任务或与 Nautilus 并行的账户状态机。共享 Schema 由 Runtime 统一初始化；已有历史表保持原状。
+共享 schema 由应用启动时的 `seealpha_database::bootstrap_engine_schema` 初始化。同一事务中会将已有单租户历史表无损转换为单实例表，重建约束和索引；**如果历史账本出现多个不同 tenant 值，启动时拒绝合并**，防止不同账户证据混淆。迁移前应备份数据库；不会自动删除历史经济证据。
 
-## Accounts 迁移
+仅对账户和环境进行隔离是有意设计：同一个 `account_id` 的 `production` 与 `sandbox` 不能共享成交和资金费证据。
 
-2026-11-22 起不再编译 `accounts/account_snapshots.rs`，也不再为新数据库建立 `account_snapshots` 表。原生账户模块位于 `engine/pipeline/sources/shared/nautilus/`。删除了无生产调用方的 Ledger 快照 Basket 对账、旧版本 CAS 预登记实验接口，保留通用 Basket Checkpoint 和通用不可变订单意图记录。
+## 执行安全
 
-**当前只完成测试网只读 Runtime 接线**：独立 Nautilus Observer 可通过私有 Unix Socket 提供已筛选的 AccountState 余额/保证金观察，Runtime 校验账户范围、环境和 60 秒时效。它不是交易所完整认证流水或 Position Cache；生产账户请求与测试网实时持仓查询仍 fail-closed，不能凭旧 SQLite 快照放行订单。不得将用户提交的 JSON、`is_reported` 或原生缓存存在视为交易所认证的持仓完整性证明。
+订单发送前必须持久化意图；未知交易所执行结果只能核验，不能自动重发。原生执行报告与订单恢复循环目前仍未完整接通，因此 Ledger 的存在不意味着具备可用的实盘执行能力。
 
-升级已有数据库不会自动删除历史 `account_snapshots` 表及数据；待明确历史保留和备份策略后由独立迁移处理。
-
-## 旧 `src/` 接口清理（2026-11-22）
-
-- 已移除 Ledger `records.rs`：租户和连接登记归 `accounts/`，历史认证成交查询归 `movements/verified_fills.rs`；通用 `gaps_for_scope()`、`event_page()` 等操作接口归 Runtime StateStore。
-- 删除 `parity.rs::positions()` 对历史 `positions` 表的读接口；Gateway `/positions` 在 Nautilus 原生持仓核验尚未接线前明确失败关闭，包含 `paper` 环境，不能把缺少证据的空仓位响应当作已核实状态。
-- **不执行 DROP 表或历史数据迁移**：既有 `positions` 和 `order_observations` 数据保留供审计及后续受控迁移。
-- 2026-11-23 更新：旧 Runtime 订单观察与恢复链路已移除，历史数据仍在；Nautilus 端到端认证恢复**尚未替代完成**，禁止实盘。
-
-## 应用状态职责迁出（2026-11-22）
-
-- 研究快照与回测结果：`engine/runtime/src/state_store/research.rs`；由 Runtime 持有并持久化，不属于资金账本。
-- Basket Journal 与 Portfolio Coordinator CAS 检查点：`engine/runtime/src/state_store/{basket_journal,coordinator_state}.rs`；作为 Runtime 的 Portfolio 用例状态，原有并发修订规则保持不变。
-- Paper Session 和模拟持仓：`engine/runtime/src/state_store/paper.rs`；仅用于独立模拟，不能被当作真实账户余额或 Nautilus Position Cache。
-- 上述存储继续使用相同 PostgreSQL schema 和既有表，**没有重建、复制或删除历史数据**。目前由 Runtime 在 Ledger 初始化后建立自己的数据库连接。当前不为目录整理而增设多个长期运行服务。
-- 2026-11-23 更新：原 Runtime 订单意图和只读对账实现已移除；相关历史数据未删除或迁移。
-- Legacy 订单、缺口和通用操作事件读写归 Runtime StateStore。资金经济证据仍归 Ledger。所有迁移均保留历史表，不执行自动删除。
-
-## 安全原则
-
-- Nautilus Account / Position 管理运行时余额、保证金和持仓；SeeAlpha 不再新增另一套账户快照引擎。
-- 订单发送前意图必须持久化；未知结果只允许查证，不得自动重发。
-- 未接通的原生执行报告和余额服务必须 fail-closed，不能以模拟数据替代实盘认证。
-- 历史成交及结算证明归 Movements；资产余额变化不等于已经确认的成交或结算。
-
-## Execution persistence ownership
-
-The former Runtime-owned order intent/recovery implementation was removed on 2026-11-23. The native production dispatcher and replacement recovery loop remain disabled. Ledger retains signed fills, settlements and economic evidence; historical execution tables remain intact with no DROP or backfill.
-
-## Ledger 源码收敛（2026-11-22）
-
-- `mod.rs` 是 Ledger crate 根入口，维护 Ledger 初始化、公共类型、连接锁和保留历史表的安全测试；原 `src/lib.rs` 已移除。
-- 租户登记及其 active 状态校验已退役，不再有 `ensure_tenant`。保留租户标识作为策略和历史数据范围字段。
-- `movements/verified_fills.rs` 持有 `fills()` 读取与认证成交写入；不新增原生订单状态机。
-- 旧 `src/records.rs` 已删除，迁移不修改 SQL Schema 或现有 API 方法签名。
-- 共享 PostgreSQL Schema 由 Runtime 启动时调用 `seealpha_database::bootstrap_engine_schema`，之后打开 Ledger/Strategy/Control。Ledger 仅在单元测试中初始化独立 fixture；不执行 DROP 或历史数据转换。
-
-> 2026-11-23 注：上文“应用状态职责迁出”记录了历史迁移方案，其中引用的旧 `state_store` 子模块已退役，不表示目前代码中仍存在这些功能。
-
-> 2026-11-23：新库初始化 SQL 已不创建 `tenants` 表；既有表保留历史数据，不再访问。前述历史迁移说明不代表旧 StateStore 子模块仍存在。
+旧的无生产消费者的订单恢复逻辑、模拟资金状态与快照已从 Ledger 移除。对账结果中的 `history_completeness_verified`、`exchange_balance_reconciled`、`position_reconciled` 必须明确为 false，直到真正完成认证。
