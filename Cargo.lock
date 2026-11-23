@@ -1647,9 +1647,12 @@ dependencies = [
 name = "seealpha-engine"
 version = "0.1.0"
 dependencies = [
+ "seealpha-catalog",
+ "seealpha-database",
  "seealpha-http",
+ "seealpha-ledger",
  "seealpha-market",
- "seealpha-runtime",
+ "seealpha-strategy",
  "serde_json",
  "tokio",
 ]
@@ -1668,19 +1671,16 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
- "hmac 0.12.1",
  "http-body-util",
  "rust_decimal",
  "seealpha-catalog",
  "seealpha-database",
+ "seealpha-execution",
  "seealpha-ledger",
  "seealpha-market",
- "seealpha-runtime",
+ "seealpha-strategy",
  "serde",
  "serde_json",
- "sha2 0.10.9",
- "subtle",
- "thiserror",
  "tokio",
  "tower",
  "tower-http",
@@ -1713,21 +1713,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "seealpha-runtime"
-version = "0.1.0"
-dependencies = [
- "rust_decimal",
- "seealpha-catalog",
- "seealpha-database",
- "seealpha-execution",
- "seealpha-ledger",
- "seealpha-market",
- "seealpha-strategy",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]

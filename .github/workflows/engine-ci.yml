@@ -157,19 +157,18 @@ jobs:
       - name: Local synthetic HTTP smoke (no exchange credentials)
         run: |
           docker run -d --name seealpha-engine-ci -p 127.0.0.1:18766:8766 \
-            -e ENGINE_HOST=0.0.0.0 -e ENGINE_AUTH_MODE=token -e ENGINE_TOKEN=ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef \
-            -e ENGINE_TENANT_ID=42 \
+            -e ENGINE_HOST=0.0.0.0 -e ENGINE_ALLOW_UNAUTHENTICATED_REMOTE=1 \
             seealpha-engine:native
           trap 'docker logs seealpha-engine-ci || true; docker rm -f seealpha-engine-ci || true' EXIT
           for i in $(seq 1 50); do
-            if curl -fsS --max-time 2 -H 'Authorization: Bearer ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef' http://127.0.0.1:18766/health > /tmp/engine-health.json; then
+            if curl -fsS --max-time 2 http://127.0.0.1:18766/health > /tmp/engine-health.json; then
               break
             fi
             sleep 1
           done
           jq -e '.contract_version == "2"' /tmp/engine-health.json
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/health)" = 401
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef' http://127.0.0.1:18766/tenants/99/jobs)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/health)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18766/tenants/99/jobs)" = 404
 
       - name: Local PostgreSQL schema and restart smoke (no exchange credentials)
         run: |
@@ -177,9 +176,6 @@ jobs:
           volume=seealpha-pg-ci-state
           docker volume create "$volume"
           docker run -d --name seealpha-pg-ci -v "$volume:/app/.local/state" \
-            -e ENGINE_AUTH_MODE=token \
-            -e ENGINE_TOKEN=ci-engine-token-0123456789abcdef0123456789abcdef0123456789abcdef \
-            -e ENGINE_TENANT_ID=42 \
             seealpha-engine:native
           trap 'docker logs seealpha-pg-ci || true; docker rm -f seealpha-pg-ci || true; docker volume rm "$volume" || true' EXIT
           ready=0
