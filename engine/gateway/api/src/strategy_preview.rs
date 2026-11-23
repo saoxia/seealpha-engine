@@ -28,7 +28,7 @@ pub(crate) fn preview_strategies(
             volume: bar.volume.to_string(),
         }).collect::<Vec<_>>();
         let loads = state.strategy_store
-            .strategies(& &account_id)
+            .strategies(account_id)
             .map_err(|e|AppError::conflict(e.to_string()))?;
 
         let mut seen = BTreeSet::new();
@@ -48,7 +48,7 @@ pub(crate) fn preview_strategies(
             let outcome = execute_issued_native(
                 load,
                 AccountScope {
-                    account_id: &account_id,
+                    account_id,
                 },
                 &strategy.archive,
                 ExecutionInput {
