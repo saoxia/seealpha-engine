@@ -2,16 +2,16 @@
 
 ## 当前实现与代码入口
 
-本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `engine/apps/trading_engine` 编译出的 `seealpha-engine`。当前策略实现位于 `engine/strategy/`，研究授权与范围校验位于 `engine/gateway/api/src/research/`，已合并进 `seealpha-http` crate，没有运行中的 Python Engine、Python 策略宿主或 Python Platform 共享契约文件。旧版 Python Engine、原 `core/` 和 `python/strategy_host/` 属于迁移历史。当前的 `engine/` 是 Rust 源码汇总目录，**不得把旧 Python 代码恢复为运行时依赖**。
+本仓库是 Rust Cargo workspace，默认 HTTP 服务为 `engine/apps/trading_engine` 编译出的 `seealpha-engine`。2026-11-23 已退役 `engine/strategy/` 的 EMA 示例、下发存储及预览路由；当前没有运行中的策略执行器。历史研究授权模块和 Python Engine、Python 策略宿主均不在现行运行链路。旧版 Python Engine、原 `core/` 和 `python/strategy_host/` 属于迁移历史。当前的 `engine/` 是 Rust 源码汇总目录，**不得把旧 Python 代码恢复为运行时依赖**。
 
 当前架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，代码导航见 [docs/architecture/MODULE_MAP.md](docs/architecture/MODULE_MAP.md)。如文档相互矛盾，以当前 Rust 代码和测试为实际实现依据，同时修订不一致的现行说明。
 
 ## 边界和安全
 
-- `engine/gateway/api` 持有 HTTP v2 与 Research HTTP 路由，`engine/gateway/mcp` 持有 Research MCP 协议处理；应用入口装配 Store，Gateway 调用领域模块；行情、策略、目标仓位、账本与交易所连接归属各自的领域 crate；旧回测 crate 已退役。不再存在 Runtime crate、Engine Token 认证和租户级门禁。
+- `engine/gateway/api` 持有 HTTP v2 与 Research HTTP 路由，`engine/gateway/mcp` 持有 Research MCP 协议处理；应用入口装配 Store，Gateway 调用领域模块；行情、目标仓位、账本与交易所连接归属各自的领域 crate；策略运行尚未重新接入，未来优先复用 NautilusTrader 原生能力。旧回测 crate 已退役。不再存在 Runtime crate、Engine Token 认证和租户级门禁。
 - 不在没有明确授权和匹配测试时更改 HTTP v2 数据接口、数据格式、持久化状态、订单幂等、真实账户安全门禁或生产部署。
 - 订单必须先登记请求意图；外部请求未知结果不得盲目再次发送；只有被核验的真实成交证据能更新已成交事实；模拟成交必须与真实成交分离。
-- 行情读取与策略订阅不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据；未来新回测实现必须遵守同样的安全边界。
+- 行情读取不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据；未来策略订阅和新回测实现必须遵守同样的安全边界。
 - 不触碰真实账户、真实下单、生产密钥、旧数据重建、生产状态卷或数据库迁移。使用合成/离线数据验证重构。
 - `engine/execution` 和 `engine/risk` 是跨现有 crate 的逻辑领域，参见 `docs/architecture/`；不存在同名独立 crate，不创建空实现。
 - 一级领域清单与状态见 `docs/architecture/DOMAIN_LAYOUT.md`。

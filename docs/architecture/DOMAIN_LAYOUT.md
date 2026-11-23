@@ -1,59 +1,31 @@
-# SeeAlpha Engine 一级领域布局（方案 B）
+# SeeAlpha Engine 当前领域布局
 
-本文件描述**当前代码归属与长期领域边界**。Rust 引擎源码统一位于仓库的 `engine/`，部署、文档、测试和基准测试等工程文件与其并列。规划不等于实现；真正功能状态以源码、Cargo Workspace 和验证结果为准。
+当前源码以 `engine/` 下的 Rust crates 为主。规划领域不等于已实现功能；以代码、Workspace 和验证结果为准。
 
 ## 已落地的业务领域
 
-| 目录 | 职责与实施状态 |
+| 目录 | 职责与现状 |
 | --- | --- |
-| `engine/pipeline/` | 整个行情服务：Nautilus 实时节点、补充数据源、数据完整性验证、Catalog 访问 |
-| `engine/strategy/` | 策略授权、原生策略、目标持仓发布；由 `alpha/strategy/` 原样迁入，Cargo 包名保持 `seealpha-strategy` |
-| `engine/execution/` | 多策略组合、目标持仓、资金分配、净额与篮子；当前也包含部分风险逻辑 |
-| `engine/ledger/` | 账户、订单意图、成交事实、对账证据与账本持久化 |
-| `engine/connection/` | Binance Options 专属协议规范化；Spot/USD-M 执行工厂位于 `engine/pipeline/sources/shared/nautilus/`，真实订单发送尚未接通 |
+| `engine/pipeline/` | Nautilus 原生行情节点、补充数据源、数据完整性验证与 Catalog |
+| `engine/execution/` | 目标数量、净额与裁剪计算；作为独立 crate 保留，当前没有策略 API 调用 |
+| `engine/ledger/` | 订单意图、账户事件、真实成交、对账与存储 |
+| `engine/database/` | PostgreSQL 数据访问、schema 引导 |
+| `engine/connection/` | Binance Options 规范化；Spot/USD-M 的 Nautilus 执行工厂仍属非实盘接入阶段 |
+| `engine/gateway/` | HTTP API、研究只读入口、MCP |
+| `engine/apps/` | 进程入口、服务装配与运行 |
 
-### Binance Options 专属代码边界（分步迁移）
+2026-11-23 已删除仅运行内置 EMA 交叉示例的 `engine/strategy/`，以及关联的包检查、不可变下发和预览 HTTP 路由。它们当时没有独立于示例的真实生产策略使用方。该操作**不代表 Nautilus 已经接管策略执行**。
 
-`engine/connection/binance/` 已删除。`engine/connection/binance-options/` 保留 Options 领域规范化，但没有签名私有通信通路；Spot / USD-M 使用 NautilusTrader 原生数据节点和执行工厂离线配置，Runtime 仍只登记订单。
+## 尚未接通的目标能力
 
-## 规划中的业务领域（当前无同名源码目录）
+- **策略**：计划复用 NautilusTrader 的原生 Strategy、Actor、指标与生命周期；目前不启动自研策略宿主，也不允许上传任意 Python/Rust 代码运行。
+- **Risk / Execution**：交易风险预算、订单准入、撤改单、幂等与失败恢复仍需独立端到端设计。现有目标数量算法不是实盘交易权限。
+- **回测**：旧模拟撮合和回测模块已删除，后续另行规划。
 
-| 规划目录 | 目标职责 | 当前归属 |
-| --- | --- | --- |
-| `engine/risk/` | 风险预算、敞口、组合限制、动态风控与订单准入 | `engine/execution/`、`engine/runtime/`、`engine/pipeline/sources/shared/nautilus/` |
-| `engine/execution/` | 订单决策、生命周期、撤改、幂等、未知结果恢复与执行优化 | `engine/runtime/`、`engine/ledger/`、`engine/pipeline/sources/shared/nautilus/` |
+## 应用与数据边界
 
-已清理未被业务代码调用的独立 `seealpha-execution` crate；订单状态安全规则仍应在实际执行/对账接入时由其真实所有者实现和验证。不为了目录完整而创建空目录、空 crate 或兼容包装。独立前必须先确认安全事务边界与回归测试。参见 [Risk](risk.md)、[Execution](execution.md)。
+应用入口在 `engine/apps/`；HTTP 路由在 `engine/gateway/api/`。旧 `engine/runtime/` 已删除。行情持久化存储位于仓库根级 `data/` 或部署挂载卷，不在源码树内。
 
-## 应用和对外边界
+只读历史查询不等于行情 READY；真实订单 ACK 不等于成交。只有核验的真实成交证据才能更新权威账户事实。当前没有生产实盘订单发送通路，也不在本次示例退役中删除既有 PostgreSQL 数据。
 
-- `engine/runtime/`：用例编排、租户/账户/会话管理、研究任务、订单恢复
-- `engine/gateway/`：对外协议入口；`api/` 为 HTTP API crate，内部 `src/research/` 负责研究签名授权与范围校验；`mcp/` 为复用现有 HTTP 服务的 MCP 协议模块，不增加独立进程或监听端口
-- `engine/apps/`：Engine 主程序和其他可执行入口
-
-## 回测移除边界
-
-旧 `engine/backtest/`、模拟撮合、历史策略回放和回测结果计算已删除，当前未保留回测兼容入口。独立行情存储与历史读取属于 Pipeline，不因删除回测而移除。未来回测应作为新需求重新设计。
-
-## 持久化数据目录
-
-仓库根级 `data/` 用于运行时产生的 Feather、Parquet Catalog 和历史归档；仅 `data/README.md` 作为目录说明纳入 Git，实际数据文件被 `.gitignore`、`.dockerignore` 排除，不是 Rust Workspace 成员。生产环境可挂载独立数据卷，路径由部署参数指定。此次目录调整不移动、删除或修改已有生产数据。参见 [数据目录约定](DATA_LAYOUT.md)。
-
-## 工程设施与资产
-
-本节目录均在仓库根目录，与 `engine/` 并列。根目录 `Cargo.toml` 和 `Cargo.lock` 管理 Rust Workspace，`engine/pipeline/sources/shared/nautilus` 作为独立 Cargo 项目被明确排除，`benchmarks/rust` 仍属于 Workspace。
-
-
-- 测试：crate 单测、集成测试均就近放置；不再保留只有 Python `__init__.py` 的根目录 `tests/`
-- `benchmarks/`：性能基准
-- `docker/`：现有 Docker 构建和部署，沿用名称
-- `docs/`：现行架构与历史审计；历史迁移快照不批量重写
-- `.github/`：CI 与仓库工作流
-- `scripts/`：将来有自动化脚本再创建，目前不创建空目录
-
-## 维护不变量
-
-1. 目录调整不变更 crate 名、Rust 公开 API、HTTP 契约、持久化格式、订单幂等或租户隔离。
-2. 真实订单 ACK 不等于成交；只有独立核验的真实成交证据才能更新账本事实。
-3. 行情读取不得隐式启动生产者、伪造 READY 或缺失的行情证据。未来重建的回测能力必须遵守同样的数据真实性要求。
-4. 领域边界不等于同步调用顺序；重构时保留正确的事务和失败恢复语义。
+不要为了形式完整创建空 crate、替代实现或兼容转发；需要新能力时先明确 Nautilus 原生 API 的边界与验证方案。
