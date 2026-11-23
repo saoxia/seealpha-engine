@@ -23,7 +23,7 @@ impl Runtime {
     /// Run only account-issued strategies against supplied bars.
     /// Never register a session, infer paper fills, or mutate positions.
     pub fn preview_strategies(&self, request: PreviewRequest) -> Result<Value, RuntimeError> {
-        let tenant = self.require_active(&request.tenant_id)?;
+        let purpose = self.strategy_purpose(&request.tenant_id)?;
         if request.strategies.is_empty() {
             return Err(RuntimeError::Conflict("该租户账户没有已下发的策略。".into()));
         }
@@ -61,7 +61,7 @@ impl Runtime {
                 AccountScope {
                     tenant_id: &request.tenant_id,
                     account_id: &request.account_id,
-                    purpose: &tenant.purpose,
+                    purpose,
                 },
                 &strategy.archive,
                 ExecutionInput {

@@ -59,11 +59,6 @@ CREATE TABLE IF NOT EXISTS account_event_allocations (
 CREATE INDEX IF NOT EXISTS account_event_allocations_by_evidence
     ON account_event_allocations(tenant_id,account_id,environment,event_id);
 
-CREATE TABLE IF NOT EXISTS tenants (
-    tenant_id TEXT PRIMARY KEY,
-    purpose TEXT NOT NULL,
-    status TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS orders (
     tenant_id TEXT NOT NULL,
     account_id TEXT NOT NULL,

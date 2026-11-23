@@ -93,6 +93,13 @@ impl Config {
                 }
             }
         }
+        if let Some(purpose) = &self.tenant_purpose {
+            if !matches!(purpose.as_str(), "development" | "production")
+                || self.tenant_id.is_none()
+            {
+                return Err("ENGINE_TENANT_PURPOSE requires a pinned tenant and development or production".into());
+            }
+        }
         if let Some(key) = &self.research_signing_key {
             if key.len() < 32 || key.chars().any(|char| char == '\n' || char == '\r') {
                 return Err("Research signing key must be at least 32 characters".into());

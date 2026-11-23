@@ -1,5 +1,5 @@
 //! Built-in Rust strategy inspection, issuance, and authenticated execution.
-//! Tenant status is checked by Runtime; no package grants trading permission.
+//! The caller supplies a trusted tenant/account scope; no package grants trading permission.
 use crate::executor::{ExecutionInput, IssuedNativeEmaExecutor, StrategyExecutor};
 use crate::native_ema::run_native_ema;
 use crate::native_manifest::{authorize_native_manifest, inspect_native_manifest};
@@ -69,7 +69,7 @@ pub fn inspect_native_package(
 
 impl StrategyStore {
     /// Validate immutable issuance identity, prepare parameters and persist it.
-    /// The caller must first verify that this tenant is active.
+    /// The caller must supply a trusted tenant scope and purpose.
     pub fn issue_native(
         &self,
         submission: &NativeSubmission<'_>,
@@ -177,7 +177,7 @@ impl StrategyStore {
 }
 
 /// Bind a requested preview to its trusted persisted issuance before executing.
-/// Runtime supplies the active tenant/account scope and market input.
+/// Runtime supplies the configured tenant/account scope and market input.
 pub fn execute_issued_native(
     load: &StrategyLoad,
     scope: AccountScope<'_>,
