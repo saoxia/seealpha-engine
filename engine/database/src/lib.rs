@@ -245,7 +245,7 @@ mod schema_contract_tests {
         // All application tables are account-, product-, or instrument-scoped.
         for table in [
             "order_intents", "order_observations", "orders", "fills",
-            "quarantined_unverified_fills", "account_evidence_events",
+            "account_evidence_events",
             "account_event_allocations", "account_settlements",
             "pipeline_subscriptions", "strategy_issuances",
         ] {
@@ -255,7 +255,7 @@ mod schema_contract_tests {
         }
         for table in [
             "order_intents", "order_observations", "orders", "fills",
-            "quarantined_unverified_fills", "account_evidence_events",
+            "account_evidence_events",
             "account_event_allocations", "account_settlements",
             "pipeline_subscriptions", "strategy_issuances",
         ] {

@@ -14,7 +14,7 @@ Ledger 只保存 SeeAlpha 特有的、经过认证的经济事件。NautilusTrad
 
 Ledger 的经济证据表及订单历史表按账户、环境和业务事件身份建键，不引入安装级身份列。
 
-共享 schema 由应用启动时的 `seealpha_database::bootstrap_engine_schema` 在全新数据库中创建。不保留旧表迁移或兼容代码；升级旧实例时应先停止服务并重建 SeeAlpha 数据库。
+共享 schema 由应用启动时的 `seealpha_database::bootstrap_engine_schema` 初始化。只定义当前所需的数据结构，不引入旧版本的数据迁移或隔离表。
 
 仅对账户和环境进行隔离是有意设计：同一个 `account_id` 的 `production` 与 `sandbox` 不能共享成交和资金费证据。
 

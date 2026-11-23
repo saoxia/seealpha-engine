@@ -1,17 +1,15 @@
-//! HTTP v2 compatibility endpoints migrated from the Python Engine.
+//! Read-only account-independent market data endpoints.
 //! No handler in this module can start a live collector or issue an order.
 use crate::{AppError, AppState};
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
-    routing::{get, post},
+    extract::State,
+    routing::post,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
-        .route("/accounts/{account_id}/positions",get(positions))
         .route("/data/datasets",post(data_inventory))
         .route("/data/catalog/events",post(native_events))
         .route("/data/catalog/inventory",post(native_inventory))
@@ -34,27 +32,6 @@ pub(crate) fn dataset_inventory(state: &AppState) -> Result<Option<Vec<Value>>, 
         .then(a["symbol"].as_str().cmp(&b["symbol"].as_str()))
         .then(a["level"].as_str().cmp(&b["level"].as_str())));
     Ok(Some(records))
-}
-
-#[derive(Deserialize)]
-struct Environment {
-    environment: Option<String>,
-}
-async fn positions(
-    State(_state): State<AppState>,
-    Path(account): Path<String>,
-    Query(query): Query<Environment>,
-) -> Result<Json<Value>, AppError> {
-    let env = query
-        .environment
-        .ok_or_else(|| AppError::bad_request("账户环境无效。"))?;
-    // Old Ledger positions are not an authoritative live or paper Position
-    // service. Do not return an empty array (which could be interpreted as a
-    // verified flat account) while the native position reader is unavailable.
-    let _ = (account, env);
-    Err(AppError::conflict(
-        "Nautilus 原生持仓查询尚未接入，旧 Ledger 仓位不可用。",
-    ))
 }
 
 async fn data_inventory(

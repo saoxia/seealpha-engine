@@ -1,5 +1,4 @@
-//! Contract parity cases from legacy engine/execution/targets.py.
-//! Native-only tests do not authorize removing the legacy Python runtime.
+//! Target quantity and weight contract tests.
 use rust_decimal::Decimal;
 use seealpha_execution::{TargetHolding, TargetHoldingError};
 use std::str::FromStr;

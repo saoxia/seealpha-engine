@@ -42,64 +42,6 @@ impl Ledger {
     }
 
 
-    /// Move previously auto-generated empty 'fill-{client_order_id}' rows into
-    /// a non-destructive quarantine. Historical raw evidence remains available
-    /// for audit, but the trading fill table no longer claims a real execution.
-    pub fn quarantine_synthetic_fills(&self) -> Result<usize, LedgerError> {
-        let mut conn = self.lock()?;
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(db_error)?;
-        let mut stmt = tx
-            .prepare("SELECT account_id,environment,fill_id,fill_json FROM fills")
-            .map_err(db_error)?;
-        let rows = stmt
-            .query_map(&[], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                ))
-            })
-            .map_err(db_error)?;
-        let mut suspected = Vec::new();
-        for row in rows {
-            let (account, env, id, text) = row.map_err(db_error)?;
-            let Ok(value) = serde_json::from_str::<Value>(&text) else {
-                continue;
-            };
-            let client = value["client_order_id"].as_str().unwrap_or("");
-            if !client.is_empty()
-                && id == format!("fill-{client}")
-                && value["trade_id"].as_str() == Some(id.as_str())
-                && value["quantity"].is_null()
-                && value["price"].is_null()
-                && value["symbol"].as_str().is_some()
-            {
-                suspected.push((account, env, id, text));
-            }
-        }
-        drop(stmt);
-        for (account, env, id, text) in &suspected {
-            tx.execute(
-                "INSERT INTO quarantined_unverified_fills
-                 (account_id,environment,fill_id,fill_json,reason,quarantined_at)
-                 VALUES($1,$2,$3,$4,'synthetic_order_ack_fill',$5) ON CONFLICT DO NOTHING",
-                params![account, env, id, text, now_ms()],
-            )
-            .map_err(db_error)?;
-            tx.execute(
-                "DELETE FROM fills WHERE account_id=$1
-                 AND environment=$2 AND fill_id=$3",
-                params![account, env, id],
-            )
-            .map_err(db_error)?;
-        }
-        tx.commit().map_err(db_error)?;
-        Ok(suspected.len())
-    }
-
     pub fn import_verified_fills(
         &self,
         account: &str,
@@ -163,13 +105,7 @@ impl Ledger {
         Ok(rows.len())
     }
 
-    pub fn quarantined_fill_count(&self, account: &str) -> Result<i64, LedgerError> {
-        let conn = self.lock()?;
-        conn.query_row(
-            "SELECT COUNT(*) FROM quarantined_unverified_fills WHERE account_id=$1",
-            params![account],|r|r.get(0),
-        ).map_err(db_error)
-    }
+
 }
 
 #[cfg(test)]
@@ -177,33 +113,20 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[test]
-    fn quarantines_fabricated_ack_without_losing_raw_evidence() {
+    fn rejects_unverified_fills_and_preserves_verified_idempotence() {
         let path = std::env::temp_dir().join(format!(
             "seealpha-fill-{}-{}.db_error",
             std::process::id(),
             now_ms()
         ));
         let book = Ledger::open(&path).unwrap();
-        let legacy = json!({"trade_id":"fill-A","client_order_id":"A","symbol":"ETHUSDT"});
-        // Seed a pre-migration row directly: live raw upserts are now forbidden.
-        {
-            let conn = book.lock().unwrap();
-            conn.execute(
-                "INSERT INTO fills(account_id,environment,fill_id,fill_json,updated_at)
-                 VALUES('a','production','fill-A',$1,0)",
-                seealpha_database::params![legacy.to_string()],
-            )
-            .unwrap();
-        }
         // Unsigned or fabricated fill input cannot enter the verified table.
         assert!(book.import_verified_fills(
              "a", "production", "9",
             &[json!({"trade_id":"fill-B","venue_order_id":"9",
                 "quantity":"1","price":"100","source":"order_ack"})],
         ).is_err());
-        assert_eq!(book.quarantine_synthetic_fills().unwrap(), 1);
         assert!(book.fills( "a", "production").unwrap().is_empty());
-        assert_eq!(book.quarantined_fill_count( "a").unwrap(), 1);
         let real = json!({"trade_id":"binance:futures_um:ETHUSDT:123",
             "venue_order_id":"9","quantity":"1","price":"100",
             "source":"signed_exchange_user_trades"});

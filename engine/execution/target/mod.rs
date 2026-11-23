@@ -53,7 +53,7 @@ impl TargetHolding {
     }
 
     /// Validate allocation even for an absolute-quantity target to match the
-    /// legacy contract. Decimal cannot represent NaN or infinity.
+    /// target contract. Decimal cannot represent NaN or infinity.
     pub fn signed_quantity(&self, allocation: Decimal) -> Result<Decimal, TargetHoldingError> {
         if allocation <= Decimal::ZERO {
             return Err(TargetHoldingError::Allocation);
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn target_holding_matches_legacy_weight_and_quantity_semantics() {
+    fn target_holding_validates_weight_and_quantity_semantics() {
         let weight = TargetHolding::new("ETHUSDT", None, Some(Decimal::new(-25, 2))).unwrap();
         assert_eq!(
             weight.signed_quantity(Decimal::from(8)).unwrap(),

@@ -27,7 +27,7 @@ pub struct StrategyLoad {
     pub version: String,
     pub parameters_json: String,
     pub entry_point: String,
-    /// Hash of the executable manifest bytes (legacy-compatible).
+    /// Hash of the executable manifest bytes.
     pub package_hash: String,
     /// Exact validated native manifest bytes handed to the executor; never an arbitrary ZIP.
     #[serde(skip)]
@@ -146,7 +146,7 @@ impl StrategyStore {
     }
 
     /// Reconstruct the index from published issuance directories after a crash
-    /// or loss of the metadata database; no legacy Ledger strategy tables.
+    /// or loss of the metadata database.
     fn rebuild_index(&self) -> Result<(), StoreError> {
         let _guard = self.lock.lock().map_err(err)?;
         let mut conn = self.index.lock().map_err(err)?;
@@ -184,7 +184,7 @@ impl StrategyStore {
 
     fn check_artifact(&self, folder: &Path, record: &StoredRecord) -> Result<Vec<u8>, StoreError> {
         let manifest = folder.join("manifest.json");
-        let file = if manifest.exists() { manifest } else { folder.join("legacy-archive.bin") };
+        let file = manifest;
         let bytes = fs::read(file).map_err(err)?;
         if sha(&bytes) != record.load.package_hash {
             return Err(conflict("stored strategy manifest was modified"));
@@ -248,7 +248,7 @@ impl StrategyStore {
     fn folder(&self, load: &StrategyLoad) -> PathBuf {
         self.root.join(&load.account_id).join(&load.issuance_id)
     }
-    /// Legacy raw native manifest is migrated without changing its identity.
+    /// Store a native manifest with its immutable issuance identity.
     pub fn insert(&self, load: &StrategyLoad) -> Result<(), StoreError> {
         self.insert_artifact(load, None)
     }
@@ -279,7 +279,7 @@ impl StrategyStore {
             let prior = read_record(&final_dir.join("issuance.json"))?;
             if prior != record { return Err(conflict("immutable issuance differs")); }
             let manifest = final_dir.join("manifest.json");
-            let path = if manifest.exists() { manifest } else { final_dir.join("legacy-archive.bin") };
+            let path = manifest;
             let current = fs::read(path).map_err(err)?;
             if current != load.archive || sha(&current) != load.package_hash {
                 return Err(conflict("stored manifest was modified"));
@@ -324,7 +324,7 @@ impl StrategyStore {
                     write_new(&target, contents)?;
                 }
             } else {
-                let file = if load.archive.starts_with(&[0x50, 0x4b, 0x03, 0x04]) { "legacy-archive.bin" } else { "manifest.json" };
+                let file = "manifest.json";
                 write_new(&stage.join(file), &load.archive)?;
             }
             if let Some(bytes) = zip { write_new(&stage.join("package.zip"),bytes)?; }

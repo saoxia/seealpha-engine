@@ -25,8 +25,7 @@ where
     normalize_options_account_snapshot(&account, &positions).map_err(E::from)
 }
 
-/// Preserve the exact historical JSON contract consumed by Runtime/Ledger:
-/// "product", "balances", "positions", "observed_at".
+/// Normalize the signed exchange response into a validated account view.
 ///
 /// This validates container shape and does not claim the snapshot is current,
 /// complete, or an authorization to open positions.
@@ -35,12 +34,9 @@ pub fn normalize_options_account_snapshot(
     positions: &Value,
 ) -> Result<Value, OptionsEvidenceError> {
     // Official marginAccount response uses an "asset" array.
-    // Accept the previous envelopes only for offline compatibility.
     let balances = account
         .get("asset")
-        .or_else(|| account.get("balances"))
-        .unwrap_or(account)
-        .as_array()
+        .and_then(Value::as_array)
         .ok_or(OptionsEvidenceError::Unconfirmed)?;
     let positions = positions
         .as_array()
@@ -237,19 +233,20 @@ mod tests {
     }
 
     #[test]
-    fn accepts_both_supported_signed_account_envelopes_without_revaluation() {
+    fn accepts_official_signed_margin_account_envelope() {
         let positions = json!([{"symbol":"BTC-271231-90000-P","quantity":"1.00"}]);
-        for account in [
-            json!([{"asset":"USDT","marginBalance":"0.20"}]),
-            json!({"balances":[{"asset":"USDT","marginBalance":"0.20"}]}),
-            json!({"asset":[{"asset":"USDT","marginBalance":"0.20"}]})
-        ] {
-            let result = normalize_options_account_snapshot(&account, &positions).unwrap();
-            assert_eq!(result["product"], "options");
-            assert_eq!(result["balances"][0]["marginBalance"], "0.20");
-            assert_eq!(result["positions"], positions);
-            assert!(result["observed_at"].is_null());
-        }
+        let account = json!({"asset":[{"asset":"USDT","marginBalance":"0.20"}]});
+        let result = normalize_options_account_snapshot(&account, &positions).unwrap();
+        assert_eq!(result["balances"][0]["marginBalance"], "0.20");
+        assert_eq!(result["positions"], positions);
+        assert!(result["observed_at"].is_null());
+        assert_eq!(
+            normalize_options_account_snapshot(
+                &json!({"balances":[{"asset":"USDT","marginBalance":"0.20"}]}),
+                &positions
+            ),
+            Err(OptionsEvidenceError::Unconfirmed)
+        );
     }
 
     #[test]
