@@ -191,7 +191,7 @@ elif [[ "${SEEALPHA_NATIVE_ACCOUNT_OBSERVER:-0}" != "0" ]]; then
 fi
 
 # Product-local autonomous market data loops (no Engine data-job dispatcher).
-# They are inactive until a tenant defines a subscription via the config API.
+# They are inactive until a subscription is defined via the config API.
 if [[ "${SEEALPHA_PIPELINE_ENABLED:-1}" == "1" ]]; then
   # Pipeline writes into the same Catalog root that Runtime reads.
   catalog_root="${ENGINE_CATALOG_DIR:-/app/data/catalog}"
