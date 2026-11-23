@@ -41,16 +41,7 @@ To bind outside loopback (including `ENGINE_HOST=0.0.0.0` in a container) operat
 
 ## Data and execution safety
 
-The application runs with one installation scope. Strategy issuances are keyed by account and issuance ID; Pipeline subscriptions are keyed by product and instrument. PostgreSQL schemas are **fresh-install only**: there is no automatic conversion or retention of pre-removal databases. Before using the new build, stop the Engine, Pipeline and Strategy processes and reset the former application schema. Do not reset a running Engine. The PostgreSQL cluster is shared with NautilusTrader, so dropping only `seealpha` avoids deleting unrelated native cache data.
-
-```bash
-# With the application stopped and SEEALPHA_DATABASE_URL set:
-psql "$SEEALPHA_DATABASE_URL" -v ON_ERROR_STOP=1 -f docker/reset-seealpha-schema.sql
-# Remove the old immutable strategy issuance folders under your Engine state directory.
-# Then restart the application to create a fresh schema.
-```
-
-If the entire PostgreSQL cluster is disposable, stop the container first and delete its **actual mounted PostgreSQL data volume** instead; on the next start, the container initializes an empty database. The source repository cannot delete an existing deployed volume.
+The application has a single installation scope. Strategy issuances are keyed by account and issuance ID; Pipeline subscriptions are keyed by product and instrument. PostgreSQL state is initialized directly from the current schema at first start. No legacy database upgrade or data-conversion path is supported.
 
 No real order transmission is enabled. A strategy preview only computes signals and target exposures, never fills or actual positions. Proven exchange fills, request idempotency and order-admission safety must be independently verified before any production execution cutover.
 
