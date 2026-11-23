@@ -6,7 +6,7 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 
 ## 源码与工程结构
 
-业务源码统一放在 [engine/](engine/)。`docker/`、`benchmarks/`、`docs/`、`.github/` 与 `engine/` 并列。Rust 测试放在各 crate 的 `src/` 或 `tests/`，不再保留空的根级 Python `tests/`。根目录 `Cargo.toml` 管理全部 14 个 Rust Workspace 成员。
+业务源码统一放在 [engine/](engine/)。`docker/`、`benchmarks/`、`docs/`、`.github/` 与 `engine/` 并列。Rust 测试放在各 crate 的 `src/` 或 `tests/`，不再保留空的根级 Python `tests/`。根目录 `Cargo.toml` 管理全部 13 个 Rust Workspace 成员。
 
 ### engine/ 内的业务领域与应用
 
@@ -15,7 +15,6 @@ SeeAlpha 独立量化引擎。主服务为 Rust 二进制 `seealpha-engine`。�
 - `engine/execution/`：目标净额和风险裁剪
 - `engine/ledger/`：PostgreSQL 账本（SeeAlpha 专属 schema）
 - `engine/connection/`：Binance Options 专属规范化接口（Spot/USD-M 原生工厂位于 `pipeline/sources/shared/nautilus/`）
-- `engine/backtest/`：历史回放与回测
 - `engine/runtime/`：Runtime、租户和交易会话编排
 - `engine/gateway/`：对外 HTTP API、MCP 协议入口和研究授权校验（独立源码目录，同一 HTTP 服务）
 - `engine/apps/`：Engine 二进制入口
@@ -60,7 +59,7 @@ docker run --rm -p 127.0.0.1:8766:8766 \
 }
 ```
 
-将该请求发送到 `POST /tenants/{tenant_id}/accounts/{account_id}/paper/sessions`，带入现有认证和 `X-SeeAlpha-Engine-Contract-Version: 2` 请求头。该开发示例不向交易所下单。
+上述 JSON 仅展示原生 EMA 参数形态，**不是可运行的纸面会话请求**；旧 `paper/sessions` 路由已退役。策略可通过现有只读预览接口评估目标发布，不产生模拟成交或回测结果。
 
 已发行策略现在要求原生清单字节（JSON，非 ZIP）：
 
@@ -69,6 +68,10 @@ docker run --rm -p 127.0.0.1:8766:8766 \
 ```
 
 清单必须通过 SHA-256 与可信发行记录匹配，同时满足租户、账户、发行用途和策略元数据一致性检查。执行路径调用预编译的 Rust EMA，**不允许**直接上传并运行任意 Rust 代码。当前并未提供将任意 Python 策略自动翻译成 Rust 的功能。
+
+## 回测能力状态
+
+历史回测、离线事件回放和模拟撮合的自研实现已全部移除。当前 Engine 不提供可运行的回测 API、任务队列或回测报告。未来将重新设计回测能力，不以旧实现为兼容基线；行情历史读取、Catalog、策略和执行领域仍保留。
 
 ## 本地开发
 

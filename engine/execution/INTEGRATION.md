@@ -37,10 +37,6 @@ OMS event log, settlement ledger or streaming subscriber belongs in Execution.
 
 ## Related modules
 
-- `seealpha-backtest::paper`: simulated target fills and bar-synchronous
-  replay for paper sessions only.
-- `seealpha-backtest::carry_history`: read-only historical spot/perp bars
-  and funding observations.
 - `connection/binance-options::settlement`: Options exchange exercise
   evidence normalization, not synthetic cash movements.
 

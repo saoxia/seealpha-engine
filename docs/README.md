@@ -13,6 +13,8 @@
 | 行情的配置/采集/读取设计目标 | [MARKET_DATA_ARCHITECTURE](MARKET_DATA_ARCHITECTURE.md) |
 | Platform HTTP 集成背景 | [PLATFORM_INTEGRATION](PLATFORM_INTEGRATION.md)（含过时 Python 命令，勿当作现行启动说明） |
 
+**回测已退役**：`engine/backtest/` 和相关回测 API/基准代码已删除；未来将从头开发。历史迁移记录中提到的回测接口和路径均不代表当前能力。
+
 ## 历史和迁移记录
 
 `RUST_*.md`、`PYTHON_*.md`、`LEGACY_*.md`、`ENGINE_LAYOUT.md`、`TEST_MAP_*.md`、`NATIVE_CAPABILITY_*.md` 等部分文档记录的是过去某个分支/阶段的状态，**不是当前功能验收结论**。
