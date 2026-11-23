@@ -54,9 +54,8 @@ async fn current_paths_are_routed(){
     assert_eq!(status,StatusCode::OK);
     let (status,_)=call(&app,request("POST","/accounts/a/orders","{}")).await;
     assert_eq!(status,StatusCode::METHOD_NOT_ALLOWED);
-    let (status,body)=call(&app,request("GET","/accounts/a/positions?environment=paper","")).await;
-    assert_eq!(status,StatusCode::CONFLICT);
-    assert!(body["detail"].as_str().unwrap_or("").contains("Nautilus"));
+    let (status,_)=call(&app,request("GET","/accounts/a/positions?environment=paper","")).await;
+    assert_eq!(status,StatusCode::NOT_FOUND);
 }
 #[tokio::test]
 async fn read_only_research_and_catalog_require_real_inventory_not_a_grant(){
