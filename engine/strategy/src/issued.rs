@@ -1,7 +1,7 @@
 //! Issuance-bound strategy execution contract.
 //!
 //! Callers must obtain the issued record from the trusted strategy issuance store and compare it
-//! with the authenticated tenant/account. No claim made by the Python package
+//! with the authenticated account. No claim made by the Python package
 //! grants authority. Rust never exposes an order or data-control operation.
 
 use crate::{HostCommand, PackageMetadata, StrategyError, StrategyRun, inspect_archive, run_host};
@@ -14,7 +14,6 @@ static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy)]
 pub struct IssuedStrategy<'a> {
-    pub tenant_id: &'a str,
     pub account_id: &'a str,
     pub issuance_id: &'a str,
     pub code_key: &'a str,
@@ -25,8 +24,6 @@ pub struct IssuedStrategy<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct AccountScope<'a> {
-    /// Obtained from the authenticated request / selected Runtime tenant.
-    pub tenant_id: &'a str,
     pub account_id: &'a str,
 }
 
@@ -37,10 +34,8 @@ pub fn authorize_issued(
     caller: AccountScope<'_>,
     metadata: &PackageMetadata,
 ) -> Result<(), StrategyError> {
-    if !valid_identifier(issued.tenant_id, 128)
-        || !valid_identifier(issued.account_id, 40)
+    if !valid_identifier(issued.account_id, 40)
         || !valid_identifier(issued.issuance_id, 64)
-        || issued.tenant_id != caller.tenant_id
         || issued.account_id != caller.account_id
         || !super::valid_name(issued.code_key)
         || !super::valid_version(issued.version)
@@ -175,7 +170,6 @@ mod tests {
 
     fn issued<'a>(hash: &'a str) -> IssuedStrategy<'a> {
         IssuedStrategy {
-            tenant_id: "tenant-1",
             account_id: "account-1",
             issuance_id: "issue-1",
             code_key: "alpha_strategy",
@@ -186,11 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn only_matching_issuance_can_run_in_the_pinned_account_and_tenant() {
+    fn only_matching_issuance_can_run_in_the_pinned_account() {
         let hash = "a".repeat(64);
         let record = issued(&hash);
         let scope = AccountScope {
-            tenant_id: "tenant-1",
             account_id: "account-1",
         };
         authorize_issued(record, scope, &meta()).unwrap();
@@ -209,7 +202,6 @@ mod tests {
             authorize_issued(
                 record,
                 AccountScope {
-                    tenant_id: "tenant-2",
                     ..scope
                 },
                 &meta()
@@ -232,7 +224,6 @@ mod tests {
         let hash = "a".repeat(64);
         let record = issued(&hash);
         let scope = AccountScope {
-            tenant_id: "tenant-1",
             account_id: "account-1",
         };
         let params = serde_json::json!({});
