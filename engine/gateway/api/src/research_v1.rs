@@ -1,4 +1,4 @@
-//! Read-only Research datasets and optional MCP, without task grants or tenant auth.
+//! Read-only Research datasets and optional MCP, without task grants.
 use crate::{AppError,AppState};
 use axum::{Json,Router,extract::State,routing::get};
 use serde_json::{Value,json};
