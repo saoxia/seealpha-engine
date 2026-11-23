@@ -84,65 +84,6 @@ CREATE TABLE IF NOT EXISTS account_settlements (
     PRIMARY KEY(account_id,environment,product,event_kind,event_id)
 );
 
--- One-time in-place upgrade of legacy scoped ledgers.  Do not combine
--- different historical tenant books into the same account/environment.
--- The transaction aborts without deleting data when multiple scopes exist.
-DO $single_scope_ledger$
-DECLARE
-    tbl TEXT;
-    found TEXT[];
-    all_scopes TEXT[] := ARRAY[]::TEXT[];
-BEGIN
-    FOREACH tbl IN ARRAY ARRAY[
-        'order_intents','order_observations','account_evidence_events',
-        'account_event_allocations','orders','fills',
-        'quarantined_unverified_fills','account_settlements'
-    ] LOOP
-        IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema=current_schema() AND table_name=tbl AND column_name='tenant_id'
-        ) THEN
-            EXECUTE format('SELECT COALESCE(array_agg(DISTINCT tenant_id), ARRAY[]::TEXT[]) FROM %I',tbl)
-                INTO found;
-            all_scopes := all_scopes || found;
-        END IF;
-    END LOOP;
-    IF (SELECT COUNT(DISTINCT scope) FROM unnest(all_scopes) AS t(scope)) > 1 THEN
-        RAISE EXCEPTION 'Ledger upgrade blocked: multiple historical tenant scopes; back up and migrate separately';
-    END IF;
-    FOREACH tbl IN ARRAY ARRAY[
-        'order_intents','order_observations','account_evidence_events',
-        'account_event_allocations','orders','fills',
-        'quarantined_unverified_fills','account_settlements'
-    ] LOOP
-        IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema=current_schema() AND table_name=tbl AND column_name='tenant_id'
-        ) THEN
-            EXECUTE format('ALTER TABLE %I DROP COLUMN tenant_id',tbl);
-            CASE tbl
-                WHEN 'order_intents' THEN
-                    ALTER TABLE order_intents ADD PRIMARY KEY (account_id,request_id);
-                WHEN 'order_observations' THEN
-                    ALTER TABLE order_observations ADD PRIMARY KEY (account_id,environment,client_order_id,observation_id);
-                WHEN 'account_evidence_events' THEN
-                    ALTER TABLE account_evidence_events ADD UNIQUE (account_id,environment,kind,evidence_id);
-                WHEN 'account_event_allocations' THEN
-                    ALTER TABLE account_event_allocations ADD PRIMARY KEY (account_id,environment,event_id,strategy_id);
-                WHEN 'orders' THEN
-                    ALTER TABLE orders ADD PRIMARY KEY (account_id,environment,client_order_id);
-                WHEN 'fills' THEN
-                    ALTER TABLE fills ADD PRIMARY KEY (account_id,environment,fill_id);
-                WHEN 'quarantined_unverified_fills' THEN
-                    ALTER TABLE quarantined_unverified_fills ADD PRIMARY KEY (account_id,environment,fill_id);
-                WHEN 'account_settlements' THEN
-                    ALTER TABLE account_settlements ADD PRIMARY KEY (account_id,environment,product,event_kind,event_id);
-            END CASE;
-        END IF;
-    END LOOP;
-END
-$single_scope_ledger$;
-
 CREATE INDEX IF NOT EXISTS order_intents_client
     ON order_intents(account_id, environment, client_order_id);
 CREATE INDEX IF NOT EXISTS order_observations_by_time
@@ -154,24 +95,24 @@ CREATE INDEX IF NOT EXISTS account_event_allocations_by_evidence
 CREATE INDEX IF NOT EXISTS account_settlement_symbol
     ON account_settlements(account_id,environment,product,symbol);
 
--- Pipeline desired state. One row per tenant/product/instrument.
+-- Pipeline desired state. One row per product/instrument.
 CREATE TABLE IF NOT EXISTS pipeline_subscriptions (
- tenant_id TEXT NOT NULL, product TEXT NOT NULL CHECK(product IN ('spot','futures_um','options')),
+ product TEXT NOT NULL CHECK(product IN ('spot','futures_um','options')),
  symbol TEXT NOT NULL, history_start TEXT NOT NULL,
  realtime_enabled BOOLEAN NOT NULL DEFAULT FALSE,
  enabled BOOLEAN NOT NULL DEFAULT TRUE,
  price_precision INTEGER, size_precision INTEGER, updated_at BIGINT NOT NULL,
- PRIMARY KEY(tenant_id,product,symbol)
+ PRIMARY KEY(product,symbol)
 );
 
 -- Source: engine/strategy/src/store.rs
 CREATE TABLE IF NOT EXISTS strategy_issuances (
- tenant_id TEXT NOT NULL, account_id TEXT NOT NULL, issuance_id TEXT NOT NULL,
+ account_id TEXT NOT NULL, issuance_id TEXT NOT NULL,
  code_key TEXT NOT NULL, version TEXT NOT NULL,
  parameters_json TEXT NOT NULL, entry_point TEXT NOT NULL,
  package_hash TEXT NOT NULL, zip_sha256 TEXT,
- PRIMARY KEY (tenant_id,account_id,issuance_id)
+ PRIMARY KEY (account_id,issuance_id)
 );
-CREATE INDEX IF NOT EXISTS strategy_name_version ON strategy_issuances (tenant_id,code_key,version);
+CREATE INDEX IF NOT EXISTS strategy_name_version ON strategy_issuances (code_key,version);
 
 COMMIT;
