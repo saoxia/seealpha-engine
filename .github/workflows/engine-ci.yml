@@ -3,7 +3,7 @@ name: Engine standalone CI
 on:
   pull_request:
   push:
-    branches: [main, 'refactor/remove-runtime-and-auth-20261123']
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
