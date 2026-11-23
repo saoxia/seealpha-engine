@@ -7,13 +7,12 @@ Rust-based market-data and read-only trading research engine. The process binary
 - `engine/apps/trading_engine/` — binary entry point, PostgreSQL bootstrap, active Store assembly, HTTP server and read-only market smoke.
 - `engine/gateway/api/` — HTTP v2 boundary, routes, contract version, validation and domain calls.
 - `engine/gateway/mcp/` — optional read-only Research MCP adapter.
-- `engine/execution/` — standalone target quantity, netting and clipping utilities (no live order sender).
 - `engine/pipeline/` — market ingestion, Catalog, subscription desired state and source interfaces.
 - `engine/ledger/` — verified economic evidence, fills and audit history.
 - `engine/database/` — PostgreSQL access and schema bootstrap.
 - `engine/connection/` — external exchange integrations.
 
-There is **no active custom strategy runtime, strategy issuance store, strategy preview, `engine/runtime` crate, or `engine/backtest` crate**. The bundled EMA demo and its dedicated `engine/strategy/` crate and HTTP routes were retired on 2026-11-23. When actual strategy execution is required, prefer NautilusTrader's native strategy lifecycle rather than recreating generic strategy infrastructure. No live order transmission is enabled.
+There is **no active custom strategy runtime, custom `engine/execution` crate, strategy issuance store, strategy preview, `engine/runtime` crate, or `engine/backtest` crate**. The bundled EMA demo and its dedicated `engine/strategy/` crate and HTTP routes were retired on 2026-11-23. When actual strategy execution is required, prefer NautilusTrader's native strategy lifecycle rather than recreating generic strategy infrastructure. The former pure target/netting utilities were removed on 2026-11-23 for a Nautilus-native-first redesign. No live order transmission is enabled.
 
 ## Build
 

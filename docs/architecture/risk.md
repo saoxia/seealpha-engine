@@ -1,10 +1,9 @@
 # Risk Management
 
-**当前是逻辑业务边界，不是独立的 Rust crate。**
+**当前是逻辑业务边界，不是独立 Rust crate。**
 
-- `engine/execution/src/risk.rs`：组合目标的风险裁剪与基本限额。
-- `engine/execution/src/phase_gate.rs`、`basket.rs`：篮子阶段和相关门禁。
-- `engine/runtime/src/orders.rs`、`basket_phase.rs`：账户操作准入、运行与恢复阶段的业务控制。
-- `engine/connection/binance/src/order_guard.rs`：发送前的交易所协议/订单约束。
+截至 2026-11-23，原 `engine/execution/` 目标数量与基础裁剪计算已退役；以前的 `engine/execution/src/risk.rs`、`phase_gate.rs`、`basket.rs` 及 `engine/runtime/` 路径也不是当前有效实现。
 
-风控不等于一个顶层 `risk/` 目录。未来如拆出 crate，应先明确它对组合目标、订单准入、最大敞口、幂等和未知成交恢复的职责，确保不会改变当前的事务边界。
+未来优先使用 NautilusTrader 原生 RiskEngine、账户/订单缓存及执行前检查。只有明确超出原生能力的 SeeAlpha 业务要求（如跨策略预算与组合风险、账户级权限和多腿保护约束）才增加专门实现；不得复制原生订单状态或交易所恢复机制。
+
+当前**没有已验收的生产下单风险门禁**。不能因为某个策略已加载、订单 ACK 或离线测试通过，就授权真实账户发送。实际运行前需要验证风险约束、账户/订单对账与未知结果恢复。

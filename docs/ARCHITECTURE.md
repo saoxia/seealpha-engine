@@ -1,6 +1,6 @@
 # SeeAlpha Engine 当前架构
 
-> 2026-11-23：退役仅服务内置 EMA 示例的 `engine/strategy/` crate、策略下发及预览 HTTP 路由。此前 Runtime crate、应用层 Token/租户门禁与旧 Backtest crate 已删除；历史迁移文档可能过期。
+> 2026-11-23：退役仅服务内置 EMA 示例的 `engine/strategy/` crate、策略下发及预览 HTTP 路由，并移除未接入实际交易的独立 `engine/execution/` 计算 crate。此前 Runtime crate、应用层 Token/租户门禁与旧 Backtest crate 已删除；历史迁移文档可能过期。
 
 ## 当前调用关系
 
@@ -16,7 +16,7 @@ apps/trading_engine
 ```
 
 - Apps 负责创建活跃 Store；Gateway 只持有 Ledger、ControlStore 和行情源引用，解析请求并调用领域实现。
-- **无自研策略执行链**：已删除 EMA 示例、StrategyStore、策略下发、检查和只读策略预览路由。独立的 `engine/execution/` 仍提供目标数量、净额与裁剪计算库，但 HTTP 当前不调用它进行策略计算，也不会生成交易订单。
+- **无自研策略/Execution 执行链**：EMA 示例、StrategyStore、策略下发及预览路由已退役；原独立 `engine/execution/` 目标数量、净额与裁剪计算 crate 也于 2026-11-23 退役。当前没有目标组合/调仓计算服务或实盘订单发送链路。后续以 NautilusTrader 原生 OMS/Execution 为主，SeeAlpha 仅增加确有业务必要的组合、授权及成交归属功能。
 - NautilusTrader Rust 项目位于 `engine/pipeline/sources/shared/nautilus/`，当前作为独立 Cargo 子项目，未接管策略执行或交易订单发送。
 - 订单 POST、实盘账户和原生持仓读侧未启用；历史订单 GET 不代表 Nautilus 当前订单状态。
 - `/research/v1/datasets` 是 Catalog 的只读索引；可选 `/research/mcp` 只暴露 `list_datasets`。没有研究 Grant、异步快照任务或候选回测 API。

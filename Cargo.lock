@@ -1636,14 +1636,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "seealpha-execution"
-version = "0.1.0"
-dependencies = [
- "rust_decimal",
- "thiserror",
-]
-
-[[package]]
 name = "seealpha-http"
 version = "0.1.0"
 dependencies = [

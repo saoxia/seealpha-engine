@@ -8,12 +8,12 @@
 
 ## 边界和安全
 
-- `engine/gateway/api` 持有 HTTP v2 与 Research HTTP 路由，`engine/gateway/mcp` 持有 Research MCP 协议处理；应用入口装配 Store，Gateway 调用领域模块；行情、目标仓位、账本与交易所连接归属各自的领域 crate；策略运行尚未重新接入，未来优先复用 NautilusTrader 原生能力。旧回测 crate 已退役。不再存在 Runtime crate、Engine Token 认证和租户级门禁。
+- `engine/gateway/api` 持有 HTTP v2 与 Research HTTP 路由，`engine/gateway/mcp` 持有 Research MCP 协议处理；应用入口装配 Store，Gateway 调用领域模块；行情、账本与交易所连接归属各自的领域 crate；策略运行尚未重新接入，未来优先复用 NautilusTrader 原生能力。旧回测 crate 已退役。不再存在 Runtime crate、Engine Token 认证和租户级门禁。
 - 不在没有明确授权和匹配测试时更改 HTTP v2 数据接口、数据格式、持久化状态、订单幂等、真实账户安全门禁或生产部署。
 - 订单必须先登记请求意图；外部请求未知结果不得盲目再次发送；只有被核验的真实成交证据能更新已成交事实；模拟成交必须与真实成交分离。
 - 行情读取不得隐式启动生产者、绕过 READY 门禁，亦不得伪造缺失的 Tick/L2、资金费或期权证据；未来策略订阅和新回测实现必须遵守同样的安全边界。
 - 不触碰真实账户、真实下单、生产密钥、旧数据重建、生产状态卷或数据库迁移。使用合成/离线数据验证重构。
-- `engine/execution` 和 `engine/risk` 是跨现有 crate 的逻辑领域，参见 `docs/architecture/`；不存在同名独立 crate，不创建空实现。
+- `engine/execution/` 原有独立 crate 已于 2026-11-23 退役，现行 Workspace 不包含自研 Execution crate；Execution 与 Risk 仅作为待重新接入的业务领域，参见 `docs/architecture/`。未来应优先接入 NautilusTrader 的原生 OMS、订单事件、账户缓存与对账能力，只补充 SeeAlpha 特有的组合决策、授权和成交归属；不得创建空实现或平行订单状态机。
 - 一级领域清单与状态见 `docs/architecture/DOMAIN_LAYOUT.md`。
 
 ## 目录调整规范

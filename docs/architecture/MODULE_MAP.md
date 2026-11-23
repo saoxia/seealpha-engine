@@ -5,7 +5,7 @@
 | 进程启动、数据库初始化、Store 装配 | `engine/apps/trading_engine/src/main.rs` |
 | HTTP 服务参数、监听约束 | `engine/gateway/api/src/config.rs` |
 | 路由、合同版本、HTTP 错误映射 | `engine/gateway/api/src/lib.rs`、`src/routes/` |
-| 目标数量、净额与风险裁剪计算 | `engine/execution/target/`（当前未作为策略 API 挂载） |
+| Execution 组合决策（待重建） | 原 `engine/execution/` 已退役，目前无在线实现；先复用 NautilusTrader 原生 Execution，再补必要的 SeeAlpha 业务计算 |
 | 行情标准化 | `engine/pipeline/sources/shared/market/` |
 | 历史 Catalog | `engine/pipeline/catalog/` |
 | Subscription 配置 | `engine/pipeline/catalog/src/subscriptions.rs` |
