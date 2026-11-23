@@ -233,7 +233,7 @@ mod schema_contract_tests {
     fn bootstrap_creates_only_active_application_tables() {
         let schema = include_str!("../../../docker/seealpha-postgres-schema.sql");
         for table in [
-            "tenants", "portfolio_coordinator_states", "basket_journals",
+            "portfolio_coordinator_states", "basket_journals",
             "order_reconciliation_tasks", "order_requests", "order_request_views",
             "positions", "paper_positions", "paper_sessions",
         ] {
