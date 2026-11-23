@@ -214,12 +214,11 @@ async fn main()->Result<()>{
 #[cfg(test)]
 mod tests{
     use super::*;
-    #[test] fn earlier_tenant_start_wins_and_disabled_prevents_deletion(){
+    #[test] fn earlier_start_wins_and_disabled_prevents_deletion(){
         let make=|start:&str,enabled:bool|PipelineSubscription{
             product:"spot".into(),symbol:"BTCUSDT".into(),history_start:start.into(),
             realtime_enabled:enabled,enabled,price_precision:Some(8),size_precision:Some(8)};
-        let rows=vec![("a".into(),make("2025-06-01",true)),
-                      ("b".into(),make("2025-01-01",false))];
+        let rows=vec![make("2025-06-01",true),make("2025-01-01",false)];
         let spec=desired(&rows).unwrap();
         assert_eq!(spec["BTCUSDT"].retain_from,make("2025-01-01",false).start_ms().unwrap());
         assert_eq!(spec["BTCUSDT"].fetch_from,Some(make("2025-06-01",true).start_ms().unwrap()));
